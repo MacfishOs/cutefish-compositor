@@ -5,7 +5,6 @@
 #include <gtest/gtest.h>
 
 #include <linux/input-event-codes.h>
-#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "input/key_translator.h"
 #include "input/xkb_tracker.h"
@@ -46,7 +45,7 @@ class KeyTranslatorTest : public testing::Test
 protected:
     XkbTracker keymap;
     std::vector<Delivered> delivered;
-    KeyTargetFlags target = NoKeyTarget;
+    bool terminal = false;
     bool passthrough = false;
     bool buttonsHeld = false;
     KeyTranslator translator {&keymap, [this](Timestamp, uint32_t code, bool pressed) {
@@ -57,8 +56,8 @@ protected:
     void SetUp() override
     {
         translator.setConvention(ShortcutConvention::Command);
-        translator.setTargetProvider([this] {
-            return target;
+        translator.setTerminalProvider([this] {
+            return terminal;
         });
         translator.setPassthroughProvider([this] {
             return passthrough;
@@ -193,20 +192,20 @@ TEST_F(KeyTranslatorTest, CommandBackspaceDeletesToTheLineStart)
               take());
 }
 
-TEST_F(KeyTranslatorTest, ControlKeepsItsLineEditingKeysInTextAndCtrlElsewhere)
+TEST_F(KeyTranslatorTest, ControlGoesOutAsCtrl)
 {
     press(KEY_LEFTCTRL);
     tap(KEY_A);
-    tap(KEY_SPACE);
+    tap(KEY_E);
     release(KEY_LEFTCTRL);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_HOME), up(KEY_HOME), down(KEY_LEFTCTRL),
-                                      down(KEY_SPACE), up(KEY_SPACE), up(KEY_LEFTCTRL)}),
+    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_A), up(KEY_A), down(KEY_E),
+                                      up(KEY_E), up(KEY_LEFTCTRL)}),
               take());
 }
 
 TEST_F(KeyTranslatorTest, TerminalsCopyWithCtrlShiftAndKeepControlForThePrograms)
 {
-    target = TerminalTarget;
+    terminal = true;
     press(KEY_LEFTMETA);
     tap(KEY_C);
     release(KEY_LEFTMETA);
@@ -223,39 +222,10 @@ TEST_F(KeyTranslatorTest, TerminalsCopyWithCtrlShiftAndKeepControlForThePrograms
               take());
 }
 
-TEST_F(KeyTranslatorTest, CommandKClearsWithCtrlShiftKOnlyInCutefishTerminal)
-{
-    target = TerminalTarget | CutefishTerminalTarget;
-    press(KEY_LEFTMETA);
-    tap(KEY_K);
-    release(KEY_LEFTMETA);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFTSHIFT), down(KEY_K),
-                                      up(KEY_K), up(KEY_LEFTSHIFT), up(KEY_LEFTCTRL)}),
-              take());
-
-    target = TerminalTarget;
-    press(KEY_LEFTMETA);
-    tap(KEY_K);
-    release(KEY_LEFTMETA);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_L), up(KEY_L),
-                                      up(KEY_LEFTCTRL)}),
-              take());
-}
-
-TEST_F(KeyTranslatorTest, TerminalsDeleteAWordForwardWithEscapeD)
-{
-    target = TerminalTarget;
-    press(KEY_LEFTALT);
-    tap(KEY_DELETE);
-    release(KEY_LEFTALT);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_ESC), up(KEY_ESC), down(KEY_D), up(KEY_D)}),
-              take());
-}
-
 TEST_F(KeyTranslatorTest, TerminalsGetNoCommandKeyWithoutARule)
 {
     // As Ctrl these would end the shell, suspend the program and run the line.
-    target = TerminalTarget;
+    terminal = true;
     press(KEY_LEFTMETA);
     tap(KEY_D);
     tap(KEY_Z);
@@ -272,7 +242,7 @@ TEST_F(KeyTranslatorTest, TerminalsGetNoCommandKeyWithoutARule)
     EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTSHIFT), up(KEY_LEFTSHIFT)}), take());
 
     // Other applications still get Command as Ctrl.
-    target = NoKeyTarget;
+    terminal = false;
     press(KEY_LEFTMETA);
     tap(KEY_D);
     release(KEY_LEFTMETA);
@@ -281,69 +251,18 @@ TEST_F(KeyTranslatorTest, TerminalsGetNoCommandKeyWithoutARule)
               take());
 }
 
-TEST_F(KeyTranslatorTest, TerminalsSelectAllZoomAndScrollWithCommand)
+TEST_F(KeyTranslatorTest, OtherApplicationsGetTheirShortcutsAsCtrl)
 {
-    target = TerminalTarget;
+    // No rule depends on the application: browser and file manager keys go
+    // out as Ctrl like any other.
     press(KEY_LEFTMETA);
-    tap(KEY_A);
-    tap(KEY_EQUAL);
-    tap(KEY_PAGEUP);
-    release(KEY_LEFTMETA);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFTSHIFT), down(KEY_A),
-                                      up(KEY_A), up(KEY_LEFTSHIFT), down(KEY_EQUAL),
-                                      up(KEY_EQUAL), up(KEY_LEFTCTRL), down(KEY_LEFTSHIFT),
-                                      down(KEY_PAGEUP), up(KEY_PAGEUP), up(KEY_LEFTSHIFT)}),
-              take());
-}
-
-TEST_F(KeyTranslatorTest, CommandDigitPicksATab)
-{
-    // Terminals and non-Chromium browsers pick tabs with Alt+digit.
-    for (const KeyTargetFlags app : {KeyTargetFlags(TerminalTarget),
-                                     KeyTargetFlags(BrowserTarget)}) {
-        target = app;
-        press(KEY_LEFTMETA);
-        tap(KEY_3);
-        tap(KEY_9);
-        release(KEY_LEFTMETA);
-        EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTALT), down(KEY_3), up(KEY_3),
-                                          up(KEY_LEFTALT), down(KEY_LEFTALT), down(KEY_9),
-                                          up(KEY_9), up(KEY_LEFTALT)}),
-                  take());
-    }
-
-    // Chromium takes Ctrl+digit, and Command+0 stays Ctrl+0 everywhere.
-    target = BrowserTarget | ChromiumTarget;
-    press(KEY_LEFTMETA);
+    tap(KEY_LEFTBRACE);
     tap(KEY_1);
-    release(KEY_LEFTMETA);
-    target = TerminalTarget;
-    press(KEY_LEFTMETA);
-    tap(KEY_0);
-    release(KEY_LEFTMETA);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_1), up(KEY_1),
-                                      up(KEY_LEFTCTRL), down(KEY_LEFTCTRL), down(KEY_0),
-                                      up(KEY_0), up(KEY_LEFTCTRL)}),
-              take());
-}
-
-TEST_F(KeyTranslatorTest, BrowsersGoBackWithCommandBracket)
-{
-    target = BrowserTarget;
-    press(KEY_LEFTMETA);
-    tap(KEY_LEFTBRACE);
-    release(KEY_LEFTMETA);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTALT), down(KEY_LEFT), up(KEY_LEFT),
-                                      up(KEY_LEFTALT)}),
-              take());
-
-    // Elsewhere Command+[ stays Ctrl+[, which editors outdent with.
-    target = NoKeyTarget;
-    press(KEY_LEFTMETA);
-    tap(KEY_LEFTBRACE);
+    tap(KEY_DOT);
     release(KEY_LEFTMETA);
     EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFTBRACE),
-                                      up(KEY_LEFTBRACE), up(KEY_LEFTCTRL)}),
+                                      up(KEY_LEFTBRACE), down(KEY_1), up(KEY_1),
+                                      down(KEY_DOT), up(KEY_DOT), up(KEY_LEFTCTRL)}),
               take());
 }
 
@@ -418,24 +337,10 @@ TEST_F(KeyTranslatorTest, DeliveredKeysIncludeTheSentModifiers)
     EXPECT_EQ(std::vector<uint32_t>({KEY_LEFTCTRL, KEY_C}), keys);
 }
 
-TEST(KeyTargets, KnownApplicationsAreClassified)
+TEST(IsTerminal, KnownTerminalsAreRecognised)
 {
-    EXPECT_EQ(KeyTargetFlags(TerminalTarget | CutefishTerminalTarget),
-              classifyApplication(QStringLiteral("cutefish-terminal")));
-    EXPECT_EQ(KeyTargetFlags(TerminalTarget),
-              classifyApplication(QStringLiteral("org.gnome.Console")));
-    EXPECT_EQ(KeyTargetFlags(BrowserTarget | ChromiumTarget),
-              classifyApplication(QStringLiteral("google-chrome")));
-    EXPECT_EQ(KeyTargetFlags(BrowserTarget), classifyApplication(QStringLiteral("firefox")));
-    EXPECT_EQ(KeyTargetFlags(FileManagerTarget),
-              classifyApplication(QStringLiteral("org.gnome.Nautilus")));
-    EXPECT_EQ(KeyTargetFlags(NoKeyTarget), classifyApplication(QStringLiteral("code")));
-}
-
-TEST(XkbTracker, FindsTheKeyForAKeysym)
-{
-    XkbTracker tracker;
-    EXPECT_EQ(uint32_t(KEY_B), tracker.evdevCodeForKeysym(XKB_KEY_b));
-    ASSERT_TRUE(tracker.updateKeyboardLayout("us-dvorak"));
-    EXPECT_EQ(uint32_t(KEY_N), tracker.evdevCodeForKeysym(XKB_KEY_b));
+    EXPECT_TRUE(isTerminal(QStringLiteral("cutefish-terminal")));
+    EXPECT_TRUE(isTerminal(QStringLiteral("org.gnome.Console")));
+    EXPECT_FALSE(isTerminal(QStringLiteral("google-chrome")));
+    EXPECT_FALSE(isTerminal(QStringLiteral("code")));
 }

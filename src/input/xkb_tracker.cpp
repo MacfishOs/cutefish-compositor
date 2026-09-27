@@ -10,7 +10,6 @@
 
 #include "input/xkb_tracker.h"
 
-#include <algorithm>
 #include <cstdlib>
 #include <iterator>
 
@@ -119,25 +118,6 @@ uint32_t XkbTracker::baseKeysym(uint32_t evdevCode) const
     const xkb_keysym_t keysym =
             count > 0 ? syms[0] : xkb_state_key_get_one_sym(m_state.get(), keycode);
     return xkb_keysym_to_lower(keysym);
-}
-
-uint32_t XkbTracker::evdevCodeForKeysym(uint32_t keysym) const
-{
-    if (!m_keymap || !m_state)
-        return 0;
-    const xkb_layout_index_t layout =
-            xkb_state_serialize_layout(m_state.get(), XKB_STATE_LAYOUT_EFFECTIVE);
-    const xkb_keycode_t min = std::max<xkb_keycode_t>(xkb_keymap_min_keycode(m_keymap.get()),
-                                                      kEvdevToXkbOffset);
-    const xkb_keycode_t max = xkb_keymap_max_keycode(m_keymap.get());
-    for (xkb_keycode_t keycode = min; keycode <= max; ++keycode) {
-        const xkb_keysym_t *syms = nullptr;
-        const int count =
-                xkb_keymap_key_get_syms_by_level(m_keymap.get(), keycode, layout, 0, &syms);
-        if (count > 0 && xkb_keysym_to_lower(syms[0]) == keysym)
-            return keycode - kEvdevToXkbOffset;
-    }
-    return 0;
 }
 
 bool XkbTracker::modifierPressed(const char *name) const

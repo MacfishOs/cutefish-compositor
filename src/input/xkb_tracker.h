@@ -52,10 +52,6 @@ public:
     // what ui::KeyboardCode is to Ash accelerators. Shift+1 is "1", not "!".
     uint32_t baseKeysym(uint32_t evdevCode) const;
 
-    // The evdev code whose base keysym in the active layout is `keysym`, or 0
-    // when no key produces it there.
-    uint32_t evdevCodeForKeysym(uint32_t keysym) const;
-
     // Whether a modifier is depressed or latched, ignoring locks: Caps Lock
     // does not make Ctrl+A a different accelerator.
     bool modifierPressed(const char *name) const;

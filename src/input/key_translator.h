@@ -19,23 +19,9 @@ namespace cutefish::input {
 
 class XkbTracker;
 
-// What kind of application has keyboard focus, as far as KeyTranslator's
-// rules care. A Chromium browser is a Browser as well.
-enum KeyTargetFlag : uint32_t {
-    NoKeyTarget = 0,
-    TerminalTarget = 1u << 0,
-    BrowserTarget = 1u << 1,
-    ChromiumTarget = 1u << 2,
-    FileManagerTarget = 1u << 3,
-    // cutefish-terminal, a Terminal as well; it has a Ctrl+Shift+K clear.
-    CutefishTerminalTarget = 1u << 4,
-};
-
-using KeyTargetFlags = uint32_t;
-
-// Matches a window's application id (xdg_toplevel.set_app_id, or the X11
-// class) against the terminals, browsers and file managers the rules know.
-KeyTargetFlags classifyApplication(const QString &applicationId);
+// Whether a window's application id (xdg_toplevel.set_app_id, or the X11
+// class) names a terminal, the one kind of application the rules treat apart.
+bool isTerminal(const QString &applicationId);
 
 // Turns the keys the compositor did not consume into the keys clients see.
 //
@@ -51,8 +37,8 @@ KeyTargetFlags classifyApplication(const QString &applicationId);
 //   them. Pressing one alone reaches no client (no menu bar pops up on a lone
 //   Alt), and a rule can send Home for Command+Left without taking back a Ctrl
 //   the client already saw.
-// - Rules turn text navigation and the shortcuts of terminals, browsers and
-//   file managers into their Linux equivalents; see kRules. A terminal gets
+// - Rules turn text navigation into its Linux equivalents and give terminals
+//   their Ctrl+Shift clipboard and tab shortcuts; see kRules. A terminal gets
 //   no Command key that no rule names.
 // - Control+click is a secondary click.
 //
@@ -71,9 +57,10 @@ public:
     ShortcutConvention convention() const { return m_convention; }
     void setConvention(ShortcutConvention convention) { m_convention = convention; }
 
-    void setTargetProvider(std::function<KeyTargetFlags()> provider)
+    // True while a terminal has keyboard focus.
+    void setTerminalProvider(std::function<bool()> provider)
     {
-        m_target = std::move(provider);
+        m_terminal = std::move(provider);
     }
 
     // True while keys must reach the focused client untranslated.
@@ -123,7 +110,7 @@ private:
     const XkbTracker *m_keymap;
     DeliverKey m_deliver;
     ShortcutConvention m_convention = ShortcutConvention::Pc;
-    std::function<KeyTargetFlags()> m_target;
+    std::function<bool()> m_terminal;
     std::function<bool()> m_passthrough;
     std::function<bool()> m_pointerButtonsHeld;
 

@@ -36,150 +36,75 @@ enum ModifierKind : uint32_t {
 };
 
 enum class Scope {
-    Everywhere,
-    NotTerminal,
     Terminal,
-    CutefishTerminal,
-    Browser,
-    Chromium,
-    // Browsers not built on Chromium, which pick tabs with Alt+digit.
-    OtherBrowser,
-    FileManager,
+    NotTerminal,
 };
 
-// One key a rule sends: an evdev code, the key typing `keysym` in the active
-// layout, or, with neither, the key that was pressed.
+// One key a rule sends: an evdev code or, without one, the key that was
+// pressed.
 struct Stroke {
     uint32_t modifiers = 0;
     uint32_t code = 0;
-    uint32_t keysym = 0;
 };
 
 struct Rule {
     Scope scope;
     uint32_t roles;
-    // The key: evdev codes code..lastCode for keys every layout has in the
-    // same place, a base keysym otherwise.
+    // The key: an evdev code for keys every layout has in the same place, a
+    // base keysym otherwise.
     uint32_t code;
-    uint32_t lastCode;
     uint32_t keysym;
     // Also matches with Shift held, which is then sent along: Command+Shift+Left
     // selects to the start of the line as Command+Left moves there.
     bool withShift;
     // Every stroke but the last is tapped; the last stays down with the key.
-    // No strokes swallows the key.
     int strokeCount;
     std::array<Stroke, 2> strokes;
 };
 
 constexpr Stroke send(uint32_t modifiers, uint32_t code)
 {
-    return {modifiers, code, 0};
-}
-
-constexpr Stroke type(uint32_t modifiers, uint32_t keysym)
-{
-    return {modifiers, 0, keysym};
+    return {modifiers, code};
 }
 
 constexpr Stroke same(uint32_t modifiers)
 {
-    return {modifiers, 0, 0};
+    return {modifiers, 0};
 }
 
 constexpr Rule key(Scope scope, uint32_t roles, uint32_t code, Stroke stroke,
                    bool withShift = false)
 {
-    return {scope, roles, code, code, 0, withShift, 1, {stroke, {}}};
+    return {scope, roles, code, 0, withShift, 1, {stroke, {}}};
 }
 
 constexpr Rule key(Scope scope, uint32_t roles, uint32_t code, Stroke first, Stroke second)
 {
-    return {scope, roles, code, code, 0, false, 2, {first, second}};
+    return {scope, roles, code, 0, false, 2, {first, second}};
 }
 
-constexpr Rule keys(Scope scope, uint32_t roles, uint32_t first, uint32_t last, Stroke stroke)
+constexpr Rule sym(Scope scope, uint32_t roles, uint32_t keysym, Stroke stroke)
 {
-    return {scope, roles, first, last, 0, false, 1, {stroke, {}}};
+    return {scope, roles, 0, keysym, false, 1, {stroke, {}}};
 }
-
-constexpr Rule sym(Scope scope, uint32_t roles, uint32_t keysym, Stroke stroke,
-                   bool withShift = false)
-{
-    return {scope, roles, 0, 0, keysym, withShift, 1, {stroke, {}}};
-}
-
-constexpr Rule sym(Scope scope, uint32_t roles, uint32_t keysym, Stroke first, Stroke second)
-{
-    return {scope, roles, 0, 0, keysym, false, 2, {first, second}};
-}
-
 
 constexpr uint32_t None = NoKind;
 constexpr uint32_t Ctrl = CtrlKind;
-constexpr uint32_t Alt = AltKind;
 constexpr uint32_t ShiftMod = ShiftKind;
 
-// Looked up in order; the first match wins, so scoped rules come first. Any
-// key no rule matches goes out with Command as Ctrl, except in a terminal,
-// where it is dropped (see applyRule). Modelled on Toshy's default keymaps
-// (General GUI, General Terminals, browsers, Finder mods).
+// Looked up in order; the first match wins. Any key no rule matches goes out
+// with Command as Ctrl, except in a terminal, where it is dropped (see
+// applyRule). Deliberately short: rules never depend on which application has
+// focus beyond whether it is a terminal.
 constexpr auto kRules = std::to_array<Rule>({
-        // Terminals take their clipboard and tab shortcuts with Ctrl+Shift and
-        // leave Ctrl to the program; line editing speaks readline.
+        // Terminals take their clipboard, tab, window and search shortcuts with
+        // Ctrl+Shift and leave Ctrl to the program.
         sym(Scope::Terminal, Command, XKB_KEY_c, same(Ctrl | ShiftMod)),
         sym(Scope::Terminal, Command, XKB_KEY_v, same(Ctrl | ShiftMod)),
         sym(Scope::Terminal, Command, XKB_KEY_t, same(Ctrl | ShiftMod)),
         sym(Scope::Terminal, Command, XKB_KEY_w, same(Ctrl | ShiftMod)),
         sym(Scope::Terminal, Command, XKB_KEY_n, same(Ctrl | ShiftMod)),
         sym(Scope::Terminal, Command, XKB_KEY_f, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_a, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_equal, same(Ctrl), true),
-        sym(Scope::Terminal, Command, XKB_KEY_minus, same(Ctrl)),
-        key(Scope::Terminal, Command, KEY_0, same(Ctrl)),
-        // The scrollback, which terminals page through with Shift.
-        key(Scope::Terminal, Command, KEY_HOME, same(ShiftMod)),
-        key(Scope::Terminal, Command, KEY_END, same(ShiftMod)),
-        key(Scope::Terminal, Command, KEY_PAGEUP, same(ShiftMod)),
-        key(Scope::Terminal, Command, KEY_PAGEDOWN, same(ShiftMod)),
-        // Clears the scrollback as well; other terminals would take Ctrl+Shift+K as Ctrl+K.
-        sym(Scope::CutefishTerminal, Command, XKB_KEY_k, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_k, type(Ctrl, XKB_KEY_l)),
-        sym(Scope::Terminal, Command, XKB_KEY_period, type(Ctrl, XKB_KEY_c)),
-        key(Scope::Terminal, Command, KEY_LEFT, send(None, KEY_HOME)),
-        key(Scope::Terminal, Command, KEY_RIGHT, send(None, KEY_END)),
-        key(Scope::Terminal, Command, KEY_BACKSPACE, type(Ctrl, XKB_KEY_u)),
-        key(Scope::Terminal, Command, KEY_DELETE, type(Ctrl, XKB_KEY_k)),
-        key(Scope::Terminal, Option, KEY_LEFT, type(Alt, XKB_KEY_b)),
-        key(Scope::Terminal, Option, KEY_RIGHT, type(Alt, XKB_KEY_f)),
-        key(Scope::Terminal, Option, KEY_BACKSPACE, type(Ctrl, XKB_KEY_w)),
-        key(Scope::Terminal, Option, KEY_DELETE, send(None, KEY_ESC), type(None, XKB_KEY_d)),
-        // Command+1..9 picks a tab: Alt+digit in terminals and non-Chromium
-        // browsers; Chromium takes Ctrl+digit as it comes. By position, since
-        // some layouts type symbols on the digit row.
-        keys(Scope::Terminal, Command, KEY_1, KEY_9, same(Alt)),
-
-
-        sym(Scope::Chromium, Command, XKB_KEY_y, type(Ctrl, XKB_KEY_h)),
-        keys(Scope::OtherBrowser, Command, KEY_1, KEY_9, same(Alt)),
-        sym(Scope::Browser, Command, XKB_KEY_bracketleft, send(Alt, KEY_LEFT)),
-        sym(Scope::Browser, Command, XKB_KEY_bracketright, send(Alt, KEY_RIGHT)),
-        key(Scope::Browser, Command | Option, KEY_LEFT, send(Ctrl, KEY_PAGEUP)),
-        key(Scope::Browser, Command | Option, KEY_RIGHT, send(Ctrl, KEY_PAGEDOWN)),
-        sym(Scope::Browser, Command | Option, XKB_KEY_i, same(Ctrl | ShiftMod)),
-        sym(Scope::Browser, Command | Option, XKB_KEY_j, same(Ctrl | ShiftMod)),
-        sym(Scope::Browser, Command | Option, XKB_KEY_u, type(Ctrl, XKB_KEY_u)),
-
-        sym(Scope::FileManager, Command, XKB_KEY_bracketleft, send(Alt, KEY_LEFT)),
-        sym(Scope::FileManager, Command, XKB_KEY_bracketright, send(Alt, KEY_RIGHT)),
-        key(Scope::FileManager, Command, KEY_UP, send(Alt, KEY_UP)),
-        key(Scope::FileManager, Command, KEY_DOWN, send(None, KEY_ENTER)),
-        key(Scope::FileManager, Command, KEY_BACKSPACE, send(None, KEY_DELETE)),
-        sym(Scope::FileManager, Command, XKB_KEY_i, send(Alt, KEY_ENTER)),
-        sym(Scope::FileManager, Command | Shift, XKB_KEY_period, type(Ctrl, XKB_KEY_h)),
-
-        sym(Scope::Everywhere, Command | Shift, XKB_KEY_bracketleft, send(Ctrl, KEY_PAGEUP)),
-        sym(Scope::Everywhere, Command | Shift, XKB_KEY_bracketright, send(Ctrl, KEY_PAGEDOWN)),
 
         // Text navigation.
         key(Scope::NotTerminal, Command, KEY_LEFT, send(None, KEY_HOME), true),
@@ -194,42 +119,11 @@ constexpr auto kRules = std::to_array<Rule>({
             send(None, KEY_BACKSPACE)),
         key(Scope::NotTerminal, Command, KEY_DELETE, send(ShiftMod, KEY_END),
             send(None, KEY_DELETE)),
-        sym(Scope::NotTerminal, Command, XKB_KEY_period, send(None, KEY_ESC)),
-
-        // Control's line editing keys, as text fields take them there.
-        sym(Scope::NotTerminal, Control, XKB_KEY_a, send(None, KEY_HOME), true),
-        sym(Scope::NotTerminal, Control, XKB_KEY_e, send(None, KEY_END), true),
-        sym(Scope::NotTerminal, Control, XKB_KEY_b, send(None, KEY_LEFT), true),
-        sym(Scope::NotTerminal, Control, XKB_KEY_f, send(None, KEY_RIGHT), true),
-        sym(Scope::NotTerminal, Control, XKB_KEY_p, send(None, KEY_UP), true),
-        sym(Scope::NotTerminal, Control, XKB_KEY_n, send(None, KEY_DOWN), true),
-        sym(Scope::NotTerminal, Control, XKB_KEY_d, send(None, KEY_DELETE)),
-        sym(Scope::NotTerminal, Control, XKB_KEY_h, send(None, KEY_BACKSPACE)),
-        sym(Scope::NotTerminal, Control, XKB_KEY_k, send(ShiftMod, KEY_END),
-            send(None, KEY_DELETE)),
 });
 
-bool inScope(Scope scope, KeyTargetFlags target)
+bool inScope(Scope scope, bool terminal)
 {
-    switch (scope) {
-    case Scope::Everywhere:
-        return true;
-    case Scope::NotTerminal:
-        return !(target & TerminalTarget);
-    case Scope::Terminal:
-        return target & TerminalTarget;
-    case Scope::CutefishTerminal:
-        return target & CutefishTerminalTarget;
-    case Scope::Browser:
-        return target & BrowserTarget;
-    case Scope::Chromium:
-        return target & ChromiumTarget;
-    case Scope::OtherBrowser:
-        return (target & BrowserTarget) && !(target & ChromiumTarget);
-    case Scope::FileManager:
-        return target & FileManagerTarget;
-    }
-    return false;
+    return (scope == Scope::Terminal) == terminal;
 }
 
 uint32_t defaultCode(ModifierKind kind)
@@ -248,10 +142,11 @@ uint32_t defaultCode(ModifierKind kind)
 
 } // namespace
 
-KeyTargetFlags classifyApplication(const QString &applicationId)
+bool isTerminal(const QString &applicationId)
 {
     // Lower-cased application ids and X11 classes, after Toshy's lists.
     static const QSet<QString> terminals = {
+            QStringLiteral("cutefish-terminal"),
             QStringLiteral("alacritty"),
             QStringLiteral("kitty"),
             QStringLiteral("foot"),
@@ -297,70 +192,8 @@ KeyTargetFlags classifyApplication(const QString &applicationId)
             QStringLiteral("st"),
             QStringLiteral("st-256color"),
     };
-    static const QSet<QString> chromium = {
-            QStringLiteral("chromium"),
-            QStringLiteral("chromium-browser"),
-            QStringLiteral("org.chromium.chromium"),
-            QStringLiteral("google-chrome"),
-            QStringLiteral("google-chrome-stable"),
-            QStringLiteral("google-chrome-beta"),
-            QStringLiteral("google-chrome-unstable"),
-            QStringLiteral("com.google.chrome"),
-            QStringLiteral("brave-browser"),
-            QStringLiteral("com.brave.browser"),
-            QStringLiteral("microsoft-edge"),
-            QStringLiteral("microsoft-edge-stable"),
-            QStringLiteral("com.microsoft.edge"),
-            QStringLiteral("vivaldi"),
-            QStringLiteral("vivaldi-stable"),
-            QStringLiteral("opera"),
-            QStringLiteral("thorium-browser"),
-    };
-    static const QSet<QString> browsers = {
-            QStringLiteral("firefox"),
-            QStringLiteral("firefox-esr"),
-            QStringLiteral("org.mozilla.firefox"),
-            QStringLiteral("librewolf"),
-            QStringLiteral("io.gitlab.librewolf-community"),
-            QStringLiteral("floorp"),
-            QStringLiteral("one.ablaze.floorp"),
-            QStringLiteral("waterfox"),
-            QStringLiteral("zen"),
-            QStringLiteral("app.zen_browser.zen"),
-            QStringLiteral("org.gnome.epiphany"),
-            QStringLiteral("org.kde.falkon"),
-            QStringLiteral("falkon"),
-    };
-    static const QSet<QString> fileManagers = {
-            QStringLiteral("cutefish-filemanager"),
-            QStringLiteral("org.gnome.nautilus"),
-            QStringLiteral("nautilus"),
-            QStringLiteral("org.kde.dolphin"),
-            QStringLiteral("dolphin"),
-            QStringLiteral("thunar"),
-            QStringLiteral("nemo"),
-            QStringLiteral("caja"),
-            QStringLiteral("pcmanfm"),
-            QStringLiteral("pcmanfm-qt"),
-            QStringLiteral("io.elementary.files"),
-            QStringLiteral("com.system76.cosmicfiles"),
-            QStringLiteral("org.kde.krusader"),
-            QStringLiteral("peony"),
-            QStringLiteral("dde-file-manager"),
-    };
 
-    const QString id = applicationId.toLower();
-    if (id == QLatin1String("cutefish-terminal"))
-        return TerminalTarget | CutefishTerminalTarget;
-    if (terminals.contains(id))
-        return TerminalTarget;
-    if (chromium.contains(id))
-        return BrowserTarget | ChromiumTarget;
-    if (browsers.contains(id))
-        return BrowserTarget;
-    if (fileManagers.contains(id))
-        return FileManagerTarget;
-    return NoKeyTarget;
+    return terminals.contains(applicationId.toLower());
 }
 
 KeyTranslator::KeyTranslator(const XkbTracker *keymap, DeliverKey deliver)
@@ -543,19 +376,19 @@ void KeyTranslator::releaseKey(Timestamp timestamp, uint32_t code)
 bool KeyTranslator::applyRule(Timestamp timestamp, uint32_t code)
 {
     const uint32_t roles = heldRoles();
-    const KeyTargetFlags target = m_target ? m_target() : NoKeyTarget;
+    const bool terminal = m_terminal && m_terminal();
     const uint32_t keysym = m_keymap->baseKeysym(code);
     const auto match = std::find_if(kRules.begin(), kRules.end(), [&](const Rule &rule) {
-        if (rule.code ? code < rule.code || code > rule.lastCode : rule.keysym != keysym)
+        if (rule.code ? rule.code != code : rule.keysym != keysym)
             return false;
         if (rule.roles != roles && !(rule.withShift && (rule.roles | Shift) == roles))
             return false;
-        return inScope(rule.scope, target);
+        return inScope(rule.scope, terminal);
     });
     if (match == kRules.end()) {
         // Ctrl belongs to the program in a terminal, so a Command key as Ctrl
         // would type a control character: Command+D would end the shell.
-        if (!(roles & Command) || !(target & TerminalTarget))
+        if (!(roles & Command) || !terminal)
             return false;
         m_presses.emplace(code, Press {0, true});
         return true;
@@ -565,11 +398,7 @@ bool KeyTranslator::applyRule(Timestamp timestamp, uint32_t code)
     Press press {0, true};
     for (int i = 0; i < match->strokeCount; ++i) {
         const Stroke &stroke = match->strokes[i];
-        const uint32_t out = stroke.code ? stroke.code
-                : stroke.keysym          ? m_keymap->evdevCodeForKeysym(stroke.keysym)
-                                         : code;
-        if (!out)
-            continue;
+        const uint32_t out = stroke.code ? stroke.code : code;
         syncModifierKinds(timestamp, stroke.modifiers | shift);
         pressKey(timestamp, out);
         if (i + 1 < match->strokeCount)
