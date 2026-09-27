@@ -1,0 +1,336 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "cursor/cursor.h"
+
+#include <cmath>
+#include <map>
+#include <utility>
+
+#include <QImage>
+
+#include "input/seat.h"
+
+namespace cutefish::cursor {
+
+class Cursor::ImageNode final : public QObject, public scene::Node
+{
+public:
+    explicit ImageNode(int size)
+        : scene::Node(QStringLiteral("system-cursor"))
+        , m_size(size)
+    {
+        m_timer.setSingleShot(true);
+        connect(&m_timer, &QTimer::timeout, this, [this] {
+            m_frame = (m_frame + 1) % m_frames.size();
+            if (onFrameChanged)
+                onFrameChanged();
+            else
+                notifyChanged();
+            m_timer.start(m_frames[m_frame].delayMs);
+        });
+    }
+
+    void setDensity(int density)
+    {
+        if (density == m_density)
+            return;
+        m_density = density;
+        m_timer.stop();
+        m_frames.clear();
+    }
+
+    int density() const { return m_density; }
+
+    bool setTheme(const QString &theme, int size)
+    {
+        if (m_theme == theme && m_size == size)
+            return false;
+        m_theme = theme;
+        m_size = size;
+        m_timer.stop();
+        m_frames.clear();
+        m_loaded.clear();
+        return true;
+    }
+
+    void setPointerPosition(const QPointF &position)
+    {
+        const QPoint integral = position.toPoint();
+        const QPointF remainder = position - integral;
+        if (remainder != m_fractionalOffset) {
+            m_fractionalOffset = remainder;
+            notifyChanged();
+        }
+        setPosition(integral - hotspot());
+    }
+
+    void setShape(input::CursorShape shape, bool visible)
+    {
+        if (shape != m_shape || m_frames.empty()) {
+            m_timer.stop();
+            m_shape = shape;
+            m_frames = frames(shape);
+            m_frame = 0;
+            if (!m_frames.empty())
+                setGeometry(QRect(position(),
+                                  (QSizeF(m_frames.front().image.size()) / m_density).toSize()));
+            notifyChanged();
+        }
+        m_wantsDisplay = visible;
+        setVisible(visible && !m_frames.empty());
+        if (!isVisible())
+            m_timer.stop();
+        else if (m_frames.size() > 1 && !m_timer.isActive())
+            m_timer.start(m_frames[m_frame].delayMs);
+    }
+
+    QPoint hotspot() const
+    {
+        return m_frames.empty() ? QPoint()
+                                : (QPointF(m_frames.front().hotspot) / m_density).toPoint();
+    }
+
+    const Frame *currentFrame() const
+    {
+        return m_frame < m_frames.size() ? &m_frames[m_frame] : nullptr;
+    }
+
+    // Replaces the scene repaint when the image lives on a hardware plane.
+    std::function<void()> onFrameChanged;
+
+    // Whether the cursor would be drawn if it were not on a hardware plane.
+    bool wantsDisplay() const { return m_wantsDisplay && !m_frames.empty(); }
+
+    Content content() const override
+    {
+        return m_frames.empty() ? Content::None : Content::Translucent;
+    }
+
+protected:
+    void paint(render::Renderer &renderer, const QRect &geometry) const override
+    {
+        if (m_frames.empty())
+            return;
+        const QString key = QStringLiteral("cursor:%1:%2:%3")
+                                    .arg(m_theme, resourceName(m_shape))
+                                    .arg(m_size * m_density);
+        const auto &textures = renderer.cachedTextureSet(key, [&] {
+            render::Renderer::TextureSet result;
+            for (const auto &frame : m_frames) {
+                const auto image =
+                        frame.image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+                result.push_back(renderer.createTexture(image.size(), image.constBits(),
+                                                        image.bytesPerLine(),
+                                                        render::PixelFormat::Rgba8888));
+            }
+            return result;
+        });
+        if (m_frame < textures.size() && textures[m_frame])
+            renderer.drawTextureF(textures[m_frame].get(),
+                                  QRectF(geometry).translated(m_fractionalOffset));
+    }
+
+private:
+    // A theme is read from disk once per shape and pixel size, as
+    // wm::CursorLoader keeps image_cursors_ until the theme or size changes.
+    std::vector<Frame> frames(input::CursorShape shape)
+    {
+        const int pixels = m_size * m_density;
+        auto &loaded = m_loaded[{shape, pixels}];
+        if (loaded.empty())
+            loaded = load(shape, pixels, m_theme);
+        return loaded;
+    }
+
+    int m_size;
+    QString m_theme = QStringLiteral("default");
+    std::map<std::pair<input::CursorShape, int>, std::vector<Frame>> m_loaded;
+    int m_density = 1;
+    QPointF m_fractionalOffset;
+    input::CursorShape m_shape = input::CursorShape::Hidden;
+    std::vector<Frame> m_frames;
+    size_t m_frame = 0;
+    bool m_wantsDisplay = false;
+    QTimer m_timer;
+};
+
+Cursor::Cursor(input::Seat &seat, scene::Node &container, int size)
+    : m_seat(seat)
+    , m_container(container)
+    , m_node(static_cast<ImageNode *>(container.addChild(std::make_unique<ImageNode>(size))))
+{
+    m_seat.addObserver(this);
+    m_node->onFrameChanged = [this] {
+        if (!m_hardware || !pushToSink())
+            updatePresentation();
+    };
+    onCursorChanged();
+}
+
+Cursor::~Cursor()
+{
+    m_seat.removeObserver(this);
+    m_container.removeChild(m_node);
+}
+
+QPoint Cursor::deviceHotspot() const
+{
+    const Frame *frame = m_node->currentFrame();
+    if (!frame)
+        return {};
+    const double ratio = m_scale / m_node->density();
+    return QPoint(int(std::floor(frame->hotspot.x() * ratio)),
+                  int(std::floor(frame->hotspot.y() * ratio)));
+}
+
+void Cursor::setHeld(bool held)
+{
+    if (m_held == held)
+        return;
+    m_held = held;
+    // The sink learns the position before the image, which it then puts on the
+    // output under the pointer and nowhere else first.
+    if (!held && m_sink)
+        m_sink->moveCursor(m_seat.cursorPosition());
+    updatePresentation();
+    onCursorPositionChanged();
+}
+
+QRectF Cursor::captureBounds() const
+{
+    if (!m_node->wantsDisplay())
+        return {};
+    const auto *frame = m_node->currentFrame();
+    return QRectF(m_seat.cursorPosition() - QPointF(frame->hotspot) / m_node->density(),
+                  QSizeF(frame->image.size()) / m_node->density());
+}
+
+void Cursor::paintForCapture(render::Renderer &renderer) const
+{
+    if (!m_node->wantsDisplay())
+        return;
+    const auto *frame = m_node->currentFrame();
+    const auto image = frame->image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+    auto texture = renderer.createTexture(image.size(), image.constBits(), image.bytesPerLine(),
+                                          render::PixelFormat::Rgba8888);
+    if (texture)
+        renderer.drawTextureF(
+                texture.get(),
+                QRectF(m_seat.cursorPosition() - QPointF(frame->hotspot) / m_node->density(),
+                       QSizeF(image.size()) / m_node->density()));
+}
+
+void Cursor::setScale(double scale)
+{
+    if (m_scale == scale)
+        return;
+    m_scale = scale;
+    m_node->setDensity(int(std::ceil(scale)));
+    onCursorChanged();
+}
+
+void Cursor::setTheme(const QString &theme, int size)
+{
+    // Preferences reloads on any config write; reprogramming the plane blinks the cursor.
+    if (m_node->setTheme(validThemeName(theme) ? theme : QStringLiteral("default"),
+                         qBound(16, size, 64)))
+        onCursorChanged();
+}
+
+void Cursor::setSink(render::CursorSink *sink)
+{
+    if (m_sink == sink)
+        return;
+    if (m_sink && m_hardware)
+        m_sink->hideCursor();
+    m_sink = sink;
+    m_hardware = false;
+    updatePresentation();
+    onCursorPositionChanged();
+}
+
+bool Cursor::pushToSink()
+{
+    const Frame *frame = m_node->currentFrame();
+    if (!m_sink || !frame)
+        return false;
+
+    // A fractional scale gets the plane too, as ash scales the next larger
+    // artwork down (wm::ScaleAndRotateCursorBitmapAndHotpoint, floored). The
+    // hotspot then lands within half a device pixel, and the cursor moves on
+    // the plane instead of costing a composited frame per motion.
+    QImage image = frame->image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+    const double ratio = m_scale / m_node->density();
+    const QSize deviceSize(int(std::floor(image.width() * ratio)),
+                           int(std::floor(image.height() * ratio)));
+    if (deviceSize.isEmpty())
+        return false;
+    if (deviceSize != image.size())
+        image = image.scaled(deviceSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    render::CursorImage cursorImage;
+    cursorImage.pixels = image.constBits();
+    cursorImage.size = image.size();
+    cursorImage.stride = static_cast<int>(image.bytesPerLine());
+    cursorImage.hotspot = deviceHotspot();
+    return m_sink->setCursorImage(cursorImage);
+}
+
+// Decides between the cursor plane and the scene, and keeps exactly one of them
+// showing the cursor.
+void Cursor::updatePresentation()
+{
+    if (m_held) {
+        m_hardware = false;
+        m_node->setVisible(false);
+        return;
+    }
+    // A client cursor surface composites through the seat's container, so the
+    // plane has to give the cursor back rather than draw a second one.
+    const bool wantsHardware = m_sink && m_node->wantsDisplay();
+    m_hardware = wantsHardware && pushToSink();
+
+    if (m_sink && !m_hardware)
+        m_sink->hideCursor();
+    m_node->setVisible(m_node->wantsDisplay() && !m_hardware);
+}
+
+void Cursor::refresh()
+{
+    // Drop the plane first: pushToSink() is skipped while the image is
+    // unchanged, and the point here is to reprogram it regardless.
+    if (m_sink && !m_held)
+        m_sink->hideCursor();
+    m_hardware = false;
+    onCursorChanged();
+}
+
+void Cursor::onCursorChanged()
+{
+    const auto override = m_seat.cursorOverride();
+    const auto client = m_seat.clientCursorShape();
+    // A touch hides every cursor, the client's own surface too, until the
+    // mouse moves.
+    const bool touched = m_seat.cursorHiddenByTouch();
+    const bool visible = !touched && (override || client || !m_seat.hasClientCursorRequest());
+    if (auto *container = m_seat.cursorContainer())
+        container->setVisible(!override && !touched);
+    m_node->setShape(override.value_or(client.value_or(m_seat.compositorCursorShape())), visible);
+    updatePresentation();
+    onCursorPositionChanged();
+}
+
+void Cursor::onCursorPositionChanged()
+{
+    const QPoint position = m_seat.cursorPosition().toPoint();
+    if (m_hardware) {
+        // The whole point of the plane: motion costs one ioctl, not a frame.
+        // The sink maps the logical position onto each output itself.
+        m_sink->moveCursor(m_seat.cursorPosition());
+        return;
+    }
+    m_node->setPointerPosition(m_seat.cursorPosition());
+}
+
+} // namespace cutefish::cursor

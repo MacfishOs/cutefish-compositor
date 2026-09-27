@@ -1,0 +1,44 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "render/gaussian_kernel.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace cutefish::render {
+
+void setGaussianKernel(const GlProgram &program, float sigma, float stepX, float stepY, int reach)
+{
+    reach = std::clamp(reach, 0, kGaussianMaxReach);
+    float weights[kGaussianMaxReach + 1] = {};
+    float total = 0;
+    for (int i = 0; i <= reach; ++i) {
+        if (sigma > 0)
+            weights[i] = std::exp(-float(i * i) / (2 * sigma * sigma));
+        else
+            weights[i] = i == 0 ? 1 : 0;
+        total += weights[i] * (i == 0 ? 1 : 2);
+    }
+    for (float &weight : weights)
+        weight /= total;
+    // Linear filtering combines adjacent Gaussian taps without changing the kernel.
+    float taps[kGaussianMaxReach] = {};
+    int tapCount = 0;
+    for (int i = 1; i < kGaussianMaxReach; i += 2) {
+        const float weight = weights[i] + weights[i + 1];
+        if (weight == 0)
+            break;
+        taps[2 * tapCount] = i + weights[i + 1] / weight;
+        taps[2 * tapCount + 1] = weight;
+        ++tapCount;
+    }
+    glUniform1f(program.uniform("uCenterWeight"), weights[0]);
+    glUniform1i(program.uniform("uTapCount"), tapCount);
+    if (tapCount > 0)
+        glUniform2fv(program.uniform("uTaps"), tapCount, taps);
+    glUniform2f(program.uniform("uStep"), stepX, stepY);
+}
+
+} // namespace cutefish::render

@@ -1,0 +1,178 @@
+// Copyright 2017 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/ui/ozone/platform/drm/gpu/screen_manager_unittest.cc
+//           chromium/src/ui/ozone/platform/drm/gpu/drm_gpu_display_manager_unittest.cc
+// Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
+//
+// Adapted for Cutefish: tests cover the device-wide route planner, bounded
+// MST mode fallback, and atomic commit publication boundary.
+
+#include <gtest/gtest.h>
+#include <xf86drmMode.h>
+
+#include "backend/drm/drm_commit_coordinator.h"
+#include "backend/drm/drm_configuration_planner.h"
+#include "backend/drm/drm_mode_fallback_planner.h"
+#include "fake_drm_device.h"
+
+using namespace cutefish;
+
+TEST(DrmConfigurationPlanner, BacktracksAcrossAsymmetricCrtcCompatibility)
+{
+    const QList<backend::DrmRouteCandidate> routes = {{10, 0b11, 100}, {20, 0b01, 0}};
+    const QList<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {2000}}};
+    const auto plan = backend::DrmConfigurationPlanner::assign(routes, crtcs);
+    ASSERT_TRUE(plan);
+    ASSERT_EQ(plan->size(), 2);
+    EXPECT_EQ(plan->at(0).crtcId, 200u);
+    EXPECT_EQ(plan->at(1).crtcId, 100u);
+    EXPECT_NE(plan->at(0).primaryPlaneId, plan->at(1).primaryPlaneId);
+}
+
+TEST(DrmModeFallbackPlanner, DowngradesOnlyTheFailedMstBranchWithinABound)
+{
+    using Mode = backend::DrmModeCandidate;
+    const QList<backend::DrmFallbackHead> heads = {
+            {10,
+             QStringLiteral("eDP-1"),
+             QStringLiteral("internal"),
+             true,
+             {Mode {QStringLiteral("panel"), 2560, 1600, 60000, 250000, true}}},
+            {20,
+             QStringLiteral("DP-1-1"),
+             QStringLiteral("DP-1"),
+             false,
+             {Mode {QStringLiteral("4k"), 3840, 2160, 60000, 600000, true},
+              Mode {QStringLiteral("1080p"), 1920, 1080, 60000, 148500, false}}},
+            {30,
+             QStringLiteral("HDMI-A-1"),
+             QStringLiteral("HDMI-A-1"),
+             false,
+             {Mode {QStringLiteral("1440p"), 2560, 1440, 60000, 241500, true},
+              Mode {QStringLiteral("720p"), 1280, 720, 60000, 74250, false}}}};
+    const auto plan = backend::DrmModeFallbackPlanner::choose(
+            heads,
+            [](const QList<Mode> &modes) {
+                if (modes.at(1).pixelClockKHz > 200000)
+                    return backend::DrmFallbackTestResult {
+                            false, {QStringLiteral("DP-1")}, QStringLiteral("MST link bandwidth")};
+                return backend::DrmFallbackTestResult {true, {}, QStringLiteral("tested")};
+            },
+            4);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ(plan->modes.at(0).key, QStringLiteral("panel"));
+    EXPECT_EQ(plan->modes.at(1).key, QStringLiteral("1080p"));
+    EXPECT_EQ(plan->modes.at(2).key, QStringLiteral("1440p"));
+    EXPECT_EQ(plan->downgradedConnectors, QStringList {QStringLiteral("DP-1-1")});
+    EXPECT_LE(plan->attempts, 4);
+}
+
+TEST(DrmConfigurationPlanner, RejectsSharedOrInsufficientResources)
+{
+    const QList<backend::DrmRouteCandidate> routes = {{10, 0b11, 0}, {20, 0b11, 0}};
+    const QList<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {1000}}};
+    EXPECT_FALSE(backend::DrmConfigurationPlanner::assign(routes, crtcs));
+}
+
+TEST(DrmCommitCoordinator, TestAndCommitAreAtomicFromPublishedStatesPerspective)
+{
+    cutefish::testing::FakeDrmDevice device;
+    backend::DrmCommitCoordinator coordinator(&device);
+    backend::AtomicRequest first;
+    first.add(1, 2, 3);
+    ASSERT_TRUE(coordinator.testAndCommit(first, DRM_MODE_ATOMIC_ALLOW_MODESET));
+    EXPECT_EQ(coordinator.revision(), 1u);
+    ASSERT_TRUE(coordinator.appliedRequest());
+
+    backend::AtomicRequest rejected;
+    rejected.add(4, 5, 6);
+    device.commitFilter = [](const auto &commit) {
+        return !(commit.flags & DRM_MODE_ATOMIC_TEST_ONLY);
+    };
+    EXPECT_FALSE(coordinator.testAndCommit(rejected, DRM_MODE_ATOMIC_ALLOW_MODESET));
+    EXPECT_EQ(coordinator.revision(), 1u);
+    EXPECT_EQ(coordinator.appliedRequest()->properties.front().objectId, 1u);
+    EXPECT_EQ(device.realCommitCount(), 1u);
+}
+
+TEST(DrmCommitCoordinator, FailedRealCommitDoesNotPublishCandidate)
+{
+    cutefish::testing::FakeDrmDevice device;
+    backend::DrmCommitCoordinator coordinator(&device);
+    backend::AtomicRequest request;
+    request.add(1, 2, 3);
+    device.commitFilter = [](const auto &commit) {
+        return static_cast<bool>(commit.flags & DRM_MODE_ATOMIC_TEST_ONLY);
+    };
+    EXPECT_FALSE(coordinator.testAndCommit(request));
+    EXPECT_FALSE(coordinator.appliedRequest());
+    EXPECT_EQ(coordinator.revision(), 0u);
+    EXPECT_EQ(device.testCommitCount(), 1u);
+    EXPECT_EQ(device.realCommitCount(), 1u);
+}
+
+TEST(DrmCommitCoordinator, InvalidationAfterTestKeepsThePreviousRequest)
+{
+    cutefish::testing::FakeDrmDevice device;
+    backend::DrmCommitCoordinator coordinator(&device);
+    backend::AtomicRequest first;
+    first.add(1, 2, 3);
+    ASSERT_TRUE(coordinator.testAndCommit(first));
+    bool valid = true;
+    device.commitFilter = [&](const auto &) {
+        valid = false;
+        return true;
+    };
+    backend::AtomicRequest next;
+    next.add(1, 2, 4);
+    EXPECT_EQ(coordinator.execute(next, false, 0, nullptr,
+                                  [&] {
+                                      return valid;
+                                  }),
+              backend::DrmCommitStatus::Invalidated);
+    EXPECT_EQ(device.realCommitCount(), 1u);
+    EXPECT_EQ(coordinator.revision(), 1u);
+    EXPECT_EQ(coordinator.appliedRequest()->properties.front().value, 3u);
+}
+
+TEST(DrmCommitCoordinator, RejectsConflictingPropertiesBeforeTesting)
+{
+    cutefish::testing::FakeDrmDevice device;
+    backend::DrmCommitCoordinator coordinator(&device);
+    backend::AtomicRequest request;
+    request.add(1, 2, 3);
+    request.add(1, 2, 4);
+    EXPECT_EQ(coordinator.execute(request, false), backend::DrmCommitStatus::InvalidRequest);
+    EXPECT_TRUE(device.commits.empty());
+}
+
+TEST(DrmCommitCoordinator, TestOnlyDoesNotPublishAndStripsPageFlipEventFlag)
+{
+    cutefish::testing::FakeDrmDevice device;
+    backend::DrmCommitCoordinator coordinator(&device);
+    backend::AtomicRequest request;
+    request.add(1, 2, 3);
+    EXPECT_EQ(coordinator.execute(request, true, DRM_MODE_PAGE_FLIP_EVENT),
+              backend::DrmCommitStatus::Success);
+    EXPECT_FALSE(coordinator.appliedRequest());
+    ASSERT_EQ(device.commits.size(), 1u);
+    EXPECT_FALSE(device.commits.front().flags & DRM_MODE_PAGE_FLIP_EVENT);
+    EXPECT_EQ(device.commits.front().userData, nullptr);
+}
+
+TEST(DrmConfigurationPlanner, EnumeratesDistinctResourceAlternativesWithinTheBound)
+{
+    const QList<backend::DrmRouteCandidate> routes = {{10, 0b11, 100}, {20, 0b11, 200}};
+    const QList<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {2000}}};
+    const auto first = backend::DrmConfigurationPlanner::assign(routes, crtcs, 0);
+    const auto next = backend::DrmConfigurationPlanner::assign(routes, crtcs, 1);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(next);
+    EXPECT_EQ(first->first().crtcId, 100u);
+    EXPECT_EQ(next->first().crtcId, 200u);
+    EXPECT_NE(next->first().primaryPlaneId, next->last().primaryPlaneId);
+    EXPECT_FALSE(backend::DrmConfigurationPlanner::assign(routes, crtcs, 2));
+    EXPECT_FALSE(backend::DrmConfigurationPlanner::assign(routes, crtcs, 8));
+}

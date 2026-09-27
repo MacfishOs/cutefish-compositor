@@ -1,0 +1,342 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef CUTEFISH_RENDER_RENDERER_H_
+#define CUTEFISH_RENDER_RENDERER_H_
+
+#include <cstdint>
+#include <functional>
+#include <list>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include <QImage>
+#include <QPainterPath>
+#include <QRect>
+#include <QRegion>
+#include <QSize>
+#include <QString>
+#include <QTransform>
+
+#include "render/dmabuf.h"
+#include "render/glass.h"
+#include "render/output_render_context.h"
+#include "render/presentation.h"
+#include "render/rounded_shape.h"
+#include "render/sync_fence.h"
+#include "render/texture.h"
+
+namespace cutefish::render {
+
+struct Color {
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    float a = 1.0f;
+};
+
+// One Gaussian lobe of a drop shadow, in the pixels of the image it is drawn into.
+struct ShadowLobe {
+    float sigma = 0;
+    QPoint offset; // Positive down/right.
+    float opacity = 0;
+};
+
+// A drawable owned by an output. Opaque to everything except the renderer that
+// created it.
+class RenderTarget
+{
+public:
+    virtual ~RenderTarget() = default;
+    virtual QSize size() const = 0;
+};
+
+// Draw geometry is logical; rasterScale maps it into the physical target.
+
+// Pixels on their way back from the GPU.
+class PendingImage
+{
+public:
+    virtual ~PendingImage() = default;
+    // Premultiplied ARGB32, rows top-down; null if the read failed. Waits for
+    // the GPU only if it has not finished by then.
+    virtual QImage take() = 0;
+};
+class Renderer
+{
+public:
+    virtual ~Renderer() = default;
+
+    PresentationSubmission *presentationSubmission = nullptr;
+
+    void recordPresentation(const std::shared_ptr<PresentationContent> &content, const QRect &rect)
+    {
+        QRect viewport = m_outputContext.logicalViewport;
+        if (viewport.isEmpty()) {
+            const QSize logical(std::ceil(viewportSize().width() / rasterScale()),
+                                std::ceil(viewportSize().height() / rasterScale()));
+            viewport = QRect(QPoint(), logical);
+        }
+        if (presentationSubmission && rect.intersects(viewport))
+            presentationSubmission->add(content, false);
+    }
+
+    double rasterScale() const { return m_rasterScale; }
+
+    void setRasterScale(double scale) { m_rasterScale = scale; }
+
+    virtual void setOutputContext(OutputRenderContext context)
+    {
+        m_outputContext = std::move(context);
+        m_rasterScale = m_outputContext.scale;
+    }
+
+    const OutputRenderContext &outputContext() const { return m_outputContext; }
+
+    // Binds `target` and sets up the viewport. Every draw call must sit between
+    // beginFrame() and endFrame().
+    virtual bool beginFrame(RenderTarget *target) = 0;
+    virtual bool endFrame() = 0;
+
+    // `samples` are the logical regions backdrop blurs read, which a repaint
+    // reaching them has to cover whole.
+    virtual void prepareDamage(const QRegion &, const std::vector<QRect> &) { }
+
+    // Whether this frame draws any of `logical` again. Everywhere else the
+    // target keeps what the last frame left there.
+    virtual bool repaints(const QRect &) const { return true; }
+
+    // Ends the frame without presenting it. Used when the display controller
+    // decided to scan a client buffer out instead, so the previous composited
+    // buffer must be left untouched and reusable.
+    virtual void cancelFrame() { }
+
+    // Animation snapshots retain the body; the physical-width outline is drawn afterward.
+    bool suppressWindowOutlines = false;
+
+    // Set by an animation morphing a window's corners into its snapshot: the
+    // window's visual node clips its content with these instead of its own.
+    struct WindowCorners {
+        qreal radius = 0;
+        QSizeF radiusScale {1, 1};
+    };
+    std::optional<WindowCorners> windowCorners;
+    bool capturing = false;
+
+    // The output's presentation-timeline time for the frame being composited,
+    // in milliseconds of the steady clock; -1 outside an output frame. What
+    // Chromium animations step on as BeginFrameArgs::frame_time. Fractional:
+    // whole milliseconds would step a 13.3 ms period by 13 or 14 at random.
+    double frameTime = -1;
+    // The output's refresh interval in milliseconds; 0 outside an output frame.
+    int64_t framePeriod = 0;
+
+    virtual void pushRoundedClip(const RoundedShape &shape) { m_roundedClips.push_back(shape); }
+
+    virtual void popRoundedClip()
+    {
+        if (!m_roundedClips.empty())
+            m_roundedClips.pop_back();
+    }
+
+    virtual void drawRoundedOutline(const RoundedShape &, const Color &, qreal) { }
+
+    virtual void clear(const Color &color) = 0;
+    virtual void fillRect(const QRect &rect, const Color &color) = 0;
+
+    virtual void fillRectF(const QRectF &rect, const Color &color)
+    {
+        fillRect(rect.toAlignedRect(), color);
+    }
+
+    virtual void drawTextureF(Texture *texture, const QRectF &target, float alpha = 1.0f)
+    {
+        drawTexture(texture, target.toAlignedRect(), alpha);
+    }
+
+    virtual void drawTexture(Texture *texture, const QRect &target, float alpha = 1.0f) = 0;
+
+    // `transform` maps logical coordinates, so `target` can be rotated or scaled.
+    virtual void drawTextureTransformed(Texture *texture, const QRectF &target,
+                                        const QTransform &transform, float alpha = 1.0f)
+    {
+        drawTextureF(texture, transform.mapRect(target), alpha);
+    }
+
+    virtual void drawTextureMapped(Texture *texture, const QRect &target, float alpha,
+                                   const QTransform &mapping) = 0;
+
+    // A non-empty `shape`, in the same coordinates as `bounds`, masks the blur
+    // instead of the rounded rectangle.
+    virtual void drawBackgroundBlur(const QRect &bounds, int radius, const QRect &clip,
+                                    const GlassParams &glass = {}, const QPainterPath &shape = {})
+    {
+    }
+
+    // Makes subsequent draws wait for `fence` before sampling. Renderers that
+    // can queue the wait on the GPU do so; the base implementation blocks,
+    // which is the correct fallback and never wrong, only slower.
+    virtual void waitFence(const SyncFence &fence) { fence.wait(kFenceWaitMs); }
+
+    // Signalled once every draw issued so far has finished reading its sources.
+    // An invalid fence means the renderer cannot produce one, in which case the
+    // caller must fall back to releasing buffers on frame completion.
+    virtual SyncFence createReleaseFence() { return SyncFence(); }
+
+    // A wedged client must not stall the compositor forever.
+    static constexpr int kFenceWaitMs = 500;
+
+    // Uploads `size` pixels starting at `pixels`, `stride` bytes per row.
+    virtual std::unique_ptr<Texture> createTexture(const QSize &size, const uint8_t *pixels,
+                                                   int stride, PixelFormat format) = 0;
+
+    // Re-uploads into an existing texture. Returns false when `texture` was not
+    // created by this renderer or its size/format no longer match, in which
+    // case the caller must create a new one.
+    virtual bool updateTexture(Texture *texture, const uint8_t *pixels, int stride,
+                               PixelFormat format) = 0;
+
+    // The same for `damage` alone, in buffer pixels; everywhere else the
+    // texture keeps what it holds. A renderer without partial uploads takes
+    // the whole buffer, which outside `damage` holds the same pixels.
+    virtual bool updateTexture(Texture *texture, const uint8_t *pixels, int stride,
+                               PixelFormat format, const QRegion &)
+    {
+        return updateTexture(texture, pixels, stride, format);
+    }
+
+    // Tightly packed RGBA8888, `size.width() * size.height() * 4` bytes.
+    std::unique_ptr<Texture> createTexture(const QSize &size, const uint8_t *rgba)
+    {
+        return createTexture(size, rgba, size.width() * 4, PixelFormat::Rgba8888);
+    }
+
+    // Optional offscreen composition, called only inside a frame. The resulting
+    // premultiplied texture owns its pixels independently of client resources.
+    virtual bool renderToTexture(std::unique_ptr<Texture> &texture, const QRect &bounds,
+                                 const std::function<void()> &paint)
+    {
+        return false;
+    }
+
+    // Draws only `repaint` again, when `texture` holds the rest from an
+    // earlier pass over the same bounds at the same scale; an empty `repaint`
+    // or a texture of another size draws everything.
+    virtual bool renderToTexture(std::unique_ptr<Texture> &texture, const QRect &bounds,
+                                 const QRect &repaint, const std::function<void()> &paint)
+    {
+        return renderToTexture(texture, bounds, paint);
+    }
+
+    // A `size` pixel image of black `lobes` cast by what `paintCaster` draws in
+    // opaque black, with the caster's own coverage cut back out. The caster is
+    // painted with no clip, one logical unit to an image pixel. Only inside a
+    // frame; null where the renderer cannot draw one.
+    virtual std::unique_ptr<Texture> renderShadow(const QSize &size,
+                                                  const std::vector<ShadowLobe> &lobes,
+                                                  const std::function<void()> &paintCaster)
+    {
+        return nullptr;
+    }
+
+    // Samples a renderToTexture() result through mipmaps until the next
+    // renderToTexture() into it, for a snapshot drawn far below its size.
+    // cc's EffectNode::trilinear_filtering, a render pass with generate_mipmap.
+    virtual void enableTrilinearFiltering(Texture *texture) { }
+
+    // Samples a mipmapped texture from `level` or a larger one, never a
+    // smaller; a negative level lifts the limit.
+    virtual void limitMipmapLevel(Texture *texture, int level) { }
+
+    // Capture only inside a frame; the display render target remains untouched.
+    virtual QImage captureFrame(const std::function<void()> &paint) { return {}; }
+
+    // Capture of `paint` under `context` rather than the display's: a window
+    // is painted on its own by making its bounds the logical viewport. Only
+    // inside a frame; premultiplied ARGB32, rows top-down.
+    virtual QImage captureImage(const OutputRenderContext &context, const QSize &size,
+                                const std::function<void()> &paint)
+    {
+        return {};
+    }
+
+    // captureFrame() and captureImage() without waiting for the GPU: the
+    // pixels are read into a buffer and collected later, as viz serves a copy
+    // request with an asynchronous readback. Null where only the waiting path
+    // exists.
+    virtual std::shared_ptr<PendingImage> captureFrameLater(const std::function<void()> &paint)
+    {
+        return nullptr;
+    }
+
+    virtual std::shared_ptr<PendingImage> captureImageLater(const OutputRenderContext &context,
+                                                            const QSize &size,
+                                                            const std::function<void()> &paint)
+    {
+        return nullptr;
+    }
+
+    // The same capture, rendered on the GPU into a DMA-BUF the client owns.
+    // `attributes` must outlive the call. False when the buffer cannot be a
+    // render target here; captureDmaBufFormats() says what can.
+    virtual bool captureToDmaBuf(const OutputRenderContext &context, const QSize &size,
+                                 const DmaBufAttributes &attributes,
+                                 const std::function<void()> &paint)
+    {
+        return false;
+    }
+
+    // Formats and modifiers captureToDmaBuf() accepts, empty without support,
+    // and the render node clients should allocate such buffers on (0: unknown).
+    virtual const DmaBufFormats &captureDmaBufFormats() const
+    {
+        static const DmaBufFormats none;
+        return none;
+    }
+
+    virtual dev_t captureDmaBufDevice() const { return 0; }
+
+    // Reads back what `paint` draws into a `size` pixel image whose logical
+    // coordinates are its pixels. Only inside a frame; premultiplied ARGB32.
+    virtual QImage renderToImage(const QSize &size, const std::function<void()> &paint)
+    {
+        return {};
+    }
+
+    virtual QSize viewportSize() const = 0;
+
+    // Small immutable raster assets, owned by this renderer. Call only with its
+    // context current; returned references last until the next cache lookup.
+    using TextureSet = std::vector<std::unique_ptr<Texture>>;
+    const TextureSet &cachedTextureSet(const QString &key, const std::function<TextureSet()> &make);
+
+    // Derived GPU renderers clear these before destroying their context.
+    void clearTextureCache() { m_textureCache.clear(); }
+
+    size_t textureCacheSize() const { return m_textureCache.size(); }
+
+    uint64_t textureCacheMisses() const { return m_textureCacheMisses; }
+
+    static constexpr size_t textureCacheLimit = 16;
+
+protected:
+    std::vector<RoundedShape> m_roundedClips;
+
+private:
+    double m_rasterScale = 1;
+    OutputRenderContext m_outputContext;
+
+    struct CachedTextures {
+        QString key;
+        TextureSet textures;
+    };
+
+    std::list<CachedTextures> m_textureCache;
+    uint64_t m_textureCacheMisses = 0;
+};
+
+} // namespace cutefish::render
+
+#endif // CUTEFISH_RENDER_RENDERER_H_

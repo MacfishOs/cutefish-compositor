@@ -1,0 +1,57 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "scene/scene.h"
+
+#include "scene/overlay_candidate.h"
+
+namespace cutefish::scene {
+
+Scene::Scene()
+    : m_root(std::make_unique<Node>(QStringLiteral("root")))
+{
+}
+
+Scene::~Scene() = default;
+
+void Scene::setSize(const QSize &size)
+{
+    m_root->setGeometry(QRect(QPoint(0, 0), size));
+}
+
+QRect Scene::viewportFor(const render::OutputRenderContext &context) const
+{
+    return context.logicalViewport.isEmpty() ? m_root->geometry() : context.logicalViewport;
+}
+
+bool Scene::hasDamage(const render::OutputRenderContext &context) const
+{
+    const auto tracker = m_damageTrackers.find(context.outputId);
+    return tracker == m_damageTrackers.end()
+            || tracker->second.hasDamage(*m_root, viewportFor(context), context.scale,
+                                         context.transform);
+}
+
+void Scene::render(render::Renderer &renderer) const
+{
+    if (!renderer.capturing) {
+        const auto &context = renderer.outputContext();
+        auto &tracker = m_damageTrackers[context.outputId];
+        const QRegion damage =
+                tracker.update(*m_root, viewportFor(context), context.scale, context.transform);
+        renderer.prepareDamage(damage, tracker.samples());
+    }
+    // viz leaves an opaque root pass uncleared (SkiaRenderer::ClearFramebuffer);
+    // under a node covering the output, a clear is a full-screen write for nothing.
+    if (!m_root->subtreeOccludesOutput(renderer))
+        renderer.clear(m_background);
+    m_root->render(renderer);
+    if (renderer.presentationSubmission)
+        removeOccludedPresentation(*m_root, m_root->geometry().size(),
+                                   *renderer.presentationSubmission);
+    if (!renderer.capturing)
+        m_root->collectRetired();
+}
+
+} // namespace cutefish::scene

@@ -1,0 +1,68 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef CUTEFISH_SCENE_MOTION_H_
+#define CUTEFISH_SCENE_MOTION_H_
+
+namespace cutefish::scene::motion {
+
+// How a spring moves, in the response / damping-ratio form. `response` is the
+// period of the undamped oscillation in seconds; a critically damped spring
+// (dampingRatio 1) started from rest covers 99% of its distance in about that
+// time and never overshoots. Below 1 it overshoots, above 1 it creeps.
+struct SpringParameters {
+    double response = 0.35;
+    double dampingRatio = 1;
+};
+
+// CUTEFISH_ANIMATION_DURATION_SCALE stretches every spring, the way
+// ui::ScopedAnimationDurationScaleMode stretches Chromium's animations, so
+// motion can be judged in slow motion. 1 when unset or not a positive number.
+double durationScale();
+
+// gfx::CubicBezier::Solve for a timing curve from (0, 0) to (1, 1), sampled at
+// `x`, which is clamped to [0, 1].
+double cubicBezier(double x1, double y1, double x2, double y2, double x);
+
+// A damped harmonic oscillator evaluated in closed form. Its position depends
+// only on the time it is sampled at, never on how often or how regularly it
+// was sampled before, so it can be stepped on output frame times directly.
+// Times are milliseconds on the frame clock; velocities are units per second.
+class Spring
+{
+public:
+    Spring();
+    explicit Spring(const SpringParameters &parameters);
+
+    // Starts at `value`, moving at `velocity`, toward `target`, at `time`.
+    void reset(double time, double value, double target, double velocity = 0);
+
+    // Heads for `target` from wherever the spring is at `time`, keeping its
+    // velocity, so the motion bends toward the new target instead of stopping.
+    void retarget(double time, double target);
+
+    double value(double time) const;
+    double velocity(double time) const;
+
+    double target() const { return m_target; }
+
+private:
+    // Displacement from the target and its rate, `elapsed` seconds after m_start.
+    double displacement(double elapsed) const;
+    double displacementVelocity(double elapsed) const;
+    double elapsed(double time) const;
+    void updateCoefficients();
+
+    SpringParameters m_parameters;
+    double m_omega = 0;
+    double m_zeta = 1;
+    double m_start = 0;
+    double m_displacement = 0;
+    double m_velocity = 0;
+    double m_target = 0;
+};
+
+} // namespace cutefish::scene::motion
+
+#endif // CUTEFISH_SCENE_MOTION_H_

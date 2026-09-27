@@ -1,0 +1,176 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include <atomic>
+#include <chrono>
+#include <cstring>
+#include <cutefish-window-hints-v1-client-protocol.h>
+#include <gtest/gtest.h>
+#include <sys/socket.h>
+#include <thread>
+#include <wayland-client.h>
+#include <wayland-server-core.h>
+
+#include "compositor/compositor.h"
+#include "compositor/surface.h"
+#include "scene/scene.h"
+#include "wayland/protocols/window_hints.h"
+#include "wayland/protocols/wl_compositor.h"
+
+using namespace cutefish;
+
+namespace {
+
+class WindowHintsProtocolTest : public testing::Test
+{
+protected:
+    scene::Scene scene;
+    compositor::Compositor compositor {scene.root()};
+    wl_display *server = nullptr;
+    wl_display *client = nullptr;
+    wl_registry *registry = nullptr;
+    wl_compositor *clientCompositor = nullptr;
+    cutefish_window_hints_v1 *hints = nullptr;
+
+    void SetUp() override
+    {
+        server = wl_display_create();
+        ASSERT_TRUE(server);
+        ASSERT_TRUE(wayland::createCompositorGlobal(server, &compositor));
+        ASSERT_TRUE(wayland::createWindowHintsGlobal(server));
+        int sockets[2];
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets), 0);
+        ASSERT_TRUE(wl_client_create(server, sockets[0])) << std::strerror(errno);
+        client = wl_display_connect_to_fd(sockets[1]);
+        ASSERT_TRUE(client);
+        registry = wl_display_get_registry(client);
+        static const wl_registry_listener listener = {
+                [](void *data, wl_registry *registry, uint32_t name, const char *interface,
+                   uint32_t) {
+                    auto *self = static_cast<WindowHintsProtocolTest *>(data);
+                    if (std::strcmp(interface, "wl_compositor") == 0)
+                        self->clientCompositor = static_cast<wl_compositor *>(
+                                wl_registry_bind(registry, name, &wl_compositor_interface, 4));
+                    else if (std::strcmp(interface, "cutefish_window_hints_v1") == 0)
+                        self->hints = static_cast<cutefish_window_hints_v1 *>(wl_registry_bind(
+                                registry, name, &cutefish_window_hints_v1_interface, 1));
+                },
+                [](void *, wl_registry *, uint32_t) {}};
+        wl_registry_add_listener(registry, &listener, this);
+        ASSERT_GE(roundtrip(), 0);
+        ASSERT_TRUE(hints);
+        ASSERT_TRUE(clientCompositor);
+    }
+
+    int roundtrip()
+    {
+        std::atomic<bool> done = false;
+        int result = -1;
+        std::thread worker([&] {
+            result = wl_display_roundtrip(client);
+            done = true;
+        });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (!done && std::chrono::steady_clock::now() < deadline) {
+            wl_event_loop_dispatch(wl_display_get_event_loop(server), 1);
+            wl_display_flush_clients(server);
+        }
+        if (!done)
+            shutdown(wl_display_get_fd(client), SHUT_RDWR);
+        worker.join();
+        return result;
+    }
+
+    void TearDown() override
+    {
+        if (hints)
+            cutefish_window_hints_v1_destroy(hints);
+        if (clientCompositor)
+            wl_compositor_destroy(clientCompositor);
+        if (registry)
+            wl_registry_destroy(registry);
+        if (client)
+            wl_display_disconnect(client);
+        if (server) {
+            wl_display_destroy_clients(server);
+            wl_display_destroy(server);
+        }
+    }
+};
+
+TEST_F(WindowHintsProtocolTest, MetadataIsImmediateAndPersistsUntilTheSurfaceDies)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_FALSE(model->skipTaskbar());
+    cutefish_window_hints_v1_set_skip_taskbar(hints, surface, 1);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->skipTaskbar());
+    cutefish_window_hints_v1_set_skip_taskbar(hints, surface, 0);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_FALSE(model->skipTaskbar());
+    cutefish_window_hints_v1_set_skip_taskbar(hints, surface, 1);
+    cutefish_window_hints_v1_destroy(hints);
+    hints = nullptr;
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->skipTaskbar());
+    wl_surface_destroy(surface);
+    surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    ASSERT_EQ(compositor.surfaces().size(), 1u);
+    EXPECT_FALSE(compositor.surfaces().front()->skipTaskbar());
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, AlwaysOnTopIsImmediateAndPersistsUntilTheSurfaceDies)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_FALSE(model->alwaysOnTop());
+    cutefish_window_hints_v1_set_always_on_top(hints, surface, 1);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->alwaysOnTop());
+    cutefish_window_hints_v1_set_always_on_top(hints, surface, 0);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_FALSE(model->alwaysOnTop());
+    cutefish_window_hints_v1_set_always_on_top(hints, surface, 1);
+    cutefish_window_hints_v1_destroy(hints);
+    hints = nullptr;
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->alwaysOnTop());
+    wl_surface_destroy(surface);
+    surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    ASSERT_EQ(compositor.surfaces().size(), 1u);
+    EXPECT_FALSE(compositor.surfaces().front()->alwaysOnTop());
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, InvalidAlwaysOnTopIsAProtocolError)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    cutefish_window_hints_v1_set_always_on_top(hints, surface, 2);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, InvalidBooleanIsAProtocolError)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    cutefish_window_hints_v1_set_skip_taskbar(hints, surface, 2);
+    EXPECT_LT(roundtrip(), 0);
+    const wl_interface *interface = nullptr;
+    uint32_t id = 0;
+    EXPECT_EQ(wl_display_get_protocol_error(client, &interface, &id),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    ASSERT_NE(interface, nullptr);
+    EXPECT_STREQ(interface->name, "cutefish_window_hints_v1");
+    wl_surface_destroy(surface);
+}
+
+} // namespace

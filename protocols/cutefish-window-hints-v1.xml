@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="cutefish_window_hints_v1">
+  <interface name="cutefish_window_hints_v1" version="1">
+    <description summary="per-surface application presentation hints">
+      Clients may set hints only on their own surfaces. Hints are immediate
+      metadata, independent of wl_surface.commit, and persist until replaced
+      or the surface is destroyed. Destroying the manager does not reset them.
+      Set initial hints before the first buffer commit to avoid task-list flashes.
+      These hints grant no focus or privileged shell role.
+    </description>
+    <enum name="error">
+      <entry name="invalid_value" value="0" summary="expected a boolean"/>
+    </enum>
+    <request name="destroy" type="destructor"/>
+    <request name="set_skip_taskbar">
+      <description summary="exclude a surface from application presentation">
+        A value of 1 excludes the window from the dock and window switcher and
+        preserves the previous status bar application context when focused.
+        A value of 0 restores normal policy and is the default. Keyboard focus
+        and input are unaffected. The compositor may also exclude windows by role.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="skip" type="uint"/>
+    </request>
+    <request name="set_always_on_top">
+      <description summary="keep a window above ordinary application windows">
+        A value of 1 stacks the window above ordinary application windows, and
+        still below the shell's panels, dock and system dialogs. A value of 0
+        restores normal stacking and is the default. Only application
+        windows are affected; activation and focus are unchanged.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="on_top" type="uint"/>
+    </request>
+  </interface>
+</protocol>

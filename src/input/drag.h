@@ -1,0 +1,162 @@
+// Copyright 2019 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/components/exo/{drag_drop_operation,data_device}.cc
+//           chromium/src/ash/drag_drop/drag_drop_controller.cc
+// Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
+
+#pragma once
+
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include <QObject>
+#include <QPointF>
+
+#include "clipboard/selection.h"
+#include "compositor/surface_observer.h"
+#include "input/cursor_shape.h"
+#include "input/types.h"
+
+namespace cutefish::input {
+
+class Seat;
+
+class DragOffer : public QObject, public std::enable_shared_from_this<DragOffer>
+{
+    Q_OBJECT
+public:
+    enum class State {
+        Hover,
+        Dropped,
+        Finished,
+        Cancelled
+    };
+    DragOffer(std::shared_ptr<clipboard::DataSource> source, uint32_t sourceActions, bool legacy);
+    ~DragOffer() override;
+    void accept(const char* mime);
+    void setActions(uint32_t actions, uint32_t preferred);
+    void setModifierAction(uint32_t action);
+    void receive(const std::string& mime, int fd);
+    bool finish();
+    void invalidate();
+    bool drop();
+    bool canDrop() const;
+
+    uint32_t action() const { return m_action; }
+
+    const std::string& acceptedMime() const { return m_mime; }
+
+    uint32_t sourceActions() const { return m_sourceActions; }
+
+    State state() const { return m_state; }
+
+    const std::vector<std::string>& formats() const { return m_formats; }
+
+    bool legacy() const { return m_legacy; }
+
+    const std::shared_ptr<clipboard::DataSource>& source() const { return m_source; }
+
+Q_SIGNALS:
+    void feedbackChanged();
+    void actionChanged(uint32_t action);
+
+private:
+    void negotiate();
+    std::shared_ptr<clipboard::DataSource> m_source;
+    std::vector<std::string> m_formats;
+    State m_state = State::Hover;
+    uint32_t m_sourceActions;
+    uint32_t m_actions;
+    uint32_t m_preferred = 0;
+    uint32_t m_modifier = 0;
+    uint32_t m_action = 0;
+    bool m_legacy;
+    std::string m_mime;
+};
+
+class DragController : public QObject, public compositor::SurfaceObserver
+{
+    Q_OBJECT
+public:
+    explicit DragController(Seat* seat);
+    ~DragController() override;
+
+    bool active() const { return m_origin != nullptr; }
+
+    // Driven by XDND messages instead of the pointer: the client that started
+    // the drag keeps its implicit grab, and input goes on reaching it.
+    bool isExternal() const { return m_external; }
+
+    bool grabsInput() const { return active() && !m_external; }
+
+    bool busy() const { return active() || m_finishing; }
+
+    compositor::Surface* origin() const { return m_origin; }
+
+    compositor::Surface* target() const { return m_target; }
+
+    bool hasSource() const { return bool(m_source); }
+
+    const std::shared_ptr<clipboard::DataSource>& source() const { return m_source; }
+
+    void start(compositor::Surface* origin, compositor::Surface* icon,
+               std::shared_ptr<clipboard::DataSource> source, uint32_t actions, ButtonFlags button);
+    // A drag that follows touch point `touchId` from `location` and drops where
+    // it is lifted, as ash drags with a touch source. The clients that have the
+    // point are sent a cancel.
+    void startTouch(compositor::Surface* origin, compositor::Surface* icon,
+                    std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
+                    int32_t touchId, const QPointF& location);
+    // The touch point a drag follows; empty for a pointer or external drag.
+    std::optional<int32_t> touchId() const { return m_touchId; }
+    // An X11 drag seen through the XDND proxy. motion() follows XdndPosition,
+    // and drop() or cancel() end it.
+    void startExternal(compositor::Surface* origin, std::shared_ptr<clipboard::DataSource> source,
+                       uint32_t actions);
+    std::shared_ptr<DragOffer> createOffer(bool legacy);
+    void motion(Timestamp timestamp, const QPointF& location);
+    void button(Timestamp timestamp, uint32_t button, bool pressed);
+    bool key(uint32_t code, bool pressed);
+    // Drops on the selected offer, or cancels when nothing can take the drop.
+    void drop();
+    void cancel();
+    uint32_t modifierAction() const;
+    void onSurfaceDestroying(compositor::Surface* surface) override;
+    void onSurfaceCommit(compositor::Surface* surface) override;
+Q_SIGNALS:
+    void entered(compositor::Surface* surface, const QPointF& location);
+    void moved(Timestamp timestamp, const QPointF& location);
+    void left();
+    void dropped(DragOffer* offer);
+    void ended();
+
+private:
+    bool begin(compositor::Surface* origin, compositor::Surface* icon,
+               std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
+               const QPointF& location);
+    void leave();
+    void detach();
+    void updateIcon();
+    void updateFeedback(DragOffer* offer);
+    void setCursor(CursorShape shape);
+    Seat* m_seat;
+    compositor::Surface* m_origin = nullptr;
+    compositor::Surface* m_icon = nullptr;
+    compositor::Surface* m_target = nullptr;
+    QPointF m_location;
+    std::shared_ptr<clipboard::DataSource> m_source;
+    std::vector<std::weak_ptr<DragOffer>> m_offers;
+    QPointer<DragOffer> m_selected;
+    uint32_t m_actions = 0;
+    ButtonFlags m_button = NoButton;
+    std::optional<int32_t> m_touchId;
+    bool m_finishing = false;
+    bool m_external = false;
+    uint64_t m_generation = 0;
+    QMetaObject::Connection m_sourceConnection;
+};
+
+} // namespace cutefish::input

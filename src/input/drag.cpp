@@ -1,0 +1,492 @@
+// Copyright 2019 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/components/exo/{drag_drop_operation,data_device}.cc
+//           chromium/src/ash/drag_drop/drag_drop_controller.cc
+// Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
+
+#include "input/drag.h"
+
+#include <algorithm>
+#include <linux/input-event-codes.h>
+#include <unistd.h>
+#include <utility>
+
+#include "compositor/surface.h"
+#include "input/hit_test.h"
+#include "input/seat.h"
+
+namespace cutefish::input {
+
+DragOffer::DragOffer(std::shared_ptr<clipboard::DataSource> source, uint32_t sourceActions,
+                     bool legacy)
+    : m_source(std::move(source))
+    , m_formats(m_source ? m_source->formats() : std::vector<std::string>())
+    , m_sourceActions(sourceActions)
+    , m_actions(legacy ? 1 : 0)
+    , m_legacy(legacy)
+{
+    negotiate();
+}
+
+DragOffer::~DragOffer()
+{
+    if (m_state == State::Dropped && m_source) {
+        if (m_legacy) {
+            m_state = State::Finished;
+            m_source->finished();
+            m_source->invalidate();
+        } else {
+            m_state = State::Cancelled;
+            m_source->cancel();
+        }
+    }
+}
+
+void DragOffer::accept(const char *mime)
+{
+    const auto alive = weak_from_this().lock();
+    if (m_state != State::Hover && m_state != State::Dropped)
+        return;
+    m_mime = mime && std::find(m_formats.begin(), m_formats.end(), mime) != m_formats.end() ? mime
+                                                                                            : "";
+    if (m_state == State::Dropped && m_source && m_source->alive())
+        m_source->target(m_mime.empty() ? nullptr : m_mime.c_str());
+    emit feedbackChanged();
+}
+
+void DragOffer::setActions(uint32_t actions, uint32_t preferred)
+{
+    const auto alive = weak_from_this().lock();
+    if (m_state != State::Hover && !(m_state == State::Dropped && m_action == 4))
+        return;
+    m_actions = actions;
+    m_preferred = preferred;
+    if (m_state == State::Dropped)
+        m_modifier = 0;
+    negotiate();
+    if (m_state == State::Dropped && m_source && m_source->alive())
+        m_source->action(m_action);
+}
+
+void DragOffer::setModifierAction(uint32_t action)
+{
+    const auto alive = weak_from_this().lock();
+    if (m_state != State::Hover)
+        return;
+    m_modifier = action;
+    negotiate();
+}
+
+void DragOffer::negotiate()
+{
+    const uint32_t available = m_sourceActions & m_actions;
+    const uint32_t action = (available & m_modifier) ? m_modifier
+            : (available & m_preferred)              ? m_preferred
+                                                     : (available & (~available + 1));
+    if (m_action != action) {
+        m_action = action;
+        emit actionChanged(action);
+    }
+    emit feedbackChanged();
+}
+
+bool DragOffer::canDrop() const
+{
+    return m_state == State::Hover
+            && (!m_source || (m_source->alive() && !m_mime.empty() && m_action));
+}
+
+bool DragOffer::drop()
+{
+    const auto alive = weak_from_this().lock();
+    if (!canDrop())
+        return false;
+    m_state = State::Dropped;
+    if (m_source)
+        m_source->dropPerformed();
+    return true;
+}
+
+void DragOffer::receive(const std::string &mime, int fd)
+{
+    if ((m_state != State::Hover && m_state != State::Dropped) || !m_source || !m_source->alive()
+        || std::find(m_formats.begin(), m_formats.end(), mime) == m_formats.end()) {
+        close(fd);
+        return;
+    }
+    m_source->send(mime, fd);
+}
+
+bool DragOffer::finish()
+{
+    const auto alive = weak_from_this().lock();
+    if (m_state != State::Dropped || !m_source || !m_source->alive() || m_mime.empty() || !m_action
+        || m_action == 4)
+        return false;
+    m_state = State::Finished;
+    m_source->finished();
+    m_source->invalidate();
+    return true;
+}
+
+void DragOffer::invalidate()
+{
+    const auto alive = weak_from_this().lock();
+    if (m_state == State::Cancelled || m_state == State::Finished)
+        return;
+    const bool dropped = m_state == State::Dropped;
+    m_state = State::Cancelled;
+    emit feedbackChanged();
+    if (dropped && m_source)
+        m_source->cancel();
+}
+
+DragController::DragController(Seat *seat)
+    : m_seat(seat)
+{
+}
+
+DragController::~DragController()
+{
+    cancel();
+}
+
+void DragController::start(compositor::Surface *origin, compositor::Surface *icon,
+                           std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
+                           ButtonFlags button)
+{
+    if (busy() || !origin || m_seat->wasShutdown())
+        return;
+    m_button = button;
+    if (!begin(origin, icon, std::move(source), actions, m_seat->pointerLocation()))
+        return;
+    const auto generation = m_generation;
+    m_seat->clearPointerFocus();
+    if (generation != m_generation)
+        return;
+    m_seat->setCursorOverride(CursorShape::NoDrop);
+    if (generation != m_generation)
+        return;
+    motion(Timestamp {}, m_location);
+}
+
+void DragController::startTouch(compositor::Surface *origin, compositor::Surface *icon,
+                                std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
+                                int32_t touchId, const QPointF &location)
+{
+    if (busy() || !origin || m_seat->wasShutdown())
+        return;
+    m_button = NoButton;
+    m_touchId = touchId;
+    if (!begin(origin, icon, std::move(source), actions, location))
+        return;
+    const auto generation = m_generation;
+    m_seat->takeTouchPoint(touchId);
+    if (generation != m_generation)
+        return;
+    m_seat->setCursorOverride(CursorShape::NoDrop);
+    if (generation != m_generation)
+        return;
+    motion(Timestamp {}, m_location);
+}
+
+bool DragController::begin(compositor::Surface *origin, compositor::Surface *icon,
+                           std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
+                           const QPointF &location)
+{
+    const auto generation = ++m_generation;
+    m_seat->consumeDragSerials();
+    m_origin = origin;
+    m_icon = icon;
+    m_source = std::move(source);
+    m_actions = actions;
+    m_location = location;
+    origin->addSurfaceObserver(this);
+    if (m_source) {
+        m_source->markUsed();
+        m_sourceConnection = connect(m_source.get(), &clipboard::DataSource::invalidated, this,
+                                     &DragController::cancel);
+    }
+    if (icon) {
+        icon->setHasRole(true);
+        icon->addSurfaceObserver(this);
+        icon->reparentNode(m_seat->dragIconContainer());
+        if (generation != m_generation)
+            return false;
+        updateIcon();
+    }
+    return true;
+}
+
+void DragController::startExternal(compositor::Surface *origin,
+                                   std::shared_ptr<clipboard::DataSource> source, uint32_t actions)
+{
+    if (busy() || !origin || !source || m_seat->wasShutdown())
+        return;
+    ++m_generation;
+    m_external = true;
+    m_origin = origin;
+    m_source = std::move(source);
+    m_actions = actions;
+    m_location = m_seat->pointerLocation();
+    origin->addSurfaceObserver(this);
+    m_source->markUsed();
+    m_sourceConnection = connect(m_source.get(), &clipboard::DataSource::invalidated, this,
+                                 &DragController::cancel);
+}
+
+void DragController::setCursor(CursorShape shape)
+{
+    // The X11 client that owns an external drag draws its own cursor.
+    if (!m_external)
+        m_seat->setCursorOverride(shape);
+}
+
+std::shared_ptr<DragOffer> DragController::createOffer(bool legacy)
+{
+    if (!active() || !m_target)
+        return nullptr;
+    auto offer = std::make_shared<DragOffer>(m_source, m_actions, legacy);
+    m_offers.push_back(offer);
+    connect(offer.get(), &DragOffer::feedbackChanged, this, [this, raw = offer.get()] {
+        updateFeedback(raw);
+    });
+    offer->setModifierAction(modifierAction());
+    return offer;
+}
+
+void DragController::updateFeedback(DragOffer *offer)
+{
+    if (!active())
+        return;
+    if (offer->state() != DragOffer::State::Hover) {
+        if (m_selected != offer)
+            return;
+        m_selected = nullptr;
+        for (auto it = m_offers.rbegin(); it != m_offers.rend(); ++it) {
+            if (auto candidate = it->lock(); candidate && candidate->canDrop()) {
+                m_selected = candidate.get();
+                break;
+            }
+        }
+    } else {
+        if (!offer->canDrop() && m_selected && m_selected != offer && m_selected->canDrop())
+            return;
+        m_selected = offer;
+    }
+    const uint32_t action = m_selected && m_selected->canDrop() ? m_selected->action() : 0;
+    const auto generation = m_generation;
+    const auto source = m_source;
+    if (source) {
+        const auto mime = m_selected ? m_selected->acceptedMime() : std::string();
+        source->target(mime.empty() ? nullptr : mime.c_str());
+        if (generation != m_generation || !active())
+            return;
+        source->action(action);
+    }
+    if (generation != m_generation || !active())
+        return;
+    setCursor(!m_source             ? CursorShape::Grabbing
+                      : action == 1 ? CursorShape::Copy
+                      : action == 2 ? CursorShape::Move
+                      : action == 4 ? CursorShape::ContextMenu
+                                    : CursorShape::NoDrop);
+}
+
+void DragController::leave()
+{
+    auto *target = std::exchange(m_target, nullptr);
+    m_selected = nullptr;
+    auto offers = std::exchange(m_offers, {});
+    if (target && target != m_origin && target != m_icon)
+        target->removeSurfaceObserver(this);
+    for (auto &weak : offers) {
+        if (auto offer = weak.lock())
+            offer->invalidate();
+    }
+    const auto generation = m_generation;
+    const auto source = m_source;
+    if (target)
+        emit left();
+    if (generation == m_generation && source && source->alive()) {
+        source->target(nullptr);
+        if (generation == m_generation && source->alive())
+            source->action(0);
+    }
+    if (generation == m_generation && active())
+        setCursor(CursorShape::NoDrop);
+}
+
+void DragController::motion(Timestamp timestamp, const QPointF &location)
+{
+    if (!active())
+        return;
+    m_location = location;
+    updateIcon();
+    QPointF local;
+    auto *target = findTargetSurface(m_seat->compositor(), location, &local);
+    if (target != m_target) {
+        const auto generation = m_generation;
+        const auto lifetime = target ? target->lifetimeToken() : nullptr;
+        leave();
+        if (generation != m_generation || !active() || m_target || m_location != location)
+            return;
+        target = lifetime ? *lifetime : nullptr;
+        m_target = target;
+        if (target) {
+            target->addSurfaceObserver(this);
+            emit entered(target, local);
+        }
+    }
+    if (target && target == m_target && active())
+        emit moved(timestamp, local);
+}
+
+void DragController::detach()
+{
+    ++m_generation;
+    disconnect(m_sourceConnection);
+    auto *origin = std::exchange(m_origin, nullptr);
+    auto *icon = std::exchange(m_icon, nullptr);
+    m_touchId.reset();
+    if (origin)
+        origin->removeSurfaceObserver(this);
+    if (icon) {
+        icon->removeSurfaceObserver(this);
+        icon->setHasRole(false);
+        icon->reparentNode(nullptr);
+    }
+    if (!std::exchange(m_external, false))
+        m_seat->setCursorOverride(std::nullopt);
+}
+
+void DragController::button(Timestamp timestamp, uint32_t button, bool pressed)
+{
+    if (!active())
+        return;
+    m_seat->updatePointerButtonState(button, pressed);
+    if (pressed || !(buttonFlagFromEvdev(button) & m_button))
+        return;
+    drop();
+    m_seat->releasePointerButton(timestamp, button);
+    m_seat->onPointerMotion(timestamp, m_location);
+}
+
+void DragController::drop()
+{
+    if (!active())
+        return;
+    std::shared_ptr<DragOffer> selected;
+    for (auto &weak : m_offers) {
+        if (auto offer = weak.lock(); offer && offer.get() == m_selected)
+            selected = std::move(offer);
+    }
+    if (!selected || !selected->canDrop()) {
+        cancel();
+    } else {
+        m_finishing = true;
+        auto source = std::exchange(m_source, nullptr);
+        auto offers = std::exchange(m_offers, {});
+        auto *target = std::exchange(m_target, nullptr);
+        m_selected = nullptr;
+        if (target && target != m_origin && target != m_icon)
+            target->removeSurfaceObserver(this);
+        detach();
+        for (auto &weak : offers) {
+            if (auto offer = weak.lock(); offer && offer != selected)
+                offer->invalidate();
+        }
+        if (selected->drop())
+            emit dropped(selected.get());
+        else if (source)
+            source->cancel();
+        if (target)
+            emit left();
+        m_finishing = false;
+        emit ended();
+    }
+}
+
+void DragController::cancel()
+{
+    if (!active())
+        return;
+    m_finishing = true;
+    auto source = std::exchange(m_source, nullptr);
+    auto offers = std::exchange(m_offers, {});
+    auto *target = std::exchange(m_target, nullptr);
+    m_selected = nullptr;
+    if (target && target != m_origin && target != m_icon)
+        target->removeSurfaceObserver(this);
+    detach();
+    for (auto &weak : offers) {
+        if (auto offer = weak.lock())
+            offer->invalidate();
+    }
+    if (target)
+        emit left();
+    if (source)
+        source->cancel();
+    m_finishing = false;
+    emit ended();
+}
+
+uint32_t DragController::modifierAction() const
+{
+    const auto *xkb = m_seat->xkbTracker();
+    // Under the Command convention Option copies and Command moves.
+    const bool command = m_seat->shortcutConvention() == ShortcutConvention::Command;
+    if (xkb->modifierActive(command ? XKB_MOD_NAME_ALT : XKB_MOD_NAME_CTRL))
+        return 1;
+    if (xkb->modifierActive(command ? XKB_MOD_NAME_LOGO : XKB_MOD_NAME_SHIFT))
+        return 2;
+    return 0;
+}
+
+bool DragController::key(uint32_t code, bool pressed)
+{
+    // An external drag's keys, Escape included, belong to the X11 client.
+    if (!grabsInput())
+        return false;
+    if (code == KEY_ESC && pressed) {
+        cancel();
+    } else {
+        const auto offers = m_offers;
+        for (auto &weak : offers) {
+            if (auto offer = weak.lock())
+                offer->setModifierAction(modifierAction());
+        }
+    }
+    return true;
+}
+
+void DragController::updateIcon()
+{
+    if (m_icon)
+        m_icon->setPosition(m_location.toPoint() + m_icon->offset());
+}
+
+void DragController::onSurfaceDestroying(compositor::Surface *surface)
+{
+    if (surface == m_icon)
+        m_icon = nullptr;
+    if (surface == m_origin) {
+        cancel();
+    } else if (surface == m_target) {
+        leave();
+    }
+}
+
+void DragController::onSurfaceCommit(compositor::Surface *surface)
+{
+    if (surface == m_icon)
+        updateIcon();
+    if (surface == m_origin && !surface->isMapped())
+        cancel();
+    else if (surface == m_target && !surface->isMapped())
+        leave();
+}
+
+} // namespace cutefish::input

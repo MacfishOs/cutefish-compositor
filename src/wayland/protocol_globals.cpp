@@ -1,0 +1,300 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "wayland/protocol_globals.h"
+
+#include <QCoreApplication>
+#include <QProcessEnvironment>
+
+#include "compositor/compositor.h"
+#include "core/logging.h"
+#include "core/process_environment.h"
+#include "display/display_manager.h"
+#include "input/input_method_settings.h"
+#include "wayland/idle_inhibition.h"
+#include "wayland/input_method_launcher.h"
+#include "wayland/privileged_client.h"
+#include "wayland/protocols/application_menu.h"
+#include "wayland/protocols/cursor_shape.h"
+#include "wayland/protocols/cutefish_shell.h"
+#include "wayland/protocols/cutefish_window_management.h"
+#include "wayland/protocols/data_control.h"
+#include "wayland/protocols/idle_notify.h"
+#include "wayland/protocols/foreign_toplevel_list.h"
+#include "wayland/protocols/image_capture.h"
+#include "wayland/protocols/input_method.h"
+#include "wayland/protocols/primary_selection.h"
+#include "wayland/protocols/qt_hardware_integration.h"
+#include "wayland/protocols/surface_blur.h"
+#include "wayland/protocols/window_hints.h"
+#include "wayland/protocols/wl_compositor.h"
+#include "wayland/protocols/wl_data_device_manager.h"
+#include "wayland/protocols/wl_output.h"
+#include "wayland/protocols/wl_seat.h"
+#include "wayland/protocols/wl_shm.h"
+#include "wayland/protocols/wl_subcompositor.h"
+#include "wayland/protocols/wp_fractional_scale.h"
+#include "wayland/protocols/wp_viewporter.h"
+#include "wayland/protocols/xdg_activation.h"
+#include "wm/window_manager.h"
+#include "wayland/protocols/xdg_decoration.h"
+#include "wayland/protocols/xdg_dialog.h"
+#include "wayland/protocols/xdg_foreign.h"
+#include "wayland/protocols/xdg_shell.h"
+#include "wayland/protocols/zwp_idle_inhibit_manager.h"
+#include "wayland/protocols/zwp_keyboard_shortcuts_inhibit_manager.h"
+#include "wayland/protocols/zwp_pointer_constraints.h"
+#include "wayland/protocols/zwp_pointer_gestures.h"
+#include "wayland/protocols/zwp_relative_pointer_manager.h"
+#include "wayland/security_delegate.h"
+#include "wayland/server.h"
+
+namespace cutefish::wayland {
+
+ProtocolGlobals::ProtocolGlobals(const Dependencies &dependencies)
+    : m_deps(dependencies)
+    // Built before the socket exists, so no client can ever reach a registry
+    // that has not been filtered.
+    , m_privileged(std::make_unique<PrivilegedClients>(dependencies.server->display()))
+{
+}
+
+ProtocolGlobals::~ProtocolGlobals() = default;
+
+bool ProtocolGlobals::initialize()
+{
+    return registerCoreGlobals() && registerInputMethod() && registerClipboard()
+            && registerCapture() && registerPrivateShell() && registerQtHardwareIntegration();
+}
+
+bool ProtocolGlobals::registerCoreGlobals()
+{
+    wl_display *display = m_deps.server->display();
+    m_idleInhibition = std::make_unique<IdleInhibition>();
+    m_idleInhibition->input = m_deps.inputManager;
+
+    m_seat = std::make_unique<WaylandSeat>(m_deps.seat, m_deps.server->serialTracker());
+    m_xdgActivation = std::make_unique<WaylandXdgActivation>(m_deps.windowManager, m_seat.get());
+    m_xdgShell = std::make_unique<WaylandXdgShell>(m_deps.compositor, m_deps.windowManager,
+                                                   m_deps.seat, m_deps.server->serialTracker());
+
+    if (!createCompositorGlobal(display, m_deps.compositor) || !createSubcompositorGlobal(display)
+        || !createShmGlobal(display, m_deps.compositor)
+        || !createIdleNotifierGlobal(display, m_idleInhibition.get())
+        || !createIdleInhibitManagerGlobal(display, m_idleInhibition.get())
+        || !createSeatGlobal(display, m_seat.get()) || !createCursorShapeGlobal(display)
+        || !createPointerConstraintsGlobal(display, m_seat.get())
+        || !createRelativePointerManagerGlobal(display)
+        || !createPointerGesturesGlobal(display, m_seat.get())
+        || !createKeyboardShortcutsInhibitManagerGlobal(display, m_seat.get())
+        || !createPrimarySelectionGlobal(display, m_seat.get())
+        || !createDataDeviceManagerGlobal(display, m_seat.get())
+        || !createXdgActivationGlobal(display, m_xdgActivation.get())
+        || !createXdgShellGlobal(display, m_xdgShell.get()) || !createXdgDecorationGlobal(display)
+        || !createXdgDialogGlobal(display) || !createXdgExporterV2Global(display)
+        || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
+        || !createWindowHintsGlobal(display) || !createAppMenuGlobal(display) || !createFractionalScaleGlobal(display)
+        || !createXdgOutputManagerGlobal(display) || !createViewporterGlobal(display)) {
+        qCCritical(cfWayland) << "Failed to register the globals";
+        return false;
+    }
+    return true;
+}
+
+bool ProtocolGlobals::registerInputMethod()
+{
+    wl_display *display = m_deps.server->display();
+
+    m_inputMethod = std::make_unique<InputMethodManager>(display, m_seat.get(),
+                                                         m_deps.inputMethodPopupLayer);
+    if (!m_inputMethod->textInputGlobal() || !m_inputMethod->textInputV1Global()
+        || !m_inputMethod->inputMethodGlobal() || !m_inputMethod->virtualKeyboardGlobal())
+        return false;
+
+    m_inputMethodLauncher = std::make_unique<InputMethodLauncher>(display);
+    // Identity, not policy: the only client allowed to drive the input method is
+    // the process the compositor spawned for it.
+    const auto authorize = [launcher = m_inputMethodLauncher.get()](const wl_client *client) {
+        return launcher->isInputMethod(client);
+    };
+    m_inputMethod->setAuthorizer(authorize);
+    if (wm::WindowManager *windows = m_deps.windowManager) {
+        m_inputMethod->setPlacementArea([windows](const QRect &caret) {
+            const auto *displays = windows->displayManager();
+            const auto *display = displays ? displays->displayForRect(caret) : nullptr;
+            return display ? windows->workAreaForOutput(display->bounds)
+                           : windows->workAreaFor(nullptr);
+        });
+    }
+    m_privileged->addRestrictedGlobal(m_inputMethod->inputMethodGlobal(), authorize);
+    m_privileged->addRestrictedGlobal(m_inputMethod->virtualKeyboardGlobal(), authorize);
+
+    m_inputMethodSettings = std::make_unique<input::InputMethodSettings>();
+    QObject::connect(m_inputMethodLauncher.get(), &InputMethodLauncher::runningChanged,
+                     m_inputMethodSettings.get(), [this] {
+                         m_inputMethodSettings->setRunning(m_inputMethodLauncher->isRunning());
+                     });
+    return true;
+}
+
+bool ProtocolGlobals::registerClipboard()
+{
+    // The shell puts screenshots on the clipboard without holding the keyboard.
+    const auto authorize = [security = m_deps.security,
+                            privileged = m_privileged.get()](const wl_client *client) {
+        return privileged->isTrusted(client) || security->canManageClipboard(client);
+    };
+    m_dataControl =
+            std::make_unique<DataControlManager>(m_deps.server->display(), m_seat.get(), authorize);
+    if (!m_dataControl->extGlobal() || !m_dataControl->wlrGlobal())
+        return false;
+    m_privileged->addRestrictedGlobal(m_dataControl->extGlobal(), authorize);
+    m_privileged->addRestrictedGlobal(m_dataControl->wlrGlobal(), authorize);
+    return true;
+}
+
+bool ProtocolGlobals::registerCapture()
+{
+    // The shell takes screenshots itself; recordings run in an allowlisted helper.
+    const auto authorize = [security = m_deps.security,
+                            privileged = m_privileged.get()](const wl_client *client) {
+        return privileged->isTrusted(client) || security->canCaptureOutputs(client);
+    };
+    m_imageCapture = std::make_unique<ImageCaptureManager>(m_deps.server->display(), authorize,
+                                                           [compositor = m_deps.compositor] {
+                                                               compositor->scheduleRepaint();
+                                                           });
+    if (!m_imageCapture->sourceGlobal() || !m_imageCapture->toplevelSourceGlobal()
+        || !m_imageCapture->copyGlobal())
+        return false;
+    m_privileged->addRestrictedGlobal(m_imageCapture->sourceGlobal(), authorize);
+    m_privileged->addRestrictedGlobal(m_imageCapture->toplevelSourceGlobal(), authorize);
+    m_privileged->addRestrictedGlobal(m_imageCapture->copyGlobal(), authorize);
+    // Window sources need the toplevel list, which the same clients may bind.
+    m_toplevelList = std::make_unique<ForeignToplevelList>(
+            m_deps.server->display(), m_deps.windowManager, m_deps.compositor, authorize);
+    if (!m_toplevelList->global())
+        return false;
+    m_privileged->addRestrictedGlobal(m_toplevelList->global(), authorize);
+    m_imageCapture->setToplevelSourceResolver([list = m_toplevelList.get()](wl_resource *handle) {
+        return list->sourceFor(handle);
+    });
+    return true;
+}
+
+bool ProtocolGlobals::registerPrivateShell()
+{
+    // Both globals are registered with the privileged filter, so an ordinary
+    // client never sees them in its registry.
+    m_cutefishShell =
+            std::make_unique<WaylandCutefishShell>(m_deps.windowManager, m_privileged.get());
+    m_windowManagement = std::make_unique<WaylandCutefishWindowManagement>(m_deps.windowManager,
+                                                                           m_privileged.get());
+    wl_display *display = m_deps.server->display();
+    if (!createCutefishShellGlobal(display, m_cutefishShell.get())
+        || !createCutefishWindowManagementGlobal(display, m_windowManagement.get())) {
+        qCCritical(cfWayland) << "Failed to register the private shell globals";
+        return false;
+    }
+    return true;
+}
+
+bool ProtocolGlobals::registerQtHardwareIntegration()
+{
+    m_qtHardwareIntegration = createQtHardwareIntegrationGlobal(m_deps.server->display());
+    if (!m_qtHardwareIntegration)
+        return false;
+    m_privileged->addRestrictedGlobal(m_qtHardwareIntegration,
+                                      [privileged = m_privileged.get()](const wl_client *client) {
+                                          return canLoadCutefishEgl(client,
+                                                                    privileged->isTrusted(client));
+                                      });
+    return true;
+}
+
+static QProcessEnvironment inputMethodEnvironment(const QString &waylandDisplay,
+                                                  const QString &x11Display,
+                                                  const QString &x11Authority)
+{
+    auto environment = childEnvironment();
+    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), waylandDisplay);
+    environment.remove(QStringLiteral("DISPLAY"));
+    environment.remove(QStringLiteral("XAUTHORITY"));
+    if (!x11Display.isEmpty()) {
+        environment.insert(QStringLiteral("DISPLAY"), x11Display);
+        environment.insert(QStringLiteral("XAUTHORITY"), x11Authority);
+    }
+    return environment;
+}
+
+void ProtocolGlobals::setInputMethodX11Display(const QString &x11Display,
+                                               const QString &x11Authority)
+{
+    if (!m_deps.launchInputMethod || !m_inputMethodStarted)
+        return;
+    // An input method connects to X11 when it starts, and only then.
+    m_inputMethodLauncher->setEnvironment(
+            inputMethodEnvironment(m_deps.server->socketName(), x11Display, x11Authority));
+    m_inputMethodLauncher->restart();
+}
+
+void ProtocolGlobals::startInputMethod(const QString &x11Display, const QString &x11Authority)
+{
+    if (!m_deps.launchInputMethod || m_inputMethodStarted)
+        return;
+    m_inputMethodStarted = true;
+
+    m_inputMethodLauncher->setEnvironment(
+            inputMethodEnvironment(m_deps.server->socketName(), x11Display, x11Authority));
+    if (!m_deps.inputMethodOverride.isEmpty())
+        m_inputMethodSettings->overrideInputMethod(m_deps.inputMethodOverride);
+    else
+        m_inputMethodSettings->registerService();
+    QObject::connect(m_inputMethodSettings.get(), &input::InputMethodSettings::commandChanged,
+                     m_inputMethodLauncher.get(), [this] {
+                         m_inputMethodLauncher->setCommand(m_inputMethodSettings->command());
+                     });
+    m_inputMethodLauncher->setCommand(m_inputMethodSettings->command());
+}
+
+void ProtocolGlobals::sceneChanged()
+{
+    if (m_idleInhibition)
+        Q_EMIT m_idleInhibition->sceneChanged();
+    if (m_inputMethod)
+        m_inputMethod->sceneChanged();
+}
+
+void ProtocolGlobals::shutdown()
+{
+    if (m_privileged && m_dataControl) {
+        m_privileged->removeRestrictedGlobal(m_dataControl->extGlobal());
+        m_privileged->removeRestrictedGlobal(m_dataControl->wlrGlobal());
+    }
+    if (m_privileged && m_inputMethod) {
+        m_privileged->removeRestrictedGlobal(m_inputMethod->inputMethodGlobal());
+        m_privileged->removeRestrictedGlobal(m_inputMethod->virtualKeyboardGlobal());
+    }
+    if (m_dataControl)
+        m_dataControl->shutdown();
+    if (m_inputMethod)
+        m_inputMethod->shutdown();
+    if (m_privileged && m_imageCapture) {
+        m_privileged->removeRestrictedGlobal(m_imageCapture->sourceGlobal());
+        m_privileged->removeRestrictedGlobal(m_imageCapture->toplevelSourceGlobal());
+        m_privileged->removeRestrictedGlobal(m_imageCapture->copyGlobal());
+    }
+    if (m_privileged && m_toplevelList)
+        m_privileged->removeRestrictedGlobal(m_toplevelList->global());
+    if (m_privileged && m_qtHardwareIntegration)
+        m_privileged->removeRestrictedGlobal(m_qtHardwareIntegration);
+    if (m_imageCapture)
+        m_imageCapture->shutdown();
+    if (m_toplevelList)
+        m_toplevelList->shutdown();
+    if (m_privileged)
+        m_privileged->shutdown();
+}
+
+} // namespace cutefish::wayland

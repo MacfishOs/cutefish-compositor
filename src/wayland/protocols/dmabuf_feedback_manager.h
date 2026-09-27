@@ -1,0 +1,88 @@
+// Copyright 2022 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/components/exo/wayland/wayland_dmabuf_feedback_manager.h
+// Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
+//
+// Adapted for Cutefish: gpu::Capabilities becomes render::DmaBufDevice, the
+// format table lives in a sealed memfd instead of a
+// base::ReadOnlySharedMemoryRegion, and no scanout tranches are sent.
+
+#ifndef CUTEFISH_WAYLAND_PROTOCOLS_DMABUF_FEEDBACK_MANAGER_H_
+#define CUTEFISH_WAYLAND_PROTOCOLS_DMABUF_FEEDBACK_MANAGER_H_
+
+#include <sys/types.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <memory>
+
+#include "core/scoped_fd.h"
+
+struct wl_client;
+struct wl_resource;
+
+namespace cutefish::compositor {
+class Compositor;
+}
+
+namespace cutefish::render {
+class DmaBufDevice;
+}
+
+namespace cutefish::wayland {
+
+class DmaBufFeedback;
+class DmaBufFeedbackTranche;
+
+// DRM fourcc -> (index into the format table -> modifier). The indices are what
+// tranches actually carry over the wire.
+using IndexedDrmFormatsAndModifiers = std::map<uint32_t, std::map<size_t, uint64_t>>;
+
+// Owns everything the linux-dmabuf global needs: which formats and modifiers
+// are supported, the shared format table, and the default feedback.
+class DmaBufFeedbackManager
+{
+public:
+    DmaBufFeedbackManager(compositor::Compositor* compositor, render::DmaBufDevice* device);
+    DmaBufFeedbackManager(const DmaBufFeedbackManager&) = delete;
+    DmaBufFeedbackManager& operator=(const DmaBufFeedbackManager&) = delete;
+    ~DmaBufFeedbackManager();
+
+    compositor::Compositor* compositor() const { return m_compositor; }
+
+    // The highest zwp_linux_dmabuf_v1 version this platform can honour: 4 when
+    // the main device is known and a format table could be built, 3 otherwise.
+    uint32_t versionSupportedByPlatform() const { return m_version; }
+
+    bool isFormatSupported(uint32_t format) const;
+
+    // The version < 4 way of advertising capabilities.
+    void sendFormatsAndModifiers(wl_resource* resource) const;
+
+    void getDefaultFeedback(wl_client* client, wl_resource* dmaBufResource, uint32_t feedbackId);
+    void getSurfaceFeedback(wl_client* client, wl_resource* dmaBufResource, uint32_t feedbackId,
+                            wl_resource* surfaceResource);
+
+    const IndexedDrmFormatsAndModifiers& formatsAndModifiers() const
+    {
+        return m_formatsAndModifiers;
+    }
+
+private:
+    void sendFeedback(const DmaBufFeedback* feedback, wl_resource* resource) const;
+    void sendTranche(const DmaBufFeedbackTranche* tranche, wl_resource* resource) const;
+
+    compositor::Compositor* const m_compositor;
+    uint32_t m_version = 0;
+    IndexedDrmFormatsAndModifiers m_formatsAndModifiers;
+    ScopedFd m_formatTableFd;
+    size_t m_formatTableSize = 0;
+    std::unique_ptr<DmaBufFeedback> m_defaultFeedback;
+};
+
+} // namespace cutefish::wayland
+
+#endif // CUTEFISH_WAYLAND_PROTOCOLS_DMABUF_FEEDBACK_MANAGER_H_

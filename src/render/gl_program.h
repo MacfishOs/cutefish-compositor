@@ -1,0 +1,40 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#pragma once
+
+#include <GLES3/gl3.h>
+#include <QByteArray>
+#include <map>
+#include <string>
+#include <string_view>
+
+namespace cutefish::render {
+
+class GlProgram
+{
+public:
+    GlProgram() = default;
+    ~GlProgram();
+    GlProgram(GlProgram &&other) noexcept;
+    GlProgram &operator=(GlProgram &&other) noexcept;
+    GlProgram(const GlProgram &) = delete;
+    GlProgram &operator=(const GlProgram &) = delete;
+    static GlProgram create(const char *vertex, const char *fragment);
+
+    operator GLuint() const { return m_name; }
+
+    GLint uniform(const char *name) const;
+    GLint attribute(const char *name) const;
+    void reset();
+
+private:
+    GLuint m_name = 0;
+    mutable std::map<std::string, GLint, std::less<>> m_uniforms;
+    mutable std::map<std::string, GLint, std::less<>> m_attributes;
+};
+
+QByteArray clippedFragment(const char *body, const char *extensions = "");
+
+} // namespace cutefish::render

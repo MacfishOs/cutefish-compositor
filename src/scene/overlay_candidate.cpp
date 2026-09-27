@@ -1,0 +1,213 @@
+// Copyright 2014 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/ui/ozone/platform/drm/gpu/drm_overlay_plane.cc
+//           chromium/src/components/viz/service/display/
+//               overlay_strategy_fullscreen.cc
+//               overlay_strategy_single_on_top.cc
+// Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
+
+#include "scene/overlay_candidate.h"
+
+#include <algorithm>
+
+#include <QRegion>
+
+#include "scene/node.h"
+#include "scene/surface_node.h"
+#include "scene/window_animation.h"
+
+namespace cutefish::scene {
+
+namespace {
+
+bool needsComposition(const Node &node)
+{
+    if (!node.isVisible() && !node.paintsWhenHidden())
+        return false;
+    if (const auto *animation = dynamic_cast<const WindowAnimation *>(&node);
+        animation && animation->paintsSubtree())
+        return true;
+    if (const auto *surface = dynamic_cast<const SurfaceNode *>(&node);
+        surface && surface->hasBackgroundBlur())
+        return true;
+    return std::any_of(node.children().begin(), node.children().end(), [](const Node *child) {
+        return needsComposition(*child);
+    });
+}
+
+// One painted thing, in paint order. Upstream this is a viz::DrawQuad in an
+// AggregatedRenderPass; here the scene tree is walked directly.
+struct SceneItem {
+    QRect bounds;
+    bool opaque = false;
+    // Non-null when the item is one client buffer a plane could show directly.
+    SurfaceNode *surface = nullptr;
+    std::shared_ptr<render::PresentationContent> presentation;
+};
+
+void flatten(Node &node, const QRect &outputRect, std::vector<SceneItem> &items)
+{
+    if (!node.isVisible() && !node.paintsWhenHidden())
+        return;
+
+    const QRect bounds = node.absolutePaintBounds().intersected(outputRect);
+
+    // An effect draws its whole subtree itself, so it is one opaque-unknown
+    // blob and nothing inside it can reach a plane.
+    if (node.paintsSubtree()) {
+        if (!bounds.isEmpty())
+            items.push_back(SceneItem {bounds, false, nullptr});
+        return;
+    }
+
+    const auto appendSelf = [&] {
+        const Node::Content content = node.content();
+        if (content == Node::Content::None || bounds.isEmpty())
+            return;
+        SceneItem item;
+        item.bounds = bounds;
+        item.opaque = content == Node::Content::Opaque;
+        if (auto *surface = dynamic_cast<SurfaceNode *>(&node))
+            item.presentation = surface->presentationContent();
+        // A partially clipped surface cannot go on a plane as-is, and neither
+        // can one the compositor is fading: both would need a source crop or
+        // blending the planner does not attempt.
+        if (bounds == node.absoluteGeometry())
+            item.surface = dynamic_cast<SurfaceNode *>(&node);
+        if (item.surface && !item.surface->scanoutBuffer())
+            item.surface = nullptr;
+        items.push_back(std::move(item));
+    };
+
+    // Node::render draws the children marked "below parent", then itself, then
+    // the rest. The flattened order has to match exactly.
+    const auto &children = node.children();
+    const size_t split = std::min(node.childrenBelowParent(), children.size());
+
+    for (size_t i = 0; i < split; ++i)
+        flatten(*children[i], outputRect, items);
+    appendSelf();
+    for (size_t i = split; i < children.size(); ++i)
+        flatten(*children[i], outputRect, items);
+}
+
+// The buffer maps one-to-one onto its place on screen: no plane scaling and no
+// source crop, which is all the planner is willing to ask a plane for.
+bool isUnscaled(const SurfaceNode &surface)
+{
+    const render::ScanoutBuffer *buffer = surface.scanoutBuffer().get();
+    return buffer && !surface.hasContentShape() && surface.alpha() == 1.0f
+            && surface.textureMapping().isIdentity() && !buffer->scanoutAttributes().yInvert
+            && buffer->scanoutAttributes().size == surface.geometry().size();
+}
+
+OverlayCandidate makeCandidate(SurfaceNode &surface, const QRect &bounds, bool opaque, int zOrder)
+{
+    OverlayCandidate candidate;
+    candidate.buffer = surface.scanoutBuffer();
+    candidate.acquireFence = surface.acquireFence().duplicate();
+    if (surface.acquireFence().isValid() && !candidate.acquireFence.isValid())
+        return {};
+    candidate.displayRect = bounds;
+    candidate.sourceRect = QRect(QPoint(0, 0), candidate.buffer->scanoutAttributes().size);
+    candidate.opaque = opaque;
+    candidate.zOrder = zOrder;
+    candidate.node = &surface;
+    return candidate;
+}
+
+// Port of OverlayStrategyFullscreen::Propose: the topmost visible item may take
+// the primary plane when it covers the whole output opaquely. Everything below
+// it is then invisible by construction, which is the same conclusion upstream
+// reaches through its BlackFullscreenOptimization.
+bool proposeFullscreen(std::vector<SceneItem> &items, const QRect &outputRect, OverlayPlan &plan)
+{
+    if (items.empty())
+        return false;
+
+    SceneItem &top = items.back();
+    if (!top.surface || !top.opaque || top.bounds != outputRect)
+        return false;
+    if (!isUnscaled(*top.surface))
+        return false;
+
+    plan.primary = makeCandidate(*top.surface, top.bounds, true, 0);
+    return plan.primary.isValid();
+}
+
+// Port of OverlayStrategySingleOnTop::Propose: an item nothing above it touches
+// can be lifted onto an overlay plane, because composition below it stays
+// correct and nothing has to blend over it.
+void proposeSingleOnTop(std::vector<SceneItem> &items, size_t maxOverlays, OverlayPlan &plan)
+{
+    if (maxOverlays == 0)
+        return;
+
+    std::vector<SceneItem *> promoted;
+    for (size_t i = items.size(); i-- > 0 && promoted.size() < maxOverlays;) {
+        SceneItem &item = items[i];
+        if (!item.surface || !item.opaque || !isUnscaled(*item.surface))
+            continue;
+
+        bool occluded = false;
+        for (size_t above = i + 1; above < items.size() && !occluded; ++above)
+            occluded = items[above].bounds.intersects(item.bounds);
+        if (occluded)
+            continue;
+
+        promoted.push_back(&item);
+    }
+
+    // Ascending z: the lowest promoted item gets the plane nearest the primary.
+    std::reverse(promoted.begin(), promoted.end());
+    int zOrder = 1;
+    for (SceneItem *item : promoted) {
+        auto candidate = makeCandidate(*item->surface, item->bounds, item->opaque, zOrder++);
+        if (candidate.isValid())
+            plan.overlays.push_back(std::move(candidate));
+    }
+}
+
+} // namespace
+
+void removeOccludedPresentation(Node &root, const QSize &logicalSize,
+                                render::PresentationSubmission &submission)
+{
+    std::vector<SceneItem> items;
+    flatten(root, QRect(QPoint(), logicalSize), items);
+    QRegion covered;
+    for (auto it = items.rbegin(); it != items.rend(); ++it) {
+        if ((QRegion(it->bounds) - covered).isEmpty())
+            submission.remove(it->presentation);
+        if (it->opaque)
+            covered += it->bounds;
+    }
+}
+
+OverlayPlan proposeOverlays(Node &root, const QSize &outputSize, size_t maxOverlays,
+                            double outputScale)
+{
+    // The current plane planner only represents identity device-space mapping.
+    if (outputScale != 1)
+        return {};
+    OverlayPlan plan;
+    // Backdrop sampling needs the underlying buffers in the composition target.
+    if (outputSize.isEmpty() || needsComposition(root))
+        return plan;
+
+    const QRect outputRect(QPoint(0, 0), outputSize);
+    std::vector<SceneItem> items;
+    flatten(root, outputRect, items);
+
+    // Fullscreen wins outright: with the primary plane showing a client buffer
+    // there is nothing left for an overlay to sit on top of.
+    if (proposeFullscreen(items, outputRect, plan))
+        return plan;
+
+    proposeSingleOnTop(items, maxOverlays, plan);
+    return plan;
+}
+
+} // namespace cutefish::scene

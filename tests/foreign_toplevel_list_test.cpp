@@ -1,0 +1,436 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include <gtest/gtest.h>
+
+#include <cstring>
+#include <ext-foreign-toplevel-list-v1-client-protocol.h>
+#include <ext-image-capture-source-v1-client-protocol.h>
+#include <ext-image-copy-capture-v1-client-protocol.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <wayland-client.h>
+#include <wayland-server-core.h>
+
+#include "compositor/capture_source.h"
+#include "compositor/compositor.h"
+#include "compositor/surface.h"
+#include "fake_renderer.h"
+#include "input/input_manager.h"
+#include "input/seat.h"
+#include "scene/node.h"
+#include "scene/scene.h"
+#include "shm_test_util.h"
+#include "wayland/protocols/foreign_toplevel_list.h"
+#include "wayland/protocols/image_capture.h"
+#include "wayland/protocols/wl_shm.h"
+#include "wm/window.h"
+#include "wm/window_manager.h"
+
+using namespace cutefish;
+
+namespace {
+
+constexpr QRect kOutput(0, 0, 1000, 800);
+
+struct Handle {
+    ext_foreign_toplevel_handle_v1 *proxy = nullptr;
+    QString identifier;
+    QString title;
+    QString appId;
+    int done = 0;
+    bool closed = false;
+};
+
+class ForeignToplevelListTest : public testing::Test
+{
+protected:
+    scene::Scene scene;
+    scene::Node *surfaceContainer =
+            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+    compositor::Compositor compositor {surfaceContainer};
+    testsupport::FakeRenderer renderer;
+    input::Seat seat {&compositor};
+    input::InputManager input {&seat};
+    wm::WindowManager manager {&compositor, &seat};
+    std::vector<std::unique_ptr<compositor::Surface>> surfaces;
+    std::shared_ptr<compositor::ShmPool> pool = testsupport::makePool(1 << 20);
+
+    wl_display *server = nullptr;
+    wl_display *client = nullptr;
+    wl_registry *registry = nullptr;
+    ext_foreign_toplevel_list_v1 *list = nullptr;
+    wl_shm *shm = nullptr;
+    ext_foreign_toplevel_image_capture_source_manager_v1 *toplevelSources = nullptr;
+    ext_image_copy_capture_manager_v1 *copies = nullptr;
+    std::unique_ptr<wayland::ImageCaptureManager> capture;
+    std::unique_ptr<wayland::ForeignToplevelList> toplevels;
+    std::vector<std::unique_ptr<Handle>> handles;
+    bool finished = false;
+    bool allowed = true;
+
+    void SetUp() override
+    {
+        scene.setSize(kOutput.size());
+        manager.setOutputBounds(kOutput);
+        input.setBounds(kOutput.size());
+        input.setEventSink(&manager);
+        compositor.setOutputViews(
+                {{QStringLiteral("output-1"), kOutput, *compositor::OutputScale::fromNumerator(240),
+                  QStringLiteral("eDP-1")}});
+
+        server = wl_display_create();
+        ASSERT_NE(server, nullptr);
+        ASSERT_NE(wayland::createShmGlobal(server, &compositor), nullptr);
+        capture = std::make_unique<wayland::ImageCaptureManager>(
+                server,
+                [&](const wl_client *) {
+                    return allowed;
+                },
+                [] { });
+        toplevels = std::make_unique<wayland::ForeignToplevelList>(
+                server, &manager, &compositor, [&](const wl_client *) {
+                    return allowed;
+                });
+        capture->setToplevelSourceResolver([this](wl_resource *handle) {
+            return toplevels->sourceFor(handle);
+        });
+        int sockets[2];
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets), 0);
+        ASSERT_NE(wl_client_create(server, sockets[0]), nullptr);
+        client = wl_display_connect_to_fd(sockets[1]);
+        ASSERT_NE(client, nullptr);
+        registry = wl_display_get_registry(client);
+        static const wl_registry_listener listener = {
+                [](void *data, wl_registry *registry, uint32_t name, const char *interface,
+                   uint32_t) {
+                    auto &test = *static_cast<ForeignToplevelListTest *>(data);
+                    if (!strcmp(interface, ext_foreign_toplevel_list_v1_interface.name))
+                        test.bindList(registry, name);
+                    else if (!strcmp(interface, wl_shm_interface.name))
+                        test.shm = static_cast<wl_shm *>(
+                                wl_registry_bind(registry, name, &wl_shm_interface, 1));
+                    else if (!strcmp(interface,
+                                     ext_foreign_toplevel_image_capture_source_manager_v1_interface
+                                             .name))
+                        test.toplevelSources = static_cast<
+                                ext_foreign_toplevel_image_capture_source_manager_v1 *>(
+                                wl_registry_bind(
+                                        registry, name,
+                                        &ext_foreign_toplevel_image_capture_source_manager_v1_interface,
+                                        1));
+                    else if (!strcmp(interface, ext_image_copy_capture_manager_v1_interface.name))
+                        test.copies = static_cast<ext_image_copy_capture_manager_v1 *>(
+                                wl_registry_bind(registry, name,
+                                                 &ext_image_copy_capture_manager_v1_interface, 1));
+                },
+                [](void *, wl_registry *, uint32_t) {}};
+        wl_registry_add_listener(registry, &listener, this);
+        ASSERT_TRUE(roundtrip());
+    }
+
+    void TearDown() override
+    {
+        for (auto &handle : handles)
+            ext_foreign_toplevel_handle_v1_destroy(handle->proxy);
+        if (list)
+            ext_foreign_toplevel_list_v1_destroy(list);
+        if (copies)
+            ext_image_copy_capture_manager_v1_destroy(copies);
+        if (toplevelSources)
+            ext_foreign_toplevel_image_capture_source_manager_v1_destroy(toplevelSources);
+        if (shm)
+            wl_shm_destroy(shm);
+        wl_registry_destroy(registry);
+        wl_display_disconnect(client);
+        wl_display_destroy_clients(server);
+        toplevels.reset();
+        capture.reset();
+        wl_display_destroy(server);
+        seat.shutdown();
+    }
+
+    void bindList(wl_registry *registry, uint32_t name)
+    {
+        list = static_cast<ext_foreign_toplevel_list_v1 *>(
+                wl_registry_bind(registry, name, &ext_foreign_toplevel_list_v1_interface, 1));
+        static const ext_foreign_toplevel_list_v1_listener listener = {
+                [](void *data, ext_foreign_toplevel_list_v1 *,
+                   ext_foreign_toplevel_handle_v1 *proxy) {
+                    static_cast<ForeignToplevelListTest *>(data)->track(proxy);
+                },
+                [](void *data, ext_foreign_toplevel_list_v1 *) {
+                    static_cast<ForeignToplevelListTest *>(data)->finished = true;
+                }};
+        ext_foreign_toplevel_list_v1_add_listener(list, &listener, this);
+    }
+
+    void track(ext_foreign_toplevel_handle_v1 *proxy)
+    {
+        auto handle = std::make_unique<Handle>();
+        handle->proxy = proxy;
+        static const ext_foreign_toplevel_handle_v1_listener listener = {
+                [](void *data, ext_foreign_toplevel_handle_v1 *) {
+                    static_cast<Handle *>(data)->closed = true;
+                },
+                [](void *data, ext_foreign_toplevel_handle_v1 *) {
+                    ++static_cast<Handle *>(data)->done;
+                },
+                [](void *data, ext_foreign_toplevel_handle_v1 *, const char *title) {
+                    static_cast<Handle *>(data)->title = QString::fromUtf8(title);
+                },
+                [](void *data, ext_foreign_toplevel_handle_v1 *, const char *appId) {
+                    static_cast<Handle *>(data)->appId = QString::fromUtf8(appId);
+                },
+                [](void *data, ext_foreign_toplevel_handle_v1 *, const char *identifier) {
+                    static_cast<Handle *>(data)->identifier = QString::fromUtf8(identifier);
+                }};
+        ext_foreign_toplevel_handle_v1_add_listener(proxy, &listener, handle.get());
+        handles.push_back(std::move(handle));
+    }
+
+    bool roundtrip()
+    {
+        bool received = false;
+        auto *sync = wl_display_sync(client);
+        static const wl_callback_listener listener = {[](void *data, wl_callback *, uint32_t) {
+            *static_cast<bool *>(data) = true;
+        }};
+        wl_callback_add_listener(sync, &listener, &received);
+        wl_display_flush(client);
+        wl_event_loop_dispatch(wl_display_get_event_loop(server), 0);
+        wl_display_flush_clients(server);
+        const int result = wl_display_dispatch(client);
+        wl_callback_destroy(sync);
+        return result >= 0 && received;
+    }
+
+    compositor::Surface *makeSurface(const QSize &size)
+    {
+        surfaces.push_back(compositor.createSurface());
+        compositor::Surface *surface = surfaces.back().get();
+        auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
+                                         nullptr);
+        surface->attach(buffer, {});
+        surface->damage(QRect(QPoint(), size));
+        surface->commit();
+        compositor.updateTextures(renderer);
+        return surface;
+    }
+
+    wm::Window *makeWindow(const QRect &bounds, const QString &title = QStringLiteral("Editor"),
+                           const QString &appId = QStringLiteral("org.example.Editor"))
+    {
+        wm::Window *window = manager.createWindow(
+                makeSurface(bounds.size()),
+                {.requestedSize = bounds.size(), .title = title, .applicationId = appId});
+        window->setBounds(bounds);
+        return window;
+    }
+
+    // Resolves a client handle through the server-side proxy of the same id.
+    std::shared_ptr<compositor::CaptureSource> sourceOf(const Handle &handle)
+    {
+        wl_client *wlClient = nullptr;
+        wl_client_for_each(wlClient, wl_display_get_client_list(server)) break;
+        wl_resource *resource = wl_client_get_object(
+                wlClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(handle.proxy)));
+        return toplevels->sourceFor(resource);
+    }
+};
+
+TEST_F(ForeignToplevelListTest, ListsApplicationWindowsWithIdentityAndSource)
+{
+    wm::Window *window = makeWindow(QRect(100, 50, 300, 200));
+    ASSERT_TRUE(roundtrip());
+    ASSERT_EQ(handles.size(), 1u);
+    const Handle &handle = *handles.front();
+    EXPECT_EQ(handle.title, "Editor");
+    EXPECT_EQ(handle.appId, "org.example.Editor");
+    // The shell names a window to capture clients by the id it knows it by.
+    EXPECT_EQ(handle.identifier, QStringLiteral("cutefish-%1").arg(window->id()));
+    EXPECT_GE(handle.done, 1);
+    EXPECT_FALSE(handle.closed);
+
+    auto source = sourceOf(handle);
+    ASSERT_TRUE(source);
+    EXPECT_EQ(source->kind, compositor::CaptureSource::Kind::Window);
+    EXPECT_EQ(source->node, window->node());
+    EXPECT_EQ(source->bounds, QRect(100, 50, 300, 200));
+    EXPECT_EQ(source->renderedOn(), "eDP-1");
+    // Pixels follow the output's scale.
+    EXPECT_EQ(source->pixelSize(), QSize(600, 400));
+
+    window->setTitle(QStringLiteral("Editor - file.txt"));
+    ASSERT_TRUE(roundtrip());
+    EXPECT_EQ(handle.title, "Editor - file.txt");
+    EXPECT_GE(handle.done, 2);
+
+    // A resize changes the buffer size the session must announce.
+    int changes = 0;
+    QObject::connect(source.get(), &compositor::CaptureSource::changed, [&] {
+        ++changes;
+    });
+    window->setBounds(QRect(100, 50, 400, 200));
+    EXPECT_EQ(source->pixelSize(), QSize(800, 400));
+    EXPECT_EQ(changes, 1);
+    window->setBounds(QRect(120, 60, 400, 200));
+    EXPECT_EQ(changes, 1);
+}
+
+TEST_F(ForeignToplevelListTest, PopupsAndSystemDialogsAreNotListed)
+{
+    manager.setSystemDialogPolicy([](qint64 pid) {
+        return pid == 42;
+    });
+    wm::Window *app = makeWindow(QRect(0, 0, 300, 200));
+    manager.createWindow(makeSurface(QSize(100, 40)),
+                         {.type = wm::WindowType::Popup, .transientParent = app});
+    wm::Window *prompt = manager.createWindow(
+            makeSurface(QSize(200, 100)),
+            {.requestedSize = {200, 100}, .processId = 42, .transientParent = app});
+    ASSERT_TRUE(prompt->isSystemDialog());
+    ASSERT_TRUE(roundtrip());
+    EXPECT_EQ(handles.size(), 1u);
+    manager.destroyWindow(prompt);
+    manager.destroyWindow(app);
+    ASSERT_TRUE(roundtrip());
+    for (const auto &handle : handles)
+        EXPECT_TRUE(handle->closed);
+}
+
+TEST_F(ForeignToplevelListTest, ClosingAWindowStopsItsSource)
+{
+    wm::Window *window = makeWindow(QRect(0, 0, 300, 200));
+    ASSERT_TRUE(roundtrip());
+    ASSERT_EQ(handles.size(), 1u);
+    auto source = sourceOf(*handles.front());
+    ASSERT_TRUE(source);
+    int changes = 0;
+    QObject::connect(source.get(), &compositor::CaptureSource::changed, [&] {
+        ++changes;
+    });
+    manager.destroyWindow(window);
+    ASSERT_TRUE(roundtrip());
+    EXPECT_TRUE(handles.front()->closed);
+    EXPECT_FALSE(source->active);
+    EXPECT_EQ(source->node, nullptr);
+    EXPECT_EQ(changes, 1);
+    EXPECT_FALSE(sourceOf(*handles.front()));
+}
+
+TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
+{
+    struct WindowRenderer : testsupport::FakeRenderer {
+        render::OutputRenderContext seen;
+        QSize viewportSize() const override { return {1000, 800}; }
+        QImage captureImage(const render::OutputRenderContext &context, const QSize &size,
+                            const std::function<void()> &paint) override
+        {
+            seen = context;
+            paint();
+            QImage image(size, QImage::Format_ARGB32_Premultiplied);
+            image.fill(QColor(1, 2, 3));
+            return image;
+        }
+    } windowRenderer;
+    windowRenderer.setOutputContext(
+            {QStringLiteral("eDP-1"), kOutput, {2000, 1600}, 2, 0, 17, QRect(0, 0, 2000, 1600)});
+
+    makeWindow(QRect(100, 50, 300, 200));
+    ASSERT_TRUE(roundtrip());
+    ASSERT_EQ(handles.size(), 1u);
+    ASSERT_NE(toplevelSources, nullptr);
+    ASSERT_NE(copies, nullptr);
+
+    auto *source = ext_foreign_toplevel_image_capture_source_manager_v1_create_source(
+            toplevelSources, handles.front()->proxy);
+    auto *session = ext_image_copy_capture_manager_v1_create_session(copies, source, 0);
+    QSize constraint;
+    static const ext_image_copy_capture_session_v1_listener sessionListener = {
+            [](void *data, ext_image_copy_capture_session_v1 *, uint32_t w, uint32_t h) {
+                *static_cast<QSize *>(data) = QSize(int(w), int(h));
+            },
+            [](void *, ext_image_copy_capture_session_v1 *, uint32_t) {},
+            [](void *, ext_image_copy_capture_session_v1 *, wl_array *) {},
+            [](void *, ext_image_copy_capture_session_v1 *, uint32_t, wl_array *) {},
+            [](void *, ext_image_copy_capture_session_v1 *) {},
+            [](void *, ext_image_copy_capture_session_v1 *) {}};
+    ext_image_copy_capture_session_v1_add_listener(session, &sessionListener, &constraint);
+    ASSERT_TRUE(roundtrip());
+    // 300x200 logical on a 2x output.
+    EXPECT_EQ(constraint, QSize(600, 400));
+
+    const int size = 600 * 400 * 4;
+    const int fd = memfd_create("capture-test", MFD_CLOEXEC);
+    ASSERT_EQ(ftruncate(fd, size), 0);
+    void *pixels = mmap(nullptr, size_t(size), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ASSERT_NE(pixels, MAP_FAILED);
+    auto *pool = wl_shm_create_pool(shm, fd, size);
+    auto *buffer = wl_shm_pool_create_buffer(pool, 0, 600, 400, 2400, WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);
+    auto *frame = ext_image_copy_capture_session_v1_create_frame(session);
+    struct Result {
+        uint32_t transform = 99;
+        int ready = 0;
+        int failed = -1;
+    } result;
+    static const ext_image_copy_capture_frame_v1_listener frameListener = {
+            [](void *data, ext_image_copy_capture_frame_v1 *, uint32_t value) {
+                static_cast<Result *>(data)->transform = value;
+            },
+            [](void *, ext_image_copy_capture_frame_v1 *, int32_t, int32_t, int32_t, int32_t) {},
+            [](void *, ext_image_copy_capture_frame_v1 *, uint32_t, uint32_t, uint32_t) {},
+            [](void *data, ext_image_copy_capture_frame_v1 *) {
+                ++static_cast<Result *>(data)->ready;
+            },
+            [](void *data, ext_image_copy_capture_frame_v1 *, uint32_t reason) {
+                static_cast<Result *>(data)->failed = int(reason);
+            }};
+    ext_image_copy_capture_frame_v1_add_listener(frame, &frameListener, &result);
+    ext_image_copy_capture_frame_v1_attach_buffer(frame, buffer);
+    ext_image_copy_capture_frame_v1_capture(frame);
+    ASSERT_TRUE(roundtrip());
+    wayland::ImageCaptureManager::Painters painters;
+    painters.scene = [](bool) {
+        FAIL() << "a window source must not paint the whole scene";
+    };
+    capture->renderPending(windowRenderer, painters);
+    capture->presented(17, 1000000123);
+    ASSERT_TRUE(roundtrip());
+    EXPECT_EQ(result.failed, -1);
+    EXPECT_EQ(result.ready, 1);
+    EXPECT_EQ(result.transform, 0u);
+    EXPECT_EQ(windowRenderer.seen.logicalViewport, QRect(100, 50, 300, 200));
+    EXPECT_EQ(windowRenderer.seen.nativeTargetSize, QSize(600, 400));
+    EXPECT_DOUBLE_EQ(windowRenderer.seen.scale, 2.0);
+    EXPECT_EQ(windowRenderer.seen.transform, 0u);
+    auto *bytes = static_cast<uint8_t *>(pixels);
+    EXPECT_EQ(bytes[0], 3);
+    EXPECT_EQ(bytes[1], 2);
+    EXPECT_EQ(bytes[2], 1);
+
+    ext_image_copy_capture_frame_v1_destroy(frame);
+    wl_buffer_destroy(buffer);
+    ext_image_copy_capture_session_v1_destroy(session);
+    ext_image_capture_source_v1_destroy(source);
+    munmap(pixels, size_t(size));
+    close(fd);
+    ASSERT_TRUE(roundtrip());
+}
+
+TEST_F(ForeignToplevelListTest, StopFinishesTheListAndLateBindersSeeExistingWindows)
+{
+    makeWindow(QRect(0, 0, 300, 200));
+    ASSERT_TRUE(roundtrip());
+    ext_foreign_toplevel_list_v1_stop(list);
+    ASSERT_TRUE(roundtrip());
+    EXPECT_TRUE(finished);
+    makeWindow(QRect(0, 0, 300, 200));
+    ASSERT_TRUE(roundtrip());
+    EXPECT_EQ(handles.size(), 1u);
+}
+
+} // namespace

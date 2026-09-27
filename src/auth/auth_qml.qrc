@@ -1,0 +1,1 @@
+<RCC><qresource prefix="/auth"><file alias="UserView.qml">qml/UserView.qml</file><file alias="AuthScreen.qml">qml/AuthScreen.qml</file><file alias="PasswordField.qml">qml/PasswordField.qml</file><file alias="AuthError.qml">qml/AuthError.qml</file><file alias="ChoiceMenu.qml">qml/ChoiceMenu.qml</file></qresource></RCC>

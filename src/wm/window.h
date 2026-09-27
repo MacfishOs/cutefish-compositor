@@ -1,0 +1,489 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef CUTEFISH_WM_WINDOW_H_
+#define CUTEFISH_WM_WINDOW_H_
+
+#include <functional>
+#include <memory>
+#include <vector>
+
+#include <QImage>
+#include <QRect>
+#include <QSize>
+#include <QString>
+
+#include "compositor/surface_observer.h"
+#include "wm/types.h"
+#include "wm/window_frame.h"
+
+namespace cutefish::compositor {
+class Surface;
+}
+
+namespace cutefish::scene {
+class Node;
+}
+
+namespace cutefish::wm {
+
+class WindowManager;
+class WindowObserver;
+class WindowState;
+class WindowVisualController;
+
+// A user-visible window. This is a window-manager concept: it is not a
+// wl_surface and holds no protocol resource. It refers to the root Surface of
+// the client's surface tree and owns that surface's placement in the scene.
+//
+// Geometry note: bounds() is the *outer* managed window bounds - everything the
+// window manager owns on screen, including any server-side frame. The client's
+// area is contentBounds(), which is bounds() minus the frame extents, and that
+// is what an xdg configure describes. For a client-decorated or fullscreen
+// window the two are the same rectangle.
+//
+//   bounds()                       contentBounds()
+//   +---------------------------+
+//   | frame                     |
+//   +---------------------------+  +---------------------------+
+//   |                           |  |                           |
+//   |  client                   |  |  client                   |
+//   +---------------------------+  +---------------------------+
+//
+// The origin is authoritative and drives the scene node position directly. The
+// size is a request; the surface node keeps whatever size the committed buffer
+// has until the client resizes to match, which the xdg configure closes.
+class Window : public compositor::SurfaceObserver
+{
+public:
+    Window(WindowManager *manager, compositor::Surface *rootSurface, const QString &title = {},
+           WindowType type = WindowType::Normal);
+    Window(const Window &) = delete;
+    Window &operator=(const Window &) = delete;
+    ~Window() override;
+
+    WindowType type() const { return m_type; }
+
+    bool isPopup() const { return m_type == WindowType::Popup; }
+
+    quint64 id() const { return m_id; }
+
+    WindowManager *manager() const { return m_manager; }
+
+    // The root of the client's surface tree. Never a subsurface.
+    compositor::Surface *rootSurface() const { return m_rootSurface; }
+
+    // The node grouping everything this window draws: the frame, and the
+    // client's surface tree under it. Null when there is no scene at all
+    // (protocol-only tests). The window manager stacks this node.
+    scene::Node *node() const { return m_node; }
+
+    scene::Node *visualNode() const;
+
+    // The root of the client's surface tree, inside visualNode().
+    scene::Node *surfaceNode() const;
+
+    QString title() const { return m_title; }
+
+    void setTitle(const QString &title);
+
+    // xdg_toplevel.set_app_id. Metadata only; nothing in the window manager
+    // keys off it yet.
+    QString applicationId() const { return m_applicationId; }
+
+    void setApplicationId(const QString &id);
+
+    bool isShellApplication() const;
+    bool skipTaskbar() const;
+
+    // The process behind the Wayland connection the window's shell surface was
+    // created on, or 0 when unknown. Metadata for the task list only: it is
+    // never a privilege check.
+    qint64 processId() const { return m_processId; }
+
+    void setProcessId(qint64 pid) { m_processId = pid; }
+
+    // --- Shell role ---
+    //
+    // Everything but Normal comes from the trusted shell through
+    // cutefish_shell_v1 and is adapted into these plain WM concepts before the
+    // window is announced. Set once, before the window manager places the
+    // window or emits windowAdded.
+
+    WindowRole role() const { return m_role; }
+
+    void setRole(WindowRole role);
+
+    bool isShellWindow() const { return m_role != WindowRole::Normal; }
+
+    FocusPolicy focusPolicy() const { return m_focusPolicy; }
+
+    void setFocusPolicy(FocusPolicy policy) { m_focusPolicy = policy; }
+
+    PanelBehavior panelBehavior() const { return m_panelBehavior; }
+
+    void setPanelBehavior(PanelBehavior behavior);
+
+    // Where the client asked to be put, in output coordinates. Authoritative
+    // for a shell window; ordinary applications never set it.
+    bool hasClientPosition() const { return m_hasClientPosition; }
+
+    QPoint clientPosition() const { return m_clientPosition; }
+
+    void setClientPosition(const QPoint &position);
+
+    // Where a minimize animation should end: the task-list entry the shell
+    // reported, in output coordinates. Null when the shell has not said.
+    // Stored for the animation to use; nothing here depends on it.
+    QRect minimizedGeometry() const;
+    void setMinimizedGeometry(const QRect &geometry);
+    void setMinimizedGeometry(Window *panel, const QRect &geometry);
+
+    // The window as it last looked when it was minimized, for the dock to show
+    // in its place. Null while the window is not minimized.
+    const QImage &minimizedSnapshot() const { return m_minimizedSnapshot; }
+
+    void setMinimizedSnapshot(const QImage &snapshot);
+
+    // The minimize animation holds the window on its dock slot until the shell
+    // shows the thumbnail there, or kMinimizeHandoffTimeoutMs pass.
+    void beginMinimizeHandoff();
+    void endMinimizeHandoff();
+
+    bool isMinimizeHandoffPending() const;
+
+    static constexpr int kMinimizeHandoffTimeoutMs = 250;
+
+    WindowState *state() { return m_state.get(); }
+
+    const WindowState *state() const { return m_state.get(); }
+
+    WindowStateType stateType() const;
+
+    // What decoration, visuals and xdg configures follow. It differs from
+    // stateType() only while a drag pulls a tiled window out of its state: the
+    // window manager keeps the tiled state until the drag ends, but everything
+    // the user sees has to be the restored look already.
+    // Upstream: ash/public/cpp/window_properties.h kFrameRestoreLookKey.
+    WindowStateType presentedStateType() const;
+
+    // What the compositor draws *around* the window follows - its shadow, its
+    // rounded corners, its outline and its frame. It lags presentedStateType()
+    // by the frame or two a drag out of a tiled state takes to reach the
+    // client: the client is told it has been restored straight away, but until
+    // its smaller buffer arrives what is on screen is still the tiled window,
+    // and exterior decoration drawn around that hugs an edge the window has
+    // already left.
+    WindowStateType decoratedStateType() const;
+
+    bool isRestoringFromDrag() const { return m_restoringFromDrag; }
+
+    // --- Geometry ---
+
+    QRect bounds() const { return m_bounds; }
+
+    // The client area inside the frame. Equal to bounds() when undecorated.
+    QRect contentBounds() const { return frameInsets().inset(m_bounds); }
+
+    // What the frame occupies of bounds(). Null while fullscreen: a fullscreen
+    // window has no server decoration.
+    Insets frameInsets() const;
+
+    // Sets the logical geometry directly, bypassing the state machine. Use a
+    // SetBoundsWMEvent for anything a user or client requested; this is for the
+    // state machine, the resizer and initial placement.
+    void setBounds(const QRect &bounds);
+
+    // Offset from contentBounds().topLeft() to the root surface's origin. The
+    // shell surface sets it from the client's window geometry - a CSD client
+    // whose buffer carries a shadow has a non-zero one - and from the
+    // compensation applied while an asynchronous resize from a top or left edge
+    // is in flight. The frame extents are added on top of it here, so the shell
+    // surface never has to know about them.
+    QPoint surfaceOrigin() const { return m_surfaceOrigin; }
+
+    void setSurfaceOrigin(const QPoint &origin);
+
+    // What the window actually has on screen right now, in node() coordinates.
+    // bounds() is a *request*: during an interactive resize the window manager
+    // moves it on every pointer motion, while the client's buffer only catches
+    // up a round trip later. Anything the compositor draws around the window -
+    // its frame, outline and shadow - follows this instead of an edge the client
+    // has not reached yet.
+    //
+    // Includes real SSD insets around the committed client size. Configure
+    // acknowledgements alone do not replace the presented buffer.
+    QRect presentedBounds() const;
+
+    // Both constrain the client area, which is what xdg_toplevel.set_min_size /
+    // set_max_size talk about. An empty maximum size means unbounded.
+    QSize minimumSize() const { return m_minimumSize; }
+
+    void setMinimumSize(const QSize &size);
+
+    QSize maximumSize() const { return m_maximumSize; }
+
+    void setMaximumSize(const QSize &size);
+
+    // The same two limits applied to the outer bounds, which is what the
+    // resizer and the state machine work in.
+    QSize minimumOuterSize() const;
+    QSize maximumOuterSize() const;
+
+    bool isResizable() const { return !isPopup() && m_resizable; }
+
+    void setResizable(bool resizable) { m_resizable = resizable; }
+
+    // --- Presentation offset ---
+
+    // How far from bounds() the window is drawn, in output coordinates. The
+    // dock slides off its screen edge by this much while it auto-hides; input
+    // follows what is drawn, so a dock parked off screen takes no clicks.
+    // Nothing else reads it: bounds() stays where the client put the window,
+    // and that is what its popups, its minimize targets and its work-area
+    // reservation are measured from.
+    QPoint presentationOffset() const { return m_presentationOffset; }
+    void setPresentationOffset(const QPoint &offset);
+
+    // A dock parked off screen is not drawn at all, so it cannot land on an
+    // output that happens to lie beyond the edge it left through. Distinct
+    // from isVisible(), which is the minimized state.
+    bool isPresentationHidden() const { return m_presentationHidden; }
+    void setPresentationHidden(bool hidden);
+
+    // --- Client-side decoration ---
+
+    // What the client's own buffer occupies outside its declared xdg_surface
+    // window geometry. A CSD client that paints its own shadow or an invisible
+    // resize border has a non-zero one; a frameless client whose geometry is
+    // its whole buffer has none. Set by the shell surface from committed
+    // protocol geometry: nothing infers it from the application id, the
+    // toolkit or the buffer's pixels.
+    Insets clientExteriorInsets() const { return m_clientExteriorInsets; }
+
+    void setClientExteriorInsets(const Insets &insets);
+
+    // Leading margins distinguish surrounding decoration from trailing resize slack.
+    // Visual ownership does not depend on this classification.
+    bool hasClientExteriorDecoration() const
+    {
+        return m_clientExteriorInsets.left > 0 && m_clientExteriorInsets.top > 0;
+    }
+
+    // --- Server-side decoration ---
+
+    // Gives the window a frame, or takes it away, from the window manager's
+    // frame provider. The client area keeps its size and its position; the
+    // outer bounds absorb the difference. Does nothing without a provider,
+    // which is the case in protocol-only tests.
+    void setDecorated(bool decorated);
+
+    bool isDecorated() const { return m_decorated; }
+
+    // Null unless the window is decorated and a provider was installed.
+    WindowFrame *frame() const { return m_frame.get(); }
+
+    // --- Visibility and activation ---
+
+    // False while minimized, hidden or on a desk that is not active. An
+    // invisible window is not rendered and is not hit tested; its surface and
+    // state stay alive. Upstream: aura::Window::IsVisible.
+    bool isVisible() const { return m_visible && !m_deskHidden; }
+
+    // The window's own visibility, whatever its desk: a window on an inactive
+    // desk can still be activated, which brings its desk up.
+    // Upstream: aura::Window::TargetVisibility.
+    bool targetVisibility() const { return m_visible; }
+
+    void setVisible(bool visible);
+
+    // Set by the window's desk while that desk is not the active one, as Ash
+    // hides an inactive desk's container. Orthogonal to minimized and hidden.
+    bool isDeskHidden() const { return m_deskHidden; }
+
+    void setDeskHidden(bool hidden);
+
+    // Hidden by the shell: off screen at once, with no animation and no
+    // thumbnail, and orthogonal to the state type. A minimized window that is
+    // hidden stays minimized and returns to the dock when it is unhidden.
+    bool isHidden() const { return m_hidden; }
+
+    void setHidden(bool hidden);
+
+    // The client's own opacity for the whole window, frame included. At zero
+    // it is still shown for everything but the eye: frames, input, stacking.
+    void setOpacity(float opacity);
+
+    bool isActive() const;
+    void activate();
+
+    // True between beginMove/beginResize and the end of the drag. ShellSurface
+    // maps this onto the xdg_toplevel resizing state.
+    bool isResizing() const { return m_resizing; }
+
+    // True for an interactive move as well, which the xdg_toplevel resizing
+    // state deliberately does not cover.
+    bool isDragged() const { return m_dragged; }
+
+    // --- Convenience state requests, each one a WMEvent ---
+
+    void maximize();
+    void snapPrimary();
+    void snapSecondary();
+    void minimize();
+    void restore();
+    void setFullscreen(bool fullscreen);
+    void requestBounds(const QRect &bounds);
+
+    // --- Closing ---
+
+    // How a close request reaches the client. The shell surface installs it;
+    // for xdg-shell it sends xdg_toplevel.close.
+    using CloseCallback = std::function<void()>;
+    void setCloseCallback(CloseCallback callback);
+
+    bool canClose() const { return static_cast<bool>(m_closeCallback); }
+
+    // Runs the close callback, which is client-visible and may destroy this
+    // window. An unresponsive window runs the kill callback instead.
+    void requestClose();
+
+    // --- Responsiveness ---
+
+    // How the window manager asks the client to show it still handles events.
+    // The shell surface installs it; for xdg-shell it sends xdg_wm_base.ping,
+    // and the answer, or its absence, comes back through setResponsive().
+    using PingCallback = std::function<void()>;
+    void setPingCallback(PingCallback callback);
+
+    // Does nothing for shell windows, which the session supervises.
+    void ping();
+
+    // False while a ping goes unanswered past its timeout. The window is dimmed,
+    // and closing it ends the client process instead of asking the client.
+    bool isResponsive() const { return m_responsive; }
+
+    void setResponsive(bool responsive);
+
+    // Ends the client process behind the window. The only place the window
+    // manager terminates a client, and only one that stopped answering pings.
+    using KillCallback = std::function<void()>;
+    void setKillCallback(KillCallback callback);
+
+    // --- Transients ---
+
+    // Null unsets the relationship. Refused, returning false, if it would form
+    // a cycle or if `parent` is this window.
+    bool setTransientParent(Window *parent);
+
+    Window *transientParent() const { return m_transientParent; }
+
+    const std::vector<Window *> &transientChildren() const { return m_transientChildren; }
+
+    // Window-modal: while this window is visible, its transient parent gets no
+    // pointer input and cannot be activated. Without a parent it blocks nothing.
+    bool isModal() const { return m_modal; }
+
+    void setModal(bool modal);
+
+    // A dialog the session asks on an application's behalf. Only its stacking
+    // layer differs from an ordinary window; see StackingLayer::SystemDialog.
+    bool isSystemDialog() const { return m_systemDialog; }
+
+    void setSystemDialog(bool systemDialog);
+
+    // Set by policy for floating clients, or asked for by the client itself
+    // through cutefish_window_hints_v1.
+    bool isAlwaysOnTop() const;
+
+    void setAlwaysOnTop(bool alwaysOnTop);
+
+    // --- Observers ---
+
+    // compositor::SurfaceObserver: the client destroyed the surface, so the
+    // window goes with it. This deletes the window.
+    void onSurfaceDestroying(compositor::Surface *surface) override;
+    // The client committed; whatever it now has on screen is presentedBounds().
+    void onSurfaceCommit(compositor::Surface *surface) override;
+    void onSurfaceWindowHintsChanged(compositor::Surface *surface) override;
+
+    void addObserver(WindowObserver *observer);
+    void removeObserver(WindowObserver *observer);
+    bool hasObserver(const WindowObserver *observer) const;
+
+private:
+    friend class Activation;
+    friend class TransientManager;
+    friend class WindowState;
+    friend class ToplevelEventHandler;
+
+    void setActiveInternal(bool active);
+    void setResizingInternal(bool resizing);
+    void setDraggedInternal(bool dragged);
+    void setRestoringFromDragInternal(bool restoring);
+    void updateSurfacePlacement();
+    void updateNodeVisibility();
+    // Applies a change of isVisible() from `wasVisible`.
+    void onEffectiveVisibilityChanged(bool wasVisible);
+    void updateFrame();
+    // Returns the client's surface tree to the compositor's surface container,
+    // so it survives this window's scene node.
+    void detachSurfaceNode();
+
+    const WindowType m_type;
+    const quint64 m_id;
+    WindowManager *m_manager = nullptr;
+    compositor::Surface *m_rootSurface = nullptr;
+    QString m_title;
+    QString m_applicationId;
+    qint64 m_processId = 0;
+    WindowRole m_role = WindowRole::Normal;
+    FocusPolicy m_focusPolicy = FocusPolicy::Normal;
+    PanelBehavior m_panelBehavior = PanelBehavior::StayAbove;
+    QPoint m_clientPosition;
+    QRect m_minimizedGeometry;
+    quint64 m_minimizedGeometryPanel = 0;
+    QImage m_minimizedSnapshot;
+    quint64 m_minimizeHandoff = 0;
+    bool m_hasClientPosition = false;
+    CloseCallback m_closeCallback;
+    PingCallback m_pingCallback;
+    KillCallback m_killCallback;
+    std::unique_ptr<WindowState> m_state;
+
+    scene::Node *m_node = nullptr;
+    std::unique_ptr<WindowVisualController> m_visual;
+    std::unique_ptr<WindowFrame> m_frame;
+    bool m_decorated = false;
+
+    QRect m_bounds;
+    QPoint m_surfaceOrigin;
+    QPoint m_presentationOffset;
+    bool m_presentationHidden = false;
+    Insets m_clientExteriorInsets;
+    QSize m_minimumSize {1, 1};
+    QSize m_maximumSize;
+    bool m_resizable = true;
+    bool m_visible = true;
+    bool m_hidden = false;
+    bool m_deskHidden = false;
+    bool m_active = false;
+    bool m_resizing = false;
+    bool m_dragged = false;
+    bool m_restoringFromDrag = false;
+    bool m_modal = false;
+    bool m_responsive = true;
+    bool m_systemDialog = false;
+    bool m_alwaysOnTop = false;
+    bool m_surfaceAlwaysOnTop = false;
+
+    Window *m_transientParent = nullptr;
+    std::vector<Window *> m_transientChildren;
+
+    std::vector<WindowObserver *> m_observers;
+};
+
+} // namespace cutefish::wm
+
+#endif // CUTEFISH_WM_WINDOW_H_

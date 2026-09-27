@@ -1,0 +1,50 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef CUTEFISH_WM_STACKING_H_
+#define CUTEFISH_WM_STACKING_H_
+
+#include "wm/types.h"
+
+namespace cutefish::wm {
+
+class Window;
+
+// The one place role-aware z-order is decided. Nothing outside this header may
+// hardcode a layer number, and no raise or activation may move a window out of
+// the layer its role puts it in.
+//
+// Bottom to top:
+//
+//   Desktop < Normal applications < AlwaysOnTop < DesktopPopup < Panel < Launcher < SystemDialog < Dock < Notification < Capture
+//
+// SystemDialog holds the session's own dialogs - permission prompts and the
+// like, asked by trusted processes on another application's behalf - which no
+// application window may cover, and which still sit under the dock.
+//
+// Capture is the screen capture interface, which has to reach every pixel the
+// user can point at, the panels and banners included.
+//
+// The cursor is not a window; it composites above all of this from its own
+// scene container.
+enum class StackingLayer {
+    Desktop = 0,
+    Normal = 1,
+    AlwaysOnTop = 2,
+    DesktopPopup = 3,
+    Panel = 4,
+    Launcher = 5,
+    SystemDialog = 6,
+    Dock = 7,
+    Notification = 8,
+    Capture = 9,
+};
+
+// A panel whose behavior is WindowsCanCover drops into the normal layer.
+StackingLayer layerFor(WindowRole role, PanelBehavior behavior);
+StackingLayer layerFor(const Window *window);
+
+} // namespace cutefish::wm
+
+#endif // CUTEFISH_WM_STACKING_H_

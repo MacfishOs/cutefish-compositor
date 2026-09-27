@@ -1,0 +1,56 @@
+// Copyright 2014 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/ui/display/types/native_display_delegate.h
+// Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
+//
+// Adapted for Cutefish: callbacks use standard C++ values and expose the
+// backend boundary needed by a single-process Qt compositor.
+
+#pragma once
+
+#include <functional>
+
+#include <QObject>
+
+#include "display/display_types.h"
+
+namespace cutefish::display {
+
+class NativeDisplayDelegate : public QObject
+{
+    Q_OBJECT
+
+public:
+    enum class ConfigureMode {
+        TestOnly,
+        Commit,
+    };
+
+    enum class PowerState {
+        On,
+        Off,
+        Suspend,
+    };
+
+    using ControlCallback = std::function<void(bool)>;
+    using QueryCallback = std::function<void(std::optional<HardwareSnapshot>, DisplayError)>;
+    using ConfigureCallback = std::function<void(ConfigurationResult)>;
+
+    using QObject::QObject;
+    ~NativeDisplayDelegate() override = default;
+
+    virtual void takeDisplayControl(ControlCallback callback) = 0;
+    virtual void relinquishDisplayControl(ControlCallback callback) = 0;
+    virtual void queryHardware(QueryCallback callback) = 0;
+    virtual void configure(const DisplayConfiguration& configuration, ConfigureMode mode,
+                           ConfigureCallback callback) = 0;
+    virtual void setDisplayPower(const QList<DisplayId>& displays, PowerState state,
+                                 ConfigureCallback callback) = 0;
+
+signals:
+    void hardwareInvalidated(uint64_t topologyGeneration);
+};
+
+} // namespace cutefish::display

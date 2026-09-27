@@ -1,0 +1,85 @@
+// Copyright 2014 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/ui/wm/core/accelerator_filter.h and
+//           chromium/src/ash/accelerators/pre_target_accelerator_handler.h
+// Revision: 8abbac30b9cf2fe976422c58c000c94685648b65
+//
+// Adapted for Cutefish: the pre-target handler is an input::EventSink that
+// sits in front of the window manager's, the way DemoController does. It also
+// stands in for the aura::Env pre-target handlers Ash gives the accelerator
+// history, the launcher state machine and the window cycle event filter.
+
+#ifndef CUTEFISH_ACCELERATORS_ACCELERATOR_FILTER_H_
+#define CUTEFISH_ACCELERATORS_ACCELERATOR_FILTER_H_
+
+#include <QObject>
+
+#include "accelerators/accelerator.h"
+#include "input/event_sink.h"
+
+namespace cutefish::input {
+class XkbTracker;
+}
+
+namespace cutefish::wm {
+class WindowCycleController;
+class WindowManager;
+} // namespace cutefish::wm
+
+namespace cutefish::accelerators {
+
+class AcceleratorController;
+
+// ash::InputMethodManager::ArePositionalShortcutsUsedByCurrentInputMethod:
+// every layout but the US ones pins punctuation shortcuts by position.
+bool usesPositionalShortcuts(const input::XkbTracker &xkb);
+
+class AcceleratorFilter : public QObject, public input::EventSink
+{
+    Q_OBJECT
+
+public:
+    // `next` receives whatever is not consumed here; it is the window manager.
+    AcceleratorFilter(AcceleratorController *controller, const input::XkbTracker *xkb,
+                      wm::WindowManager *windowManager, wm::WindowCycleController *windowCycle,
+                      input::EventSink *next, QObject *parent = nullptr);
+    ~AcceleratorFilter() override;
+
+    // The accelerator a physical key transition amounts to under the current
+    // xkb state, which the seat has already advanced for it.
+    Accelerator acceleratorForKey(uint32_t evdevCode, bool pressed) const;
+
+    // input::EventSink:
+    bool onPointerMotion(input::Timestamp timestamp, const QPointF &location) override;
+    bool onPointerButton(input::Timestamp timestamp, const QPointF &location,
+                         uint32_t evdevButton, bool pressed) override;
+    bool onPointerAxis(input::Timestamp timestamp, const QPointF &location,
+                       const QPointF &offset, bool discrete) override;
+    bool onPointerAxisStop(input::Timestamp timestamp, const QPointF &location) override;
+    bool onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
+    // Touch passes straight through: ash's launcher state machine and window
+    // cycle filter watch the mouse only.
+    bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
+    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
+    bool onTouchUp(input::Timestamp timestamp, int32_t id) override;
+    void onTouchCancel(input::Timestamp timestamp) override;
+
+private:
+    // PreTargetAcceleratorHandler::ProcessAccelerator.
+    bool processAccelerator(const Accelerator &accelerator);
+    bool shouldProcessAcceleratorNow(const Accelerator &accelerator) const;
+
+    AcceleratorController *m_controller = nullptr;
+    const input::XkbTracker *m_xkb = nullptr;
+    // What the accelerator that started the window cycle held besides Shift.
+    uint32_t m_cycleModifiers = 0;
+    wm::WindowManager *m_windowManager = nullptr;
+    wm::WindowCycleController *m_windowCycle = nullptr;
+    input::EventSink *m_next = nullptr;
+};
+
+} // namespace cutefish::accelerators
+
+#endif // CUTEFISH_ACCELERATORS_ACCELERATOR_FILTER_H_

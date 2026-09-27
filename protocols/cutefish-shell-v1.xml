@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="cutefish_shell_v1">
+
+  <description summary="private shell surface roles for cutefish-shell">
+    This protocol lets the trusted Cutefish shell process describe what its
+    surfaces are for: a desktop background, a panel, a dock, the launcher, a
+    notification banner or the screen capture interface.
+
+    It is an *extension* of an ordinary wl_surface, not a replacement for
+    xdg-shell. The shell keeps creating xdg_toplevel objects through
+    xdg_wm_base exactly like any other Wayland client; this protocol only adds
+    the role, the stacking behaviour, the global position, the focus policy and
+    the work-area reservation that plain xdg-shell cannot express.
+
+    The compositor only advertises this global to the one trusted shell client
+    it was handed by the session. Ordinary applications never see it.
+
+    Warning! Not a standard protocol. Backward-incompatible changes are made by
+    bumping the interface version.
+  </description>
+
+  <interface name="cutefish_shell_v1" version="1">
+    <description summary="private shell interface">
+      A factory for cutefish_shell_surface_v1 objects.
+    </description>
+
+    <enum name="error">
+      <entry name="role" value="0"
+             summary="the wl_surface already has a cutefish_shell_surface_v1"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="release the shell interface">
+        Destroying the factory does not destroy the shell surfaces it created.
+      </description>
+    </request>
+
+    <request name="get_shell_surface">
+      <description summary="extend a wl_surface with shell metadata">
+        Creates a cutefish_shell_surface_v1 for the given wl_surface.
+
+        The wl_surface must belong to the same client and the same connection.
+        Giving a surface two shell surfaces raises the role error.
+
+        The metadata carried by the new object should be set before the first
+        buffer is committed on the surface, so the compositor never has to
+        place the surface as an ordinary window first.
+      </description>
+      <arg name="id" type="new_id" interface="cutefish_shell_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="cutefish_shell_surface_v1" version="1">
+    <description summary="shell metadata attached to a wl_surface">
+      Describes what the compositor should make of a shell surface. All state
+      here takes effect immediately rather than on the next wl_surface.commit:
+      the shell sets it once when the surface is created and the compositor
+      applies it to the window the surface's xdg role produces.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_role" value="0" summary="unknown role value"/>
+      <entry name="invalid_edge" value="1" summary="unknown exclusive-zone edge"/>
+      <entry name="invalid_behavior" value="2" summary="unknown panel behavior"/>
+      <entry name="invalid_focus_policy" value="3" summary="unknown focus policy"/>
+      <entry name="invalid_output" value="4" summary="unknown logical output"/>
+    </enum>
+
+    <enum name="role">
+      <description summary="what the surface is">
+        The role decides which stacking layer the window lives in and how the
+        window manager places it. Roles other than desktop are always kept in
+        their own layer: activation can never move a window between layers.
+
+        A capture surface and its popups are shown on screen but never
+        painted into an image or a video the compositor captures, so the
+        interface that takes a screenshot is never part of it.
+
+        A capture surface never becomes the active window: activating it only
+        takes the keyboard, and the window that was active stays active.
+      </description>
+      <entry name="desktop" value="0" summary="the desktop background, below everything"/>
+      <entry name="panel" value="1" summary="a panel such as the status bar"/>
+      <entry name="dock" value="2" summary="the dock"/>
+      <entry name="launcher" value="3" summary="the full screen launcher"/>
+      <entry name="notification" value="4" summary="a notification banner"/>
+      <entry name="capture" value="5"
+             summary="the screen capture interface, above everything else"/>
+    </enum>
+
+    <enum name="panel_behavior">
+      <description summary="how a panel or dock relates to ordinary windows">
+        Only meaningful for the panel and dock roles.
+      </description>
+      <entry name="stay_above" value="0" summary="always above ordinary windows"/>
+      <entry name="windows_can_cover" value="1"
+             summary="ordinary windows and the launcher may be stacked over it"/>
+    </enum>
+
+    <enum name="focus_policy">
+      <entry name="normal" value="0" summary="the window can take keyboard focus"/>
+      <entry name="no_focus" value="1"
+             summary="the window receives pointer input but never keyboard focus"/>
+    </enum>
+
+    <enum name="edge">
+      <description summary="which screen edge an exclusive zone is measured from"/>
+      <entry name="top" value="0"/>
+      <entry name="bottom" value="1"/>
+      <entry name="left" value="2"/>
+      <entry name="right" value="3"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="drop the shell metadata">
+        The surface goes back to being an ordinary window, and any exclusive
+        zone it reserved is released.
+      </description>
+    </request>
+
+    <request name="set_role">
+      <description summary="set the surface role">
+        Must be sent before the surface is first mapped. Changing the role of a
+        mapped surface is allowed but the compositor may only apply it the next
+        time the surface is mapped.
+      </description>
+      <arg name="role" type="uint" enum="role"/>
+    </request>
+
+    <request name="set_position">
+      <description summary="place the surface in global coordinates">
+        The position of the surface's top left corner in the compositor's
+        global coordinate space. A shell surface is never subject to the
+        window manager's ordinary placement policy: this position is
+        authoritative.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </request>
+
+    <request name="set_panel_behavior">
+      <arg name="behavior" type="uint" enum="panel_behavior"/>
+    </request>
+
+    <request name="set_focus_policy">
+      <arg name="policy" type="uint" enum="focus_policy"/>
+    </request>
+
+    <request name="set_exclusive_zone">
+      <description summary="reserve work area along a screen edge">
+        Asks the compositor to keep a strip of `thickness` logical pixels along
+        `edge` clear of maximized and normally placed windows.
+
+        Reservations from every shell surface compose: a status bar at the top
+        and a dock at the bottom shrink the work area from both ends. A
+        thickness of zero is the same as clear_exclusive_zone.
+      </description>
+      <arg name="edge" type="uint" enum="edge"/>
+      <arg name="thickness" type="int"/>
+    </request>
+
+    <request name="clear_exclusive_zone">
+      <description summary="release this surface's work-area reservation"/>
+    </request>
+
+    <request name="activate">
+      <description summary="give this surface the keyboard focus">
+        The trusted way for the launcher to take focus. No serial is required:
+        the shell is trusted, and its own activations do not come from an
+        input event it can point at.
+
+        Ignored while the surface has no window, or while its focus policy is
+        no_focus.
+      </description>
+    </request>
+
+    <request name="set_output">
+      <description summary="associate this surface with a logical output">
+        Selects the logical output by its stable wl_output name. Positions stay
+        in global coordinates. Exclusive zones apply only to this output.
+      </description>
+      <arg name="name" type="string" summary="wl_output name"/>
+    </request>
+  </interface>
+</protocol>

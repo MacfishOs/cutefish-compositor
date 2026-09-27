@@ -1,0 +1,76 @@
+// Copyright 2020 The Chromium Authors
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE.chromium file.
+//
+// Upstream: chromium/src/ash/wm/desks/desks_animations.cc (WindowMoveToDeskAnimation)
+// Revision: 8abbac30b9cf2fe976422c58c000c94685648b65
+
+#include "scene/slide_out_node.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+
+#include "scene/motion.h"
+
+namespace cutefish::scene {
+
+SlideOutNode::SlideOutNode(std::function<qint64()> clock)
+    : Node(QStringLiteral("window-move-to-desk"))
+    , m_now(clock ? std::move(clock) : [] {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+    })
+{
+}
+
+void SlideOutNode::slideOut(DeskSwitchNode::Frames frames, const QRect &window,
+                            const QRect &output, bool goingLeft)
+{
+    if (frames.empty())
+        return;
+    // Upstream GetWindowEndTransform: just past the edge on the target's side.
+    const int distance = goingLeft ? -(window.right() + 1 - output.left())
+                                   : output.right() + 1 - window.left();
+    m_slides.push_back({std::move(frames), distance, m_now()});
+    notifyChanged();
+}
+
+void SlideOutNode::render(render::Renderer &renderer) const
+{
+    if (m_slides.empty() || !isVisible())
+        return;
+    const qint64 now = m_now();
+    const auto &context = renderer.outputContext();
+    const QRect viewport =
+            context.logicalViewport.isEmpty() ? absoluteGeometry() : context.logicalViewport;
+    const double duration = std::max(1.0, kDurationMs * motion::durationScale());
+    for (const Slide &slide : m_slides) {
+        const auto frame = slide.frames.find(context.outputId);
+        if (frame == slide.frames.end() || !frame->second)
+            continue;
+        const double t = std::clamp(double(now - slide.start) / duration, 0.0, 1.0);
+        // gfx::Tween::EASE_IN.
+        const double offset = slide.distance * t * t;
+        renderer.drawTextureF(frame->second.get(),
+                              QRectF(viewport.x() + offset, viewport.y(), viewport.width(),
+                                     viewport.height()));
+    }
+    if (renderer.capturing)
+        return;
+    std::erase_if(m_slides, [now, duration](const Slide &slide) {
+        return now - slide.start >= duration;
+    });
+    // Once more after the last slide ends, to repaint without it.
+    notifyChanged();
+}
+
+void SlideOutNode::releaseRenderResources()
+{
+    m_slides.clear();
+    Node::releaseRenderResources();
+}
+
+} // namespace cutefish::scene

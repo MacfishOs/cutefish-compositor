@@ -1,0 +1,122 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "wm/window_visual_controller.h"
+
+#include <algorithm>
+
+#include "compositor/surface.h"
+#include "decoration/window_visual_style.h"
+#include "wm/window.h"
+#include "wm/window_manager.h"
+#include "wm/window_modality_controller.h"
+
+namespace cutefish::wm {
+
+scene::WindowVisualState
+WindowVisualController::evaluate(const Window &window, const decoration::WindowVisualStyle &style)
+{
+    using Mode = scene::WindowVisualMode;
+    scene::WindowVisualState state;
+    state.shape.bounds = window.presentedBounds();
+    if (window.isPopup() || window.role() != WindowRole::Normal) {
+        // Menus and shell panels describe their rounded body through the blur request.
+        const auto *surface = window.rootSurface();
+        const QPoint origin = window.frameInsets().topLeft() + window.surfaceOrigin();
+        const QPainterPath path = surface ? surface->backgroundBlurShape() : QPainterPath();
+        if (!path.isEmpty()) {
+            state.outlinePath = path.translated(origin);
+            state.outlineShape = {state.outlinePath.boundingRect(), 0};
+            state.drawOutline = true;
+            state.outlineWidthPx = style.outlineWidthPx;
+            const bool dock = window.role() == WindowRole::Dock;
+            state.outlineColor = dock ? style.dockOutline : style.activeOutline;
+            state.highlightColor = dock ? style.dockHighlight : style.highlight;
+            return state;
+        }
+        const QRect body = surface
+                ? surface->backgroundBlurRect().intersected(QRect(QPoint(), surface->contentSize()))
+                : QRect();
+        if (!body.isEmpty() && surface->backgroundBlurRadius() > 0) {
+            const qreal radius = std::min({qreal(surface->backgroundBlurRadius()),
+                                           body.width() / 2.0, body.height() / 2.0});
+            state.outlineShape = {QRectF(body.translated(origin)), radius};
+            state.drawOutline = true;
+            state.outlineWidthPx = style.outlineWidthPx;
+            const bool dock = window.role() == WindowRole::Dock;
+            state.outlineColor = dock ? style.dockOutline : style.activeOutline;
+            state.highlightColor = dock ? style.dockHighlight : style.highlight;
+        }
+        return state;
+    }
+    if (window.isDecorated())
+        state.mode = Mode::ServerFrame;
+    else
+        state.mode = Mode::ServerExterior;
+    const auto exterior = window.clientExteriorInsets();
+    state.shape.bounds.adjust(exterior.left, exterior.top, -exterior.right, -exterior.bottom);
+    // Exterior pixels stay hidden even when the body has square, tiled edges.
+    state.clipContent = !exterior.isNull();
+    if (window.decoratedStateType() == WindowStateType::Normal) {
+        state.shape.radius = style.radiusFor(state.shape.bounds.size().toSize());
+        state.clipContent = true;
+        state.drawOutline = true;
+        state.outlineWidthPx = style.outlineWidthPx;
+    }
+    state.outlineColor = window.isActive() ? style.activeOutline : style.inactiveOutline;
+    state.highlightColor = style.highlight;
+    if (modalTransient(&window) || !window.isResponsive())
+        state.dimOpacity = style.dimOpacity;
+    return state;
+}
+
+scene::WindowVisualState WindowVisualController::evaluate(const Window &window)
+{
+    return evaluate(window, decoration::WindowVisualStyle());
+}
+
+WindowVisualController::WindowVisualController(Window *window)
+    : m_window(window)
+{
+    if (window->node())
+        m_node = static_cast<scene::WindowVisualNode *>(
+                window->node()->addChild(std::make_unique<scene::WindowVisualNode>()));
+    window->addObserver(this);
+    update();
+}
+
+WindowVisualController::~WindowVisualController()
+{
+    m_window->removeObserver(this);
+}
+
+void WindowVisualController::update()
+{
+    if (m_node)
+        m_node->setState(evaluate(*m_window, m_window->manager()->visualStyle()));
+}
+
+void WindowVisualController::refresh(Window *window)
+{
+    if (auto *node = window ? dynamic_cast<scene::WindowVisualNode *>(window->visualNode()) : nullptr)
+        node->setState(evaluate(*window, window->manager()->visualStyle()));
+}
+
+void WindowVisualController::onWindowVisibilityChanged(Window *window, bool)
+{
+    refresh(window->transientParent());
+}
+
+void WindowVisualController::onWindowModalChanged(Window *window)
+{
+    refresh(window->transientParent());
+}
+
+void WindowVisualController::onWindowTransientParentChanged(Window *window, Window *oldParent)
+{
+    refresh(oldParent);
+    refresh(window->transientParent());
+}
+
+} // namespace cutefish::wm
