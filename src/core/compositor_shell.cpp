@@ -973,6 +973,9 @@ CompositorShell::~CompositorShell()
     m_cursorRouter.reset();
     m_scene.root()->setChangeCallback({});
     m_scene.root()->releaseRenderResources();
+    // Outside the scene, so released by hand: a texture outliving the backend
+    // keeps its EGL display up while the GBM device under it is destroyed.
+    m_decorationTheme.clearTextures();
     m_backend.reset();
     m_session.reset();
 }
