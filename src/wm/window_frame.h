@@ -14,6 +14,7 @@
 #define CUTEFISH_WM_WINDOW_FRAME_H_
 
 #include <memory>
+#include <vector>
 
 #include <QPointF>
 #include <QRect>
@@ -67,6 +68,11 @@ public:
     // True while the pointer holds a caption button, so the release belongs to
     // the frame wherever it lands.
     virtual bool isTrackingPress() const = 0;
+
+    // The title bar and the caption buttons in output coordinates, for the
+    // window debug service. Empty for a frame that draws none.
+    virtual QRect titleBarBounds() const { return QRect(); }
+    virtual std::vector<QRect> captionButtonBounds() const { return {}; }
 
     // Touch points the window manager decided belong to the frame. A point
     // that went down here is the frame's until it is lifted; one that starts

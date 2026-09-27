@@ -143,6 +143,26 @@ QRect Decoration::titleBarRect() const
     return QRect(0, 0, frame.width(), std::min(frame.height(), m_theme->metrics().titleBarHeight));
 }
 
+QRect Decoration::titleBarBounds() const
+{
+    if (!m_window || m_window->frameInsets().isNull())
+        return QRect();
+    return titleBarRect().translated(m_window->bounds().topLeft()
+                                     + m_window->presentedBounds().topLeft());
+}
+
+std::vector<QRect> Decoration::captionButtonBounds() const
+{
+    std::vector<QRect> bounds;
+    if (!m_window || m_window->frameInsets().isNull())
+        return bounds;
+    // The inverse of toFrame().
+    const QPoint origin = m_window->bounds().topLeft() + m_window->presentedBounds().topLeft();
+    for (const CaptionButton &button : m_buttons)
+        bounds.push_back(button.geometry().translated(origin));
+    return bounds;
+}
+
 QRect Decoration::inputBounds() const
 {
     if (!m_window)

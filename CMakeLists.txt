@@ -585,6 +585,8 @@ add_library(cutefish-session STATIC
     src/session/session_teardown.h
     src/session/sleep_lock.cpp
     src/session/sleep_lock.h
+    src/session/window_debug_service.cpp
+    src/session/window_debug_service.h
 )
 target_include_directories(cutefish-session PUBLIC src)
 target_link_libraries(cutefish-session PUBLIC cutefish-compositor-core cutefish-wm Qt6::DBus Qt6::Concurrent)

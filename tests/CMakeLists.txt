@@ -298,6 +298,13 @@ target_include_directories(applications_service_test PRIVATE ${CMAKE_CURRENT_SOU
 target_link_libraries(applications_service_test PRIVATE cutefish-session Qt6::Test)
 add_test(NAME applications_service_test
     COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:applications_service_test>)
+
+add_executable(window_debug_service_test window_debug_service_test.cpp)
+target_include_directories(window_debug_service_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(window_debug_service_test PRIVATE cutefish-session Qt6::Test)
+add_test(NAME window_debug_service_test
+    COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:window_debug_service_test>)
+
 add_executable(sleep_lock_test sleep_lock_test.cpp)
 target_link_libraries(sleep_lock_test PRIVATE cutefish-session Qt6::Test)
 add_test(NAME sleep_lock_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:sleep_lock_test>)

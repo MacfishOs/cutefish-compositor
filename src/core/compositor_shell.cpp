@@ -359,6 +359,10 @@ bool CompositorShell::init()
                 });
         if (!m_applicationsService->registerService())
             qCWarning(cfWayland) << "The applications service is unavailable";
+
+        m_windowDebugService = std::make_unique<session::WindowDebugService>(&m_windowManager);
+        if (!m_windowDebugService->registerService())
+            qCWarning(cfWayland) << "The window debug service is unavailable";
     }
 
     if (m_options.noDrm) {
@@ -924,6 +928,7 @@ CompositorShell::~CompositorShell()
     m_displayController.reset();
     m_displayDelegate.reset();
     m_inputManager.setEventSink(nullptr);
+    m_windowDebugService.reset();
     m_applicationsService.reset();
     m_quitAll.reset();
     m_powerButton.reset();

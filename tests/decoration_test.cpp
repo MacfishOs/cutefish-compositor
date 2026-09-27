@@ -614,6 +614,21 @@ TEST_F(DecorationTest, TheButtonsCentreInTheTitleBar)
     }
 }
 
+TEST_F(DecorationTest, TheDebugBoundsAreTheFrameInOutputCoordinates)
+{
+    ShellSurface *shell = makeToplevel(QSize(400, 300));
+    Window *window = shell->window();
+    decoration::Decoration *frame = frameOf(window);
+    const QPoint origin = window->bounds().topLeft();
+
+    EXPECT_EQ(QRect(origin, QSize(window->bounds().width(), theme.metrics().titleBarHeight)),
+              frame->titleBarBounds());
+    const std::vector<QRect> bounds = frame->captionButtonBounds();
+    ASSERT_EQ(frame->buttons().size(), bounds.size());
+    for (size_t index = 0; index < bounds.size(); ++index)
+        EXPECT_EQ(frame->buttons()[index].geometry().translated(origin), bounds[index]);
+}
+
 TEST_F(DecorationTest, AWindowUnderAnotherOneDoesNotGetTheFrameHit)
 {
     ShellSurface *lower = makeToplevel(QSize(400, 300));

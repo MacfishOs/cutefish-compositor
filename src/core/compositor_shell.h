@@ -31,6 +31,7 @@
 #include "scene/scene.h"
 #include "scene/screen_transition_node.h"
 #include "session/applications_service.h"
+#include "session/window_debug_service.h"
 #include "session/power_button.h"
 #include "session/screen_saver_service.h"
 #include "session/secure_container.h"
@@ -263,6 +264,7 @@ private:
     // How the session quits every application before it ends.
     std::unique_ptr<wm::QuitAll> m_quitAll;
     std::unique_ptr<session::ApplicationsService> m_applicationsService;
+    std::unique_ptr<session::WindowDebugService> m_windowDebugService;
 
     compositor::Output m_outputModel;
     std::vector<std::unique_ptr<compositor::Output>> m_additionalOutputModels;
