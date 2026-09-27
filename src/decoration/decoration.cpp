@@ -173,9 +173,10 @@ void Decoration::layout()
     // The group is right-aligned, in the order the Cutefish KWin configuration
     // lists it: minimize, maximize, close.
     int right = titleBar.right() + 1 - metrics.buttonsRightMargin;
+    const int top = titleBar.top() + std::max(0, (titleBar.height() - metrics.buttonSize) / 2);
     for (auto button = m_buttons.rbegin(); button != m_buttons.rend(); ++button) {
         const int left = right - metrics.buttonSize;
-        button->setGeometry(QRect(left, titleBar.top(), metrics.buttonSize, metrics.buttonSize));
+        button->setGeometry(QRect(left, top, metrics.buttonSize, metrics.buttonSize));
         right = left - metrics.buttonSpacing;
     }
 }

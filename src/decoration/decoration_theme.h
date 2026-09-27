@@ -37,8 +37,9 @@ namespace cutefish::decoration {
 struct Metrics {
     Metrics();
 
-    // Match FishUI's button height without extra decoration padding.
-    int titleBarHeight = 32;
+    // Lower than FishUI's 40px header, which also carries toolbar controls;
+    // the buttons centre in it.
+    int titleBarHeight = 36;
     // The outline overlays client pixels; resize hit areas do not need a visible inset.
     int borderWidth = 0;
     // FishUI Theme.qml windowRadius, shared by all compositor-owned corners.
@@ -48,10 +49,11 @@ struct Metrics {
     int resizeMargin = 5;
     // How far along an edge counts as the corner rather than the edge.
     int resizeCorner = 16;
-    // FishUI Window.qml and Units.smallSpacing.
+    // FishUI Window.qml: 7px between hover circles and to the right edge, so
+    // right-aligned windows line their buttons up.
     int buttonSize = 32;
-    int buttonSpacing = 3;
-    int buttonsRightMargin = 6;
+    int buttonSpacing = 1;
+    int buttonsRightMargin = 4;
     // The artwork is drawn on a 24x24 grid inside the button.
     int iconSize = 24;
     // kwin-plugins: the caption keeps this much clear of the buttons.

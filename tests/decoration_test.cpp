@@ -593,6 +593,27 @@ TEST_F(DecorationTest, ACaptionButtonIsNotTheTitleBar)
     }
 }
 
+TEST_F(DecorationTest, TheButtonsCentreInTheTitleBar)
+{
+    ShellSurface *shell = makeToplevel(QSize(400, 300));
+    decoration::Decoration *frame = frameOf(shell->window());
+    const auto &metrics = theme.metrics();
+    const int width = shell->window()->bounds().width();
+
+    const auto &buttons = frame->buttons();
+    ASSERT_EQ(3u, buttons.size());
+    const int top = (metrics.titleBarHeight - metrics.buttonSize) / 2;
+    EXPECT_EQ(width - metrics.buttonsRightMargin, buttons.back().geometry().right() + 1);
+    for (size_t index = 0; index < buttons.size(); ++index) {
+        const QRect geometry = buttons[index].geometry();
+        EXPECT_EQ(QSize(metrics.buttonSize, metrics.buttonSize), geometry.size());
+        EXPECT_EQ(top, geometry.top());
+        if (index > 0)
+            EXPECT_EQ(metrics.buttonSpacing,
+                      geometry.left() - buttons[index - 1].geometry().right() - 1);
+    }
+}
+
 TEST_F(DecorationTest, AWindowUnderAnotherOneDoesNotGetTheFrameHit)
 {
     ShellSurface *lower = makeToplevel(QSize(400, 300));
