@@ -426,6 +426,12 @@ void Window::setOpacity(float opacity)
         animation->setOpacity(opacity);
 }
 
+void Window::setPresentationScale(double scale, const QPointF &anchor, bool animate)
+{
+    if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node))
+        animation->setPresentationScale(scale, anchor, animate);
+}
+
 void Window::setModal(bool modal)
 {
     if (modal == m_modal)

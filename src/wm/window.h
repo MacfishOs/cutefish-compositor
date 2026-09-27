@@ -315,6 +315,11 @@ public:
     // it is still shown for everything but the eye: frames, input, stacking.
     void setOpacity(float opacity);
 
+    // Drawn at `scale` of its size about `anchor`, a point in bounds()
+    // coordinates, animated there from what is drawn now unless `animate` is
+    // false. Presentation only: bounds, input and the client are unaffected.
+    void setPresentationScale(double scale, const QPointF &anchor, bool animate);
+
     bool isActive() const;
     void activate();
 
@@ -325,6 +330,12 @@ public:
     // True for an interactive move as well, which the xdg_toplevel resizing
     // state deliberately does not cover.
     bool isDragged() const { return m_dragged; }
+
+    // A window pulled out of another by a drag and not yet let go: it follows
+    // the pointer as a preview, and cannot be activated until it is dropped.
+    bool isDragPreview() const { return m_dragPreview; }
+
+    void setDragPreview(bool preview) { m_dragPreview = preview; }
 
     // --- Convenience state requests, each one a WMEvent ---
 
@@ -471,6 +482,7 @@ private:
     bool m_active = false;
     bool m_resizing = false;
     bool m_dragged = false;
+    bool m_dragPreview = false;
     bool m_restoringFromDrag = false;
     bool m_modal = false;
     bool m_responsive = true;

@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "input/input_manager.h"
+#include "scene/window_animation.h"
 #include "wm/window.h"
 #include "wm/window_frame.h"
 #include "wm/window_manager.h"
@@ -40,9 +41,15 @@ QJsonObject describe(const wm::Window *window)
             {QStringLiteral("visible"), window->isVisible()},
             {QStringLiteral("active"), window->isActive()},
             {QStringLiteral("decorated"), window->isDecorated()},
+            {QStringLiteral("dragPreview"), window->isDragPreview()},
             {QStringLiteral("bounds"), rectArray(window->bounds())},
             {QStringLiteral("contentBounds"), rectArray(window->contentBounds())},
     };
+
+    if (const auto *animation = dynamic_cast<const scene::WindowAnimation *>(window->node())) {
+        object.insert(QStringLiteral("opacity"), animation->opacity());
+        object.insert(QStringLiteral("scale"), animation->targetPresentationScale());
+    }
 
     const wm::Insets exterior = window->clientExteriorInsets();
     object.insert(QStringLiteral("clientExteriorInsets"),

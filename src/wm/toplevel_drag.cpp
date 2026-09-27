@@ -4,6 +4,10 @@
 
 #include "wm/toplevel_drag.h"
 
+#include <algorithm>
+
+#include <QTimer>
+
 #include "clipboard/selection.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
@@ -21,6 +25,21 @@ namespace {
 scene::WindowAnimation *animationFor(Window *window)
 {
     return dynamic_cast<scene::WindowAnimation *>(window->node());
+}
+
+// The pointer in `window`'s bounds, which the preview shrinks towards and
+// grows back from.
+QPointF grabPoint(WindowManager *manager, Window *window)
+{
+    input::Seat *seat = manager->seat();
+    return seat ? seat->pointerLocation() - QPointF(window->bounds().topLeft()) : QPointF();
+}
+
+void settlePreview(WindowManager *manager, Window *preview)
+{
+    preview->setDragPreview(false);
+    preview->setOpacity(1);
+    preview->setPresentationScale(1, grabPoint(manager, preview), true);
 }
 
 } // namespace
@@ -45,6 +64,7 @@ ToplevelDrag::~ToplevelDrag()
         if (seat->drag()->windowDelegate() == this)
             seat->drag()->setWindowDelegate(nullptr);
     }
+    unwatchDockTarget();
     stopMove();
     detach();
 }
@@ -85,8 +105,15 @@ void ToplevelDrag::onWindowAdded(Window *window)
         const QPoint origin = seat->pointerLocation().toPoint() - m_offset;
         window->setBounds(window->bounds().translated(origin - window->contentBounds().topLeft()));
     }
-    if (m_dragging)
+    if (m_dragging) {
+        window->setDragPreview(true);
+        window->setOpacity(kPreviewOpacity);
+        window->setPresentationScale(
+                std::min(kPreviewMaxScale, kPreviewWidth / std::max(1, window->bounds().width())),
+                grabPoint(m_manager, window), false);
+        m_preview = window->id();
         startMove(window);
+    }
 }
 
 void ToplevelDrag::onWindowRemoved(Window *window)
@@ -145,9 +172,63 @@ void ToplevelDrag::dragMoved(const QPointF &location)
         handler->onPointerMotion(location);
 }
 
+void ToplevelDrag::dragTargetChanged(compositor::Surface *target, bool accepted)
+{
+    Window *preview = m_manager->windowById(m_preview);
+    Window *below = accepted ? m_manager->windowForSurface(target) : nullptr;
+    const bool docked = preview && below && below->processId() > 0
+            && below->processId() == preview->processId();
+    if (!docked) {
+        unwatchDockTarget();
+        m_docked = 0;
+        if (preview)
+            preview->setOpacity(kPreviewOpacity);
+        return;
+    }
+    if (m_docked == below->id())
+        return;
+    unwatchDockTarget();
+    m_docked = below->id();
+    m_dockTarget = below->rootSurface();
+    m_dockTarget->addSurfaceObserver(this);
+}
+
+void ToplevelDrag::onSurfaceCommit(compositor::Surface *surface)
+{
+    if (surface != m_dockTarget)
+        return;
+    unwatchDockTarget();
+    if (Window *preview = m_manager->windowById(m_preview))
+        preview->setOpacity(0);
+}
+
+void ToplevelDrag::unwatchDockTarget()
+{
+    if (m_dockTarget && m_dockTarget != m_surface)
+        m_dockTarget->removeSurfaceObserver(this);
+    m_dockTarget = nullptr;
+}
+
 void ToplevelDrag::dragEnded(bool released)
 {
     m_dragging = false;
+    unwatchDockTarget();
+    // Let go where nothing takes it, the preview is the new window at once.
+    // Otherwise its client takes it back: hidden until it has, and shown only
+    // if it keeps it after all. The drag object may be gone by then.
+    const bool docked = std::exchange(m_docked, 0) != 0;
+    if (Window *preview = m_manager->windowById(std::exchange(m_preview, 0))) {
+        if (released && !docked) {
+            settlePreview(m_manager, preview);
+            preview->activate();
+        } else {
+            preview->setOpacity(0);
+            QTimer::singleShot(kSettleDelayMs, m_manager, [manager = m_manager, id = preview->id()] {
+                if (Window *kept = manager->windowById(id))
+                    settlePreview(manager, kept);
+            });
+        }
+    }
     Window *window = std::exchange(m_moving, nullptr);
     // Looked up while the dragged window still takes no part in the hit test.
     if (window && released) {
@@ -178,6 +259,8 @@ void ToplevelDrag::dragEnded(bool released)
 
 void ToplevelDrag::onSurfaceDestroying(compositor::Surface *surface)
 {
+    if (surface == m_dockTarget)
+        m_dockTarget = nullptr;
     if (surface == m_surface)
         detach();
 }

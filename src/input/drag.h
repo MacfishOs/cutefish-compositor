@@ -84,6 +84,9 @@ class DragWindowDelegate
 public:
     virtual ~DragWindowDelegate() = default;
     virtual void dragMoved(const QPointF& location) = 0;
+    // The surface under the pointer, and whether it takes the drop; null when
+    // the drag is over nothing.
+    virtual void dragTargetChanged(compositor::Surface* target, bool accepted) = 0;
     // `released` is a drop, whether or not a target took the data; otherwise
     // the drag was cancelled, by Escape or by its source or origin going away.
     virtual void dragEnded(bool released) = 0;
@@ -166,6 +169,7 @@ private:
     void setCursor(CursorShape shape);
     // The cursor over nothing that takes the drop.
     CursorShape idleCursor() const;
+    void notifyWindowTarget();
     Seat* m_seat;
     compositor::Surface* m_origin = nullptr;
     compositor::Surface* m_icon = nullptr;

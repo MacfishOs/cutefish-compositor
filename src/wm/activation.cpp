@@ -40,6 +40,9 @@ bool Activation::canActivate(const Window *window) const
     // WindowManager::setKeyboardGrab().
     if (window->role() == WindowRole::Capture)
         return false;
+    // The window it was pulled out of keeps the keyboard until the drop.
+    if (window->isDragPreview())
+        return false;
     // As in AshFocusRules, a window on an inactive desk counts as visible:
     // activating it is what switches to its desk.
     if (!window->targetVisibility() || window->state()->isMinimized())

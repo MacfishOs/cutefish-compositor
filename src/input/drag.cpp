@@ -294,6 +294,7 @@ void DragController::updateFeedback(DragOffer *offer)
     }
     if (generation != m_generation || !active())
         return;
+    notifyWindowTarget();
     setCursor(!m_source             ? CursorShape::Grabbing
                       : action == 1 ? CursorShape::Copy
                       : action == 2 ? CursorShape::Move
@@ -321,8 +322,10 @@ void DragController::leave()
         if (generation == m_generation && source->alive())
             source->action(0);
     }
-    if (generation == m_generation && active())
+    if (generation == m_generation && active()) {
+        notifyWindowTarget();
         setCursor(idleCursor());
+    }
 }
 
 void DragController::motion(Timestamp timestamp, const QPointF &location)
@@ -472,6 +475,12 @@ void DragController::setWindowDelegate(DragWindowDelegate *delegate)
     m_windowDelegate = delegate;
     if (!m_selected || !m_selected->canDrop())
         setCursor(idleCursor());
+}
+
+void DragController::notifyWindowTarget()
+{
+    if (m_windowDelegate)
+        m_windowDelegate->dragTargetChanged(m_target, m_selected && m_selected->canDrop());
 }
 
 CursorShape DragController::idleCursor() const

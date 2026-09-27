@@ -56,6 +56,9 @@ constexpr double kCloseMotion = .26;
 constexpr double kCloseFade = .16;
 constexpr int kOpenDurationMs = 360;
 constexpr int kCloseDurationMs = 220;
+// A preview growing into the window it stands for, on the ease-out of a window
+// opening, without the spring's overshoot.
+constexpr int kScaleDurationMs = 250;
 
 // A spring's step response from rest `elapsed` ms in. Early on it runs in real
 // time; its tail is warped to end at `duration` with no speed left, instead of
@@ -531,6 +534,23 @@ void WindowAnimation::setOpacity(float opacity)
     changed();
 }
 
+void WindowAnimation::setPresentationScale(double scale, const QPointF &anchor, bool animate)
+{
+    m_scaleFrom = animate ? presentationScale() : scale;
+    m_scaleTo = scale;
+    m_scaleStarted = -1;
+    m_scaleAnchor = anchor;
+    changed();
+}
+
+double WindowAnimation::presentationScale() const
+{
+    if (m_scaleFrom == m_scaleTo || m_scaleStarted < 0)
+        return m_scaleFrom;
+    const double t = (now() - m_scaleStarted) / (kScaleDurationMs * motion::durationScale());
+    return t >= 1 ? m_scaleTo : m_scaleFrom + (m_scaleTo - m_scaleFrom) * easeOut(t, 3);
+}
+
 void WindowAnimation::close()
 {
     if (!isVisible() || (m_type == Type::Minimize && !m_running) || (!m_texture && !m_oldTexture)) {
@@ -802,6 +822,16 @@ void WindowAnimation::render(render::Renderer &renderer) const
     // What was presented stays the animation's own; each draw adds the client's.
     m_presented = value;
     value.opacity *= m_opacity;
+    if (m_scaleFrom != m_scaleTo && m_scaleStarted < 0)
+        m_scaleStarted = now();
+    if (const double scale = presentationScale(); scale != 1) {
+        // Kept inside, so a shrunk window never draws outside its own bounds.
+        const QRect geometry = absoluteGeometry();
+        const QPointF anchor(geometry.x() + std::clamp<qreal>(m_scaleAnchor.x(), 0, geometry.width()),
+                             geometry.y() + std::clamp<qreal>(m_scaleAnchor.y(), 0, geometry.height()));
+        value.bounds = QRectF(anchor + (value.bounds.topLeft() - anchor) * scale,
+                              value.bounds.size() * scale);
+    }
     if (m_running && m_type == Type::Minimize && value.progress >= 1 && m_landingSnapshot)
         readSnapshot(renderer, true);
 
@@ -839,6 +869,11 @@ void WindowAnimation::render(render::Renderer &renderer) const
             outlined.opacity *= exterior;
             outline(renderer, m_visual, m_textureBounds, outlined);
         }
+    }
+    if (m_scaleFrom != m_scaleTo) {
+        if (presentationScale() == m_scaleTo)
+            m_scaleFrom = m_scaleTo;
+        changed();
     }
     if (m_running) {
         if (value.progress >= 1) {

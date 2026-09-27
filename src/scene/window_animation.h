@@ -128,13 +128,26 @@ public:
 
     void setOpacity(float opacity);
 
+    // Drawn at `scale` of its size about `anchor`, a point in its own
+    // geometry, as a window pulled out by a drag is while it is a preview.
+    // Animated from the scale drawn now unless `animate` is false.
+    void setPresentationScale(double scale, const QPointF &anchor, bool animate);
+
+    double presentationScale() const;
+
+    // Where the presentation scale is heading, or stays.
+    double targetPresentationScale() const { return m_scaleTo; }
+
     void render(render::Renderer &renderer) const override;
 
     bool isRetired() const override { return m_closing && !m_running; }
 
     // The animation composites its subtree offscreen and draws the result
     // transformed or blended, so nothing under it can reach a hardware plane.
-    bool paintsSubtree() const override { return animating() || m_opacity < 1; }
+    bool paintsSubtree() const override
+    {
+        return animating() || m_opacity < 1 || m_scaleFrom != 1 || m_scaleTo != 1;
+    }
 
     // Other animations draw only inside absolutePaintBounds(). A cross-fade
     // scales the old snapshot's shadow up past them, and a minimize bends
@@ -246,6 +259,12 @@ private:
     bool m_boundsContentReady = true;
     float m_startOpacity = 1;
     float m_opacity = 1;
+    // The presentation scale runs from m_scaleFrom to m_scaleTo from the frame
+    // time m_scaleStarted, set by the first frame that draws it.
+    mutable double m_scaleFrom = 1;
+    double m_scaleTo = 1;
+    mutable double m_scaleStarted = -1;
+    QPointF m_scaleAnchor;
     mutable Sample m_presented {{}, 1, 0};
     mutable std::function<void(const QImage &)> m_snapshot;
     mutable std::function<void(const QImage &)> m_landingSnapshot;

@@ -190,6 +190,42 @@ TEST(WindowAnimation, OpenScalesFromCenterAndEndsWithoutFurtherFrames)
     EXPECT_EQ(requests, 0);
 }
 
+TEST(WindowAnimation, APresentationScaleShrinksAboutItsAnchorAndGrowsBack)
+{
+    qint64 now = 0;
+    scene::Scene scene;
+    SnapshotRenderer renderer;
+    auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
+        return now;
+    })));
+    node->setStyle(Animation::Style::None);
+    node->setGeometry({100, 100, 400, 300});
+    // Half size about (100, 50) in the window: the texture, which covers 64px
+    // around it, shrinks towards (200, 150).
+    node->setPresentationScale(0.5, {100, 50}, false);
+    scene.render(renderer);
+    EXPECT_EQ(QRectF(118, 93, 264, 214), renderer.lastTarget);
+
+    int requests = 0;
+    scene.root()->setChangeCallback([&] {
+        ++requests;
+    });
+    node->setPresentationScale(1, {100, 50}, true);
+    scene.render(renderer);
+    EXPECT_EQ(QRectF(118, 93, 264, 214), renderer.lastTarget);
+    now = 100;
+    scene.render(renderer);
+    EXPECT_GT(renderer.lastTarget.width(), 264);
+    EXPECT_LT(renderer.lastTarget.width(), 528);
+    now = 1000;
+    scene.render(renderer);
+    EXPECT_EQ(QRectF(36, 36, 528, 428), renderer.lastTarget);
+    EXPECT_DOUBLE_EQ(1, node->presentationScale());
+    requests = 0;
+    scene.render(renderer);
+    EXPECT_EQ(0, requests);
+}
+
 TEST(WindowAnimation, StepsOnTheRendererFrameTimeInsteadOfTheClock)
 {
     qint64 now = 0;

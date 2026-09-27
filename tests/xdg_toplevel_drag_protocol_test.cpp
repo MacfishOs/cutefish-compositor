@@ -30,6 +30,7 @@
 #include "input/seat.h"
 #include "scene/node.h"
 #include "scene/scene.h"
+#include "scene/window_animation.h"
 #include "shm_test_util.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_data_device_manager.h"
@@ -38,6 +39,7 @@
 #include "wayland/protocols/xdg_shell.h"
 #include "wayland/protocols/xdg_toplevel_drag.h"
 #include "wayland/server.h"
+#include "wm/toplevel_drag.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -77,6 +79,8 @@ struct Client {
 
     uint32_t buttonSerial = 0;
     wl_surface *dragEnterSurface = nullptr;
+    wl_data_offer *dragOffer = nullptr;
+    uint32_t dragEnterSerial = 0;
     int dropsPerformed = 0;
     int cancels = 0;
 
@@ -130,9 +134,12 @@ struct Client {
         dataDevice = wl_data_device_manager_get_data_device(dataDeviceManager, seat);
         static const wl_data_device_listener deviceListener = {
                 [](void *, wl_data_device *, wl_data_offer *) {},
-                [](void *data, wl_data_device *, uint32_t, wl_surface *surface, wl_fixed_t,
-                   wl_fixed_t, wl_data_offer *) {
-                    static_cast<Client *>(data)->dragEnterSurface = surface;
+                [](void *data, wl_data_device *, uint32_t serial, wl_surface *surface, wl_fixed_t,
+                   wl_fixed_t, wl_data_offer *offer) {
+                    auto *client = static_cast<Client *>(data);
+                    client->dragEnterSurface = surface;
+                    client->dragOffer = offer;
+                    client->dragEnterSerial = serial;
                 },
                 [](void *data, wl_data_device *) {
                     static_cast<Client *>(data)->dragEnterSurface = nullptr;
@@ -306,6 +313,11 @@ protected:
         return nullptr;
     }
 
+    static float opacityOf(wm::Window *window)
+    {
+        return static_cast<scene::WindowAnimation *>(window->node())->opacity();
+    }
+
     wm::Window *windowAt(size_t index)
     {
         const auto &windows = windowManager.windows();
@@ -397,6 +409,15 @@ TEST_F(XdgToplevelDragProtocolTest, ANewWindowMapsUnderThePointerAndStaysWhereIt
             wm::Window *window = windowSized(QSize(200, 150));
             ASSERT_NE(nullptr, window);
             EXPECT_EQ(QRect(130, 140, 200, 150), window->bounds());
+            // A translucent preview, and the window it came out of keeps the keyboard.
+            EXPECT_TRUE(window->isDragPreview());
+            EXPECT_FALSE(window->isActive());
+            EXPECT_FLOAT_EQ(wm::ToplevelDrag::kPreviewOpacity, opacityOf(window));
+            // A thumbnail: 320 wide at most, and never more than half size.
+            EXPECT_DOUBLE_EQ(wm::ToplevelDrag::kPreviewMaxScale,
+                             static_cast<scene::WindowAnimation *>(window->node())
+                                     ->presentationScale());
+            EXPECT_TRUE(windowSized(QSize(300, 200))->isActive());
             EXPECT_TRUE(windowManager.eventHandler()->isDragging());
             EXPECT_EQ(window, windowManager.eventHandler()->draggedWindow());
 
@@ -412,8 +433,13 @@ TEST_F(XdgToplevelDragProtocolTest, ANewWindowMapsUnderThePointerAndStaysWhereIt
             manager.onPointerButton(at(4), BTN_LEFT, false);
             EXPECT_FALSE(seat.drag()->active());
             EXPECT_FALSE(windowManager.eventHandler()->isDragging());
-            ASSERT_NE(nullptr, windowSized(QSize(200, 150)));
-            EXPECT_EQ(QPoint(230, 190), windowSized(QSize(200, 150))->bounds().topLeft());
+            wm::Window *window = windowSized(QSize(200, 150));
+            ASSERT_NE(nullptr, window);
+            EXPECT_EQ(QPoint(230, 190), window->bounds().topLeft());
+            // Let go, it is a window of its own.
+            EXPECT_FALSE(window->isDragPreview());
+            EXPECT_TRUE(window->isActive());
+            EXPECT_FLOAT_EQ(1, opacityOf(window));
         });
         c.sync();
         // Nothing took the data, but it was a drop, not a cancel.
@@ -513,7 +539,7 @@ TEST_F(XdgToplevelDragProtocolTest, UnmappingADroppedWindowActivatesTheWindowItW
         xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
         c.map(detached, QSize(200, 150));
         check([&] {
-            EXPECT_TRUE(windowSized(QSize(200, 150))->isActive());
+            EXPECT_FALSE(windowSized(QSize(200, 150))->isActive());
             manager.onPointerMotionAbsolute(at(3), QPointF(600, 200));
             manager.onPointerButton(at(4), BTN_LEFT, false);
         });
@@ -529,6 +555,53 @@ TEST_F(XdgToplevelDragProtocolTest, UnmappingADroppedWindowActivatesTheWindowItW
                 EXPECT_EQ(window->bounds().x() == 500, window->isActive());
         });
 
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, OverAWindowOfItsOwnThatTakesTheDropThePreviewGoesOnItsNextCommit)
+{
+    run([&](Client &c) {
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        c.sync();
+        Toplevel *detached = c.makeToplevel();
+        xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
+        c.map(detached, QSize(200, 150));
+
+        // Over the window it came from, which takes the tab back.
+        ASSERT_EQ(origin->surface, c.dragEnterSurface);
+        wl_data_offer_accept(c.dragOffer, c.dragEnterSerial, "application/x-cutefish-tab");
+        wl_data_offer_set_actions(c.dragOffer, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
+                                  WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+        c.sync();
+        check([&] {
+            EXPECT_FLOAT_EQ(wm::ToplevelDrag::kPreviewOpacity,
+                            opacityOf(windowSized(QSize(200, 150))));
+        });
+        // The frame that shows where the tab would go.
+        wl_surface_damage(origin->surface, 0, 0, 10, 10);
+        wl_surface_commit(origin->surface);
+        c.sync();
+        check([&] {
+            EXPECT_FLOAT_EQ(0, opacityOf(windowSized(QSize(200, 150))));
+            // Off it, the preview is back at once.
+            manager.onPointerMotionAbsolute(at(3), QPointF(600, 500));
+            EXPECT_FLOAT_EQ(wm::ToplevelDrag::kPreviewOpacity,
+                            opacityOf(windowSized(QSize(200, 150))));
+            manager.onKey(at(4), KEY_ESC, true);
+            manager.onKey(at(5), KEY_ESC, false);
+            // Cancelled, its client takes it back: not drawn meanwhile.
+            EXPECT_FLOAT_EQ(0, opacityOf(windowSized(QSize(200, 150))));
+            EXPECT_FALSE(windowSized(QSize(200, 150))->isActive());
+            manager.onPointerButton(at(6), BTN_LEFT, false);
+        });
+        c.sync();
+        c.destroy(detached);
         xdg_toplevel_drag_v1_destroy(drag);
         wl_data_source_destroy(source);
         c.sync();

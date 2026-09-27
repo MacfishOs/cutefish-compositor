@@ -14,10 +14,17 @@
 // detaches it. What is dropped: cursor locking, the pending start raced
 // against the attach, and the tab-dragging window property.
 //
-// What is added: a window dropped on another window of its own process, and
-// unmapped by its client for it, hands the activation to that window. Chrome
-// activates the tab strip it merges into itself, but Qt spends the pointer
-// press serial on showing the dragged window, so the client cannot.
+// What is added: a window that maps during the drag is a preview until it is
+// let go. It is drawn as a translucent thumbnail around the pointer, and grows
+// to its size when dropped; it cannot be activated, so the window it was
+// pulled out of keeps the keyboard; dropped where nothing takes it, it becomes
+// an ordinary window and is activated. Over a window of its own process that
+// takes the drop it is not drawn at all, from the frame that window next
+// commits, which is the one where the client shows where the drop would go. A
+// window dropped on another window of its own process, and unmapped by its
+// client for it, hands the activation to that window. Chrome activates the tab
+// strip it merges into itself, but Qt spends the pointer press serial on
+// showing the dragged window, so the client cannot.
 
 #ifndef CUTEFISH_WM_TOPLEVEL_DRAG_H_
 #define CUTEFISH_WM_TOPLEVEL_DRAG_H_
@@ -63,11 +70,21 @@ public:
     // --- input::DragWindowDelegate ---
 
     void dragMoved(const QPointF &location) override;
+    void dragTargetChanged(compositor::Surface *target, bool accepted) override;
     void dragEnded(bool released) override;
 
     // --- compositor::SurfaceObserver ---
 
     void onSurfaceDestroying(compositor::Surface *surface) override;
+    void onSurfaceCommit(compositor::Surface *surface) override;
+
+    // How opaque a preview is drawn, and how wide at most.
+    static constexpr float kPreviewOpacity = 0.85f;
+    static constexpr double kPreviewWidth = 320;
+    static constexpr double kPreviewMaxScale = 0.5;
+    // How long a client has after the drag to take its preview back before
+    // it is shown as an ordinary window anyway.
+    static constexpr int kSettleDelayMs = 500;
 
 private:
     void onDragStarted();
@@ -77,6 +94,8 @@ private:
     void startMove(Window *window);
     void stopMove();
     void detach();
+    void setDocked(compositor::Surface *target);
+    void unwatchDockTarget();
 
     WindowManager *m_manager = nullptr;
     std::shared_ptr<clipboard::DataSource> m_source;
@@ -87,6 +106,13 @@ private:
     // The window a released drag was dropped on, while the dragged one is
     // still mapped. Zero otherwise.
     quint64 m_dropWindow = 0;
+    // The preview, while the drag runs and a little after.
+    quint64 m_preview = 0;
+    // The window of the same process under the drag that takes the drop, or
+    // zero. The preview is not drawn over it from its next commit, which the
+    // root surface below is watched for.
+    quint64 m_docked = 0;
+    compositor::Surface *m_dockTarget = nullptr;
     std::optional<scene::WindowAnimation::Style> m_animationStyle;
 };
 
