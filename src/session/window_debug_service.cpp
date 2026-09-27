@@ -9,8 +9,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <chrono>
 #include <utility>
 
+#include "input/input_manager.h"
 #include "wm/window.h"
 #include "wm/window_frame.h"
 #include "wm/window_manager.h"
@@ -120,6 +122,30 @@ bool WindowDebugService::ActivateWindow(qulonglong id)
     if (!window)
         return false;
     window->activate();
+    return true;
+}
+
+bool WindowDebugService::PointerMotion(double x, double y)
+{
+    if (!m_input)
+        return false;
+    m_input->onPointerMotionAbsolute(std::chrono::steady_clock::now(), QPointF(x, y));
+    return true;
+}
+
+bool WindowDebugService::PointerButton(uint button, bool pressed)
+{
+    if (!m_input)
+        return false;
+    m_input->onPointerButton(std::chrono::steady_clock::now(), button, pressed);
+    return true;
+}
+
+bool WindowDebugService::Key(uint code, bool pressed)
+{
+    if (!m_input)
+        return false;
+    m_input->onKey(std::chrono::steady_clock::now(), code, pressed);
     return true;
 }
 

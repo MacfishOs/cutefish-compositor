@@ -12,6 +12,10 @@
 #include <QDBusConnection>
 #include <QObject>
 
+namespace cutefish::input {
+class InputManager;
+}
+
 namespace cutefish::wm {
 class WindowManager;
 }
@@ -29,6 +33,10 @@ public:
 
     bool registerService();
 
+    // Headless runs only: the input methods below then feed it as a device
+    // would. A session on real hardware never sets it.
+    void setInput(input::InputManager *input) { m_input = input; }
+
 public slots:
     // Every window bottom to top, as a JSON array. Rects are [x, y, width,
     // height] in logical output coordinates.
@@ -40,8 +48,16 @@ public slots:
     Q_SCRIPTABLE bool SetWindowBounds(qulonglong id, int x, int y, int width, int height);
     Q_SCRIPTABLE bool ActivateWindow(qulonglong id);
 
+    // Pointer and keyboard input for driving a headless compositor from a
+    // script, in logical output coordinates and evdev codes. False without
+    // an input to feed.
+    Q_SCRIPTABLE bool PointerMotion(double x, double y);
+    Q_SCRIPTABLE bool PointerButton(uint button, bool pressed);
+    Q_SCRIPTABLE bool Key(uint code, bool pressed);
+
 private:
     wm::WindowManager *m_manager;
+    input::InputManager *m_input = nullptr;
     QDBusConnection m_bus;
     bool m_registered = false;
 };

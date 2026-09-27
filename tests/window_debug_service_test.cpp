@@ -5,6 +5,7 @@
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "fake_renderer.h"
+#include "input/input_manager.h"
 #include "input/seat.h"
 #include "scene/scene.h"
 #include "session/window_debug_service.h"
@@ -124,6 +125,24 @@ private slots:
         QVERIFY(QDBusReply<bool>(call(QStringLiteral("ActivateWindow"), {id})).value());
         QVERIFY(editor->isActive());
         QCOMPARE(desktop.manager.windows().back(), editor);
+    }
+
+    void feedsInputOnlyWhenGivenOne()
+    {
+        Desktop desktop;
+        session::WindowDebugService service(&desktop.manager);
+        QVERIFY(service.registerService());
+        QVERIFY(!QDBusReply<bool>(call(QStringLiteral("PointerMotion"), {40.0, 30.0})).value());
+
+        input::InputManager input(&desktop.seat);
+        input.setBounds({1280, 800});
+        service.setInput(&input);
+        QVERIFY(QDBusReply<bool>(call(QStringLiteral("PointerMotion"), {40.0, 30.0})).value());
+        QCOMPARE(desktop.seat.pointerLocation(), QPointF(40, 30));
+        QVERIFY(QDBusReply<bool>(call(QStringLiteral("PointerButton"), {uint(0x110), true})).value());
+        QVERIFY(desktop.seat.pressedButtons() != input::NoButton);
+        QVERIFY(QDBusReply<bool>(call(QStringLiteral("PointerButton"), {uint(0x110), false})).value());
+        QCOMPARE(desktop.seat.pressedButtons(), input::NoButton);
     }
 
     void anUnknownIdChangesNothing()

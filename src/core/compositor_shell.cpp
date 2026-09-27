@@ -360,6 +360,8 @@ bool CompositorShell::init()
             qCWarning(cfWayland) << "The applications service is unavailable";
 
         m_windowDebugService = std::make_unique<session::WindowDebugService>(&m_windowManager);
+        if (m_options.noDrm)
+            m_windowDebugService->setInput(&m_inputManager);
         if (!m_windowDebugService->registerService())
             qCWarning(cfWayland) << "The window debug service is unavailable";
     }
