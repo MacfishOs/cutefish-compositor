@@ -1,0 +1,586 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// Modelled on chromium/src/components/exo/extended_drag_source_unittest.cc
+// (revision 7acd40ddefff49c9d36144999aafdbb674dbd07a), driven through
+// xdg_toplevel_drag_v1 on a real libwayland-client connection.
+
+#include <atomic>
+#include <chrono>
+#include <functional>
+#include <future>
+#include <gtest/gtest.h>
+#include <linux/input-event-codes.h>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <sys/socket.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+#include <wayland-client.h>
+#include <wayland-server-core.h>
+#include <xdg-shell-client-protocol.h>
+#include <xdg-toplevel-drag-v1-client-protocol.h>
+
+#include "compositor/compositor.h"
+#include "input/input_manager.h"
+#include "input/seat.h"
+#include "scene/node.h"
+#include "scene/scene.h"
+#include "shm_test_util.h"
+#include "wayland/protocols/wl_compositor.h"
+#include "wayland/protocols/wl_data_device_manager.h"
+#include "wayland/protocols/wl_seat.h"
+#include "wayland/protocols/wl_shm.h"
+#include "wayland/protocols/xdg_shell.h"
+#include "wayland/protocols/xdg_toplevel_drag.h"
+#include "wayland/server.h"
+#include "wm/toplevel_event_handler.h"
+#include "wm/window.h"
+#include "wm/window_manager.h"
+
+using namespace cutefish;
+
+namespace {
+
+input::Timestamp at(int ms)
+{
+    return input::Timestamp(std::chrono::milliseconds(ms));
+}
+
+constexpr QRect kOutput(0, 0, 800, 600);
+
+struct Toplevel {
+    wl_surface *surface = nullptr;
+    xdg_surface *xdgSurface = nullptr;
+    xdg_toplevel *toplevel = nullptr;
+    wl_buffer *buffer = nullptr;
+    uint32_t configureSerial = 0;
+};
+
+struct Client {
+    wl_display *display = nullptr;
+    wl_registry *registry = nullptr;
+    wl_compositor *compositor = nullptr;
+    wl_shm *shm = nullptr;
+    wl_seat *seat = nullptr;
+    wl_pointer *pointer = nullptr;
+    xdg_wm_base *wmBase = nullptr;
+    wl_data_device_manager *dataDeviceManager = nullptr;
+    wl_data_device *dataDevice = nullptr;
+    xdg_toplevel_drag_manager_v1 *dragManager = nullptr;
+    std::map<std::string, std::pair<uint32_t, uint32_t>> globals;
+    std::vector<std::unique_ptr<Toplevel>> toplevels;
+
+    uint32_t buttonSerial = 0;
+    wl_surface *dragEnterSurface = nullptr;
+    int dropsPerformed = 0;
+    int cancels = 0;
+
+    explicit Client(int fd)
+        : display(wl_display_connect_to_fd(fd))
+    {
+        registry = wl_display_get_registry(display);
+        static const wl_registry_listener listener = {
+                [](void *data, wl_registry *, uint32_t name, const char *interface,
+                   uint32_t version) {
+                    static_cast<Client *>(data)->globals[interface] = {name, version};
+                },
+                [](void *, wl_registry *, uint32_t) {}};
+        wl_registry_add_listener(registry, &listener, this);
+        wl_display_roundtrip(display);
+
+        compositor = static_cast<wl_compositor *>(
+                bind("wl_compositor", &wl_compositor_interface, 4));
+        shm = static_cast<wl_shm *>(bind("wl_shm", &wl_shm_interface, 1));
+        wmBase = static_cast<xdg_wm_base *>(bind("xdg_wm_base", &xdg_wm_base_interface, 1));
+        static const xdg_wm_base_listener wmBaseListener = {
+                [](void *, xdg_wm_base *base, uint32_t serial) {
+                    xdg_wm_base_pong(base, serial);
+                }};
+        xdg_wm_base_add_listener(wmBase, &wmBaseListener, this);
+        dataDeviceManager = static_cast<wl_data_device_manager *>(
+                bind("wl_data_device_manager", &wl_data_device_manager_interface, 3));
+        dragManager = static_cast<xdg_toplevel_drag_manager_v1 *>(
+                bind("xdg_toplevel_drag_manager_v1", &xdg_toplevel_drag_manager_v1_interface, 1));
+
+        seat = static_cast<wl_seat *>(bind("wl_seat", &wl_seat_interface, 5));
+        pointer = wl_seat_get_pointer(seat);
+        static const wl_pointer_listener pointerListener = {
+                [](void *, wl_pointer *, uint32_t, wl_surface *, wl_fixed_t, wl_fixed_t) {},
+                [](void *, wl_pointer *, uint32_t, wl_surface *) {},
+                [](void *, wl_pointer *, uint32_t, wl_fixed_t, wl_fixed_t) {},
+                [](void *data, wl_pointer *, uint32_t serial, uint32_t, uint32_t, uint32_t state) {
+                    if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+                        static_cast<Client *>(data)->buttonSerial = serial;
+                },
+                [](void *, wl_pointer *, uint32_t, uint32_t, wl_fixed_t) {},
+                [](void *, wl_pointer *) {},
+                [](void *, wl_pointer *, uint32_t) {},
+                [](void *, wl_pointer *, uint32_t, uint32_t) {},
+                [](void *, wl_pointer *, uint32_t, int32_t) {},
+                nullptr,
+                nullptr,
+        };
+        wl_pointer_add_listener(pointer, &pointerListener, this);
+
+        dataDevice = wl_data_device_manager_get_data_device(dataDeviceManager, seat);
+        static const wl_data_device_listener deviceListener = {
+                [](void *, wl_data_device *, wl_data_offer *) {},
+                [](void *data, wl_data_device *, uint32_t, wl_surface *surface, wl_fixed_t,
+                   wl_fixed_t, wl_data_offer *) {
+                    static_cast<Client *>(data)->dragEnterSurface = surface;
+                },
+                [](void *data, wl_data_device *) {
+                    static_cast<Client *>(data)->dragEnterSurface = nullptr;
+                },
+                [](void *, wl_data_device *, uint32_t, wl_fixed_t, wl_fixed_t) {},
+                [](void *, wl_data_device *) {},
+                [](void *, wl_data_device *, wl_data_offer *) {},
+        };
+        wl_data_device_add_listener(dataDevice, &deviceListener, this);
+        wl_display_roundtrip(display);
+    }
+
+    ~Client()
+    {
+        for (auto &toplevel : toplevels)
+            destroy(toplevel.get());
+        wl_data_device_release(dataDevice);
+        wl_pointer_release(pointer);
+        wl_seat_release(seat);
+        xdg_toplevel_drag_manager_v1_destroy(dragManager);
+        wl_data_device_manager_destroy(dataDeviceManager);
+        xdg_wm_base_destroy(wmBase);
+        wl_shm_destroy(shm);
+        wl_compositor_destroy(compositor);
+        wl_registry_destroy(registry);
+        wl_display_disconnect(display);
+    }
+
+    void *bind(const char *interface, const wl_interface *type, uint32_t version)
+    {
+        return wl_registry_bind(registry, globals[interface].first, type, version);
+    }
+
+    wl_buffer *makeBuffer(const QSize &size)
+    {
+        const int stride = size.width() * 4;
+        const size_t bytes = static_cast<size_t>(stride) * size.height();
+        const int fd = testsupport::makeMemfd(bytes);
+        wl_shm_pool *pool = wl_shm_create_pool(shm, fd, static_cast<int32_t>(bytes));
+        wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, size.width(), size.height(), stride,
+                                                      WL_SHM_FORMAT_XRGB8888);
+        wl_shm_pool_destroy(pool);
+        close(fd);
+        return buffer;
+    }
+
+    // A toplevel that has had its initial configure but no buffer yet.
+    Toplevel *makeToplevel()
+    {
+        toplevels.push_back(std::make_unique<Toplevel>());
+        Toplevel *toplevel = toplevels.back().get();
+        toplevel->surface = wl_compositor_create_surface(compositor);
+        toplevel->xdgSurface = xdg_wm_base_get_xdg_surface(wmBase, toplevel->surface);
+        static const xdg_surface_listener surfaceListener = {
+                [](void *data, xdg_surface *, uint32_t serial) {
+                    static_cast<Toplevel *>(data)->configureSerial = serial;
+                },
+        };
+        xdg_surface_add_listener(toplevel->xdgSurface, &surfaceListener, toplevel);
+        toplevel->toplevel = xdg_surface_get_toplevel(toplevel->xdgSurface);
+        wl_surface_commit(toplevel->surface);
+        sync();
+        return toplevel;
+    }
+
+    void map(Toplevel *toplevel, const QSize &size)
+    {
+        xdg_surface_ack_configure(toplevel->xdgSurface, toplevel->configureSerial);
+        toplevel->buffer = makeBuffer(size);
+        wl_surface_attach(toplevel->surface, toplevel->buffer, 0, 0);
+        wl_surface_damage(toplevel->surface, 0, 0, size.width(), size.height());
+        wl_surface_commit(toplevel->surface);
+        sync();
+    }
+
+    void destroy(Toplevel *toplevel)
+    {
+        if (toplevel->toplevel)
+            xdg_toplevel_destroy(toplevel->toplevel);
+        if (toplevel->xdgSurface)
+            xdg_surface_destroy(toplevel->xdgSurface);
+        if (toplevel->surface)
+            wl_surface_destroy(toplevel->surface);
+        if (toplevel->buffer)
+            wl_buffer_destroy(toplevel->buffer);
+        *toplevel = {};
+    }
+
+    wl_data_source *makeSource()
+    {
+        wl_data_source *source = wl_data_device_manager_create_data_source(dataDeviceManager);
+        static const wl_data_source_listener sourceListener = {
+                [](void *, wl_data_source *, const char *) {},
+                [](void *, wl_data_source *, const char *, int32_t fd) {
+                    close(fd);
+                },
+                [](void *data, wl_data_source *) {
+                    ++static_cast<Client *>(data)->cancels;
+                },
+                [](void *data, wl_data_source *) {
+                    ++static_cast<Client *>(data)->dropsPerformed;
+                },
+                [](void *, wl_data_source *) {},
+                [](void *, wl_data_source *, uint32_t) {},
+        };
+        wl_data_source_add_listener(source, &sourceListener, this);
+        wl_data_source_offer(source, "application/x-cutefish-tab");
+        wl_data_source_set_actions(source, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+        return source;
+    }
+
+    void sync() { wl_display_roundtrip(display); }
+
+    uint32_t syncExpectingError()
+    {
+        if (wl_display_roundtrip(display) >= 0 || wl_display_get_error(display) != EPROTO)
+            return UINT32_MAX;
+        const wl_interface *interface = nullptr;
+        uint32_t id = 0;
+        return wl_display_get_protocol_error(display, &interface, &id);
+    }
+};
+
+class XdgToplevelDragProtocolTest : public testing::Test
+{
+protected:
+    scene::Scene scene;
+    scene::Node *surfaceContainer =
+            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+    scene::Node *cursorContainer =
+            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("cursor")));
+    compositor::Compositor compositor {surfaceContainer};
+    input::Seat seat {&compositor};
+    input::InputManager manager {&seat};
+    wm::WindowManager windowManager {&compositor, &seat};
+    wayland::Server server;
+
+    std::mutex mutex;
+    std::function<void()> pendingCheck;
+
+    void SetUp() override
+    {
+        scene.setSize(kOutput.size());
+        seat.setCursorContainer(cursorContainer);
+        manager.setBounds(kOutput.size());
+        manager.setEventSink(&windowManager);
+        windowManager.setOutputBounds(kOutput);
+    }
+
+    // Runs `body` on the server thread and waits for it.
+    void check(std::function<void()> body)
+    {
+        std::promise<void> done;
+        auto future = done.get_future();
+        {
+            std::lock_guard lock(mutex);
+            pendingCheck = [&] {
+                body();
+                done.set_value();
+            };
+        }
+        future.wait();
+    }
+
+    wm::Window *windowSized(const QSize &size)
+    {
+        for (wm::Window *window : windowManager.windows()) {
+            if (window->bounds().size() == size)
+                return window;
+        }
+        return nullptr;
+    }
+
+    wm::Window *windowAt(size_t index)
+    {
+        const auto &windows = windowManager.windows();
+        return index < windows.size() ? windows[index] : nullptr;
+    }
+
+    // Maps a 300x200 window at (100, 100) and presses the button over it at
+    // (150, 150), which is where every drag here starts.
+    Toplevel *mapSourceWindowAndPress(Client &c)
+    {
+        Toplevel *source = c.makeToplevel();
+        c.map(source, QSize(300, 200));
+        check([&] {
+            // Just mapped, so on top.
+            windowManager.windows().back()->setBounds(QRect(100, 100, 300, 200));
+            manager.onPointerMotionAbsolute(at(1), QPointF(150, 150));
+            manager.onPointerButton(at(2), BTN_LEFT, true);
+        });
+        c.sync();
+        EXPECT_NE(0u, c.buttonSerial);
+        return source;
+    }
+
+    void run(std::function<void(Client &)> body)
+    {
+        auto waylandSeat = std::make_unique<wayland::WaylandSeat>(&seat, server.serialTracker());
+        auto xdgShell = std::make_unique<wayland::WaylandXdgShell>(&compositor, &windowManager,
+                                                                   &seat, server.serialTracker());
+        ASSERT_TRUE(wayland::createCompositorGlobal(server.display(), &compositor));
+        ASSERT_TRUE(wayland::createShmGlobal(server.display(), &compositor));
+        ASSERT_TRUE(wayland::createSeatGlobal(server.display(), waylandSeat.get()));
+        ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server.display(), waylandSeat.get()));
+        ASSERT_TRUE(wayland::createXdgShellGlobal(server.display(), xdgShell.get()));
+        ASSERT_TRUE(wayland::createXdgToplevelDragGlobal(server.display(), &windowManager));
+
+        int fds[2];
+        ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds));
+        ASSERT_TRUE(wl_client_create(server.display(), fds[0]));
+
+        std::atomic<bool> done = false;
+        std::thread client([&] {
+            {
+                Client c(fds[1]);
+                body(c);
+            }
+            done = true;
+        });
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!done) {
+            server.dispatch(std::chrono::milliseconds(1));
+            server.flush();
+            std::function<void()> work;
+            {
+                std::lock_guard lock(mutex);
+                work.swap(pendingCheck);
+            }
+            if (work)
+                work();
+            if (std::chrono::steady_clock::now() > deadline) {
+                ADD_FAILURE() << "client timed out";
+                shutdown(fds[1], SHUT_RDWR);
+                break;
+            }
+        }
+        client.join();
+        wl_display_destroy_clients(server.display());
+        EXPECT_FALSE(seat.drag()->active());
+        EXPECT_FALSE(windowManager.eventHandler()->isDragging());
+        EXPECT_TRUE(windowManager.windows().empty());
+    }
+};
+
+} // namespace
+
+TEST_F(XdgToplevelDragProtocolTest, ANewWindowMapsUnderThePointerAndStaysWhereItIsDropped)
+{
+    run([&](Client &c) {
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        c.sync();
+
+        Toplevel *detached = c.makeToplevel();
+        xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
+        c.map(detached, QSize(200, 150));
+        check([&] {
+            wm::Window *window = windowSized(QSize(200, 150));
+            ASSERT_NE(nullptr, window);
+            EXPECT_EQ(QRect(130, 140, 200, 150), window->bounds());
+            EXPECT_TRUE(windowManager.eventHandler()->isDragging());
+            EXPECT_EQ(window, windowManager.eventHandler()->draggedWindow());
+
+            manager.onPointerMotionAbsolute(at(3), QPointF(250, 200));
+            EXPECT_EQ(QRect(230, 190, 200, 150), window->bounds());
+        });
+        c.sync();
+        // The window under the pointer is the one being dragged; the drop
+        // target is what lies beneath it.
+        EXPECT_EQ(origin->surface, c.dragEnterSurface);
+
+        check([&] {
+            manager.onPointerButton(at(4), BTN_LEFT, false);
+            EXPECT_FALSE(seat.drag()->active());
+            EXPECT_FALSE(windowManager.eventHandler()->isDragging());
+            ASSERT_NE(nullptr, windowSized(QSize(200, 150)));
+            EXPECT_EQ(QPoint(230, 190), windowSized(QSize(200, 150))->bounds().topLeft());
+        });
+        c.sync();
+        // Nothing took the data, but it was a drop, not a cancel.
+        EXPECT_EQ(1, c.dropsPerformed);
+        EXPECT_EQ(1, c.cancels);
+
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, EscapeRevertsAnExistingWindowAndIsNoDrop)
+{
+    run([&](Client &c) {
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        xdg_toplevel_drag_v1_attach(drag, origin->toplevel, 50, 50);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        c.sync();
+
+        check([&] {
+            wm::Window *window = windowAt(0);
+            EXPECT_EQ(window, windowManager.eventHandler()->draggedWindow());
+            manager.onPointerMotionAbsolute(at(3), QPointF(300, 250));
+            EXPECT_EQ(QRect(250, 200, 300, 200), window->bounds());
+            manager.onKey(at(4), KEY_ESC, true);
+            manager.onKey(at(5), KEY_ESC, false);
+            EXPECT_FALSE(seat.drag()->active());
+            EXPECT_FALSE(windowManager.eventHandler()->isDragging());
+            EXPECT_EQ(QRect(100, 100, 300, 200), window->bounds());
+            manager.onPointerButton(at(6), BTN_LEFT, false);
+        });
+        c.sync();
+        EXPECT_EQ(0, c.dropsPerformed);
+        EXPECT_EQ(1, c.cancels);
+
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, UnmappingTheWindowDetachesItAndTheDragGoesOn)
+{
+    run([&](Client &c) {
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        c.sync();
+        Toplevel *detached = c.makeToplevel();
+        xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
+        c.map(detached, QSize(200, 150));
+
+        // Snapping the tab back in: the client unmaps the window it tore off.
+        wl_surface_attach(detached->surface, nullptr, 0, 0);
+        wl_surface_commit(detached->surface);
+        c.sync();
+        check([&] {
+            EXPECT_EQ(1u, windowManager.windows().size());
+            EXPECT_TRUE(seat.drag()->active());
+            EXPECT_FALSE(windowManager.eventHandler()->isDragging());
+            manager.onPointerMotionAbsolute(at(3), QPointF(200, 200));
+            EXPECT_EQ(QRect(100, 100, 300, 200), windowAt(0)->bounds());
+        });
+
+        // Once unmapped, another toplevel may be attached.
+        xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
+        c.sync();
+        check([&] {
+            manager.onPointerButton(at(4), BTN_LEFT, false);
+        });
+        c.sync();
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, UnmappingADroppedWindowActivatesTheWindowItWasDroppedOn)
+{
+    run([&](Client &c) {
+        // The tab goes from the source window into this one, to the right of it.
+        Toplevel *target = c.makeToplevel();
+        c.map(target, QSize(300, 200));
+        check([&] {
+            windowAt(0)->setBounds(QRect(500, 100, 300, 200));
+        });
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        c.sync();
+        Toplevel *detached = c.makeToplevel();
+        xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
+        c.map(detached, QSize(200, 150));
+        check([&] {
+            EXPECT_TRUE(windowSized(QSize(200, 150))->isActive());
+            manager.onPointerMotionAbsolute(at(3), QPointF(600, 200));
+            manager.onPointerButton(at(4), BTN_LEFT, false);
+        });
+        c.sync();
+
+        // The client takes the tab into the window below and lets the dragged one go.
+        wl_surface_attach(detached->surface, nullptr, 0, 0);
+        wl_surface_commit(detached->surface);
+        c.sync();
+        check([&] {
+            ASSERT_EQ(2u, windowManager.windows().size());
+            for (wm::Window *window : windowManager.windows())
+                EXPECT_EQ(window->bounds().x() == 500, window->isActive());
+        });
+
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, ASourceTakesOneToplevelDrag)
+{
+    run([&](Client &c) {
+        wl_data_source *source = c.makeSource();
+        xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        EXPECT_EQ(uint32_t(XDG_TOPLEVEL_DRAG_MANAGER_V1_ERROR_INVALID_SOURCE),
+                  c.syncExpectingError());
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, AToplevelDragSourceIsNoSelection)
+{
+    run([&](Client &c) {
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        (void)origin;
+        wl_data_source *source = wl_data_device_manager_create_data_source(c.dataDeviceManager);
+        wl_data_source_offer(source, "text/plain");
+        xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_set_selection(c.dataDevice, source, c.buttonSerial);
+        EXPECT_EQ(uint32_t(WL_DATA_SOURCE_ERROR_INVALID_SOURCE), c.syncExpectingError());
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, ASecondAttachWhileOneIsAttachedIsAnError)
+{
+    run([&](Client &c) {
+        Toplevel *first = c.makeToplevel();
+        Toplevel *second = c.makeToplevel();
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        xdg_toplevel_drag_v1_attach(drag, first->toplevel, 0, 0);
+        xdg_toplevel_drag_v1_attach(drag, second->toplevel, 0, 0);
+        EXPECT_EQ(uint32_t(XDG_TOPLEVEL_DRAG_V1_ERROR_TOPLEVEL_ATTACHED), c.syncExpectingError());
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, DestroyingTheDragBeforeItEndsIsAnError)
+{
+    run([&](Client &c) {
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        xdg_toplevel_drag_v1_attach(drag, origin->toplevel, 50, 50);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        xdg_toplevel_drag_v1_destroy(drag);
+        EXPECT_EQ(uint32_t(XDG_TOPLEVEL_DRAG_V1_ERROR_ONGOING_DRAG), c.syncExpectingError());
+    });
+}

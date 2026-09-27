@@ -121,6 +121,12 @@ public:
 
     virtual bool acceptsInput(const QPointF &) const { return true; }
 
+    // Drawn as usual, but left out of the input hit test, as aura's
+    // ScopedWindowEventTargetingBlocker does for a window dragged with a drag.
+    bool isEventTargetingBlocked() const { return m_eventTargetingBlocked; }
+
+    void setEventTargetingBlocked(bool blocked) { m_eventTargetingBlocked = blocked; }
+
     // Paints over the whole of the renderer's current output, opaquely, so
     // nothing drawn before it there can show. Its parent then skips those
     // siblings, as viz drops quads an opaque one occludes.
@@ -167,6 +173,7 @@ private:
     QRect m_geometry;
     bool m_visible = true;
     bool m_promotedToOverlay = false;
+    bool m_eventTargetingBlocked = false;
     bool m_excludedFromCapture = false;
     size_t m_childrenBelowParent = 0;
 };

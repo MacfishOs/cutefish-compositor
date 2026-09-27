@@ -64,6 +64,8 @@ cutefish_add_test(xdg_shell_protocol_test cutefish-wayland-shell cutefish-waylan
     PkgConfig::WaylandClient)
 cutefish_add_test(xdg_foreign_protocol_test cutefish-wayland-shell cutefish-wayland-input
     PkgConfig::WaylandClient)
+cutefish_add_test(xdg_toplevel_drag_protocol_test cutefish-wayland-shell cutefish-wayland-input
+    PkgConfig::WaylandClient)
 cutefish_add_test(foreign_toplevel_list_test cutefish-wayland-private-shell cutefish-input
     cutefish-compositor-core PkgConfig::WaylandClient)
 cutefish_add_test(private_shell_protocol_test cutefish-wayland-private-shell

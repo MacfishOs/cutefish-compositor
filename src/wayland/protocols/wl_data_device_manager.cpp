@@ -30,6 +30,7 @@ class ExternalSource final : public clipboard::DataSource
 public:
     wl_resource* resource = nullptr;
     bool actionsSet = false;
+    bool dragOnly = false;
     uint32_t actions = 1;
     uint32_t lastAction = 0;
 
@@ -447,7 +448,7 @@ void setSelection(wl_client* client, wl_resource* resource, wl_resource* sourceR
         return;
     if (!unused(resource, source))
         return;
-    if (source && source->actionsSet) {
+    if (source && (source->actionsSet || source->dragOnly)) {
         wl_resource_post_error(sourceResource, WL_DATA_SOURCE_ERROR_INVALID_SOURCE,
                                "drag source cannot be a selection");
         return;
@@ -509,6 +510,15 @@ void bind(wl_client* client, void* data, uint32_t version, uint32_t id)
 }
 
 } // namespace
+
+std::shared_ptr<clipboard::DataSource> claimDragSource(wl_client* client, wl_resource* resource)
+{
+    auto source = getSource(client, resource);
+    if (!source || source->used() || !source->alive() || source->dragOnly)
+        return nullptr;
+    source->dragOnly = true;
+    return source;
+}
 
 wl_global* createDataDeviceManagerGlobal(wl_display* display, WaylandSeat* seat)
 {

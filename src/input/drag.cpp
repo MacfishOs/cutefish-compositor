@@ -166,7 +166,10 @@ void DragController::start(compositor::Surface *origin, compositor::Surface *ico
     m_seat->clearPointerFocus();
     if (generation != m_generation)
         return;
-    m_seat->setCursorOverride(CursorShape::NoDrop);
+    emit started();
+    if (generation != m_generation)
+        return;
+    m_seat->setCursorOverride(idleCursor());
     if (generation != m_generation)
         return;
     motion(Timestamp {}, m_location);
@@ -186,7 +189,10 @@ void DragController::startTouch(compositor::Surface *origin, compositor::Surface
     m_seat->takeTouchPoint(touchId);
     if (generation != m_generation)
         return;
-    m_seat->setCursorOverride(CursorShape::NoDrop);
+    emit started();
+    if (generation != m_generation)
+        return;
+    m_seat->setCursorOverride(idleCursor());
     if (generation != m_generation)
         return;
     motion(Timestamp {}, m_location);
@@ -292,7 +298,7 @@ void DragController::updateFeedback(DragOffer *offer)
                       : action == 1 ? CursorShape::Copy
                       : action == 2 ? CursorShape::Move
                       : action == 4 ? CursorShape::ContextMenu
-                                    : CursorShape::NoDrop);
+                                    : idleCursor());
 }
 
 void DragController::leave()
@@ -316,7 +322,7 @@ void DragController::leave()
             source->action(0);
     }
     if (generation == m_generation && active())
-        setCursor(CursorShape::NoDrop);
+        setCursor(idleCursor());
 }
 
 void DragController::motion(Timestamp timestamp, const QPointF &location)
@@ -325,6 +331,12 @@ void DragController::motion(Timestamp timestamp, const QPointF &location)
         return;
     m_location = location;
     updateIcon();
+    if (m_windowDelegate) {
+        const auto generation = m_generation;
+        m_windowDelegate->dragMoved(location);
+        if (generation != m_generation || !active())
+            return;
+    }
     QPointF local;
     auto *target = findTargetSurface(m_seat->compositor(), location, &local);
     if (target != m_target) {
@@ -384,8 +396,18 @@ void DragController::drop()
             selected = std::move(offer);
     }
     if (!selected || !selected->canDrop()) {
-        cancel();
+        // A window dragged along stays where it is let go, so the source is
+        // told of the drop before it hears that nothing took the data.
+        const bool released = m_windowDelegate != nullptr;
+        if (released && m_source) {
+            const auto generation = m_generation;
+            m_source->dropPerformed();
+            if (generation != m_generation || !active())
+                return;
+        }
+        end(released);
     } else {
+        auto *window = std::exchange(m_windowDelegate, nullptr);
         m_finishing = true;
         auto source = std::exchange(m_source, nullptr);
         auto offers = std::exchange(m_offers, {});
@@ -405,14 +427,22 @@ void DragController::drop()
         if (target)
             emit left();
         m_finishing = false;
+        if (window)
+            window->dragEnded(true);
         emit ended();
     }
 }
 
 void DragController::cancel()
 {
+    end(false);
+}
+
+void DragController::end(bool released)
+{
     if (!active())
         return;
+    auto *window = std::exchange(m_windowDelegate, nullptr);
     m_finishing = true;
     auto source = std::exchange(m_source, nullptr);
     auto offers = std::exchange(m_offers, {});
@@ -430,7 +460,23 @@ void DragController::cancel()
     if (source)
         source->cancel();
     m_finishing = false;
+    if (window)
+        window->dragEnded(released);
     emit ended();
+}
+
+void DragController::setWindowDelegate(DragWindowDelegate *delegate)
+{
+    if (!active() || m_external)
+        return;
+    m_windowDelegate = delegate;
+    if (!m_selected || !m_selected->canDrop())
+        setCursor(idleCursor());
+}
+
+CursorShape DragController::idleCursor() const
+{
+    return m_windowDelegate ? CursorShape::Grabbing : CursorShape::NoDrop;
 }
 
 uint32_t DragController::modifierAction() const

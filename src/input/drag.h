@@ -77,6 +77,18 @@ private:
     std::string m_mime;
 };
 
+// Moves a window along with a drag, for xdg_toplevel_drag_v1. The data
+// transfer goes on as usual; the window follows the pointer on top of it.
+class DragWindowDelegate
+{
+public:
+    virtual ~DragWindowDelegate() = default;
+    virtual void dragMoved(const QPointF& location) = 0;
+    // `released` is a drop, whether or not a target took the data; otherwise
+    // the drag was cancelled, by Escape or by its source or origin going away.
+    virtual void dragEnded(bool released) = 0;
+};
+
 class DragController : public QObject, public compositor::SurfaceObserver
 {
     Q_OBJECT
@@ -124,9 +136,17 @@ public:
     void drop();
     void cancel();
     uint32_t modifierAction() const;
+    // For the running drag only; it is forgotten when the drag ends. A drag
+    // with a window drops anywhere: the source learns of the drop even when no
+    // target accepts it, which is how it tells a drop from Escape.
+    void setWindowDelegate(DragWindowDelegate* delegate);
+
+    DragWindowDelegate* windowDelegate() const { return m_windowDelegate; }
+
     void onSurfaceDestroying(compositor::Surface* surface) override;
     void onSurfaceCommit(compositor::Surface* surface) override;
 Q_SIGNALS:
+    void started();
     void entered(compositor::Surface* surface, const QPointF& location);
     void moved(Timestamp timestamp, const QPointF& location);
     void left();
@@ -138,10 +158,14 @@ private:
                std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
                const QPointF& location);
     void leave();
+    // Cancels the transfer; `released` tells the window delegate it was a drop.
+    void end(bool released);
     void detach();
     void updateIcon();
     void updateFeedback(DragOffer* offer);
     void setCursor(CursorShape shape);
+    // The cursor over nothing that takes the drop.
+    CursorShape idleCursor() const;
     Seat* m_seat;
     compositor::Surface* m_origin = nullptr;
     compositor::Surface* m_icon = nullptr;
@@ -153,6 +177,7 @@ private:
     uint32_t m_actions = 0;
     ButtonFlags m_button = NoButton;
     std::optional<int32_t> m_touchId;
+    DragWindowDelegate* m_windowDelegate = nullptr;
     bool m_finishing = false;
     bool m_external = false;
     uint64_t m_generation = 0;

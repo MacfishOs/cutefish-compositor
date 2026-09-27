@@ -76,7 +76,8 @@ compositor::Surface *findTargetSurfaceInNodes(compositor::Compositor *compositor
 {
     for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
         scene::Node *node = *it;
-        if (!node->isEffectivelyVisible() || !node->acceptsInput(location))
+        if (!node->isEffectivelyVisible() || node->isEventTargetingBlocked()
+            || !node->acceptsInput(location))
             continue;
         if (throughCapture && node->isExcludedFromCapture())
             continue;

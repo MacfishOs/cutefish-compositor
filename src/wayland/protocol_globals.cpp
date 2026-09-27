@@ -42,6 +42,7 @@
 #include "wayland/protocols/xdg_dialog.h"
 #include "wayland/protocols/xdg_foreign.h"
 #include "wayland/protocols/xdg_shell.h"
+#include "wayland/protocols/xdg_toplevel_drag.h"
 #include "wayland/protocols/zwp_idle_inhibit_manager.h"
 #include "wayland/protocols/zwp_keyboard_shortcuts_inhibit_manager.h"
 #include "wayland/protocols/zwp_pointer_constraints.h"
@@ -93,6 +94,8 @@ bool ProtocolGlobals::registerCoreGlobals()
         || !createXdgActivationGlobal(display, m_xdgActivation.get())
         || !createXdgShellGlobal(display, m_xdgShell.get()) || !createXdgDecorationGlobal(display)
         || !createXdgDialogGlobal(display) || !createXdgExporterV2Global(display)
+        || (m_deps.windowManager
+            && !createXdgToplevelDragGlobal(display, m_deps.windowManager))
         || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
         || !createWindowHintsGlobal(display) || !createAppMenuGlobal(display) || !createFractionalScaleGlobal(display)
         || !createXdgOutputManagerGlobal(display) || !createViewporterGlobal(display)) {

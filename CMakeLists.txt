@@ -89,6 +89,8 @@ cutefish_wayland_protocol(xdg-dialog-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/xdg-dialog/xdg-dialog-v1.xml)
 cutefish_wayland_protocol(xdg-foreign-unstable-v2
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/xdg-foreign/xdg-foreign-unstable-v2.xml)
+cutefish_wayland_protocol(xdg-toplevel-drag-v1
+    ${WAYLAND_PROTOCOLS_DATADIR}/staging/xdg-toplevel-drag/xdg-toplevel-drag-v1.xml)
 
 cutefish_wayland_protocol(linux-dmabuf-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/stable/linux-dmabuf/linux-dmabuf-v1.xml)
@@ -163,6 +165,7 @@ add_library(cutefish-protocols STATIC
     ${cutefish-window-hints-v1_SOURCES} ${cutefish-surface-blur-v1_SOURCES} ${xdg-shell_SOURCES} ${xdg-decoration_SOURCES}
     ${xdg-dialog-v1_SOURCES}
     ${xdg-foreign-unstable-v2_SOURCES}
+    ${xdg-toplevel-drag-v1_SOURCES}
     ${cursor-shape-v1_SOURCES} ${tablet-v2_SOURCES} ${linux-dmabuf-v1_SOURCES}
     ${linux-drm-syncobj-v1_SOURCES} ${cutefish-shell-v1_SOURCES}
     ${cutefish-window-management-v1_SOURCES})
@@ -462,6 +465,8 @@ add_library(cutefish-wm STATIC
     src/wm/snap_drag_controller.h
     src/wm/toplevel_event_handler.cpp
     src/wm/toplevel_event_handler.h
+    src/wm/toplevel_drag.cpp
+    src/wm/toplevel_drag.h
     src/wm/window_manager.cpp
     src/wm/window_manager.h
     src/wm/quit_all.cpp
@@ -644,6 +649,8 @@ add_library(cutefish-wayland-shell STATIC
     src/wayland/protocols/xdg_dialog.h
     src/wayland/protocols/xdg_foreign.cpp
     src/wayland/protocols/xdg_foreign.h
+    src/wayland/protocols/xdg_toplevel_drag.cpp
+    src/wayland/protocols/xdg_toplevel_drag.h
 )
 target_include_directories(cutefish-wayland-shell PUBLIC src)
 target_link_libraries(cutefish-wayland-shell
