@@ -20,7 +20,7 @@ namespace cutefish::input {
 class XkbTracker;
 
 // Whether a window's application id (xdg_toplevel.set_app_id, or the X11
-// class) names a terminal, the one kind of application the rules treat apart.
+// class) names a terminal, the one kind of application treated apart.
 bool isTerminal(const QString &applicationId);
 
 // Turns the keys the compositor did not consume into the keys clients see.
@@ -35,22 +35,23 @@ bool isTerminal(const QString &applicationId);
 //   application; Option stays Alt and Control stays Ctrl.
 // - Command, Option and Control are held back until a key or a click needs
 //   them. Pressing one alone reaches no client (no menu bar pops up on a lone
-//   Alt), and a rule can send Home for Command+Left without taking back a Ctrl
-//   the client already saw.
-// - Rules turn text navigation into its Linux equivalents and give terminals
-//   their Ctrl+Shift clipboard and tab shortcuts; see kRules. A terminal gets
-//   no Command key that no rule names.
+//   Alt).
+// - In a terminal Command+C/V/T/W/N/F go out as Ctrl+Shift+C/V/T/W/N/F and
+//   Command+1 to 9 as Alt+1 to 9, the terminal's own shortcuts, so Control+C
+//   still interrupts the program. Any other Command+letter reaches no
+//   terminal, since as Ctrl it would be a control character. Nothing else is
+//   rewritten.
 // - Control+click is a secondary click.
 //
-// Ash's KeyboardModifierEventRewriter and the six-pack rewrites of
-// EventRewriterAsh do this job on ChromeOS; like them, each key remembers what
-// it was sent as, so its release matches whatever changed in between.
+// Ash's KeyboardModifierEventRewriter does this job on ChromeOS; like it, each
+// key remembers what it was sent as, so its release matches whatever changed
+// in between.
 class KeyTranslator
 {
 public:
     using DeliverKey = std::function<void(Timestamp, uint32_t evdevCode, bool pressed)>;
 
-    // `keymap` resolves the keysyms rules match and type; it is the tracker
+    // `keymap` resolves the keysyms of the terminal keys; it is the tracker
     // the delivered keys feed.
     KeyTranslator(const XkbTracker *keymap, DeliverKey deliver);
 

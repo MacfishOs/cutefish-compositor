@@ -17,7 +17,7 @@
 namespace cutefish::input {
 namespace {
 
-// The modifiers held when a rule is looked up.
+// The modifiers held, by role.
 enum Role : uint32_t {
     Command = 1u << 0,
     Option = 1u << 1,
@@ -25,7 +25,7 @@ enum Role : uint32_t {
     Shift = 1u << 3,
 };
 
-// The modifiers a rule sends with its key, by kind.
+// The modifiers sent with a key, by kind.
 enum ModifierKind : uint32_t {
     NoKind = 0,
     CtrlKind = 1u << 0,
@@ -35,96 +35,10 @@ enum ModifierKind : uint32_t {
     Level3Kind = 1u << 4,
 };
 
-enum class Scope {
-    Terminal,
-    NotTerminal,
-};
-
-// One key a rule sends: an evdev code or, without one, the key that was
-// pressed.
-struct Stroke {
-    uint32_t modifiers = 0;
-    uint32_t code = 0;
-};
-
-struct Rule {
-    Scope scope;
-    uint32_t roles;
-    // The key: an evdev code for keys every layout has in the same place, a
-    // base keysym otherwise.
-    uint32_t code;
-    uint32_t keysym;
-    // Also matches with Shift held, which is then sent along: Command+Shift+Left
-    // selects to the start of the line as Command+Left moves there.
-    bool withShift;
-    // Every stroke but the last is tapped; the last stays down with the key.
-    int strokeCount;
-    std::array<Stroke, 2> strokes;
-};
-
-constexpr Stroke send(uint32_t modifiers, uint32_t code)
-{
-    return {modifiers, code};
-}
-
-constexpr Stroke same(uint32_t modifiers)
-{
-    return {modifiers, 0};
-}
-
-constexpr Rule key(Scope scope, uint32_t roles, uint32_t code, Stroke stroke,
-                   bool withShift = false)
-{
-    return {scope, roles, code, 0, withShift, 1, {stroke, {}}};
-}
-
-constexpr Rule key(Scope scope, uint32_t roles, uint32_t code, Stroke first, Stroke second)
-{
-    return {scope, roles, code, 0, false, 2, {first, second}};
-}
-
-constexpr Rule sym(Scope scope, uint32_t roles, uint32_t keysym, Stroke stroke)
-{
-    return {scope, roles, 0, keysym, false, 1, {stroke, {}}};
-}
-
-constexpr uint32_t None = NoKind;
-constexpr uint32_t Ctrl = CtrlKind;
-constexpr uint32_t ShiftMod = ShiftKind;
-
-// Looked up in order; the first match wins. Any key no rule matches goes out
-// with Command as Ctrl, except in a terminal, where it is dropped (see
-// applyRule). Deliberately short: rules never depend on which application has
-// focus beyond whether it is a terminal.
-constexpr auto kRules = std::to_array<Rule>({
-        // Terminals take their clipboard, tab, window and search shortcuts with
-        // Ctrl+Shift and leave Ctrl to the program.
-        sym(Scope::Terminal, Command, XKB_KEY_c, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_v, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_t, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_w, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_n, same(Ctrl | ShiftMod)),
-        sym(Scope::Terminal, Command, XKB_KEY_f, same(Ctrl | ShiftMod)),
-
-        // Text navigation.
-        key(Scope::NotTerminal, Command, KEY_LEFT, send(None, KEY_HOME), true),
-        key(Scope::NotTerminal, Command, KEY_RIGHT, send(None, KEY_END), true),
-        key(Scope::NotTerminal, Command, KEY_UP, send(Ctrl, KEY_HOME), true),
-        key(Scope::NotTerminal, Command, KEY_DOWN, send(Ctrl, KEY_END), true),
-        key(Scope::NotTerminal, Option, KEY_LEFT, send(Ctrl, KEY_LEFT), true),
-        key(Scope::NotTerminal, Option, KEY_RIGHT, send(Ctrl, KEY_RIGHT), true),
-        key(Scope::NotTerminal, Option, KEY_BACKSPACE, send(Ctrl, KEY_BACKSPACE)),
-        key(Scope::NotTerminal, Option, KEY_DELETE, send(Ctrl, KEY_DELETE)),
-        key(Scope::NotTerminal, Command, KEY_BACKSPACE, send(ShiftMod, KEY_HOME),
-            send(None, KEY_BACKSPACE)),
-        key(Scope::NotTerminal, Command, KEY_DELETE, send(ShiftMod, KEY_END),
-            send(None, KEY_DELETE)),
-});
-
-bool inScope(Scope scope, bool terminal)
-{
-    return (scope == Scope::Terminal) == terminal;
-}
+// Terminals take their own shortcuts with Ctrl+Shift, leaving Ctrl to the
+// program: copy, paste, new tab, close tab, new window, find.
+constexpr std::array<uint32_t, 6> kTerminalCtrlShiftKeys = {XKB_KEY_c, XKB_KEY_v, XKB_KEY_t,
+                                                           XKB_KEY_w, XKB_KEY_n, XKB_KEY_f};
 
 uint32_t defaultCode(ModifierKind kind)
 {
@@ -376,37 +290,31 @@ void KeyTranslator::releaseKey(Timestamp timestamp, uint32_t code)
 bool KeyTranslator::applyRule(Timestamp timestamp, uint32_t code)
 {
     const uint32_t roles = heldRoles();
-    const bool terminal = m_terminal && m_terminal();
+    if (!(roles & Command) || !m_terminal || !m_terminal())
+        return false;
+
+    uint32_t kinds = NoKind;
     const uint32_t keysym = m_keymap->baseKeysym(code);
-    const auto match = std::find_if(kRules.begin(), kRules.end(), [&](const Rule &rule) {
-        if (rule.code ? rule.code != code : rule.keysym != keysym)
-            return false;
-        if (rule.roles != roles && !(rule.withShift && (rule.roles | Shift) == roles))
-            return false;
-        return inScope(rule.scope, terminal);
-    });
-    if (match == kRules.end()) {
-        // Ctrl belongs to the program in a terminal, so a Command key as Ctrl
-        // would type a control character: Command+D would end the shell.
-        if (!(roles & Command) || !terminal)
-            return false;
+    if (roles == Command
+        && std::find(kTerminalCtrlShiftKeys.begin(), kTerminalCtrlShiftKeys.end(), keysym)
+                != kTerminalCtrlShiftKeys.end()) {
+        kinds = CtrlKind | ShiftKind;
+    } else if (roles == Command && code >= KEY_1 && code <= KEY_9) {
+        // Terminals pick a tab with Alt+digit. By position, since some layouts
+        // type symbols on the digit row.
+        kinds = AltKind;
+    } else if (keysym >= XKB_KEY_a && keysym <= XKB_KEY_z) {
+        // As Ctrl a letter is a control character to the program: Command+D
+        // would end the shell and Command+Z suspend it. Other keys go out.
         m_presses.emplace(code, Press {0, true});
         return true;
+    } else {
+        return false;
     }
 
-    const uint32_t shift = (match->withShift && (roles & Shift)) ? ShiftKind : NoKind;
-    Press press {0, true};
-    for (int i = 0; i < match->strokeCount; ++i) {
-        const Stroke &stroke = match->strokes[i];
-        const uint32_t out = stroke.code ? stroke.code : code;
-        syncModifierKinds(timestamp, stroke.modifiers | shift);
-        pressKey(timestamp, out);
-        if (i + 1 < match->strokeCount)
-            releaseKey(timestamp, out);
-        else
-            press.delivered = out;
-    }
-    m_presses.emplace(code, press);
+    syncModifierKinds(timestamp, kinds);
+    pressKey(timestamp, code);
+    m_presses.emplace(code, Press {code, true});
     return true;
 }
 

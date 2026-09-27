@@ -122,42 +122,23 @@ TEST_F(KeyTranslatorTest, ShiftGoesOutAtOnce)
     EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_Z), up(KEY_Z)}), take());
 }
 
-TEST_F(KeyTranslatorTest, CommandLeftMovesToTheLineStartWithoutCtrl)
+TEST_F(KeyTranslatorTest, TextKeysGoOutWithCtrlUnchanged)
 {
+    // No text navigation: Command+Left and Command+Backspace are Ctrl+Left and
+    // Ctrl+Backspace, which a file view can bind as it likes.
     press(KEY_LEFTMETA);
     tap(KEY_LEFT);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_HOME), up(KEY_HOME)}), take());
-
-    press(KEY_LEFTSHIFT);
-    tap(KEY_LEFT);
-    release(KEY_LEFTSHIFT);
+    tap(KEY_BACKSPACE);
     release(KEY_LEFTMETA);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTSHIFT), down(KEY_HOME), up(KEY_HOME),
-                                      up(KEY_LEFTSHIFT)}),
+    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFT), up(KEY_LEFT),
+                                      down(KEY_BACKSPACE), up(KEY_BACKSPACE),
+                                      up(KEY_LEFTCTRL)}),
               take());
-}
-
-TEST_F(KeyTranslatorTest, ARuleLiftsACtrlTheClientAlreadyHas)
-{
-    press(KEY_LEFTMETA);
-    tap(KEY_C);
-    take();
-    tap(KEY_RIGHT);
-    // The Ctrl stays lifted until a key needs it again.
-    EXPECT_EQ(std::vector<Delivered>({up(KEY_LEFTCTRL), down(KEY_END), up(KEY_END)}), take());
-    tap(KEY_V);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_V), up(KEY_V)}), take());
 }
 
 TEST_F(KeyTranslatorTest, AKeyReleasesWhatItWasSentAs)
 {
-    press(KEY_LEFTMETA);
-    press(KEY_LEFT);
-    release(KEY_LEFTMETA);
-    release(KEY_LEFT);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_HOME), up(KEY_HOME)}), take());
-
-    // The convention changing in between does not strand a key either.
+    // The convention changing in between does not strand a key.
     press(KEY_LEFTMETA);
     press(KEY_A);
     translator.setConvention(ShortcutConvention::Pc);
@@ -168,27 +149,14 @@ TEST_F(KeyTranslatorTest, AKeyReleasesWhatItWasSentAs)
               take());
 }
 
-TEST_F(KeyTranslatorTest, OptionMovesByWordAndDeletesWords)
+TEST_F(KeyTranslatorTest, OptionGoesOutAsAltWithTheKeyThatNeedsIt)
 {
     press(KEY_LEFTALT);
+    EXPECT_TRUE(take().empty());
     tap(KEY_LEFT);
-    tap(KEY_BACKSPACE);
     release(KEY_LEFTALT);
-    // Option itself never goes out; each rule sends its own Ctrl.
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFT), up(KEY_LEFT),
-                                      up(KEY_LEFTCTRL), down(KEY_LEFTCTRL), down(KEY_BACKSPACE),
-                                      up(KEY_BACKSPACE), up(KEY_LEFTCTRL)}),
-              take());
-}
-
-TEST_F(KeyTranslatorTest, CommandBackspaceDeletesToTheLineStart)
-{
-    press(KEY_LEFTMETA);
-    tap(KEY_BACKSPACE);
-    release(KEY_LEFTMETA);
-    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTSHIFT), down(KEY_HOME), up(KEY_HOME),
-                                      up(KEY_LEFTSHIFT), down(KEY_BACKSPACE),
-                                      up(KEY_BACKSPACE)}),
+    EXPECT_EQ(std::vector<Delivered>(
+                      {down(KEY_LEFTALT), down(KEY_LEFT), up(KEY_LEFT), up(KEY_LEFTALT)}),
               take());
 }
 
@@ -212,6 +180,12 @@ TEST_F(KeyTranslatorTest, TerminalsCopyWithCtrlShiftAndKeepControlForThePrograms
     EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFTSHIFT), down(KEY_C),
                                       up(KEY_C), up(KEY_LEFTSHIFT), up(KEY_LEFTCTRL)}),
               take());
+    press(KEY_LEFTMETA);
+    tap(KEY_V);
+    release(KEY_LEFTMETA);
+    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFTSHIFT), down(KEY_V),
+                                      up(KEY_V), up(KEY_LEFTSHIFT), up(KEY_LEFTCTRL)}),
+              take());
 
     press(KEY_LEFTCTRL);
     tap(KEY_C);
@@ -222,15 +196,40 @@ TEST_F(KeyTranslatorTest, TerminalsCopyWithCtrlShiftAndKeepControlForThePrograms
               take());
 }
 
-TEST_F(KeyTranslatorTest, TerminalsGetNoCommandKeyWithoutARule)
+TEST_F(KeyTranslatorTest, TerminalsOpenAndCloseTabsAndPickThemByNumber)
 {
-    // As Ctrl these would end the shell, suspend the program and run the line.
+    terminal = true;
+    press(KEY_LEFTMETA);
+    tap(KEY_T);
+    release(KEY_LEFTMETA);
+    EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTCTRL), down(KEY_LEFTSHIFT), down(KEY_T),
+                                      up(KEY_T), up(KEY_LEFTSHIFT), up(KEY_LEFTCTRL)}),
+              take());
+
+    press(KEY_LEFTMETA);
+    tap(KEY_3);
+    release(KEY_LEFTMETA);
+    EXPECT_EQ(std::vector<Delivered>(
+                      {down(KEY_LEFTALT), down(KEY_3), up(KEY_3), up(KEY_LEFTALT)}),
+              take());
+
+    // Elsewhere Command+3 is Ctrl+3, which browsers pick tabs with.
+    terminal = false;
+    press(KEY_LEFTMETA);
+    tap(KEY_3);
+    release(KEY_LEFTMETA);
+    EXPECT_EQ(std::vector<Delivered>(
+                      {down(KEY_LEFTCTRL), down(KEY_3), up(KEY_3), up(KEY_LEFTCTRL)}),
+              take());
+}
+
+TEST_F(KeyTranslatorTest, TerminalsGetNoOtherCommandLetters)
+{
+    // As Ctrl these would end the shell and suspend the program.
     terminal = true;
     press(KEY_LEFTMETA);
     tap(KEY_D);
     tap(KEY_Z);
-    tap(KEY_ENTER);
-    tap(KEY_UP);
     release(KEY_LEFTMETA);
     EXPECT_TRUE(take().empty());
 
@@ -241,7 +240,15 @@ TEST_F(KeyTranslatorTest, TerminalsGetNoCommandKeyWithoutARule)
     release(KEY_LEFTSHIFT);
     EXPECT_EQ(std::vector<Delivered>({down(KEY_LEFTSHIFT), up(KEY_LEFTSHIFT)}), take());
 
-    // Other applications still get Command as Ctrl.
+    // Other keys still go out as Ctrl.
+    press(KEY_LEFTMETA);
+    tap(KEY_LEFT);
+    release(KEY_LEFTMETA);
+    EXPECT_EQ(std::vector<Delivered>(
+                      {down(KEY_LEFTCTRL), down(KEY_LEFT), up(KEY_LEFT), up(KEY_LEFTCTRL)}),
+              take());
+
+    // Other applications get Command+D as Ctrl+D.
     terminal = false;
     press(KEY_LEFTMETA);
     tap(KEY_D);
