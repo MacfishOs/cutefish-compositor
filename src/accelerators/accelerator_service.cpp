@@ -75,11 +75,6 @@ AcceleratorService::~AcceleratorService()
     }
 }
 
-bool AcceleratorService::customizable() const
-{
-    return m_configuration->customizable();
-}
-
 QString AcceleratorService::shortcutConvention() const
 {
     return m_configuration->convention() == input::ShortcutConvention::Command
@@ -178,9 +173,6 @@ AcceleratorService::validateAction(const QString &name, AcceleratorActionId *id)
     const auto action = acceleratorActionFromName(name);
     if (!action || !m_configuration->isValid(toActionId(*action)))
         return AcceleratorConfigResult::NotFound;
-    // The Command convention's shortcuts are fixed.
-    if (!m_configuration->customizable())
-        return AcceleratorConfigResult::ActionLocked;
     *id = toActionId(*action);
     return std::nullopt;
 }
@@ -259,9 +251,14 @@ AcceleratorService::maybeHandleNonMetaAccelerator(const Accelerator &accelerator
     if (m_conflictState != ConflictErrorState::AwaitingNonMetaConfirmation)
         m_pending.reset();
 
+    // Applications never see Meta. Under the Command convention they get both
+    // Command and Control as Ctrl, so only the two together are clear of them.
+    const bool clear = m_configuration->convention() == input::ShortcutConvention::Command
+            ? accelerator.isMetaDown() && accelerator.isControlDown()
+            : accelerator.isMetaDown();
     // Function keys cannot be used with Meta, so they are not warned about;
     // neither is the Meta tap itself.
-    if (!accelerator.isMetaDown() && !isFunctionKeysym(accelerator.keysym())
+    if (!clear && !isFunctionKeysym(accelerator.keysym())
         && accelerator.keyState() == Accelerator::KeyState::Pressed) {
         if (!m_pending || m_pending->action != id || m_pending->accelerator != accelerator) {
             m_pending = PendingAccelerator {accelerator, id};

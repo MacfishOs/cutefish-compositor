@@ -71,13 +71,9 @@ public:
 
     input::ShortcutConvention convention() const { return m_convention; }
 
-    // Each convention has its own defaults; a change reloads them.
+    // Each convention has its own defaults and its own saved overrides; a
+    // change reloads both.
     void setConvention(input::ShortcutConvention convention);
-
-    // Only the PC convention's shortcuts are the user's to change. The
-    // Command convention takes its defaults as they are and refuses every
-    // change with ActionLocked; the saved overrides wait for PC.
-    bool customizable() const;
 
     const std::vector<Accelerator> &allAccelerators() const { return m_accelerators; }
 
@@ -125,6 +121,7 @@ private:
 
     void addAccelerators(std::span<const AcceleratorData> accelerators);
 
+    QString overridesGroup() const;
     void loadOverrides();
     void saveOverrides();
     void applyOverrides();

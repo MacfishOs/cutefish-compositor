@@ -95,20 +95,16 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
 });
 
 // The defaults under input::ShortcutConvention::Command. Command reaches the
-// compositor as Meta, so MetaDown reads as Command: Command+Tab switches
-// windows, Command+Space opens the launcher, Control+Command+Q locks, and
-// Command+Q, Command+H and Command+Option+H are the application menu's Quit,
-// Hide and Hide Others. Command+Shift+3 and 4 capture the screen and a
-// selected part of it, onto the clipboard with Control as well, Command+Shift+5
-// opens the capture tools and Control+Command+Escape stops a recording.
-// Control+Left and Right step between desks and Control+1 to 8 go straight to
-// one; with Shift as well Control+Left and Right take the window along.
-// Control+Command+= and - add and remove a desk, and Control+Command+A puts the
-// window on every desk. Everything else Command does goes to the application
-// as Ctrl.
+// compositor as Meta, so MetaDown reads as Command. Applications get Command
+// and Control as Ctrl, so the system keeps to Control+Command, which they
+// never see, apart from a few actions on Command alone: Command+Tab switches
+// applications, Command+M minimizes, and Command+Q, Command+H and
+// Command+Option+H are the application menu's Quit, Hide and Hide Others.
+// Keys no application uses stay as under PC: Print and its combinations, and
+// Control+Command+Escape stops a recording. Command+Shift+3, 4 and 5 capture
+// as well, onto the clipboard with Control. The launcher has no default.
 inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_q, ControlDown | MetaDown, AcceleratorAction::LockScreen},
-        {true, XKB_KEY_space, MetaDown, AcceleratorAction::ToggleAppList},
 
         // Window management.
         {true, XKB_KEY_Tab, MetaDown, AcceleratorAction::CycleForwardMru},
@@ -124,22 +120,26 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_m, ControlDown | MetaDown,
          AcceleratorAction::MoveActiveWindowBetweenDisplays},
 
-        // Desks.
-        {true, XKB_KEY_Left, ControlDown, AcceleratorAction::DesksActivateDeskLeft},
-        {true, XKB_KEY_Right, ControlDown, AcceleratorAction::DesksActivateDeskRight},
-        {true, XKB_KEY_Left, ControlDown | ShiftDown, AcceleratorAction::DesksMoveActiveItemLeft},
-        {true, XKB_KEY_Right, ControlDown | ShiftDown,
+        // Desks, with Control+Command where PC has Meta.
+        {true, XKB_KEY_bracketleft, ControlDown | MetaDown,
+         AcceleratorAction::DesksActivateDeskLeft},
+        {true, XKB_KEY_bracketright, ControlDown | MetaDown,
+         AcceleratorAction::DesksActivateDeskRight},
+        {true, XKB_KEY_bracketleft, ControlDown | MetaDown | ShiftDown,
+         AcceleratorAction::DesksMoveActiveItemLeft},
+        {true, XKB_KEY_bracketright, ControlDown | MetaDown | ShiftDown,
          AcceleratorAction::DesksMoveActiveItemRight},
         {true, XKB_KEY_equal, ControlDown | MetaDown, AcceleratorAction::DesksNewDesk},
         {true, XKB_KEY_minus, ControlDown | MetaDown, AcceleratorAction::DesksRemoveCurrentDesk},
-        {true, XKB_KEY_1, ControlDown, AcceleratorAction::DesksActivate0},
-        {true, XKB_KEY_2, ControlDown, AcceleratorAction::DesksActivate1},
-        {true, XKB_KEY_3, ControlDown, AcceleratorAction::DesksActivate2},
-        {true, XKB_KEY_4, ControlDown, AcceleratorAction::DesksActivate3},
-        {true, XKB_KEY_5, ControlDown, AcceleratorAction::DesksActivate4},
-        {true, XKB_KEY_6, ControlDown, AcceleratorAction::DesksActivate5},
-        {true, XKB_KEY_7, ControlDown, AcceleratorAction::DesksActivate6},
-        {true, XKB_KEY_8, ControlDown, AcceleratorAction::DesksActivate7},
+        // Without Shift, which Control+Command+Shift+3 and 4 take for screenshots.
+        {true, XKB_KEY_1, ControlDown | MetaDown, AcceleratorAction::DesksActivate0},
+        {true, XKB_KEY_2, ControlDown | MetaDown, AcceleratorAction::DesksActivate1},
+        {true, XKB_KEY_3, ControlDown | MetaDown, AcceleratorAction::DesksActivate2},
+        {true, XKB_KEY_4, ControlDown | MetaDown, AcceleratorAction::DesksActivate3},
+        {true, XKB_KEY_5, ControlDown | MetaDown, AcceleratorAction::DesksActivate4},
+        {true, XKB_KEY_6, ControlDown | MetaDown, AcceleratorAction::DesksActivate5},
+        {true, XKB_KEY_7, ControlDown | MetaDown, AcceleratorAction::DesksActivate6},
+        {true, XKB_KEY_8, ControlDown | MetaDown, AcceleratorAction::DesksActivate7},
         {true, XKB_KEY_a, ControlDown | MetaDown, AcceleratorAction::DesksToggleAssignToAllDesks},
 
         // Screen capture.
@@ -150,6 +150,9 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_4, ControlDown | MetaDown | ShiftDown,
          AcceleratorAction::TakePartialScreenshotToClipboard},
         {true, XKB_KEY_5, MetaDown | ShiftDown, AcceleratorAction::StartCaptureMode},
+        {true, XKB_KEY_Print, NoModifier, AcceleratorAction::StartCaptureMode},
+        {true, XKB_KEY_Print, ShiftDown, AcceleratorAction::TakeScreenshot},
+        {true, XKB_KEY_Print, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
         {true, XKB_KEY_Escape, ControlDown | MetaDown, AcceleratorAction::StopScreenRecording},
 });
 

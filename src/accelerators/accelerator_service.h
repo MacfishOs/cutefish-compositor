@@ -39,9 +39,6 @@ class AcceleratorService : public QObject
     // "pc", or "command" when Meta is the Command key next to the space bar,
     // Alt is Option and Ctrl is Control; see input::ShortcutConvention.
     Q_PROPERTY(QString shortcutConvention READ shortcutConvention NOTIFY acceleratorsChanged)
-    // False under the Command convention, whose shortcuts are fixed: every
-    // change is answered with action-locked.
-    Q_PROPERTY(bool customizable READ customizable NOTIFY acceleratorsChanged)
 
 public:
     AcceleratorService(AcceleratorConfiguration *configuration, AcceleratorController *controller,
@@ -51,7 +48,6 @@ public:
     bool registerService();
 
     QString shortcutConvention() const;
-    bool customizable() const;
 
     // JSON for one accelerator, shared with the tests.
     QJsonObject acceleratorToJson(const Accelerator &accelerator, AcceleratorActionId id) const;

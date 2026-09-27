@@ -426,36 +426,40 @@ TEST(AcceleratorConfiguration, OverridesPersistAcrossInstances)
     EXPECT_EQ(AcceleratorAction::LockScreen, *configuration.findAcceleratorAction(metaL));
 }
 
-TEST(AcceleratorConfiguration, TheCommandConventionIsFixedAndKeepsThePcOverridesForLater)
+TEST(AcceleratorConfiguration, EachConventionKeepsItsOwnOverrides)
 {
     QTemporaryDir directory;
     const QString file = directory.filePath(QStringLiteral("shortcuts.conf"));
     const auto maximize = toActionId(AcceleratorAction::ToggleMaximized);
-    const Accelerator custom(XKB_KEY_k, MetaDown | ControlDown);
+    const auto launcher = toActionId(AcceleratorAction::ToggleAppList);
+    const Accelerator pcBinding(XKB_KEY_k, MetaDown | ControlDown);
+    const Accelerator commandBinding(XKB_KEY_space, MetaDown);
 
     AcceleratorConfiguration configuration(file);
     configuration.initialize();
-    ASSERT_TRUE(configuration.customizable());
-    ASSERT_EQ(AcceleratorConfigResult::Success, configuration.addUserAccelerator(maximize, custom));
+    ASSERT_EQ(AcceleratorConfigResult::Success,
+              configuration.addUserAccelerator(maximize, pcBinding));
 
-    // The Command convention takes no edits and ignores the PC binding, but
-    // does not forget it.
+    // Meta is another key under Command, so the PC binding waits and the
+    // Command convention takes edits of its own.
     configuration.setConvention(input::ShortcutConvention::Command);
-    EXPECT_FALSE(configuration.customizable());
-    EXPECT_FALSE(configuration.findAcceleratorAction(custom));
+    EXPECT_FALSE(configuration.findAcceleratorAction(pcBinding));
     EXPECT_FALSE(configuration.hasCustomAccelerators());
-    EXPECT_EQ(AcceleratorConfigResult::ActionLocked,
-              configuration.addUserAccelerator(maximize, Accelerator(XKB_KEY_j, MetaDown)));
-    EXPECT_EQ(AcceleratorConfigResult::ActionLocked, configuration.restoreAllDefaults());
-    {
-        AcceleratorConfiguration reread(file);
-        reread.initialize();
-        EXPECT_TRUE(reread.findAcceleratorAction(custom));
-    }
+    ASSERT_EQ(AcceleratorConfigResult::Success,
+              configuration.addUserAccelerator(launcher, commandBinding));
+    EXPECT_EQ(AcceleratorAction::ToggleAppList,
+              *configuration.findAcceleratorAction(commandBinding));
 
     configuration.setConvention(input::ShortcutConvention::Pc);
-    ASSERT_TRUE(configuration.findAcceleratorAction(custom));
-    EXPECT_EQ(AcceleratorAction::ToggleMaximized, *configuration.findAcceleratorAction(custom));
+    ASSERT_TRUE(configuration.findAcceleratorAction(pcBinding));
+    EXPECT_EQ(AcceleratorAction::ToggleMaximized, *configuration.findAcceleratorAction(pcBinding));
+    EXPECT_FALSE(configuration.findAcceleratorAction(commandBinding));
+
+    AcceleratorConfiguration reread(file);
+    reread.setConvention(input::ShortcutConvention::Command);
+    ASSERT_TRUE(reread.findAcceleratorAction(commandBinding));
+    EXPECT_EQ(AcceleratorAction::ToggleAppList, *reread.findAcceleratorAction(commandBinding));
+    EXPECT_FALSE(reread.findAcceleratorAction(pcBinding));
 }
 
 TEST(AcceleratorConfiguration, MalformedOverridesAreDropped)
@@ -819,6 +823,16 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionApplicationsGetCommandAsCtrl)
             {KEY_LEFTCTRL, true}, {KEY_C, true}, {KEY_C, false}, {KEY_LEFTCTRL, false}};
     EXPECT_EQ(expected, keyboardDelegate->keys);
 
+    // The launcher has no default here; Command+Space is the application's.
+    keyboardDelegate->keys.clear();
+    chord({KEY_LEFTALT}, KEY_SPACE);
+    EXPECT_EQ(0, delegate.appListToggles);
+    const std::vector<std::pair<uint32_t, bool>> space = {{KEY_LEFTCTRL, true},
+                                                          {KEY_SPACE, true},
+                                                          {KEY_SPACE, false},
+                                                          {KEY_LEFTCTRL, false}};
+    EXPECT_EQ(space, keyboardDelegate->keys);
+
     // Command+Q, Command+H and Command+Option+H are the application menu's
     // Quit, Hide and Hide Others; the window sees none of them.
     int closes = 0;
@@ -878,8 +892,13 @@ TEST_F(AcceleratorTest, ScreenCaptureKeysGoToTheShellUnderBothConventions)
     chord({KEY_LEFTCTRL, KEY_LEFTALT, KEY_LEFTSHIFT}, KEY_4);
     chord({KEY_LEFTALT, KEY_LEFTSHIFT}, KEY_5);
     chord({KEY_LEFTCTRL, KEY_LEFTALT}, KEY_ESC);
-    expected = {"screen", "screen-clipboard", "partial", "partial-clipboard", "capture-mode",
-                "stop-recording"};
+    // Print works as under PC.
+    tap(KEY_SYSRQ);
+    chord({KEY_LEFTSHIFT}, KEY_SYSRQ);
+    chord({KEY_LEFTALT, KEY_LEFTSHIFT}, KEY_SYSRQ);
+    expected = {"screen",       "screen-clipboard", "partial", "partial-clipboard",
+                "capture-mode", "stop-recording",   "capture-mode", "screen",
+                "partial"};
     EXPECT_EQ(expected, delegate.captures);
     for (const auto &[code, pressed] : keyboardDelegate->keys) {
         EXPECT_NE(static_cast<uint32_t>(KEY_3), code);
@@ -921,19 +940,23 @@ TEST_F(AcceleratorTest, DeskKeysAddSwitchSendAndRemoveDesksUnderBothConventions)
     ASSERT_EQ(1u, desks->desks().size());
     EXPECT_TRUE(window->isVisible());
 
-    // Control+Command+= and Control+Left and Right; Alt is Command here.
+    // Control+Command where PC has Meta; Alt is Command here.
     seat.setShortcutConvention(input::ShortcutConvention::Command);
     configuration->setConvention(input::ShortcutConvention::Command);
     chord({KEY_LEFTCTRL, KEY_LEFTALT}, KEY_EQUAL);
     ASSERT_EQ(2u, desks->desks().size());
     EXPECT_EQ(1, desks->activeDeskIndex());
-    chord({KEY_LEFTCTRL}, KEY_LEFT);
+    chord({KEY_LEFTCTRL, KEY_LEFTALT}, KEY_LEFTBRACE);
     EXPECT_EQ(0, desks->activeDeskIndex());
-    chord({KEY_LEFTCTRL}, KEY_2);
+    chord({KEY_LEFTCTRL, KEY_LEFTALT}, KEY_2);
     EXPECT_EQ(1, desks->activeDeskIndex());
-    chord({KEY_LEFTCTRL}, KEY_1);
-    // Control+Shift+Right takes the window along to the next desk.
-    chord({KEY_LEFTCTRL, KEY_LEFTSHIFT}, KEY_RIGHT);
+    chord({KEY_LEFTCTRL, KEY_LEFTALT}, KEY_1);
+    // Control alone is the application's Ctrl.
+    chord({KEY_LEFTCTRL}, KEY_RIGHT);
+    chord({KEY_LEFTCTRL}, KEY_2);
+    EXPECT_EQ(0, desks->activeDeskIndex());
+    // With Shift the window goes along to the next desk.
+    chord({KEY_LEFTCTRL, KEY_LEFTALT, KEY_LEFTSHIFT}, KEY_RIGHTBRACE);
     EXPECT_EQ(desks->deskAt(1), desks->deskOf(window));
     chord({KEY_LEFTCTRL, KEY_LEFTALT}, KEY_MINUS);
     EXPECT_EQ(1u, desks->desks().size());
@@ -1341,6 +1364,19 @@ TEST_F(AcceleratorTest, ServiceValidatesConfirmsAndReportsConflicts)
               answer.value(QStringLiteral("result")));
     answer = parse(service.addAccelerator(maximize, KEY_J, 0, ControlDown | AltDown));
     EXPECT_EQ(QStringLiteral("success"), answer.value(QStringLiteral("result")));
+
+    // Under Command, Command+key is the application's Ctrl+key; only
+    // Control+Command is clear of it.
+    seat.setShortcutConvention(input::ShortcutConvention::Command);
+    configuration->setConvention(input::ShortcutConvention::Command);
+    const QString launcher = QStringLiteral("toggle-app-list");
+    answer = parse(service.addAccelerator(launcher, KEY_K, 0, MetaDown));
+    EXPECT_EQ(QStringLiteral("non-meta-accelerator-warning"),
+              answer.value(QStringLiteral("result")));
+    answer = parse(service.addAccelerator(launcher, KEY_K, 0, ControlDown | MetaDown));
+    EXPECT_EQ(QStringLiteral("success"), answer.value(QStringLiteral("result")));
+    seat.setShortcutConvention(input::ShortcutConvention::Pc);
+    configuration->setConvention(input::ShortcutConvention::Pc);
 
     // Five accelerators per action at most.
     EXPECT_EQ(5u, configuration->acceleratorsForAction(

@@ -23,7 +23,9 @@ namespace cutefish::accelerators {
 
 namespace {
 
+// Meta is a different key under each convention, so each keeps its own.
 constexpr auto kOverridesGroup = "overrides";
+constexpr auto kCommandOverridesGroup = "command-overrides";
 constexpr auto kKeyField = "key";
 constexpr auto kModifiersField = "modifiers";
 constexpr auto kStateField = "state";
@@ -174,21 +176,12 @@ void AcceleratorConfiguration::initialize()
 {
     // The defaults' own update saves the override cache, so it must already
     // hold what the file has.
-    if (customizable())
-        loadOverrides();
-    else
-        m_overrides.clear();
+    loadOverrides();
     if (m_convention == input::ShortcutConvention::Command)
         initialize(kCommandAcceleratorData);
     else
         initialize(kAcceleratorData);
-    if (customizable())
-        applyOverrides();
-}
-
-bool AcceleratorConfiguration::customizable() const
-{
-    return m_convention == input::ShortcutConvention::Pc;
+    applyOverrides();
 }
 
 void AcceleratorConfiguration::setConvention(input::ShortcutConvention convention)
@@ -271,8 +264,6 @@ bool AcceleratorConfiguration::hasCustomAccelerators() const
 AcceleratorConfigResult AcceleratorConfiguration::addUserAccelerator(AcceleratorActionId id,
                                                                      const Accelerator &accelerator)
 {
-    if (!customizable())
-        return AcceleratorConfigResult::ActionLocked;
     const AcceleratorConfigResult result = doAddAccelerator(id, accelerator, /*saveOverride=*/true);
     if (result == AcceleratorConfigResult::Success)
         updateAndNotifyAccelerators();
@@ -283,8 +274,6 @@ AcceleratorConfigResult AcceleratorConfiguration::addUserAccelerator(Accelerator
 AcceleratorConfigResult AcceleratorConfiguration::removeAccelerator(AcceleratorActionId id,
                                                                     const Accelerator &accelerator)
 {
-    if (!customizable())
-        return AcceleratorConfigResult::ActionLocked;
     const AcceleratorConfigResult result =
             doRemoveAccelerator(id, accelerator, /*saveOverride=*/true);
     if (result == AcceleratorConfigResult::Success)
@@ -298,8 +287,6 @@ AcceleratorConfiguration::replaceAccelerator(AcceleratorActionId id,
                                              const Accelerator &oldAccelerator,
                                              const Accelerator &newAccelerator)
 {
-    if (!customizable())
-        return AcceleratorConfigResult::ActionLocked;
     const AcceleratorConfigResult result = doReplaceAccelerator(id, oldAccelerator, newAccelerator);
     if (result == AcceleratorConfigResult::Success)
         updateAndNotifyAccelerators();
@@ -310,8 +297,6 @@ AcceleratorConfiguration::replaceAccelerator(AcceleratorActionId id,
 
 AcceleratorConfigResult AcceleratorConfiguration::restoreDefault(AcceleratorActionId id)
 {
-    if (!customizable())
-        return AcceleratorConfigResult::ActionLocked;
     const auto current = m_idToAccelerators.find(id);
     if (current == m_idToAccelerators.end())
         return AcceleratorConfigResult::NotFound;
@@ -349,8 +334,6 @@ AcceleratorConfigResult AcceleratorConfiguration::restoreDefault(AcceleratorActi
 
 AcceleratorConfigResult AcceleratorConfiguration::restoreAllDefaults()
 {
-    if (!customizable())
-        return AcceleratorConfigResult::ActionLocked;
     resetAllAccelerators();
     m_overrides.clear();
     updateAndNotifyAccelerators();
@@ -448,11 +431,18 @@ void AcceleratorConfiguration::updateAndNotifyAccelerators()
     Q_EMIT acceleratorsUpdated();
 }
 
+QString AcceleratorConfiguration::overridesGroup() const
+{
+    return QLatin1String(m_convention == input::ShortcutConvention::Command
+                                 ? kCommandOverridesGroup
+                                 : kOverridesGroup);
+}
+
 void AcceleratorConfiguration::loadOverrides()
 {
     m_overrides.clear();
     m_settings.sync();
-    m_settings.beginGroup(QLatin1String(kOverridesGroup));
+    m_settings.beginGroup(overridesGroup());
     const QStringList actions = m_settings.childKeys();
     for (const QString &action : actions) {
         const QJsonDocument document =
@@ -465,10 +455,7 @@ void AcceleratorConfiguration::loadOverrides()
 
 void AcceleratorConfiguration::saveOverrides()
 {
-    // The Command convention's shortcuts are fixed; the saved ones wait for PC.
-    if (!customizable())
-        return;
-    m_settings.beginGroup(QLatin1String(kOverridesGroup));
+    m_settings.beginGroup(overridesGroup());
     m_settings.remove(QString());
     for (const auto &[action, list] : m_overrides) {
         m_settings.setValue(action, QString::fromUtf8(QJsonDocument(list).toJson(
