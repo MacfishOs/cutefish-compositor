@@ -11,10 +11,14 @@
 // libinput swipes stand in for ui::ScrollEvent. The desk content follows the
 // fingers whatever the scrolling direction is set to, and by the distance they
 // travel on the pad rather than by accelerated pointer motion, which would
-// run ahead of a quick swipe and lag a slow one.
+// run ahead of a quick swipe and lag a slow one. A swipe that starts while
+// something is being dragged, a window or data, switches nothing: the drag
+// would carry across desks mid-flight.
 
 #ifndef CUTEFISH_WM_GESTURES_WM_GESTURE_HANDLER_H_
 #define CUTEFISH_WM_GESTURES_WM_GESTURE_HANDLER_H_
+
+#include <functional>
 
 #include "input/gesture_filter.h"
 
@@ -39,7 +43,8 @@ public:
     // touchpad_constant_filter); touchpads keep that profile here.
     static constexpr double kMmPerUnacceleratedUnit = 25.4 / 1000 / (0.9 * 0.2968);
 
-    explicit WmGestureHandler(DesksController *desks);
+    // `dragging` tells whether a drag is running; empty means never.
+    explicit WmGestureHandler(DesksController *desks, std::function<bool()> dragging = {});
 
     bool claimGesture(input::Timestamp timestamp, input::GestureType type,
                       uint32_t fingers) override;
@@ -58,6 +63,7 @@ private:
     };
 
     DesksController *m_desks = nullptr;
+    std::function<bool()> m_dragging;
     ScrollData m_scroll;
 };
 

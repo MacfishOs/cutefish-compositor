@@ -36,6 +36,7 @@
 #include "display/display_preferences.h"
 #include "display/display_topology_coordinator.h"
 #include "input/cursor_shape.h"
+#include "input/drag.h"
 #include "ipc/display_config_service.h"
 #include "render/egl_renderer.h"
 #include "render/renderer.h"
@@ -62,6 +63,7 @@
 #include "wm/gestures/wm_gesture_handler.h"
 #include "wm/mru_window_tracker.h"
 #include "wm/quit_all.h"
+#include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
 
@@ -336,7 +338,9 @@ bool CompositorShell::init()
     // The greeter has no desks, and development instances must not take over
     // the user's.
     if (!m_options.login) {
-        m_gestureHandler = std::make_unique<wm::WmGestureHandler>(m_windowManager.desks());
+        m_gestureHandler = std::make_unique<wm::WmGestureHandler>(m_windowManager.desks(), [this] {
+            return m_seat.drag()->busy() || m_windowManager.eventHandler()->isDragging();
+        });
         m_inputManager.setGestureFilter(m_gestureHandler.get());
     }
     if (!m_options.noDrm && !m_options.login)

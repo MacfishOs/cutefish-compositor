@@ -661,6 +661,41 @@ TEST_F(DeskAnimationTest, AShortFlickSwitchesDesksAndAShortHeldSwipeDoesNot)
     input.setGestureFilter(nullptr);
 }
 
+TEST_F(DeskAnimationTest, ASwipeStartedDuringADragSwitchesNothing)
+{
+    addDesks(1);
+    bool dragging = true;
+    WmGestureHandler gestures(desks, [&dragging] {
+        return dragging;
+    });
+    input.setGestureFilter(&gestures);
+    const auto swipe = [this] {
+        input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
+        for (int i = 0; i < 4; ++i) {
+            now += 8;
+            const QPointF travel(-4 / WmGestureHandler::kMmPerUnacceleratedUnit, 0);
+            input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel, travel, 1, 0);
+        }
+    };
+
+    // Not even once the drag is over: the rest of that swipe is ignored too.
+    swipe();
+    EXPECT_EQ(nullptr, desks->animation());
+    dragging = false;
+    now += 8;
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    EXPECT_EQ(desk(0), desks->activeDesk());
+
+    // The next swipe switches again.
+    swipe();
+    ASSERT_NE(nullptr, desks->animation());
+    now += 8;
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    finish();
+    EXPECT_EQ(desk(1), desks->activeDesk());
+    input.setGestureFilter(nullptr);
+}
+
 TEST_F(DeskAnimationTest, AtTheLastDeskTheFingersPullAgainstTheEdge)
 {
     WmGestureHandler gestures(desks);

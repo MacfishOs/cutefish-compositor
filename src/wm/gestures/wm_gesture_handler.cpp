@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 #include "wm/desks/desks_controller.h"
 
@@ -23,8 +24,9 @@ double milliseconds(input::Timestamp timestamp)
 
 } // namespace
 
-WmGestureHandler::WmGestureHandler(DesksController *desks)
+WmGestureHandler::WmGestureHandler(DesksController *desks, std::function<bool()> dragging)
     : m_desks(desks)
+    , m_dragging(std::move(dragging))
 {
 }
 
@@ -33,6 +35,8 @@ bool WmGestureHandler::claimGesture(input::Timestamp, input::GestureType type, u
     if (type != input::GestureType::Swipe || fingers != kDeskSwitchFingers)
         return false;
     m_scroll = {};
+    // Still claimed, so the client under the pointer does not get it either.
+    m_scroll.ignored = m_dragging && m_dragging();
     return true;
 }
 
@@ -55,7 +59,7 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
     const double y = std::abs(m_scroll.scrollY);
     if (std::max(x, y) <= kContinuousGestureMoveThresholdMm)
         return;
-    if (y > x) {
+    if (y > x || (m_dragging && m_dragging())) {
         m_scroll.ignored = true;
         return;
     }
