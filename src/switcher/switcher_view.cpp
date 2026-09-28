@@ -199,14 +199,13 @@ private:
 QImage IconCache::image(const QString &name, int pixels)
 {
     const QString key = name + QLatin1Char('@') + QString::number(pixels);
-    const auto cached = m_images.constFind(key);
-    if (cached != m_images.constEnd())
+    if (const QImage *cached = m_images.object(key))
         return *cached;
     QIcon icon = name.startsWith(QLatin1Char('/')) ? QIcon(name) : QIcon::fromTheme(name);
     if (icon.isNull())
         icon = QIcon::fromTheme(kFallbackIcon);
     const QImage image = icon.pixmap(QSize(pixels, pixels)).toImage();
-    m_images.insert(key, image);
+    m_images.insert(key, new QImage(image), std::max<qsizetype>(1, image.sizeInBytes()));
     return image;
 }
 

@@ -78,6 +78,10 @@ public:
         }
     }
 
+    const void* timeline() const override { return m_syncobj.get(); }
+
+    uint64_t timelinePoint() const override { return m_point; }
+
 private:
     std::shared_ptr<render::DrmSyncobj> m_syncobj;
     uint64_t m_point = 0;
@@ -99,6 +103,9 @@ public:
             return;
         surface->removeSurfaceObserver(this);
         m_surface = nullptr;
+        // Or a new surface allocated at the same address would read as one
+        // that already has a synchronization object.
+        unregister();
     }
 
     // Checked before every commit that carries state from this object.
@@ -110,6 +117,9 @@ public:
     }
 
     compositor::Surface* surface() const { return m_surface; }
+
+    // Leaves the side table that answers surface_exists.
+    void unregister();
 
     void setAcquirePoint(const std::shared_ptr<render::DrmSyncobj>& syncobj, uint64_t point)
     {
@@ -194,7 +204,7 @@ private:
     compositor::Surface* m_surface = nullptr;
     // The surface this was registered under. m_surface is cleared when the
     // wl_surface dies, so unregistering needs the original pointer.
-    compositor::Surface* const m_registered = nullptr;
+    compositor::Surface* m_registered = nullptr;
     std::shared_ptr<render::DrmSyncobj> m_acquireSyncobj;
     std::shared_ptr<render::DrmSyncobj> m_releaseSyncobj;
     uint64_t m_acquirePoint = 0;
@@ -274,8 +284,16 @@ SyncobjSurface::~SyncobjSurface()
         m_surface->removeSurfaceObserver(this);
         m_surface = nullptr;
     }
+    unregister();
+}
+
+void SyncobjSurface::unregister()
+{
+    if (!m_registered)
+        return;
     auto& surfaces = syncobjSurfaces();
     surfaces.erase(std::remove(surfaces.begin(), surfaces.end(), m_registered), surfaces.end());
+    m_registered = nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -1409,8 +1409,9 @@ Xwm::X11Window *Xwm::adopt(uint32_t window, const QRect &xGeometry, bool overrid
     w->xGeometry = xGeometry;
     w->geometry = QRect(fromX(w->xGeometry.topLeft()), sizeFromX(w->xGeometry.size()));
     w->overrideRedirect = overrideRedirect;
-    uint32_t mask = XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE;
-    xcb_change_window_attributes(m_connection, window, XCB_CW_EVENT_MASK, &mask);
+    // Added to what is already selected: the selection bridge asks a requestor
+    // for STRUCTURE_NOTIFY mid-transfer, and one adopted here keeps it.
+    adjustEventMask(window, kWindowEvents, 0);
     if (m_shapeEvent) {
         xcb_shape_select_input(m_connection, window, 1);
         shape(*w);
@@ -1418,6 +1419,18 @@ Xwm::X11Window *Xwm::adopt(uint32_t window, const QRect &xGeometry, bool overrid
     auto *adopted = w.get();
     m_windows[window] = std::move(w);
     return adopted;
+}
+
+void Xwm::adjustEventMask(uint32_t window, uint32_t set, uint32_t clear)
+{
+    const auto cookie = xcb_get_window_attributes(m_connection, window);
+    xcb_get_window_attributes_reply_t *reply =
+            xcb_get_window_attributes_reply(m_connection, cookie, nullptr);
+    if (!reply)
+        return;
+    uint32_t mask = (reply->your_event_mask | set) & ~clear;
+    free(reply);
+    xcb_change_window_attributes(m_connection, window, XCB_CW_EVENT_MASK, &mask);
 }
 
 void Xwm::forget(uint32_t window)
@@ -1755,6 +1768,11 @@ void Xwm::event(xcb_generic_event_t *generic)
         // Only children of the root are followed; the DestroyNotify of one
         // moved into another window goes to its new parent instead.
         if (reinterpret_cast<xcb_reparent_notify_event_t *>(generic)->parent != m_root) {
+            // No longer managed: stop its events and shape changes from
+            // arriving for a window the lookup would only drop.
+            adjustEventMask(id, 0, kWindowEvents);
+            if (m_shapeEvent)
+                xcb_shape_select_input(m_connection, id, 0);
             forget(id);
             roots();
         }

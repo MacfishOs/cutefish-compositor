@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include <QCache>
 #include <QHash>
 #include <QString>
 
@@ -41,7 +42,9 @@ private:
     const QHash<QString, QString> &wmClasses();
 
     qint64 m_stamp = -1;
-    QHash<QString, ApplicationInfo> m_cache;
+    // Bounded: a lookup that found nothing is cached like one that did, and
+    // application ids come from clients.
+    QCache<QString, ApplicationInfo> m_cache {256};
     std::optional<QHash<QString, QString>> m_wmClasses;
 };
 

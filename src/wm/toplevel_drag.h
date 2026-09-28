@@ -94,7 +94,6 @@ private:
     void startMove(Window *window);
     void stopMove();
     void detach();
-    void setDocked(compositor::Surface *target);
     void unwatchDockTarget();
 
     WindowManager *m_manager = nullptr;

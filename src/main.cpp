@@ -14,6 +14,7 @@
 #include "auth/auth_ui.h"
 #include "core/compositor_options.h"
 #include "core/compositor_shell.h"
+#include "core/scoped_fd.h"
 #include "core/logging.h"
 
 namespace {
@@ -41,7 +42,8 @@ int createSignalFd()
 int main(int argc, char *argv[])
 {
     signal(SIGPIPE, SIG_IGN);
-    const int signalFd = createSignalFd();
+    const cutefish::ScopedFd signalFdOwner(createSignalFd());
+    const int signalFd = signalFdOwner.get();
     cutefish::auth::AuthUi::configurePlatform();
     QGuiApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("cutefish-compositor"));
@@ -79,9 +81,7 @@ int main(int argc, char *argv[])
     const int result = app.exec();
     shell.reset();
 
-    if (signalNotifier) {
+    if (signalNotifier)
         signalNotifier->setEnabled(false);
-        close(signalFd);
-    }
     return result;
 }

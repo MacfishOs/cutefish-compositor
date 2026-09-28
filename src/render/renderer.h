@@ -197,8 +197,10 @@ public:
                                                    int stride, PixelFormat format) = 0;
 
     // Re-uploads into an existing texture. Returns false when `texture` was not
-    // created by this renderer or its size/format no longer match, in which
-    // case the caller must create a new one.
+    // created by this renderer, cannot be uploaded into, or its format or the
+    // row stride no longer fit it, in which case the caller must create a new
+    // one. The size is the texture's own; a caller whose pixels changed size
+    // compares that itself.
     virtual bool updateTexture(Texture *texture, const uint8_t *pixels, int stride,
                                PixelFormat format) = 0;
 

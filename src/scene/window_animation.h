@@ -142,6 +142,14 @@ public:
 
     bool isRetired() const override { return m_closing && !m_running; }
 
+    // A close that would animate on a display nobody sees is over at once.
+    void finishRetiring() override
+    {
+        Node::finishRetiring();
+        if (m_closing && m_running)
+            finish();
+    }
+
     // The animation composites its subtree offscreen and draws the result
     // transformed or blended, so nothing under it can reach a hardware plane.
     bool paintsSubtree() const override

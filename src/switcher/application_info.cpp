@@ -101,8 +101,7 @@ ApplicationInfo ApplicationInfoCache::lookup(const QString &applicationId,
         return {fallbackName, kFallbackIcon};
     if (m_stamp < 0)
         refresh();
-    const auto cached = m_cache.constFind(applicationId);
-    if (cached != m_cache.constEnd())
+    if (const ApplicationInfo *cached = m_cache.object(applicationId))
         return *cached;
 
     DesktopEntry entry;
@@ -121,7 +120,7 @@ ApplicationInfo ApplicationInfoCache::lookup(const QString &applicationId,
     ApplicationInfo info;
     info.name = entry.valid ? entry.name : applicationId;
     info.icon = entry.valid && !entry.icon.isEmpty() ? entry.icon : kFallbackIcon;
-    m_cache.insert(applicationId, info);
+    m_cache.insert(applicationId, new ApplicationInfo(info));
     return info;
 }
 

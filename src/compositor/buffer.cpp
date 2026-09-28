@@ -76,8 +76,26 @@ void Buffer::onContentsConsumed(render::SyncFence fence)
 
 void Buffer::addRelease(std::shared_ptr<BufferRelease> release)
 {
-    if (release)
-        m_releases.push_back(std::move(release));
+    if (!release)
+        return;
+    // A client re-attaching the buffer it already shows sets a new release
+    // point each time; the ones before it on the same timeline would otherwise
+    // pile up until the buffer is finally released.
+    if (const void* timeline = release->timeline()) {
+        std::vector<std::shared_ptr<BufferRelease>> superseded;
+        for (auto it = m_releases.begin(); it != m_releases.end();) {
+            if ((*it)->timeline() == timeline
+                && (*it)->timelinePoint() <= release->timelinePoint()) {
+                superseded.push_back(std::move(*it));
+                it = m_releases.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (const auto& old : superseded)
+            old->signal(render::SyncFence());
+    }
+    m_releases.push_back(std::move(release));
 }
 
 void Buffer::onScanoutAcquired()

@@ -264,6 +264,12 @@ void Node::releaseRenderResources()
         child->releaseRenderResources();
 }
 
+void Node::finishRetiring()
+{
+    for (Node *child : m_childOrder)
+        child->finishRetiring();
+}
+
 void Node::collectRetired()
 {
     for (Node *child : std::vector<Node *>(m_childOrder)) {

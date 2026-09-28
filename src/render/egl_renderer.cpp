@@ -135,6 +135,9 @@ void EglRenderer::releaseTarget(EglRenderTarget *target)
     clearTextureCache();
     m_current = nullptr;
     m_lastTarget = nullptr;
+    // Left current, the EGLSurface and its GBM colour buffers would live on
+    // past gbm_surface_destroy until the next makeCurrent.
+    m_context->makeCurrent();
 }
 
 void EglRenderer::waitFence(const SyncFence &fence)

@@ -37,6 +37,11 @@ public:
     // its last frame.
     bool hasDamage(const render::OutputRenderContext &context) const;
 
+    // Ends and collects closing windows while no output composites: their
+    // snapshots would otherwise pile up until the next frame, as retirement
+    // normally happens after painting.
+    void retireClosing();
+
     render::Color background() const { return m_background; }
 
     void setBackground(const render::Color &color)

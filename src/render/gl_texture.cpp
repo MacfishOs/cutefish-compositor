@@ -12,6 +12,11 @@
 
 namespace cutefish::render {
 
+namespace {
+// Repack scratch space kept between uploads without shrinking.
+constexpr size_t kScratchKeep = 1 << 20;
+} // namespace
+
 GlTexture::GlTexture(uint32_t name, const QSize &size, PixelFormat format, uint32_t target,
                      std::shared_ptr<EglContext> context)
     : m_context(std::move(context))
@@ -58,7 +63,12 @@ void GlTextureUploader::uploadPixels(const QSize &size, const QRect &rect, const
     // GLES 3 reads the rows where the client left them; GLES 2 needs them packed.
     const bool rows = stride != tight && stride % 4 == 0 && unpacksRows();
     if (stride != tight && !rows) {
-        m_uploadScratch.resize(static_cast<size_t>(tight) * rect.height());
+        const size_t needed = static_cast<size_t>(tight) * rect.height();
+        // A rare large repack would otherwise keep its capacity for the
+        // process lifetime; the buffer is sized for what is uploaded now.
+        if (m_uploadScratch.capacity() > 2 * needed && m_uploadScratch.capacity() > kScratchKeep)
+            std::vector<uint8_t>().swap(m_uploadScratch);
+        m_uploadScratch.resize(needed);
         for (int y = 0; y < rect.height(); ++y) {
             std::memcpy(m_uploadScratch.data() + static_cast<size_t>(y) * tight,
                         source + static_cast<size_t>(y) * stride, tight);

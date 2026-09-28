@@ -33,6 +33,12 @@ bool Scene::hasDamage(const render::OutputRenderContext &context) const
                                          context.transform);
 }
 
+void Scene::retireClosing()
+{
+    m_root->finishRetiring();
+    m_root->collectRetired();
+}
+
 void Scene::render(render::Renderer &renderer) const
 {
     if (!renderer.capturing) {

@@ -41,6 +41,13 @@ public:
     // `fence` becomes signalled when the read actually completes. An invalid
     // fence means the read is already done.
     virtual void signal(render::SyncFence fence) = 0;
+
+    // The timeline this release is a point on, and the point, for a release
+    // that is one; null for the others. A client waits on the newest point it
+    // set for a buffer, so an older point on the same timeline is done the
+    // moment a newer one takes its place.
+    virtual const void* timeline() const { return nullptr; }
+    virtual uint64_t timelinePoint() const { return 0; }
 };
 
 // The compositor-side view of a wl_buffer.

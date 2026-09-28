@@ -76,6 +76,11 @@ private:
     X11Window *adopt(uint32_t window, const QRect &xGeometry, bool overrideRedirect);
     // Stops following a window that is gone from the root.
     void forget(uint32_t window);
+    // Adds `set` to and removes `clear` from the window's event mask, keeping
+    // the bits other parts of the compositor selected.
+    void adjustEventMask(uint32_t window, uint32_t set, uint32_t clear);
+    static constexpr uint32_t kWindowEvents =
+            XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE;
     void synchronize(X11Window &window);
     void roots();
     void focus(X11Window &window, bool active);

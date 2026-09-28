@@ -42,16 +42,24 @@ int receiveFd(int socket)
     if (received <= 0)
         return received == 0 ? -1 : -2;
 
+    // One descriptor is expected; every other one delivered still belongs to
+    // this process and would leak if it were merely skipped.
+    int fd = -1;
     for (cmsghdr *header = CMSG_FIRSTHDR(&message); header;
          header = CMSG_NXTHDR(&message, header)) {
-        if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS
-            && header->cmsg_len == CMSG_LEN(sizeof(int))) {
-            int fd = -1;
-            std::memcpy(&fd, CMSG_DATA(header), sizeof(fd));
-            return fd;
+        if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS)
+            continue;
+        const size_t count = (header->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+        for (size_t i = 0; i < count; ++i) {
+            int received = -1;
+            std::memcpy(&received, CMSG_DATA(header) + i * sizeof(int), sizeof(received));
+            if (fd < 0)
+                fd = received;
+            else
+                close(received);
         }
     }
-    return -2;
+    return fd >= 0 ? fd : -2;
 }
 
 } // namespace

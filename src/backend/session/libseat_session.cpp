@@ -54,6 +54,9 @@ LibseatSession::~LibseatSession()
 {
     delete m_notifier;
     m_notifier = nullptr;
+    // Owners close their devices first today; whatever is left goes with the seat.
+    for (const int id : m_deviceFds.keys())
+        closeDevice(id);
     if (m_seat)
         libseat_close_seat(m_seat);
 }

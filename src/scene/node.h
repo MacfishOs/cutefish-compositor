@@ -151,6 +151,9 @@ public:
     virtual bool isRetired() const { return false; }
 
     void collectRetired();
+    // Ends the animations in this subtree that only wait to be collected, for
+    // when no output is going to draw them: a blanked display, an inactive seat.
+    virtual void finishRetiring();
     virtual void releaseRenderResources();
 
 protected:

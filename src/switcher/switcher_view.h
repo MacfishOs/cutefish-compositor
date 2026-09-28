@@ -9,6 +9,7 @@
 #include <memory>
 #include <utility>
 
+#include <QCache>
 #include <QHash>
 #include <QImage>
 #include <QObject>
@@ -49,7 +50,8 @@ public:
     void clear() { m_images.clear(); }
 
 private:
-    QHash<QString, QImage> m_images;
+    // Costed in bytes; a session's worth of applications at two scales fits.
+    QCache<QString, QImage> m_images {8 * 1024 * 1024};
 };
 
 // The application switcher's list: a row of application icons on a glass
