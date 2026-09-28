@@ -203,7 +203,9 @@ private slots:
         QTRY_COMPARE(controller.state(), session::SessionState::Unlocking);
         controller.notifyFramePresented();
         QCOMPARE(controller.state(), session::SessionState::Active);
-        // Prepared again for the next lock, then idle.
+        // Prepared again for the next lock, then idle. The preparation renders
+        // the panel once more, which takes longer than 100 ms under ASan.
+        QTRY_VERIFY_WITH_TIMEOUT(!ui.isRefreshPending(), 5000);
         QTest::qWait(100);
         QVERIFY(!ui.isRefreshPending());
         QVERIFY(ui.isPanelDrawn());

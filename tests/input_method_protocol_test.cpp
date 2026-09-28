@@ -847,16 +847,24 @@ TEST(InputMethodProtocol, AuthorizerRestrictsInputMethodBinds)
     ASSERT_NE(nullptr, app.textManager);
     ASSERT_NE(nullptr, app.textManagerV1);
     auto *registry = wl_display_get_registry(other.display);
+    zwp_input_method_manager_v2 *bound = nullptr;
     static const wl_registry_listener listener = {
-            [](void *, wl_registry *r, uint32_t name, const char *interface, uint32_t) {
-                if (!strcmp(interface, "zwp_input_method_manager_v2"))
-                    wl_registry_bind(r, name, &zwp_input_method_manager_v2_interface, 1);
+            [](void *data, wl_registry *r, uint32_t name, const char *interface, uint32_t) {
+                if (!strcmp(interface, "zwp_input_method_manager_v2")) {
+                    *static_cast<zwp_input_method_manager_v2 **>(data) =
+                            static_cast<zwp_input_method_manager_v2 *>(wl_registry_bind(
+                                    r, name, &zwp_input_method_manager_v2_interface, 1));
+                }
             },
             [](void *, wl_registry *, uint32_t) {}};
-    wl_registry_add_listener(registry, &listener, nullptr);
+    wl_registry_add_listener(registry, &listener, &bound);
     ASSERT_TRUE(h.until([&] {
         return wl_display_get_error(other.display) != 0;
     }));
+    // The bind was refused with a protocol error; the proxies are still ours.
+    if (bound)
+        zwp_input_method_manager_v2_destroy(bound);
+    wl_registry_destroy(registry);
 }
 
 int main(int argc, char **argv)

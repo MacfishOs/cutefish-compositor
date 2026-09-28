@@ -84,6 +84,7 @@ struct Client {
     uint32_t buttonSerial = 0;
     wl_surface *dragEnterSurface = nullptr;
     wl_data_offer *dragOffer = nullptr;
+    std::vector<wl_data_offer *> offers;
     uint32_t dragEnterSerial = 0;
     int dropsPerformed = 0;
     int cancels = 0;
@@ -139,7 +140,9 @@ struct Client {
 
         dataDevice = wl_data_device_manager_get_data_device(dataDeviceManager, seat);
         static const wl_data_device_listener deviceListener = {
-                [](void *, wl_data_device *, wl_data_offer *) {},
+                [](void *data, wl_data_device *, wl_data_offer *offer) {
+                    static_cast<Client *>(data)->offers.push_back(offer);
+                },
                 [](void *data, wl_data_device *, uint32_t serial, wl_surface *surface, wl_fixed_t,
                    wl_fixed_t, wl_data_offer *offer) {
                     auto *client = static_cast<Client *>(data);
@@ -162,6 +165,8 @@ struct Client {
     {
         for (auto &toplevel : toplevels)
             destroy(toplevel.get());
+        for (wl_data_offer *offer : offers)
+            wl_data_offer_destroy(offer);
         wl_data_device_release(dataDevice);
         wl_pointer_release(pointer);
         wl_seat_release(seat);
@@ -846,10 +851,13 @@ TEST_F(XdgToplevelDragProtocolTest, ASourceTakesOneToplevelDrag)
 {
     run([&](Client &c) {
         wl_data_source *source = c.makeSource();
-        xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
-        xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        auto *first = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        auto *second = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
         EXPECT_EQ(uint32_t(XDG_TOPLEVEL_DRAG_MANAGER_V1_ERROR_INVALID_SOURCE),
                   c.syncExpectingError());
+        xdg_toplevel_drag_v1_destroy(second);
+        xdg_toplevel_drag_v1_destroy(first);
+        wl_data_source_destroy(source);
     });
 }
 
@@ -860,9 +868,11 @@ TEST_F(XdgToplevelDragProtocolTest, AToplevelDragSourceIsNoSelection)
         (void)origin;
         wl_data_source *source = wl_data_device_manager_create_data_source(c.dataDeviceManager);
         wl_data_source_offer(source, "text/plain");
-        xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
         wl_data_device_set_selection(c.dataDevice, source, c.buttonSerial);
         EXPECT_EQ(uint32_t(WL_DATA_SOURCE_ERROR_INVALID_SOURCE), c.syncExpectingError());
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
     });
 }
 
@@ -876,6 +886,8 @@ TEST_F(XdgToplevelDragProtocolTest, ASecondAttachWhileOneIsAttachedIsAnError)
         xdg_toplevel_drag_v1_attach(drag, first->toplevel, 0, 0);
         xdg_toplevel_drag_v1_attach(drag, second->toplevel, 0, 0);
         EXPECT_EQ(uint32_t(XDG_TOPLEVEL_DRAG_V1_ERROR_TOPLEVEL_ATTACHED), c.syncExpectingError());
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
     });
 }
 
@@ -889,5 +901,6 @@ TEST_F(XdgToplevelDragProtocolTest, DestroyingTheDragBeforeItEndsIsAnError)
         wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
         xdg_toplevel_drag_v1_destroy(drag);
         EXPECT_EQ(uint32_t(XDG_TOPLEVEL_DRAG_V1_ERROR_ONGOING_DRAG), c.syncExpectingError());
+        wl_data_source_destroy(source);
     });
 }

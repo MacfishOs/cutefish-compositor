@@ -543,7 +543,7 @@ TEST_F(WaylandProtocolTest, AShmBufferUnderASyncobjSurfaceIsUnsupported)
         auto* manager = static_cast<wp_linux_drm_syncobj_manager_v1*>(wl_registry_bind(
             registry, managerName, &wp_linux_drm_syncobj_manager_v1_interface, 1));
         wl_surface* surface = wl_compositor_create_surface(compositor);
-        wp_linux_drm_syncobj_manager_v1_get_surface(manager, surface);
+        auto* syncobjSurface = wp_linux_drm_syncobj_manager_v1_get_surface(manager, surface);
         const int fd = makeMemfd(16 * 16 * 4);
         ASSERT_GE(fd, 0);
         wl_shm_pool* pool = wl_shm_create_pool(shm, fd, 16 * 16 * 4);
@@ -560,6 +560,13 @@ TEST_F(WaylandProtocolTest, AShmBufferUnderASyncobjSurfaceIsUnsupported)
         code = wl_display_get_protocol_error(display, &interface, nullptr);
         EXPECT_EQ(interface, &wp_linux_drm_syncobj_surface_v1_interface);
         close(fd);
+        // The display is in error; the proxies still have to go.
+        wp_linux_drm_syncobj_surface_v1_destroy(syncobjSurface);
+        wl_buffer_destroy(buffer);
+        wl_shm_pool_destroy(pool);
+        wl_surface_destroy(surface);
+        wp_linux_drm_syncobj_manager_v1_destroy(manager);
+        wl_registry_destroy(registry);
     }));
     close(drmFd);
     EXPECT_NE(-1, client.result.protocolError);

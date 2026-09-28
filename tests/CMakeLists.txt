@@ -5,10 +5,24 @@ endif()
 find_package(Qt6 REQUIRED COMPONENTS Test)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
 
+# A test that neither defines main() nor makes an application object of its
+# own gets gtest_qt_main.cpp, whose QCoreApplication owns the single-shot
+# timers the code under test leaves pending.
 function(cutefish_add_test name)
-    add_executable(${name} ${name}.cpp)
+    file(STRINGS ${name}.cpp own_main REGEX "^int main\\(")
+    file(STRINGS ${name}.cpp own_app
+         REGEX "(new Q(Core|Gui)Application)|(Q(Core|Gui)Application (app|application)[ ({])")
+    if(own_main)
+        add_executable(${name} ${name}.cpp)
+        target_link_libraries(${name} PRIVATE GTest::gtest ${ARGN})
+    elseif(own_app)
+        add_executable(${name} ${name}.cpp)
+        target_link_libraries(${name} PRIVATE GTest::gtest GTest::gtest_main ${ARGN})
+    else()
+        add_executable(${name} ${name}.cpp gtest_qt_main.cpp)
+        target_link_libraries(${name} PRIVATE GTest::gtest Qt6::Core ${ARGN})
+    endif()
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(${name} PRIVATE GTest::gtest GTest::gtest_main ${ARGN})
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
@@ -223,7 +237,7 @@ target_link_libraries(cutefish-presentation-client PRIVATE cutefish-protocols Pk
 
 cutefish_add_test(drm_output_test cutefish-backend cutefish-compositor-core PkgConfig::WaylandClient)
 target_sources(drm_output_test PRIVATE fake_drm_device.cpp)
-set_tests_properties(drm_output_test PROPERTIES TIMEOUT 30 ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
+set_tests_properties(drm_output_test PROPERTIES TIMEOUT 60 ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 
 cutefish_add_test(window_visual_test cutefish-decoration)
 cutefish_add_test(window_visual_pixel_test cutefish-decoration cutefish-render)
@@ -333,3 +347,17 @@ add_dependencies(input_method_launcher_test input_method_launched_client)
 add_test(NAME input_method_launcher_test
     COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:input_method_launcher_test>)
 set_tests_properties(input_method_launcher_test PROPERTIES TIMEOUT 60)
+
+# Sanitizer builds run several times slower than the per-test timeouts above
+# allow for; configure with -DCUTEFISH_TEST_TIMEOUT_SCALE=5 for those.
+set(CUTEFISH_TEST_TIMEOUT_SCALE 1 CACHE STRING "Multiplier for every test's TIMEOUT")
+if(NOT CUTEFISH_TEST_TIMEOUT_SCALE EQUAL 1)
+    get_directory_property(cutefish_all_tests TESTS)
+    foreach(test ${cutefish_all_tests})
+        get_test_property(${test} TIMEOUT timeout)
+        if(timeout AND NOT timeout STREQUAL "NOTFOUND")
+            math(EXPR scaled "${timeout} * ${CUTEFISH_TEST_TIMEOUT_SCALE}")
+            set_tests_properties(${test} PROPERTIES TIMEOUT ${scaled})
+        endif()
+    endforeach()
+endif()

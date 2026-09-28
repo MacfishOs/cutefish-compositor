@@ -433,7 +433,7 @@ TEST_F(XdgForeignProtocolTest, ParentingASurfaceWithoutAToplevelRoleIsAnError)
 {
     run([&](Client &exporterClient, Client &importerClient) {
         XdgWindow *parent = exporterClient.makeMappedToplevel("parent");
-        exporterClient.exportToplevel(parent);
+        zxdg_exported_v2 *exported = exporterClient.exportToplevel(parent);
         ASSERT_FALSE(exporterClient.handle.empty());
 
         zxdg_imported_v2 *imported = importerClient.importToplevel(exporterClient.handle);
@@ -443,6 +443,7 @@ TEST_F(XdgForeignProtocolTest, ParentingASurfaceWithoutAToplevelRoleIsAnError)
                   importerClient.syncExpectingError());
         zxdg_imported_v2_destroy(imported);
         wl_surface_destroy(surface);
+        zxdg_exported_v2_destroy(exported);
     });
 }
 

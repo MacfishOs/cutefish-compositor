@@ -986,12 +986,14 @@ TEST_F(XdgShellProtocolTest, ASecondDialogObjectIsAProtocolError)
 {
     run([&](Client &c) {
         XdgWindow *window = c.makeToplevel();
-        xdg_wm_dialog_v1_get_xdg_dialog(c.dialogManager, window->toplevel);
-        xdg_wm_dialog_v1_get_xdg_dialog(c.dialogManager, window->toplevel);
+        xdg_dialog_v1 *first = xdg_wm_dialog_v1_get_xdg_dialog(c.dialogManager, window->toplevel);
+        xdg_dialog_v1 *second = xdg_wm_dialog_v1_get_xdg_dialog(c.dialogManager, window->toplevel);
         const wl_interface *interface = nullptr;
         EXPECT_EQ(static_cast<uint32_t>(XDG_WM_DIALOG_V1_ERROR_ALREADY_USED),
                   c.syncExpectingError(&interface));
         EXPECT_EQ(&xdg_wm_dialog_v1_interface, interface);
+        xdg_dialog_v1_destroy(second);
+        xdg_dialog_v1_destroy(first);
     });
 }
 

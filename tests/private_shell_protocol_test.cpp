@@ -200,6 +200,7 @@ struct Client {
     xdg_wm_base *wmBase = nullptr;
     cutefish_shell_v1 *shell = nullptr;
     cutefish_window_management_v1 *management = nullptr;
+    std::vector<cutefish_window_management_v1 *> retiredManagements;
     std::map<std::string, std::pair<uint32_t, uint32_t>> globals;
 
     std::vector<std::unique_ptr<TrackedWindow>> tracked;
@@ -256,6 +257,8 @@ struct Client {
         tracked.clear();
         if (management)
             cutefish_window_management_v1_destroy(management);
+        for (cutefish_window_management_v1 *retired : retiredManagements)
+            cutefish_window_management_v1_destroy(retired);
         if (shell)
             cutefish_shell_v1_destroy(shell);
         xdg_wm_base_destroy(wmBase);
@@ -280,6 +283,10 @@ struct Client {
     {
         if (!globals.contains("cutefish_window_management_v1"))
             return false;
+        // A rebinding stands for a restarted shell; the first binding stays
+        // usable for the windows it announced and goes with the client.
+        if (management)
+            retiredManagements.push_back(management);
         management = static_cast<cutefish_window_management_v1 *>(
                 wl_registry_bind(registry, globals["cutefish_window_management_v1"].first,
                                  &cutefish_window_management_v1_interface, 1));

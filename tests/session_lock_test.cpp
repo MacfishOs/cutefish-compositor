@@ -13,6 +13,9 @@
 #include <linux/input-event-codes.h>
 #include <unistd.h>
 
+#include <QCoreApplication>
+#include <QEventLoop>
+
 #include "clipboard/selection.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
@@ -269,7 +272,10 @@ TEST_F(SessionLockTest, TheLoginScreenIsReadyOnceEveryOutputHasItsShield)
     session::SecureContainer greeterScene(greeterNode);
     EXPECT_FALSE(greeterScene.isWallpaperReady());
     greeterScene.setOutputs({{kPrimaryName, kPrimary}});
-    // Without an application no wallpaper loads, and a bare shield is ready.
+    // The wallpaper decodes on a worker; the shield is ready once it lands.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!greeterScene.isWallpaperReady() && std::chrono::steady_clock::now() < deadline)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     EXPECT_TRUE(greeterScene.isWallpaperReady());
 }
 
@@ -747,11 +753,12 @@ TEST_F(SessionLockTest, ATranslatedKeyHeldAcrossTheLockLeavesNoOtherKeySuppresse
     input::Keyboard keyboard(std::move(delegate), &seat);
     input::InputManager input(&seat);
     seat.setFocusedSurface(surface);
-    // Command+Left reaches the client as Home.
+    // Command+Left reaches the client as Ctrl+Left.
     const auto apple = input::KeyboardModifierLayout::Apple;
     input.onKey({}, KEY_LEFTMETA, true, apple);
     input.onKey({}, KEY_LEFT, true, apple);
-    ASSERT_TRUE(seat.clientPressedKeys().contains(KEY_HOME));
+    ASSERT_TRUE(seat.clientPressedKeys().contains(KEY_LEFTCTRL));
+    ASSERT_TRUE(seat.clientPressedKeys().contains(KEY_LEFT));
     lockFully();
     input.onKey({}, KEY_LEFT, false, apple);
     input.onKey({}, KEY_LEFTMETA, false, apple);
@@ -759,10 +766,14 @@ TEST_F(SessionLockTest, ATranslatedKeyHeldAcrossTheLockLeavesNoOtherKeySuppresse
     ASSERT_TRUE(controller.requestUnlock());
     controller.notifyFramePresented();
     seat.setFocusedSurface(surface);
+    // Neither the Ctrl it went out as nor the key stays suppressed.
     keys->keys = 0;
-    input.onKey({}, KEY_HOME, true);
-    input.onKey({}, KEY_HOME, false);
-    EXPECT_EQ(2, keys->keys);
+    input.onKey({}, KEY_LEFTCTRL, true);
+    input.onKey({}, KEY_LEFT, true);
+    input.onKey({}, KEY_LEFT, false);
+    input.onKey({}, KEY_LEFTCTRL, false);
+    EXPECT_EQ(4, keys->keys);
+    EXPECT_TRUE(seat.clientPressedKeys().empty());
 }
 
 TEST_F(SessionLockTest, InitialLoginIsolatesBothSelections)

@@ -121,8 +121,6 @@ protected:
 
 TEST_F(WmTest, QuitClosesTheApplicationsWindowsAndTerminatesWhatStaysBehind)
 {
-    int argc = 0;
-    QCoreApplication application(argc, nullptr);
     std::vector<QString> closed;
     const auto make = [&](const QString &name, const QString &applicationId, qint64 process,
                           Window *parent = nullptr) {
@@ -175,8 +173,6 @@ TEST_F(WmTest, QuitClosesTheApplicationsWindowsAndTerminatesWhatStaysBehind)
 class QuitAllTest : public WmTest
 {
 protected:
-    int argc = 0;
-    QCoreApplication application {argc, nullptr};
     qint64 now = 0;
     QuitAll quitAll {&manager, [this] {
                          return now;

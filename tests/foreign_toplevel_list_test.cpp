@@ -272,7 +272,9 @@ TEST_F(ForeignToplevelListTest, ListsApplicationWindowsWithIdentityAndSource)
 
     // A resize changes the buffer size the session must announce.
     int changes = 0;
-    QObject::connect(source.get(), &compositor::CaptureSource::changed, [&] {
+    // The context dies with the locals the lambda captures.
+    QObject scope;
+    QObject::connect(source.get(), &compositor::CaptureSource::changed, &scope, [&] {
         ++changes;
     });
     window->setBounds(QRect(100, 50, 400, 200));
@@ -311,7 +313,9 @@ TEST_F(ForeignToplevelListTest, ClosingAWindowStopsItsSource)
     auto source = sourceOf(*handles.front());
     ASSERT_TRUE(source);
     int changes = 0;
-    QObject::connect(source.get(), &compositor::CaptureSource::changed, [&] {
+    // The context dies with the locals the lambda captures.
+    QObject scope;
+    QObject::connect(source.get(), &compositor::CaptureSource::changed, &scope, [&] {
         ++changes;
     });
     manager.destroyWindow(window);

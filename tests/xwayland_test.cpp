@@ -2309,7 +2309,10 @@ TEST_F(XwaylandTest, ATransientMappedModalIsModalBeforeItIsActivated)
     wm::Window *parentWindow = manager->windows().front();
 
     std::optional<bool> modalWhenActivated;
-    QObject::connect(manager.get(), &wm::WindowManager::activeWindowChanged, manager.get(),
+    // The captures are locals: the connection must go with this scope, not
+    // with the manager, which outlives the test body.
+    QObject scope;
+    QObject::connect(manager.get(), &wm::WindowManager::activeWindowChanged, &scope,
                      [&](wm::Window *window) {
                          if (window && window != parentWindow && !modalWhenActivated)
                              modalWhenActivated = window->isModal();
