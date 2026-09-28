@@ -128,6 +128,7 @@ private:
                       const char *externalOverride = nullptr,
                       const char *backdropOverride = nullptr);
     bool makeCurrent(EglRenderTarget *target);
+    bool makeContextCurrent();
     void applyRepaint(const QRect &repaint);
     void drawTextureMappedF(Texture *texture, const QRectF &target, float alpha,
                             const QTransform &mapping, const QTransform &geometry = QTransform());

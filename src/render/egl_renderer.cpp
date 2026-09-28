@@ -112,6 +112,17 @@ bool EglRenderer::makeCurrent(EglRenderTarget *target)
     return true;
 }
 
+bool EglRenderer::makeContextCurrent()
+{
+    if (m_current)
+        return true;
+    if (m_lastTarget)
+        return makeCurrent(m_lastTarget);
+    // A modeset retires the remembered target before a frame names the next one;
+    // uploads go surfaceless meanwhile, as on Chromium's default offscreen surface.
+    return m_context->makeCurrent();
+}
+
 void EglRenderer::releaseTarget(EglRenderTarget *target)
 {
     if (!target || target != m_lastTarget)
@@ -138,7 +149,7 @@ SyncFence EglRenderer::createReleaseFence()
 std::unique_ptr<Texture> EglRenderer::createTexture(const QSize &size, const uint8_t *pixels,
                                                     int stride, PixelFormat format)
 {
-    if (!m_current && !makeCurrent(m_lastTarget))
+    if (!makeContextCurrent())
         return nullptr;
     return m_upload.create(size, pixels, stride, format);
 }
@@ -146,7 +157,7 @@ std::unique_ptr<Texture> EglRenderer::createTexture(const QSize &size, const uin
 bool EglRenderer::updateTexture(Texture *texture, const uint8_t *pixels, int stride,
                                 PixelFormat format)
 {
-    if (!m_current && !makeCurrent(m_lastTarget))
+    if (!makeContextCurrent())
         return false;
     return m_upload.update(texture, pixels, stride, format);
 }
@@ -154,14 +165,14 @@ bool EglRenderer::updateTexture(Texture *texture, const uint8_t *pixels, int str
 bool EglRenderer::updateTexture(Texture *texture, const uint8_t *pixels, int stride,
                                 PixelFormat format, const QRegion &damage)
 {
-    if (!m_current && !makeCurrent(m_lastTarget))
+    if (!makeContextCurrent())
         return false;
     return m_upload.update(texture, pixels, stride, format, damage);
 }
 
 std::shared_ptr<Texture> EglRenderer::importDmaBuf(const DmaBufAttributes &attributes)
 {
-    if ((!m_current && !makeCurrent(m_lastTarget)) || !m_externalProgram)
+    if (!makeContextCurrent() || !m_externalProgram)
         return nullptr;
     return m_importer.import(attributes);
 }

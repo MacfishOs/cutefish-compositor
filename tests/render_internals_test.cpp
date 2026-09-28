@@ -540,6 +540,20 @@ TEST_F(RenderInternals, TextureOutlivesRendererAndRetirementRestoresForeignConte
     EXPECT_EQ(eglGetCurrentContext(), EGL_NO_CONTEXT);
 }
 
+TEST_F(RenderInternals, UploadsWorkAfterTheLastTargetRetires)
+{
+    renderer->releaseTarget(target.get());
+    target.reset();
+    ASSERT_TRUE(eglMakeCurrent(renderer->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE,
+                               EGL_NO_CONTEXT));
+    const uint8_t red[] = {255, 0, 0, 255};
+    auto texture = renderer->createTexture({1, 1}, red);
+    ASSERT_TRUE(texture);
+    const uint8_t green[] = {0, 255, 0, 255};
+    EXPECT_TRUE(renderer->updateTexture(texture.get(), green, 4, PixelFormat::Rgba8888));
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
 TEST(ProgramInitialization, RetiredTextureCannotTerminateAReplacementDisplay)
 {
     auto oldContext = EglContext::createSurfaceless();
