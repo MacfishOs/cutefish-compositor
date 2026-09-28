@@ -36,6 +36,7 @@
 #include "wayland/protocols/wl_data_device_manager.h"
 #include "wayland/protocols/wl_seat.h"
 #include "wayland/protocols/wl_shm.h"
+#include "wayland/protocols/wl_subcompositor.h"
 #include "wayland/protocols/xdg_shell.h"
 #include "wayland/protocols/xdg_toplevel_drag.h"
 #include "wayland/server.h"
@@ -67,6 +68,7 @@ struct Client {
     wl_display *display = nullptr;
     wl_registry *registry = nullptr;
     wl_compositor *compositor = nullptr;
+    wl_subcompositor *subcompositor = nullptr;
     wl_shm *shm = nullptr;
     wl_seat *seat = nullptr;
     wl_pointer *pointer = nullptr;
@@ -99,6 +101,8 @@ struct Client {
 
         compositor = static_cast<wl_compositor *>(
                 bind("wl_compositor", &wl_compositor_interface, 4));
+        subcompositor = static_cast<wl_subcompositor *>(
+                bind("wl_subcompositor", &wl_subcompositor_interface, 1));
         shm = static_cast<wl_shm *>(bind("wl_shm", &wl_shm_interface, 1));
         wmBase = static_cast<xdg_wm_base *>(bind("xdg_wm_base", &xdg_wm_base_interface, 1));
         static const xdg_wm_base_listener wmBaseListener = {
@@ -163,6 +167,7 @@ struct Client {
         wl_data_device_manager_destroy(dataDeviceManager);
         xdg_wm_base_destroy(wmBase);
         wl_shm_destroy(shm);
+        wl_subcompositor_destroy(subcompositor);
         wl_compositor_destroy(compositor);
         wl_registry_destroy(registry);
         wl_display_disconnect(display);
@@ -347,6 +352,7 @@ protected:
         auto xdgShell = std::make_unique<wayland::WaylandXdgShell>(&compositor, &windowManager,
                                                                    &seat, server.serialTracker());
         ASSERT_TRUE(wayland::createCompositorGlobal(server.display(), &compositor));
+        ASSERT_TRUE(wayland::createSubcompositorGlobal(server.display()));
         ASSERT_TRUE(wayland::createShmGlobal(server.display(), &compositor));
         ASSERT_TRUE(wayland::createSeatGlobal(server.display(), waylandSeat.get()));
         ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server.display(), waylandSeat.get()));
@@ -602,6 +608,92 @@ TEST_F(XdgToplevelDragProtocolTest, OverAWindowOfItsOwnThatTakesTheDropThePrevie
         });
         c.sync();
         c.destroy(detached);
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+// Attached after the drag docked on it, a window shares the dock watch; its
+// destruction must not leave the drag holding its surface (caught by ASan).
+TEST_F(XdgToplevelDragProtocolTest, AWindowDockedOnThenAttachedAndDestroyedIsLetGo)
+{
+    run([&](Client &c) {
+        // Another window of the client, whose subsurface takes the drop.
+        Toplevel *target = c.makeToplevel();
+        c.map(target, QSize(300, 200));
+        check([&] {
+            windowAt(0)->setBounds(QRect(500, 100, 300, 200));
+        });
+        wl_surface *child = wl_compositor_create_surface(c.compositor);
+        wl_subsurface *subsurface =
+                wl_subcompositor_get_subsurface(c.subcompositor, child, target->surface);
+        wl_buffer *childBuffer = c.makeBuffer(QSize(100, 100));
+        wl_surface_attach(child, childBuffer, 0, 0);
+        wl_surface_damage(child, 0, 0, 100, 100);
+        wl_surface_commit(child);
+        wl_surface_commit(target->surface);
+
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        c.sync();
+        Toplevel *detached = c.makeToplevel();
+        xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
+        c.map(detached, QSize(200, 150));
+        check([&] {
+            manager.onPointerMotionAbsolute(at(3), QPointF(550, 150));
+        });
+        c.sync();
+        ASSERT_EQ(child, c.dragEnterSurface);
+        wl_data_offer_accept(c.dragOffer, c.dragEnterSerial, "application/x-cutefish-tab");
+        wl_data_offer_set_actions(c.dragOffer, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
+                                  WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+        c.sync();
+
+        // The client lets the preview go and attaches the window it is docked
+        // on, then unmaps and destroys that one, all before the pointer moves.
+        wl_surface_attach(detached->surface, nullptr, 0, 0);
+        wl_surface_commit(detached->surface);
+        xdg_toplevel_drag_v1_attach(drag, target->toplevel, 0, 0);
+        c.sync();
+        wl_surface_attach(target->surface, nullptr, 0, 0);
+        wl_surface_commit(target->surface);
+        c.destroy(target);
+        c.sync();
+        check([&] {
+            EXPECT_EQ(1u, windowManager.windows().size());
+            EXPECT_TRUE(seat.drag()->active());
+            manager.onPointerMotionAbsolute(at(4), QPointF(200, 150));
+            manager.onPointerButton(at(5), BTN_LEFT, false);
+            EXPECT_FALSE(seat.drag()->active());
+        });
+        c.sync();
+        wl_subsurface_destroy(subsurface);
+        wl_surface_destroy(child);
+        wl_buffer_destroy(childBuffer);
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+TEST_F(XdgToplevelDragProtocolTest, AToplevelWhoseSurfaceIsGoneIsNotAttached)
+{
+    run([&](Client &c) {
+        Toplevel *gone = c.makeToplevel();
+        wl_surface_destroy(gone->surface);
+        gone->surface = nullptr;
+        Toplevel *next = c.makeToplevel();
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        xdg_toplevel_drag_v1_attach(drag, gone->toplevel, 0, 0);
+        // Nothing was attached, so another toplevel may be.
+        xdg_toplevel_drag_v1_attach(drag, next->toplevel, 0, 0);
+        c.sync();
+        EXPECT_EQ(0, wl_display_get_error(c.display));
+
         xdg_toplevel_drag_v1_destroy(drag);
         wl_data_source_destroy(source);
         c.sync();

@@ -276,6 +276,9 @@ void ToplevelDrag::detach()
             animation->setStyle(*m_animationStyle);
     }
     m_animationStyle.reset();
+    // The dock watch shares this registration when it is on this surface.
+    if (m_dockTarget == m_surface)
+        m_dockTarget = nullptr;
     m_surface->removeSurfaceObserver(this);
     m_surface = nullptr;
 }
