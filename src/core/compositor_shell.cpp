@@ -366,6 +366,14 @@ bool CompositorShell::init()
         m_windowDebugService = std::make_unique<session::WindowDebugService>(&m_windowManager);
         if (m_options.noDrm)
             m_windowDebugService->setInput(&m_inputManager);
+        m_windowDebugService->setOutputStats([this] {
+            QStringList lines;
+            if (m_backend) {
+                for (const auto &output : m_backend->allOutputs())
+                    lines << output->statsLine();
+            }
+            return lines;
+        });
         if (!m_windowDebugService->registerService())
             qCWarning(cfWayland) << "The window debug service is unavailable";
     }

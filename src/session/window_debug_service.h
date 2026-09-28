@@ -11,6 +11,8 @@
 
 #include <QDBusConnection>
 #include <QObject>
+#include <QStringList>
+#include <functional>
 
 namespace cutefish::input {
 class InputManager;
@@ -37,6 +39,10 @@ public:
     // would. A session on real hardware never sets it.
     void setInput(input::InputManager *input) { m_input = input; }
 
+    // Supplies one scheduling stats line per output, as the compositor logs on
+    // seat changes and at exit.
+    void setOutputStats(std::function<QStringList()> stats) { m_outputStats = std::move(stats); }
+
 public slots:
     // Every window bottom to top, as a JSON array. Rects are [x, y, width,
     // height] in logical output coordinates.
@@ -48,6 +54,10 @@ public slots:
     Q_SCRIPTABLE bool SetWindowBounds(qulonglong id, int x, int y, int width, int height);
     Q_SCRIPTABLE bool ActivateWindow(qulonglong id);
 
+    // The outputs' scheduling counters, one line each, read live. Empty in a
+    // headless compositor.
+    Q_SCRIPTABLE QStringList OutputStats() const;
+
     // Pointer and keyboard input for driving a headless compositor from a
     // script, in logical output coordinates and evdev codes. False without
     // an input to feed.
@@ -58,6 +68,7 @@ public slots:
 private:
     wm::WindowManager *m_manager;
     input::InputManager *m_input = nullptr;
+    std::function<QStringList()> m_outputStats;
     QDBusConnection m_bus;
     bool m_registered = false;
 };

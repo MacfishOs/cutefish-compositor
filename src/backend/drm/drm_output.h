@@ -287,6 +287,8 @@ public:
     std::shared_ptr<render::PresentationOutput> presentationOutput;
     std::function<void(const render::PresentationSubmission &)> presentationSubmitted;
     void reportStats() const;
+    // The same counters as reportStats() logs, for a debug interface to read.
+    QString statsLine() const;
 
     // Output renders (including initial modesets), not completion events.
     quint64 frameCount() const { return m_frameCount; }

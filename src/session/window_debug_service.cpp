@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "input/input_manager.h"
+#include "scene/surface_node.h"
 #include "scene/window_animation.h"
 #include "wm/window.h"
 #include "wm/window_frame.h"
@@ -62,6 +63,32 @@ QJsonObject describe(const wm::Window *window)
             buttons.append(rectArray(button));
         object.insert(QStringLiteral("captionButtons"), buttons);
     }
+
+    // What the plane planner and the blur see of the window's surfaces.
+    QJsonArray surfaces;
+    const auto collect = [&](const auto &self, const scene::Node *node) -> void {
+        if (!node)
+            return;
+        if (const auto *surface = dynamic_cast<const scene::SurfaceNode *>(node)) {
+            const render::Texture *texture = surface->texture();
+            surfaces.append(QJsonObject {
+                    {QStringLiteral("bounds"), rectArray(surface->absoluteGeometry())},
+                    {QStringLiteral("visible"), surface->isEffectivelyVisible()},
+                    {QStringLiteral("opaque"), surface->isOpaque()},
+                    {QStringLiteral("alpha"), surface->alpha()},
+                    {QStringLiteral("blur"), surface->hasBackgroundBlur()},
+                    {QStringLiteral("bufferSize"),
+                     texture ? QJsonArray {texture->size().width(), texture->size().height()}
+                             : QJsonArray {}},
+                    {QStringLiteral("scanoutBuffer"), surface->scanoutBuffer() != nullptr},
+                    {QStringLiteral("identityMapping"), surface->textureMapping().isIdentity()},
+            });
+        }
+        for (const scene::Node *child : node->children())
+            self(self, child);
+    };
+    collect(collect, window->node());
+    object.insert(QStringLiteral("surfaces"), surfaces);
     return object;
 }
 } // namespace
@@ -130,6 +157,11 @@ bool WindowDebugService::ActivateWindow(qulonglong id)
         return false;
     window->activate();
     return true;
+}
+
+QStringList WindowDebugService::OutputStats() const
+{
+    return m_outputStats ? m_outputStats() : QStringList();
 }
 
 bool WindowDebugService::PointerMotion(double x, double y)

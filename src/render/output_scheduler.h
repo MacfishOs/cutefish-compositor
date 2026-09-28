@@ -5,6 +5,7 @@
 #ifndef CUTEFISH_RENDER_OUTPUT_SCHEDULER_H_
 #define CUTEFISH_RENDER_OUTPUT_SCHEDULER_H_
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -121,6 +122,13 @@ public:
     // what recent frames took from wakeup to the GPU finishing when that is
     // longer, and grown by frames that land late.
     Duration drawBudget() const { return m_budget; }
+
+    // The longest of the recent frames' wakeup-to-GPU-finished times.
+    Duration slowestDrawTime() const
+    {
+        return m_drawTimes.empty() ? Duration::zero()
+                                   : *std::max_element(m_drawTimes.begin(), m_drawTimes.end());
+    }
 
 private:
     struct Pending {

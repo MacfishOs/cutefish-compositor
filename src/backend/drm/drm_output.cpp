@@ -4,6 +4,7 @@
 
 #include "backend/drm/drm_output.h"
 
+#include <QDebug>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QTimer>
@@ -1183,26 +1184,37 @@ void DrmOutput::retireEvent(std::unique_ptr<FlipEvent> event)
 
 void DrmOutput::reportStats() const
 {
+    qInfo().noquote() << statsLine();
+}
+
+QString DrmOutput::statsLine() const
+{
     const auto &s = m_scheduler.stats();
-    qInfo() << "Output scheduling" << m_config.name << "duration-ms"
-            << std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - m_statsStart)
-                       .count()
-            << "process-CPU-ms" << (1000.0 * (std::clock() - m_cpuStart) / CLOCKS_PER_SEC)
-            << "refresh-Hz" << refreshRate() << "pacing-Hz" << pacingRate() << "period-ns"
-            << std::chrono::duration_cast<std::chrono::nanoseconds>(m_scheduler.period()).count()
-            << "renders" << m_frameCount << "KMS-commits" << m_commits << "normal-commits"
-            << m_flipCommits << "unique-completions" << m_completions << "missed-slots"
-            << s.missed << "requests" << s.requests << "coalesced" << s.coalesced << "failures"
-            << s.failures << "stale-completions" << s.staleCompletions << "skipped" << s.skips
-            << "direct-scanout-frames" << m_directScanoutFrames
-            << "overlay-frames" << m_overlayFrames << "plane-test-failures"
-            << (m_scanout ? m_scanout->testFailures() : 0) << "scanout-import-failures"
-            << (m_scanout ? m_scanout->importFailures() : 0) << "hardware-cursor"
-            << (m_cursor != nullptr) << "last-kernel-sequence" << m_lastSequence
-            << "last-kernel-time-ms" << m_lastTimeMs
-            << "reasons startup/resume/scene/surface/decoration" << s.reasons[0] << s.reasons[1]
-            << s.reasons[2] << s.reasons[3] << s.reasons[4];
+    const auto ms = [](std::chrono::steady_clock::duration duration) {
+        return std::chrono::duration<double, std::milli>(duration).count();
+    };
+    QString line;
+    QDebug out(&line);
+    out << "Output scheduling" << m_config.name << "duration-ms"
+        << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
+                                                                 - m_statsStart)
+                   .count()
+        << "process-CPU-ms" << (1000.0 * (std::clock() - m_cpuStart) / CLOCKS_PER_SEC)
+        << "refresh-Hz" << refreshRate() << "pacing-Hz" << pacingRate() << "period-ns"
+        << std::chrono::duration_cast<std::chrono::nanoseconds>(m_scheduler.period()).count()
+        << "renders" << m_frameCount << "KMS-commits" << m_commits << "normal-commits"
+        << m_flipCommits << "unique-completions" << m_completions << "missed-slots" << s.missed
+        << "requests" << s.requests << "coalesced" << s.coalesced << "failures" << s.failures
+        << "stale-completions" << s.staleCompletions << "skipped" << s.skips
+        << "direct-scanout-frames" << m_directScanoutFrames << "overlay-frames" << m_overlayFrames
+        << "plane-test-failures" << (m_scanout ? m_scanout->testFailures() : 0)
+        << "scanout-import-failures" << (m_scanout ? m_scanout->importFailures() : 0)
+        << "hardware-cursor" << (m_cursor != nullptr) << "last-kernel-sequence" << m_lastSequence
+        << "last-kernel-time-ms" << m_lastTimeMs << "draw-budget-ms"
+        << ms(m_scheduler.drawBudget()) << "slowest-draw-ms" << ms(m_scheduler.slowestDrawTime())
+        << "reasons startup/resume/scene/surface/decoration" << s.reasons[0] << s.reasons[1]
+        << s.reasons[2] << s.reasons[3] << s.reasons[4];
+    return line;
 }
 
 bool DrmOutput::commit(const std::vector<PlaneContent> &planes, bool modeset, uint64_t frame)
