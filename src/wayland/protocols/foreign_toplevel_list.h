@@ -52,6 +52,9 @@ public:
     // another client's list or a closed window.
     std::shared_ptr<compositor::CaptureSource> sourceFor(wl_resource *handle) const;
 
+    // List resources bound and not yet destroyed.
+    int boundListCount() const { return int(m_clients.size()); }
+
 private:
     struct Client;
     struct Entry;

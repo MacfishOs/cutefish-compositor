@@ -17,6 +17,7 @@
 namespace cutefish::wayland {
 
 struct ForeignToplevelList::Client {
+    ForeignToplevelList *list = nullptr;
     wl_resource *resource = nullptr;
     // After stop no further toplevel events are sent, but live handles stay.
     bool stopped = false;
@@ -60,8 +61,11 @@ struct ForeignToplevelListEvents {
     static void listResourceDestroyed(wl_resource *resource)
     {
         auto *client = static_cast<ForeignToplevelList::Client *>(wl_resource_get_user_data(resource));
-        if (client)
-            client->resource = nullptr;
+        if (client) {
+            std::erase_if(client->list->m_clients, [client](const auto &owned) {
+                return owned.get() == client;
+            });
+        }
     }
 
     static void bind(wl_client *wlClient, void *data, uint32_t version, uint32_t id);
@@ -92,6 +96,7 @@ void ForeignToplevelListEvents::bind(wl_client *wlClient, void *data, uint32_t v
         return;
     }
     auto client = std::make_unique<ForeignToplevelList::Client>();
+    client->list = list;
     client->resource = resource;
     wl_resource_set_implementation(resource, &listImplementation, client.get(),
                                    listResourceDestroyed);
@@ -139,7 +144,10 @@ void ForeignToplevelList::shutdown()
             client->stopped = true;
             ext_foreign_toplevel_list_v1_send_finished(client->resource);
         }
+        // A list resource that outlives this object must not reach its Client.
+        wl_resource_set_user_data(client->resource, nullptr);
     }
+    m_clients.clear();
 }
 
 bool ForeignToplevelList::listable(const wm::Window *window)

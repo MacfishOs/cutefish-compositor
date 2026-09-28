@@ -62,6 +62,7 @@ protected:
     wl_display *client = nullptr;
     wl_registry *registry = nullptr;
     ext_foreign_toplevel_list_v1 *list = nullptr;
+    uint32_t listName = 0;
     wl_shm *shm = nullptr;
     ext_foreign_toplevel_image_capture_source_manager_v1 *toplevelSources = nullptr;
     ext_image_copy_capture_manager_v1 *copies = nullptr;
@@ -154,6 +155,7 @@ protected:
 
     void bindList(wl_registry *registry, uint32_t name)
     {
+        listName = name;
         list = static_cast<ext_foreign_toplevel_list_v1 *>(
                 wl_registry_bind(registry, name, &ext_foreign_toplevel_list_v1_interface, 1));
         static const ext_foreign_toplevel_list_v1_listener listener = {
@@ -431,6 +433,29 @@ TEST_F(ForeignToplevelListTest, StopFinishesTheListAndLateBindersSeeExistingWind
     makeWindow(QRect(0, 0, 300, 200));
     ASSERT_TRUE(roundtrip());
     EXPECT_EQ(handles.size(), 1u);
+}
+
+// A screen recorder binds a list for each recording and drops it when it exits.
+TEST_F(ForeignToplevelListTest, ADestroyedListLeavesNothingBehind)
+{
+    // SetUp's roundtrip only delivers the globals; the list bind they send reaches the server now.
+    ASSERT_TRUE(roundtrip());
+    ASSERT_EQ(toplevels->boundListCount(), 1);
+    for (int recording = 0; recording < 3; ++recording) {
+        auto *extra = static_cast<ext_foreign_toplevel_list_v1 *>(
+                wl_registry_bind(registry, listName, &ext_foreign_toplevel_list_v1_interface, 1));
+        ASSERT_TRUE(roundtrip());
+        EXPECT_EQ(toplevels->boundListCount(), 2);
+        ext_foreign_toplevel_list_v1_destroy(extra);
+        ASSERT_TRUE(roundtrip());
+        EXPECT_EQ(toplevels->boundListCount(), 1);
+    }
+    ext_foreign_toplevel_list_v1_destroy(std::exchange(list, nullptr));
+    ASSERT_TRUE(roundtrip());
+    EXPECT_EQ(toplevels->boundListCount(), 0);
+    makeWindow(QRect(0, 0, 300, 200));
+    ASSERT_TRUE(roundtrip());
+    EXPECT_TRUE(handles.empty());
 }
 
 } // namespace
