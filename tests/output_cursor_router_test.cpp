@@ -105,3 +105,41 @@ TEST(OutputCursorRouter, ReconfigurationKeepsAStationaryCursorVisible)
     EXPECT_EQ(sink.position, QPoint(80, 60));
     EXPECT_EQ(router.activeTarget(), 0);
 }
+
+// An animated cursor sets a new image every frame without moving; the next move
+// must neither blank the plane nor upload the image again.
+TEST(OutputCursorRouter, AnimationFramesKeepOnePlaneActive)
+{
+    Sink sink;
+    cursor::OutputCursorRouter router;
+    router.setTargets({{{0, 0, 100, 100}, &sink}});
+    router.moveCursor({40, 30});
+    uint32_t pixel = 0xffffffff;
+    for (int frame = 0; frame < 3; ++frame)
+        ASSERT_TRUE(
+            router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+    router.moveCursor({40, 30});
+    EXPECT_EQ(sink.images, 3);
+    EXPECT_EQ(sink.hides, 0);
+    EXPECT_EQ(sink.position, QPoint(40, 30));
+    EXPECT_EQ(router.activeTarget(), 0);
+}
+
+TEST(OutputCursorRouter, ImageBetweenOutputsStaysOnTheActiveOutput)
+{
+    Sink left;
+    Sink right;
+    cursor::OutputCursorRouter router;
+    router.setTargets({{{0, 0, 100, 100}, &left}, {{200, 0, 100, 100}, &right}});
+    router.moveCursor({250, 50});
+    uint32_t pixel = 0xffffffff;
+    ASSERT_TRUE(
+        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+    router.moveCursor({150, 50});
+    ASSERT_TRUE(
+        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+    EXPECT_EQ(right.images, 2);
+    EXPECT_EQ(right.hides, 0);
+    EXPECT_EQ(left.images, 0);
+    EXPECT_EQ(router.activeTarget(), 1);
+}

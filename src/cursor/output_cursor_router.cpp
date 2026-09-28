@@ -11,6 +11,8 @@
 
 #include "cursor/output_cursor_router.h"
 
+#include <algorithm>
+
 #include <QtMath>
 
 namespace cutefish::cursor {
@@ -56,15 +58,23 @@ bool OutputCursorRouter::setCursorImage(const render::CursorImage& image)
     for (int index = 0; index < static_cast<int>(m_targets.size()); ++index)
         if (contains(m_targets[index].logicalBounds, m_position))
             targets.push_back(index);
+    // Between outputs moveCursor keeps the cursor where it is, so the new
+    // image goes there too, as Ozone's DrmCursor::SetCursor keeps its window.
+    if (targets.empty())
+        targets = m_activeTargets;
     if (targets.empty() && !m_targets.empty())
         targets.push_back(0);
-    bool uploaded = false;
+    std::vector<int> uploaded;
     for (int target : targets)
-        if (upload(target)) {
-            m_activeTargets.push_back(target);
-            uploaded = true;
-        }
-    return uploaded;
+        if (upload(target))
+            uploaded.push_back(target);
+    for (int target : m_activeTargets)
+        if (std::find(uploaded.begin(), uploaded.end(), target) == uploaded.end() &&
+            target >= 0 && target < static_cast<int>(m_targets.size()) && m_targets[target].sink)
+            m_targets[target].sink->hideCursor();
+    // Replaced, not appended: an animated cursor sets an image every frame.
+    m_activeTargets = std::move(uploaded);
+    return !m_activeTargets.empty();
 }
 
 void OutputCursorRouter::hideCursor()
