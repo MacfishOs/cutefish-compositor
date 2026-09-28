@@ -74,7 +74,9 @@ protected:
         // The lock transition draws every frame; the panel changes far less often.
         if (!m_texture || m_uploaded != m_ui->imageGeneration()) {
             const QImage image = source.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
-            if (!m_texture
+            // The renderer uploads the texture's own size and cannot see the
+            // image's, so a panel redrawn for another output needs a new one.
+            if (!m_texture || m_texture->size() != image.size()
                 || !renderer.updateTexture(m_texture.get(), image.constBits(),
                                            image.bytesPerLine(), render::PixelFormat::Rgba8888))
                 m_texture = renderer.createTexture(image.size(), image.constBits(),

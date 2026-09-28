@@ -486,6 +486,41 @@ private slots:
         QVERIFY(!window->handle());
     }
 
+    void panelTextureFollowsTheImageSize()
+    {
+        scene::Node root;
+        session::SecureContainer secure(&root);
+        session::SessionController controller(&secure);
+        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
+        FakeBackend backend;
+        auth::AuthUi ui(&controller, nullptr, &backend);
+        controller.requestLock();
+        ui.refresh();
+        secure.finishTransition();
+        testsupport::FakeRenderer renderer;
+        // The panel is drawn last, above the shield and its wallpaper.
+        const auto panelTexture = [&]() -> const render::Texture * {
+            renderer.calls.clear();
+            root.render(renderer);
+            for (auto call = renderer.calls.crbegin(); call != renderer.calls.crend(); ++call) {
+                if (call->texture)
+                    return call->texture;
+            }
+            return nullptr;
+        };
+        const render::Texture *texture = panelTexture();
+        QVERIFY(texture);
+        QCOMPARE(texture->size(), QSize(480, 560));
+        // A denser output redraws the panel larger. The renderer takes the
+        // texture's own size for an update, so the texture has to be replaced.
+        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600), 2}});
+        ui.refresh();
+        texture = panelTexture();
+        QVERIFY(texture);
+        QCOMPARE(ui.renderImage().size(), QSize(960, 1120));
+        QCOMPARE(texture->size(), QSize(960, 1120));
+    }
+
     void textureFailureKeepsCompositorShield()
     {
         class FailedRenderer : public testsupport::FakeRenderer
