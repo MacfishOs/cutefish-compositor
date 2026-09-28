@@ -81,6 +81,24 @@ TEST(XkbTrackerTest, TheLockLightsFollowTheLocks)
     EXPECT_EQ(KeyboardLed::NumLock, tracker.leds());
 }
 
+TEST(XkbTrackerTest, CopyingLocksKeepsTheHeldModifiers)
+{
+    XkbTracker source;
+    XkbTracker tracker;
+    source.updateKey(KEY_CAPSLOCK, true);
+    source.updateKey(KEY_CAPSLOCK, false);
+    tracker.updateKey(KEY_LEFTSHIFT, true);
+
+    EXPECT_TRUE(tracker.copyLocks(source));
+    EXPECT_FALSE(tracker.copyLocks(source));
+    EXPECT_EQ(KeyboardLed::CapsLock, tracker.leds());
+    EXPECT_TRUE(tracker.modifierPressed(XKB_MOD_NAME_SHIFT));
+
+    tracker.updateKey(KEY_LEFTSHIFT, false);
+    EXPECT_FALSE(tracker.modifierPressed(XKB_MOD_NAME_SHIFT));
+    EXPECT_EQ(KeyboardLed::CapsLock, tracker.leds());
+}
+
 TEST(XkbTrackerTest, ANamedLayoutReplacesTheKeymap)
 {
     XkbTracker tracker;

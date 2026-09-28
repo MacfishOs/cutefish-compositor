@@ -536,6 +536,7 @@ void InputManager::onKey(Timestamp timestamp, uint32_t physicalCode, bool presse
             if (!suppressed)
                 m_seat->dispatchKey(timestamp, evdevCode, false);
         }
+        m_seat->syncKeyboardLocks();
         return;
     }
     m_secureKeys.remove(evdevCode);
@@ -544,6 +545,7 @@ void InputManager::onKey(Timestamp timestamp, uint32_t physicalCode, bool presse
             m_seat->suppressKey(evdevCode);
         else if (!suppressed)
             m_seat->dispatchKey(timestamp, evdevCode, false);
+        m_seat->syncKeyboardLocks();
         return;
     }
     if (m_eventSink && m_eventSink->onKey(timestamp, evdevCode, pressed)) {
@@ -553,6 +555,7 @@ void InputManager::onKey(Timestamp timestamp, uint32_t physicalCode, bool presse
         // release: a press without its release would leave the key stuck.
         else if (!suppressed)
             m_seat->dispatchKey(timestamp, evdevCode, false);
+        m_seat->syncKeyboardLocks();
         return;
     }
     if (!suppressed)

@@ -71,6 +71,10 @@ public:
     // The lock lights the state has on, as KeyboardLed bits.
     uint32_t leds() const;
 
+    // Takes the locked modifiers and layout of `source`, which must run the
+    // same keymap. Returns whether anything changed.
+    bool copyLocks(const XkbTracker &source);
+
     // Evdev codes are offset by 8 from xkb keycodes; the shift comes from X11's
     // keycode range and every Linux keymap is written against it.
     static constexpr uint32_t kEvdevToXkbOffset = 8;

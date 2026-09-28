@@ -176,6 +176,26 @@ uint32_t XkbTracker::leds() const
     return leds;
 }
 
+bool XkbTracker::copyLocks(const XkbTracker &source)
+{
+    if (!m_state || !source.m_state)
+        return false;
+    xkb_state *state = m_state.get();
+    const xkb_mod_mask_t locked =
+            xkb_state_serialize_mods(source.m_state.get(), XKB_STATE_MODS_LOCKED);
+    const xkb_layout_index_t lockedLayout =
+            xkb_state_serialize_layout(source.m_state.get(), XKB_STATE_LAYOUT_LOCKED);
+    if (locked == xkb_state_serialize_mods(state, XKB_STATE_MODS_LOCKED)
+        && lockedLayout == xkb_state_serialize_layout(state, XKB_STATE_LAYOUT_LOCKED))
+        return false;
+    xkb_state_update_mask(state, xkb_state_serialize_mods(state, XKB_STATE_MODS_DEPRESSED),
+                          xkb_state_serialize_mods(state, XKB_STATE_MODS_LATCHED), locked,
+                          xkb_state_serialize_layout(state, XKB_STATE_LAYOUT_DEPRESSED),
+                          xkb_state_serialize_layout(state, XKB_STATE_LAYOUT_LATCHED),
+                          lockedLayout);
+    return true;
+}
+
 bool XkbTracker::modifierActive(const char *name) const
 {
     return m_state

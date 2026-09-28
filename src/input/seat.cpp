@@ -364,19 +364,21 @@ bool Seat::allowsFocus(const compositor::Surface *surface) const
     return !m_sessionGate || m_sessionGate->allowsFocus(surface);
 }
 
-void Seat::setFocusedSurface(compositor::Surface *surface)
+void Seat::setFocusedSurface(compositor::Surface *surface, bool borrowed)
 {
     // A refused surface clears focus rather than leaving the old one behind:
     // the surface that held focus before a lock is exactly what must not keep
     // receiving keys.
     if (surface && !allowsFocus(surface))
         surface = nullptr;
-    if (m_wasShutdown || surface == m_focusedSurface)
+    borrowed = borrowed && surface;
+    if (m_wasShutdown || (surface == m_focusedSurface && borrowed == m_focusBorrowed))
         return;
 
     compositor::Surface *lostFocus = m_focusedSurface;
 
     m_focusedSurface = surface;
+    m_focusBorrowed = borrowed;
     if (m_focusedSurface)
         m_focusedSurface->addSurfaceObserver(this);
     maybeRemoveSurfaceObserver(lostFocus);
@@ -411,6 +413,7 @@ void Seat::onSurfaceDestroying(compositor::Surface *surface)
     if (surface != m_focusedSurface)
         return;
     m_focusedSurface = nullptr;
+    m_focusBorrowed = false;
     notifySurfaceFocused(nullptr, surface);
     m_shortcutsInhibition.update();
     m_pointerConstraints.update();
@@ -662,6 +665,12 @@ void Seat::notifyKeyboardModifiers()
     }
 }
 
+void Seat::syncKeyboardLocks()
+{
+    if (m_clientXkbTracker->copyLocks(*m_xkbTracker))
+        notifyKeyboardModifiers();
+}
+
 void Seat::dispatchKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
 {
     if (m_wasShutdown)
@@ -715,6 +724,7 @@ void Seat::onKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
             suppressKey(evdevCode);
         else if (!suppressed)
             dispatchKey(timestamp, evdevCode, false);
+        syncKeyboardLocks();
         return;
     }
     if (!suppressed)

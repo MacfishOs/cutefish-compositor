@@ -173,13 +173,19 @@ public:
 
     compositor::Surface *focusedSurface() const { return m_focusedSurface; }
 
+    // Whether the focused surface only borrows the keys; see setFocusedSurface().
+    bool focusIsBorrowed() const { return m_focusBorrowed; }
+
     // The surface the client pointers are focused on, if any.
     compositor::Surface *pointerFocus() const;
 
     // The window manager sets this from window activation. The surface is
     // expected to be a root surface: keyboard focus follows the hierarchy, not
     // the individual subsurface that was hit.
-    void setFocusedSurface(compositor::Surface *surface);
+    // A `borrowed` focus takes the keys without taking focus from the client
+    // that has it: that client gets no leave, since toolkits deactivate on one,
+    // and no new key presses until focus returns.
+    void setFocusedSurface(compositor::Surface *surface, bool borrowed = false);
 
     // Makes every pointer leave whatever it is focused on. The window manager
     // uses it when the pointer moves onto compositor-owned content.
@@ -198,6 +204,9 @@ public:
     // would otherwise see Meta's press without Meta.
     bool updateKeyState(uint32_t evdevCode, bool pressed);
     void notifyKeyboardModifiers();
+    // After a key the clients never got: a Caps Lock toggled on the lock
+    // screen must reach them and the lights too, or the two states drift.
+    void syncKeyboardLocks();
     void dispatchKey(Timestamp timestamp, uint32_t evdevCode, bool pressed);
 
     using KeyFilter = std::function<bool(Timestamp, uint32_t, bool)>;
@@ -331,6 +340,7 @@ private:
 
     SessionGate *m_sessionGate = nullptr;
     compositor::Surface *m_focusedSurface = nullptr;
+    bool m_focusBorrowed = false;
     compositor::Surface *m_pointerGrabSurface = nullptr;
 
     QPointF m_pointerLocation;

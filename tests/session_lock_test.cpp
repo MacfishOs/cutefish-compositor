@@ -20,6 +20,7 @@
 #include "input/drag.h"
 #include "input/hit_test.h"
 #include "input/seat.h"
+#include "input/xkb_tracker.h"
 #include "render/scanout.h"
 #include "scene/node.h"
 #include "scene/overlay_candidate.h"
@@ -655,6 +656,22 @@ TEST_F(SessionLockTest, OrdinaryClientsReceiveNoInputAndHeldAuthKeysDoNotLeakAft
     EXPECT_TRUE(keys->entered.empty());
     input.onKey({}, KEY_B, false);
     EXPECT_EQ(0, keys->keys);
+}
+
+TEST_F(SessionLockTest, CapsLockToggledWhileLockedReachesClientsAndTheLights)
+{
+    input::InputManager input(&seat);
+    lockFully();
+    input.onKey({}, KEY_CAPSLOCK, true);
+    input.onKey({}, KEY_CAPSLOCK, false);
+    EXPECT_EQ(input::KeyboardLed::CapsLock, seat.clientXkbTracker()->leds());
+    ASSERT_TRUE(controller.requestUnlock());
+    controller.notifyFramePresented();
+    // Toggled off again after the unlock, both states agree it is off.
+    input.onKey({}, KEY_CAPSLOCK, true);
+    input.onKey({}, KEY_CAPSLOCK, false);
+    EXPECT_EQ(0u, seat.clientXkbTracker()->leds());
+    EXPECT_EQ(0u, seat.xkbTracker()->leds());
 }
 
 TEST_F(SessionLockTest, ModifiersHeldForTheLockShortcutAreReleasedWhileLocked)
