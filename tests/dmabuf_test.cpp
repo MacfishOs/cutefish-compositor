@@ -172,6 +172,12 @@ struct ClientResult {
     std::mutex mutex;
     std::vector<FormatTableEntry> formatTable;
     std::vector<uint16_t> trancheFormats;
+    // Every tranche in the order received: its flags and its format indices.
+    struct Tranche {
+        uint32_t flags = 0;
+        std::vector<uint16_t> formats;
+    };
+    std::vector<Tranche> tranches;
 };
 
 template<class T, void (*Destroy)(T*)>
@@ -377,7 +383,10 @@ const zwp_linux_dmabuf_feedback_v1_listener& feedbackListener()
             result->mainDevice = id;
         },
         [](void* data, zwp_linux_dmabuf_feedback_v1*) {
-            ++static_cast<ClientResult*>(data)->trancheDone;
+            auto* result = static_cast<ClientResult*>(data);
+            std::lock_guard<std::mutex> lock(result->mutex);
+            result->tranches.push_back({ result->trancheFlags, result->trancheFormats });
+            ++result->trancheDone;
         },
         [](void* data, zwp_linux_dmabuf_feedback_v1*, wl_array* device) {
             auto* result = static_cast<ClientResult*>(data);
@@ -576,6 +585,87 @@ TEST_F(DmaBufTest, SurfaceFeedbackIsDeliveredForASurface)
     EXPECT_EQ(client.result.trancheDone, 1);
     EXPECT_EQ(client.result.mainDevice, 0x1234u);
     EXPECT_EQ(client.result.protocolErrorCode, -1);
+}
+
+// The first tranche is the scanout one, restricted to what the primary plane
+// takes: the modifiers both sides list, the implicit modifier where the plane
+// has no explicit ones, and nothing for a format the plane cannot show.
+TEST_F(DmaBufTest, AScanoutCandidateGetsAScanoutTrancheFirstAndLosesItAgain)
+{
+    auto* manager = m_dmabufGlobal->feedbackManager();
+    manager->setScanoutFormats([] {
+        return wayland::ScanoutFormats { { DRM_FORMAT_ARGB8888, { kModifierA } },
+                                         { DRM_FORMAT_NV12, {} } };
+    });
+
+    TestClient client;
+    client.start(m_server->socketName(), [](ClientContext& context) {
+        ClientProxy<wl_surface, wl_surface_destroy> surface(
+            context.display, wl_compositor_create_surface(context.compositor));
+        ASSERT_TRUE(surface.get());
+        ClientProxy<zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_feedback_v1_destroy> feedback(
+            context.display, zwp_linux_dmabuf_v1_get_surface_feedback(context.dmabuf, surface));
+        ASSERT_TRUE(feedback.get());
+        zwp_linux_dmabuf_feedback_v1_add_listener(feedback, &feedbackListener(),
+                                                  context.result);
+        wl_display_roundtrip(context.display);
+
+        context.result->reachedHold = true;
+        EXPECT_TRUE(context.result->waitForRelease());
+        wl_display_roundtrip(context.display);
+
+        feedback.reset();
+        surface.reset();
+        wl_display_roundtrip(context.display);
+    }, 4);
+    ASSERT_TRUE(waitFor([&client] { return client.result.reachedHold.load(); }));
+    EXPECT_EQ(client.result.feedbackDone, 1);
+    EXPECT_EQ(client.result.trancheDone, 1);
+    ASSERT_EQ(m_compositor->surfaces().size(), 1u);
+    compositor::Surface* surface = m_compositor->surfaces().front();
+    EXPECT_EQ(manager->surfaceFeedbackCount(), 1u);
+
+    manager->setScanoutCandidate(surface, true);
+    EXPECT_TRUE(manager->isScanoutCandidate(surface));
+    // Marking it again re-sends nothing.
+    manager->setScanoutCandidate(surface, true);
+    // Dropping the candidate re-sends the plain feedback.
+    manager->setScanoutCandidate(surface, false);
+    manager->setScanoutCandidate(surface, true);
+    client.result.release();
+    ASSERT_TRUE(waitFor([&client] { return client.result.finished.load(); }));
+    client.join();
+    ASSERT_FALSE(client.result.failed);
+
+    EXPECT_EQ(client.result.feedbackDone, 4);
+    std::lock_guard<std::mutex> lock(client.result.mutex);
+    // Plain, scanout + default, plain, scanout + default.
+    ASSERT_EQ(client.result.tranches.size(), 6u);
+    EXPECT_EQ(client.result.tranches[0].flags, 0u);
+    EXPECT_EQ(client.result.tranches[1].flags, ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT);
+    EXPECT_EQ(client.result.tranches[2].flags, 0u);
+    EXPECT_EQ(client.result.tranches[3].flags, 0u);
+    EXPECT_EQ(client.result.tranches[4].flags, ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT);
+    EXPECT_EQ(client.result.tranches[5].flags, 0u);
+    EXPECT_EQ(client.result.tranches[5].formats.size(), 7u);
+
+    std::vector<std::pair<uint32_t, uint64_t>> scanout;
+    for (uint16_t index : client.result.tranches[1].formats) {
+        ASSERT_LT(index, client.result.formatTable.size());
+        const FormatTableEntry& entry = client.result.formatTable[index];
+        scanout.emplace_back(entry.format, entry.modifier);
+    }
+    // In format table order, which is the device's fourcc order.
+    const std::vector<std::pair<uint32_t, uint64_t>> expected = {
+        { DRM_FORMAT_NV12, DRM_FORMAT_MOD_INVALID },
+        { DRM_FORMAT_ARGB8888, kModifierA },
+    };
+    EXPECT_EQ(scanout, expected);
+
+    // The surface went with its resource: nothing is left behind.
+    EXPECT_TRUE(waitFor([&] { return m_compositor->surfaces().empty(); }));
+    EXPECT_EQ(manager->surfaceFeedbackCount(), 0u);
+    EXPECT_FALSE(manager->isScanoutCandidate(surface));
 }
 
 TEST_F(DmaBufTest, NoGlobalWithoutAnImportableFormat)

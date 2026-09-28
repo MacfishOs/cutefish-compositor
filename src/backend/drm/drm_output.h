@@ -135,6 +135,11 @@ public:
 
     QSize size() const;
 
+    // DRM fourcc -> the modifiers the primary plane accepts for it; an empty
+    // list means the plane only has a legacy format list. What linux-dmabuf
+    // advertises as scanout-able.
+    std::map<uint32_t, std::vector<uint64_t>> primaryPlaneFormats() const;
+
     QSize physicalSizeMm() const { return m_config.physicalSizeMm; }
 
     int subpixel() const { return m_config.subpixel; }

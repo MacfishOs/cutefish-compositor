@@ -68,6 +68,7 @@ class DisplayConfigService;
 namespace wayland {
 class ExecutableSecurityDelegate;
 class IdleInhibition;
+class DmaBufScanoutPolicy;
 class LinuxDmabufGlobal;
 class ProtocolGlobals;
 class Server;
@@ -295,6 +296,7 @@ private:
     void onKeyboardLayoutUpdated() override;
     std::unique_ptr<wayland::Server> m_server;
     std::unique_ptr<wayland::LinuxDmabufGlobal> m_dmabufGlobal;
+    std::unique_ptr<wayland::DmaBufScanoutPolicy> m_scanoutPolicy;
     wl_global *m_syncobjGlobal = nullptr;
     std::unique_ptr<wayland::ProtocolGlobals> m_globals;
     std::unique_ptr<xwayland::XwaylandServer> m_xwayland;

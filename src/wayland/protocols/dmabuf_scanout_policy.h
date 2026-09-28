@@ -1,0 +1,49 @@
+#ifndef CUTEFISH_WAYLAND_PROTOCOLS_DMABUF_SCANOUT_POLICY_H_
+#define CUTEFISH_WAYLAND_PROTOCOLS_DMABUF_SCANOUT_POLICY_H_
+
+#include <set>
+
+#include <QObject>
+
+#include "wm/window_observer.h"
+
+namespace cutefish::wm {
+class Window;
+class WindowManager;
+}
+
+namespace cutefish::wayland {
+
+class DmaBufFeedbackManager;
+
+// Which surfaces get a scanout tranche in their linux-dmabuf feedback: the
+// root surface of every fullscreen window, which is what the overlay planner
+// can put straight on the primary plane. Exo's surface feedback listens to the
+// shell surface's fullscreen state for the same reason.
+//
+// Must be destroyed before the WindowManager it observes.
+class DmaBufScanoutPolicy : public QObject, public wm::WindowObserver
+{
+    Q_OBJECT
+
+public:
+    DmaBufScanoutPolicy(DmaBufFeedbackManager* manager, wm::WindowManager* windowManager,
+                        QObject* parent = nullptr);
+    ~DmaBufScanoutPolicy() override;
+
+    // --- wm::WindowObserver ---
+    void onWindowStateTypeChanged(wm::Window* window, wm::WindowStateType oldType) override;
+
+private:
+    void onWindowAdded(wm::Window* window);
+    void onWindowRemoved(wm::Window* window);
+    void apply(wm::Window* window, bool removed);
+
+    DmaBufFeedbackManager* const m_manager;
+    wm::WindowManager* const m_windowManager;
+    std::set<wm::Window*> m_windows;
+};
+
+} // namespace cutefish::wayland
+
+#endif // CUTEFISH_WAYLAND_PROTOCOLS_DMABUF_SCANOUT_POLICY_H_

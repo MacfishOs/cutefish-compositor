@@ -49,6 +49,8 @@
 #include "wayland/privileged_client.h"
 #include "wayland/protocol_globals.h"
 #include "wayland/protocols/image_capture.h"
+#include "wayland/protocols/dmabuf_feedback_manager.h"
+#include "wayland/protocols/dmabuf_scanout_policy.h"
 #include "wayland/protocols/linux_dmabuf.h"
 #include "wayland/protocols/linux_drm_syncobj.h"
 #include "wayland/protocols/wl_output.h"
@@ -754,8 +756,21 @@ bool CompositorShell::initDrm()
     m_globals->imageCapture()->setRenderer(m_backend->renderer());
     m_dmabufGlobal = wayland::LinuxDmabufGlobal::create(m_server->display(), &m_compositor,
                                                         m_backend->renderer());
-    if (!m_dmabufGlobal)
+    if (!m_dmabufGlobal) {
         qCWarning(cfWayland) << "linux-dmabuf is unavailable on this device";
+    } else {
+        // A fullscreen client is steered to a layout the primary plane takes,
+        // so its buffers can be flipped instead of composited.
+        auto *feedback = m_dmabufGlobal->feedbackManager();
+        feedback->setScanoutFormats([this]() -> wayland::ScanoutFormats {
+            if (auto *output = m_backend->primaryOutput())
+                return output->primaryPlaneFormats();
+            return {};
+        });
+        m_scanoutPolicy = std::make_unique<wayland::DmaBufScanoutPolicy>(feedback, &m_windowManager);
+        QObject::connect(&m_displayManager, &display::DisplayManager::displaysChanged,
+                         m_scanoutPolicy.get(), [feedback] { feedback->refreshScanoutTranches(); });
+    }
 
     // Explicit synchronization rides on the same device the buffers come from.
     // Without it clients fall back to implicit fences, which is slower but
@@ -798,8 +813,10 @@ bool CompositorShell::initDrm()
         qInfo() << "Compositor seat active" << active;
         for (const auto &output : m_backend->allOutputs())
             output->reportStats();
-        if (!active)
+        if (!active) {
             m_seat.drag()->cancel();
+            m_scene.retireClosing();
+        }
         if (m_inputBackend)
             m_inputBackend->setActive(active);
     });
@@ -960,6 +977,7 @@ CompositorShell::~CompositorShell()
     // Clients go first: their surfaces own GL textures that need the context.
     if (m_syncobjGlobal)
         wl_global_destroy(m_syncobjGlobal);
+    m_scanoutPolicy.reset();
     m_dmabufGlobal.reset();
     m_xwayland.reset();
     if (m_globals && m_globals->inputMethodLauncher())

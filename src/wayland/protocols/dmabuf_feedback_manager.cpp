@@ -17,13 +17,17 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstring>
 #include <set>
 #include <utility>
 #include <vector>
 
+#include "compositor/surface.h"
+#include "compositor/surface_observer.h"
 #include "core/logging.h"
 #include "render/dmabuf.h"
+#include "wayland/server_util.h"
 
 namespace cutefish::wayland {
 
@@ -111,7 +115,8 @@ ScopedFd createFormatTable(const std::vector<DmaBufFeedbackFormat>& table)
 // specific device for a specific task. The most common use cases are the
 // "default" tranche (targeting the main device, advertising all formats and
 // modifiers supported by the compositor, for non-scanout cases) and "scanout"
-// tranches, which Cutefish does not send.
+// tranches (advertising the formats and modifiers on a specific device that,
+// if used, allow the compositor to put the buffer straight on a plane).
 class DmaBufFeedbackTranche
 {
 public:
@@ -143,7 +148,8 @@ private:
 
 // A feedback is the set of information sent to a client: a main device (the
 // device the compositor renders on), a format table shared through an fd, and
-// one or more tranches, of which the default one must always be present.
+// one or more tranches, of which the default one must always be present. A
+// scanout tranche, when present, goes first: clients prefer earlier tranches.
 class DmaBufFeedback
 {
 public:
@@ -159,11 +165,102 @@ public:
     dev_t mainDeviceId() const { return m_mainDeviceId; }
 
     const DmaBufFeedbackTranche* defaultTranche() const { return m_defaultTranche.get(); }
+    const DmaBufFeedbackTranche* scanoutTranche() const { return m_scanoutTranche.get(); }
+
+    // Returns whether the tranche the client sees changed.
+    bool setScanoutTranche(std::unique_ptr<DmaBufFeedbackTranche> tranche)
+    {
+        const bool changed = (tranche != nullptr) != (m_scanoutTranche != nullptr)
+            || (tranche && tranche->formatsAndModifiers() != m_scanoutTranche->formatsAndModifiers());
+        m_scanoutTranche = std::move(tranche);
+        return changed;
+    }
 
 private:
     const dev_t m_mainDeviceId;
     const std::unique_ptr<DmaBufFeedbackTranche> m_defaultTranche;
+    std::unique_ptr<DmaBufFeedbackTranche> m_scanoutTranche;
 };
+
+// One zwp_linux_dmabuf_feedback_v1 resource of a surface feedback.
+class DmaBufSurfaceFeedbackRef
+{
+public:
+    DmaBufSurfaceFeedbackRef(DmaBufSurfaceFeedback* surfaceFeedback, wl_resource* resource);
+    DmaBufSurfaceFeedbackRef(const DmaBufSurfaceFeedbackRef&) = delete;
+    DmaBufSurfaceFeedbackRef& operator=(const DmaBufSurfaceFeedbackRef&) = delete;
+    ~DmaBufSurfaceFeedbackRef();
+
+    wl_resource* resource() const { return m_resource; }
+    void setInert() { m_surfaceFeedback = nullptr; }
+
+private:
+    DmaBufSurfaceFeedback* m_surfaceFeedback;
+    wl_resource* const m_resource;
+};
+
+// A client may request the feedback of one surface several times (Mesa does
+// implicitly, the application may explicitly), so one surface feedback serves
+// any number of resources. It goes with its last resource or with the surface.
+class DmaBufSurfaceFeedback : public compositor::SurfaceObserver
+{
+public:
+    DmaBufSurfaceFeedback(DmaBufFeedbackManager* manager, compositor::Surface* surface,
+                          std::unique_ptr<DmaBufFeedback> feedback)
+        : m_manager(manager)
+        , m_surface(surface)
+        , m_feedback(std::move(feedback))
+    {
+        m_surface->addSurfaceObserver(this);
+    }
+
+    ~DmaBufSurfaceFeedback() override
+    {
+        for (DmaBufSurfaceFeedbackRef* ref : m_refs)
+            ref->setInert();
+        m_surface->removeSurfaceObserver(this);
+    }
+
+    void onSurfaceDestroying(compositor::Surface* surface) override
+    {
+        // Deletes this; the manager drops the candidate through its own
+        // observer, so nothing is re-sent for a surface on its way out.
+        m_manager->removeSurfaceFeedback(surface);
+    }
+
+    void addRef(DmaBufSurfaceFeedbackRef* ref) { m_refs.insert(ref); }
+
+    void removeRef(DmaBufSurfaceFeedbackRef* ref)
+    {
+        m_refs.erase(ref);
+        if (m_refs.empty())
+            m_manager->removeSurfaceFeedback(m_surface);
+    }
+
+    compositor::Surface* surface() const { return m_surface; }
+    DmaBufFeedback* feedback() const { return m_feedback.get(); }
+    const std::set<DmaBufSurfaceFeedbackRef*>& refs() const { return m_refs; }
+
+private:
+    DmaBufFeedbackManager* const m_manager;
+    compositor::Surface* const m_surface;
+    const std::unique_ptr<DmaBufFeedback> m_feedback;
+    std::set<DmaBufSurfaceFeedbackRef*> m_refs;
+};
+
+DmaBufSurfaceFeedbackRef::DmaBufSurfaceFeedbackRef(DmaBufSurfaceFeedback* surfaceFeedback,
+                                                   wl_resource* resource)
+    : m_surfaceFeedback(surfaceFeedback)
+    , m_resource(resource)
+{
+    m_surfaceFeedback->addRef(this);
+}
+
+DmaBufSurfaceFeedbackRef::~DmaBufSurfaceFeedbackRef()
+{
+    if (m_surfaceFeedback)
+        m_surfaceFeedback->removeRef(this);
+}
 
 DmaBufFeedbackManager::DmaBufFeedbackManager(compositor::Compositor* compositor,
                                              render::DmaBufDevice* device)
@@ -213,7 +310,13 @@ DmaBufFeedbackManager::DmaBufFeedbackManager(compositor::Compositor* compositor,
     m_version = ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION;
 }
 
-DmaBufFeedbackManager::~DmaBufFeedbackManager() = default;
+DmaBufFeedbackManager::~DmaBufFeedbackManager()
+{
+    // Each surface feedback inerts its resources on the way out.
+    m_surfaceFeedbacks.clear();
+    for (compositor::Surface* surface : m_scanoutCandidates)
+        surface->removeSurfaceObserver(this);
+}
 
 bool DmaBufFeedbackManager::isFormatSupported(uint32_t format) const
 {
@@ -252,10 +355,141 @@ void DmaBufFeedbackManager::getDefaultFeedback(wl_client* client, wl_resource* d
 void DmaBufFeedbackManager::getSurfaceFeedback(wl_client* client, wl_resource* dmaBufResource,
                                                uint32_t feedbackId, wl_resource* surfaceResource)
 {
-    // Per-surface feedback carries the default feedback until scanout tranches
-    // exist; the request must still produce a working object.
-    (void)surfaceResource;
-    getDefaultFeedback(client, dmaBufResource, feedbackId);
+    compositor::Surface* surface = surfaceFromResource(surfaceResource);
+    if (!surface) {
+        getDefaultFeedback(client, dmaBufResource, feedbackId);
+        return;
+    }
+
+    auto it = m_surfaceFeedbacks.find(surface);
+    if (it == m_surfaceFeedbacks.end()) {
+        auto tranche = std::make_unique<DmaBufFeedbackTranche>(
+            m_defaultFeedback->mainDeviceId(), TrancheFlags::kNone, m_formatsAndModifiers);
+        auto feedback = std::make_unique<DmaBufFeedback>(m_defaultFeedback->mainDeviceId(),
+                                                         std::move(tranche));
+        if (m_scanoutCandidates.contains(surface))
+            feedback->setScanoutTranche(makeScanoutTranche());
+        it = m_surfaceFeedbacks.emplace_hint(
+            it, surface,
+            std::make_unique<DmaBufSurfaceFeedback>(this, surface, std::move(feedback)));
+    }
+    DmaBufSurfaceFeedback* surfaceFeedback = it->second.get();
+
+    wl_resource* feedbackResource =
+        wl_resource_create(client, &zwp_linux_dmabuf_feedback_v1_interface,
+                           wl_resource_get_version(dmaBufResource), feedbackId);
+    if (!feedbackResource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+
+    // The ref removes itself from the surface feedback when the resource dies,
+    // which may in turn retire the surface feedback.
+    setImplementation(feedbackResource, &feedback_implementation,
+                      std::make_unique<DmaBufSurfaceFeedbackRef>(surfaceFeedback,
+                                                                 feedbackResource));
+
+    sendFeedback(surfaceFeedback->feedback(), feedbackResource);
+}
+
+void DmaBufFeedbackManager::setScanoutFormats(std::function<ScanoutFormats()> provider)
+{
+    m_scanoutFormats = std::move(provider);
+    refreshScanoutTranches();
+}
+
+void DmaBufFeedbackManager::setScanoutCandidate(compositor::Surface* surface, bool candidate)
+{
+    if (!surface)
+        return;
+    if (candidate ? !m_scanoutCandidates.insert(surface).second
+                  : m_scanoutCandidates.erase(surface) == 0) {
+        return;
+    }
+    // A surface that is no candidate any more may already be gone; it is only
+    // touched while the set says it is alive.
+    if (candidate)
+        surface->addSurfaceObserver(this);
+    else
+        surface->removeSurfaceObserver(this);
+
+    const auto it = m_surfaceFeedbacks.find(surface);
+    if (it == m_surfaceFeedbacks.end())
+        return;
+    if (it->second->feedback()->setScanoutTranche(candidate ? makeScanoutTranche() : nullptr))
+        sendSurfaceFeedback(it->second.get());
+}
+
+bool DmaBufFeedbackManager::isScanoutCandidate(const compositor::Surface* surface) const
+{
+    return m_scanoutCandidates.contains(const_cast<compositor::Surface*>(surface));
+}
+
+void DmaBufFeedbackManager::onSurfaceDestroying(compositor::Surface* surface)
+{
+    m_scanoutCandidates.erase(surface);
+}
+
+void DmaBufFeedbackManager::refreshScanoutTranches()
+{
+    for (const auto& [surface, surfaceFeedback] : m_surfaceFeedbacks) {
+        if (!m_scanoutCandidates.contains(surface))
+            continue;
+        if (surfaceFeedback->feedback()->setScanoutTranche(makeScanoutTranche()))
+            sendSurfaceFeedback(surfaceFeedback.get());
+    }
+}
+
+void DmaBufFeedbackManager::removeSurfaceFeedback(compositor::Surface* surface)
+{
+    m_surfaceFeedbacks.erase(surface);
+}
+
+void DmaBufFeedbackManager::sendSurfaceFeedback(DmaBufSurfaceFeedback* surfaceFeedback) const
+{
+    for (DmaBufSurfaceFeedbackRef* ref : surfaceFeedback->refs())
+        sendFeedback(surfaceFeedback->feedback(), ref->resource());
+}
+
+std::unique_ptr<DmaBufFeedbackTranche> DmaBufFeedbackManager::makeScanoutTranche() const
+{
+    if (!m_defaultFeedback || !m_scanoutFormats)
+        return nullptr;
+
+    const ScanoutFormats scanoutFormats = m_scanoutFormats();
+    IndexedDrmFormatsAndModifiers scanout;
+    for (const auto& [format, modifierEntries] : m_formatsAndModifiers) {
+        const auto planeIt = scanoutFormats.find(format);
+        if (planeIt == scanoutFormats.end())
+            continue;
+
+        std::map<size_t, uint64_t> entries;
+        if (modifierEntries.size() == 1 || planeIt->second.empty()) {
+            // Only the implicit modifier on one side or the other: the driver
+            // picks the layout, and a plane without IN_FORMATS takes what its
+            // legacy format list implies.
+            const auto it = modifierEntries.begin();
+            entries.emplace(it->first, it->second);
+        } else {
+            // With explicit modifiers on both sides the implicit entry is left
+            // out: a client picking it would get the driver's default layout,
+            // which is the one that cannot be scanned out.
+            for (const auto& [tableIndex, modifier] : modifierEntries) {
+                if (modifier != DRM_FORMAT_MOD_INVALID
+                    && std::find(planeIt->second.begin(), planeIt->second.end(), modifier)
+                           != planeIt->second.end()) {
+                    entries.emplace(tableIndex, modifier);
+                }
+            }
+        }
+        if (!entries.empty())
+            scanout.emplace(format, std::move(entries));
+    }
+    if (scanout.empty())
+        return nullptr;
+
+    return std::make_unique<DmaBufFeedbackTranche>(m_defaultFeedback->mainDeviceId(),
+                                                   TrancheFlags::kScanout, std::move(scanout));
 }
 
 void DmaBufFeedbackManager::sendFeedback(const DmaBufFeedback* feedback,
@@ -274,6 +508,8 @@ void DmaBufFeedbackManager::sendFeedback(const DmaBufFeedback* feedback,
     zwp_linux_dmabuf_feedback_v1_send_format_table(resource, m_formatTableFd.get(),
                                                    m_formatTableSize);
 
+    if (const DmaBufFeedbackTranche* scanout = feedback->scanoutTranche())
+        sendTranche(scanout, resource);
     sendTranche(feedback->defaultTranche(), resource);
 
     zwp_linux_dmabuf_feedback_v1_send_done(resource);

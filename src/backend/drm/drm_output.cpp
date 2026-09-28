@@ -1251,6 +1251,15 @@ bool DrmOutput::commit(const std::vector<PlaneContent> &planes, bool modeset, ui
     return true;
 }
 
+std::map<uint32_t, std::vector<uint64_t>> DrmOutput::primaryPlaneFormats() const
+{
+    for (const DrmPlane &plane : m_config.planes) {
+        if (plane.id == m_config.planeId)
+            return plane.formats;
+    }
+    return {};
+}
+
 std::optional<QPoint> DrmOutput::probedCursor() const
 {
     for (const DrmPlane &plane : m_config.planes) {

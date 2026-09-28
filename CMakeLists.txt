@@ -632,6 +632,8 @@ target_link_libraries(cutefish-accelerators PUBLIC cutefish-wm cutefish-session 
 set_target_properties(cutefish-accelerators PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(cutefish-wayland-shell STATIC
+    src/wayland/protocols/dmabuf_scanout_policy.cpp
+    src/wayland/protocols/dmabuf_scanout_policy.h
     src/wayland/protocols/xdg_activation.cpp
     src/wayland/protocols/xdg_activation.h
     src/wayland/protocols/application_menu.cpp
@@ -656,7 +658,8 @@ add_library(cutefish-wayland-shell STATIC
 )
 target_include_directories(cutefish-wayland-shell PUBLIC src)
 target_link_libraries(cutefish-wayland-shell
-    PUBLIC cutefish-wm cutefish-wayland cutefish-protocols cutefish-wayland-input)
+    PUBLIC cutefish-wm cutefish-wayland cutefish-protocols cutefish-wayland-input
+           cutefish-wayland-dmabuf)
 set_target_properties(cutefish-wayland-shell PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The private shell protocols. Above the window manager, like xdg-shell: all
