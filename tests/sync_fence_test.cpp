@@ -21,6 +21,8 @@
 #include <memory>
 #include <vector>
 
+#include <QDir>
+
 #include "compositor/buffer.h"
 #include "compositor/shm_pool.h"
 #include "render/sync_fence.h"
@@ -77,10 +79,12 @@ public:
     {
         ++signalCount;
         hadFence = fence.isValid();
+        received = std::move(fence);
     }
 
     int signalCount = 0;
     bool hadFence = false;
+    render::SyncFence received;
 };
 
 // A DMA-BUF-like buffer: the compositor samples client storage in place, so
@@ -93,6 +97,11 @@ public:
     const uint8_t* pixels() const override { return nullptr; }
     int stride() const override { return 256; }
 };
+
+int openFdCount()
+{
+    return QDir("/proc/self/fd").entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size();
+}
 
 } // namespace
 
@@ -245,6 +254,50 @@ TEST(BufferSyncTest, TheScanoutCompletionFenceReachesTheReleasePoint)
     // The client is told when the display actually stops reading, not merely
     // that the compositor stopped caring.
     EXPECT_TRUE(release->hadFence);
+}
+
+TEST(BufferSyncTest, ABufferKeptOnAPlaneDoesNotCollectAnOutFencePerFlip)
+{
+    RetainingBuffer buffer;
+    buffer.onAttach();
+    buffer.onScanoutAcquired();
+
+    const int before = openFdCount();
+    // Each frame acquires the buffer before the flip retires the previous
+    // frame, so the scanout count never reaches zero while it stays on screen.
+    for (int flip = 0; flip < 64; ++flip) {
+        buffer.onScanoutAcquired();
+        FakeFence outFence;
+        outFence.signal();
+        buffer.onScanoutReleased(outFence.take());
+    }
+
+    EXPECT_EQ(openFdCount(), before);
+}
+
+TEST(BufferSyncTest, APendingOutFenceOutlivesTheSignalledOnesAfterIt)
+{
+    FakeFence pending;
+    RetainingBuffer buffer;
+    auto release = std::make_shared<RecordingRelease>();
+    buffer.addRelease(release);
+
+    buffer.onAttach();
+    buffer.onScanoutAcquired();
+    buffer.onScanoutAcquired();
+    buffer.onScanoutReleased(pending.take());
+    buffer.onScanoutAcquired();
+    FakeFence landed;
+    landed.signal();
+    buffer.onScanoutReleased(landed.take());
+    buffer.onDetach();
+    buffer.onScanoutReleased(render::SyncFence());
+
+    ASSERT_EQ(release->signalCount, 1);
+    ASSERT_TRUE(release->received.isValid());
+    EXPECT_FALSE(release->received.isSignaled());
+    pending.signal();
+    EXPECT_TRUE(release->received.isSignaled());
 }
 
 TEST(BufferSyncTest, ABufferOnSeveralPlanesWaitsForAllOfThem)

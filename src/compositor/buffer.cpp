@@ -10,6 +10,8 @@
 
 #include "compositor/buffer.h"
 
+#include <utility>
+
 #include "compositor/shm_pool.h"
 #include "core/logging.h"
 
@@ -68,8 +70,7 @@ void Buffer::onDetach(bool cached)
 void Buffer::onContentsConsumed(render::SyncFence fence)
 {
     m_contentsInUse = false;
-    if (fence.isValid())
-        m_consumedFences.push_back(std::move(fence));
+    addConsumedFence(std::move(fence));
     maybeRelease();
 }
 
@@ -91,8 +92,7 @@ void Buffer::onScanoutReleased(render::SyncFence fence)
         return;
     }
     --m_scanoutCount;
-    if (fence.isValid())
-        m_consumedFences.push_back(std::move(fence));
+    addConsumedFence(std::move(fence));
     if (m_scanoutCount == 0)
         maybeRelease();
 }
@@ -107,6 +107,19 @@ void Buffer::signalReleases(const render::SyncFence& fence)
         release->signal(fence.duplicate());
 }
 
+void Buffer::addConsumedFence(render::SyncFence fence)
+{
+    // A buffer that stays on a plane is handed an out-fence on every flip, so
+    // keep one fd: a signalled fence adds nothing, pending ones are merged.
+    if (fence.isSignaled())
+        return;
+    std::vector<render::SyncFence> fences;
+    if (!m_consumedFence.isSignaled())
+        fences.push_back(std::move(m_consumedFence));
+    fences.push_back(std::move(fence));
+    m_consumedFence = render::SyncFence::merge(std::move(fences));
+}
+
 void Buffer::maybeRelease()
 {
     if (m_released || m_contentsInUse || m_cachedAttachCount || m_scanoutCount)
@@ -116,8 +129,7 @@ void Buffer::maybeRelease()
 
     m_released = true;
     // Explicit sync first: a client using it may never look at wl_buffer.release.
-    render::SyncFence completion = render::SyncFence::merge(std::move(m_consumedFences));
-    m_consumedFences.clear();
+    render::SyncFence completion = std::exchange(m_consumedFence, render::SyncFence());
     signalReleases(completion);
     m_acquireFence.reset();
     if (m_releaseCallback)

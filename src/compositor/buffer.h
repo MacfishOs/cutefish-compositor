@@ -154,14 +154,16 @@ private:
     void maybeRelease();
     // Signals and drops every owed release. Safe to call more than once.
     void signalReleases(const render::SyncFence& fence);
+    void addConsumedFence(render::SyncFence fence);
 
     std::function<void()> m_releaseCallback;
     std::function<void()> m_faultCallback;
     render::SyncFence m_acquireFence;
     std::vector<std::shared_ptr<BufferRelease>> m_releases;
-    // The fence handed to onContentsConsumed(), kept until the buffer is
-    // actually released so a late detach still reports the right completion.
-    std::vector<render::SyncFence> m_consumedFences;
+    // The fences handed to onContentsConsumed() and onScanoutReleased(), kept
+    // until the buffer is actually released so a late detach still reports the
+    // right completion. Signalled ones are dropped and pending ones merged.
+    render::SyncFence m_consumedFence;
     uint32_t m_scanoutCount = 0;
     uint32_t m_attachCount = 0;
     uint32_t m_cachedAttachCount = 0;
