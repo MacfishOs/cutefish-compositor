@@ -13,6 +13,9 @@ uniform float uChroma;
 uniform vec3 uLight;
 uniform vec3 uSpecular;
 uniform vec2 uAmbient;
+uniform float uSaturation;
+// Intensity, and one logical pixel in device pixels.
+uniform vec2 uRim;
 uniform vec4 uTint;
 // The lens within the quad, in device pixels; a client shape masks the quad.
 uniform vec4 uLens;
@@ -113,6 +116,8 @@ void shade() {
         refractedAt(p, vec2(-0.375, 0.125), halfSize, r, band, uv, texel, margin) +
         refractedAt(p, vec2(-0.125, -0.375), halfSize, r, band, uv, texel, margin));
 
+    float luma = dot(refracted, vec3(0.2126, 0.7152, 0.0722));
+    refracted = max(mix(vec3(luma), refracted, uSaturation), 0.0);
     vec3 color = mix(refracted, uTint.rgb, uTint.a);
     // The glass body blocks light near its edge, which is what anchors it on a
     // backdrop too bright for the refraction to show.
@@ -125,13 +130,34 @@ void shade() {
     float sheen = pow(max(dot(normal, uLight), 0.0), 1.65) * uSpecular.z;
 
     // Screen blend rather than addition, so light over a bright backdrop
-    // brightens towards white instead of blowing out. The edge itself is not
-    // lit here: the window outline layer draws it, over the client buffer.
+    // brightens towards white instead of blowing out. Without a rim the edge is
+    // not lit here: the window outline layer draws it, over the client buffer.
     vec3 lit = vec3(specular + sheen);
     color = color + lit - color * lit;
     float peak = max(color.r, max(color.g, color.b));
     if (peak > 1.0)
         color /= peak;
+
+    // The edges facing up and down catch a light from above: a lifted hairline
+    // with a glow fading inwards, weaker along the bottom. The sides get a
+    // softer darker hairline and no glow.
+    if (uRim.x > 0.0) {
+        vec2 outward = outwardAt(insideLens(p, halfSize, r), halfSize, r);
+        // Surface-local y grows downwards, so the top faces -y.
+        float lit = outward.y * outward.y * mix(1.0, 0.35, 0.5 + 0.5 * outward.y);
+        float facing = outward.y * outward.y;
+        float inset = -sd;
+        // Three quarters and half a logical pixel, never thinner than a device pixel.
+        float litWidth = max(0.75 * uRim.y, 1.0);
+        float shadeWidth = max(0.5 * uRim.y, 1.0);
+        float hairline = 1.0 - smoothstep(litWidth - 0.5, litWidth + 0.5, inset);
+        float glow = exp(-max(inset - litWidth, 0.0) / (1.7 * uRim.y));
+        // Additive, so the same edge shows over a white window and a dark one.
+        color += uRim.x * lit * (0.075 * glow + 0.26 * hairline);
+        float shade = (1.0 - facing) * (1.0 - smoothstep(shadeWidth - 0.5, shadeWidth + 0.5, inset));
+        color = mix(color, color * (1.0 - 0.1 * uRim.x) - 0.05 * uRim.x, shade);
+        color = clamp(color, 0.0, 1.0);
+    }
 
     // The rounded coverage of the clip this draw is wrapped in masks the
     // result, so the lens does not antialias its own silhouette: that shape is

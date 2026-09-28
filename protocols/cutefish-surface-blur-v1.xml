@@ -108,8 +108,9 @@
         full brightness and are combined with a screen blend, so they brighten
         towards white rather than clipping.
 
-        The material draws no edge of its own: the hairline around a rounded
-        body belongs to the compositor's window outline.
+        The material draws no edge of its own unless set_glass_rim asks for
+        one: otherwise the hairline around a rounded body belongs to the
+        compositor's window outline.
 
         A negative radius, intensity or shininess is invalid geometry.
       </description>
@@ -164,6 +165,27 @@
     <request name="unset_shape">
       <description summary="go back to the rounded rectangle on the next commit"/>
       <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+    <request name="set_glass_saturation">
+      <description summary="set the saturation of the refracted backdrop">
+        Applied to the backdrop before the tint. 1 leaves it unchanged, 0 turns
+        it grey and values above 1 make it more vivid. A negative value is
+        invalid geometry. Pending surface state, like the rest of the material.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="saturation" type="fixed"/>
+    </request>
+    <request name="set_glass_rim">
+      <description summary="light the edge of the glass">
+        A thin edge drawn by the material itself: where it faces up or down it
+        is lit in the colour of the backdrop behind it, and along the sides it
+        is shaded. intensity runs from 0, no rim, to 1 and is clamped to that
+        range; a negative value is invalid geometry. While the rim is on the
+        compositor draws no window outline around the body, so the two do not
+        stack. Pending surface state, like the rest of the material.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="intensity" type="fixed"/>
     </request>
   </interface>
 </protocol>

@@ -561,6 +561,20 @@ TEST_F(WindowVisualPixelTest, BlurredShellSurfacesAndPopupsOutlineTheirRoundedBo
     // Damage has to reach the outline outside the body.
     EXPECT_TRUE(window->visualNode()->absolutePaintBounds().contains(QRect(89, 99, 102, 62)));
 
+    // A glass rim is the edge, so the outline goes transparent and keeps its shape.
+    render::GlassParams glass;
+    glass.enabled = true;
+    glass.rim = 1;
+    surface->setGlass(glass);
+    surface->commit();
+    state = wm::WindowVisualController::evaluate(*window, style);
+    EXPECT_TRUE(state.drawOutline);
+    EXPECT_EQ(state.outlineShape.bounds, QRectF(10, 20, 100, 60));
+    EXPECT_FLOAT_EQ(state.outlineColor.a, 0);
+    EXPECT_FLOAT_EQ(state.highlightColor.a, 0);
+    surface->setGlass({});
+    surface->commit();
+
     // A square blur is not a floating body; the client keeps its own edge.
     surface->setBackgroundBlur({10, 20, 100, 60}, 0);
     surface->commit();

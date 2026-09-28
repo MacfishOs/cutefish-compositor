@@ -186,6 +186,36 @@ TEST_F(SurfaceBlurProtocolTest, ShapeIsPendingStateClippedToTheRectangle)
     ASSERT_GE(roundtrip(), 0);
 }
 
+TEST_F(SurfaceBlurProtocolTest, SaturationAndRimArePendingMaterialState)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    cutefish_surface_blur_v1_set(blur, surface, 0, 0, 100, 60, 8);
+    cutefish_surface_blur_v1_set_glass_saturation(blur, surface, wl_fixed_from_double(1.5));
+    // Past full intensity is clamped rather than refused.
+    cutefish_surface_blur_v1_set_glass_rim(blur, surface, wl_fixed_from_int(3));
+    cutefish_surface_blur_v1_set_glass(blur, surface);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_FALSE(model->glass().enabled);
+    wl_surface_commit(surface);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->glass().enabled);
+    EXPECT_FLOAT_EQ(model->glass().saturation, 1.5f);
+    EXPECT_FLOAT_EQ(model->glass().rim, 1.0f);
+    wl_surface_destroy(surface);
+    ASSERT_GE(roundtrip(), 0);
+}
+
+TEST_F(SurfaceBlurProtocolTest, NegativeRimPostsProtocolError)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    cutefish_surface_blur_v1_set_glass_rim(blur, surface, wl_fixed_from_int(-1));
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_SURFACE_BLUR_V1_ERROR_INVALID_GEOMETRY);
+    wl_proxy_destroy(reinterpret_cast<wl_proxy *>(surface));
+}
+
 TEST_F(SurfaceBlurProtocolTest, MalformedShapePostsProtocolError)
 {
     auto *surface = wl_compositor_create_surface(clientCompositor);

@@ -14,6 +14,26 @@
 
 namespace cutefish::wm {
 
+namespace {
+
+// A glass rim is the edge itself, so the outline stays transparent under it
+// rather than going away: the shadow still follows the outline's shape.
+void setShellOutlineColors(scene::WindowVisualState &state, const Window &window,
+                           const decoration::WindowVisualStyle &style)
+{
+    const auto *surface = window.rootSurface();
+    if (surface && surface->glass().enabled && surface->glass().rim > 0) {
+        state.outlineColor = {0, 0, 0, 0};
+        state.highlightColor = {0, 0, 0, 0};
+        return;
+    }
+    const bool dock = window.role() == WindowRole::Dock;
+    state.outlineColor = dock ? style.dockOutline : style.activeOutline;
+    state.highlightColor = dock ? style.dockHighlight : style.highlight;
+}
+
+} // namespace
+
 scene::WindowVisualState
 WindowVisualController::evaluate(const Window &window, const decoration::WindowVisualStyle &style)
 {
@@ -30,9 +50,7 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
             state.outlineShape = {state.outlinePath.boundingRect(), 0};
             state.drawOutline = true;
             state.outlineWidthPx = style.outlineWidthPx;
-            const bool dock = window.role() == WindowRole::Dock;
-            state.outlineColor = dock ? style.dockOutline : style.activeOutline;
-            state.highlightColor = dock ? style.dockHighlight : style.highlight;
+            setShellOutlineColors(state, window, style);
             return state;
         }
         const QRect body = surface
@@ -44,9 +62,7 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
             state.outlineShape = {QRectF(body.translated(origin)), radius};
             state.drawOutline = true;
             state.outlineWidthPx = style.outlineWidthPx;
-            const bool dock = window.role() == WindowRole::Dock;
-            state.outlineColor = dock ? style.dockOutline : style.activeOutline;
-            state.highlightColor = dock ? style.dockHighlight : style.highlight;
+            setShellOutlineColors(state, window, style);
         }
         return state;
     }

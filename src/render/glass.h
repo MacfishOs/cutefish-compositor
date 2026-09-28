@@ -54,6 +54,13 @@ struct GlassParams {
     // Off by default: the window outline layer already defines the edge.
     float ambientOcclusion = 0.0f;
     float ambientOcclusionRadius = 4.0f;
+    // Saturation of the refracted backdrop, 1 leaving it as it is. Clear glass
+    // keeps the colour of what is behind it vivid rather than washing it out.
+    float saturation = 1.0f;
+    // Off by default. A one pixel edge lit from the backdrop along the top and
+    // bottom and shaded along the sides; when set it replaces the window
+    // outline, which would otherwise stack on it.
+    float rim = 0.0f;
     float tintRed = 1.0f;
     float tintGreen = 1.0f;
     float tintBlue = 1.0f;
@@ -68,7 +75,8 @@ inline bool operator==(const GlassParams &a, const GlassParams &b)
             && a.lightAngle == b.lightAngle && a.specularIntensity == b.specularIntensity
             && a.shininess == b.shininess && a.sheen == b.sheen
             && a.ambientOcclusion == b.ambientOcclusion
-            && a.ambientOcclusionRadius == b.ambientOcclusionRadius && a.tintRed == b.tintRed
+            && a.ambientOcclusionRadius == b.ambientOcclusionRadius
+            && a.saturation == b.saturation && a.rim == b.rim && a.tintRed == b.tintRed
             && a.tintGreen == b.tintGreen && a.tintBlue == b.tintBlue && a.tintAlpha == b.tintAlpha;
 }
 

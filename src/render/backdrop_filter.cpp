@@ -114,6 +114,9 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
                 std::max(glass.shininess, 1.0f), std::max(glass.sheen, 0.0f));
     glUniform2f(uniform("uAmbient"), std::clamp(glass.ambientOcclusion, 0.0f, 1.0f),
                 std::max(glass.ambientOcclusionRadius, 0.001f) * scale);
+    glUniform1f(uniform("uSaturation"), std::max(glass.saturation, 0.0f));
+    // The shader derives the hairline widths from one logical pixel.
+    glUniform2f(uniform("uRim"), std::clamp(glass.rim, 0.0f, 1.0f), std::max(1.0f, float(scale)));
     glUniform4f(uniform("uTint"), glass.tintRed, glass.tintGreen, glass.tintBlue,
                 std::clamp(glass.tintAlpha, 0.0f, 1.0f));
 }

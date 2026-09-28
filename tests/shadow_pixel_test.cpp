@@ -676,6 +676,51 @@ TEST_F(ShadowPixelTest, GlassTintsTheBodyAndLeavesTheEdgeToTheOutline)
     EXPECT_EQ(channel(occluded, 450, 110), channel(occluded, 450, 300));
 }
 
+TEST_F(ShadowPixelTest, GlassRimLightsTheTopAndBottomAndShadesTheSides)
+{
+    const QRect bounds(300, 100, 300, 400);
+    render::GlassParams glass = bareGlass();
+    glass.rim = 1;
+    renderer->clear({0.5, 0.5, 0.5, 1});
+    renderer->drawBackgroundBlur(bounds, 24, bounds, glass);
+    const auto rimmed = pixels();
+    const int body = channel(rimmed, 450, 300);
+    EXPECT_NEAR(body, 128, 1);
+    // Lit from above, so the bottom edge catches about a third as much.
+    EXPECT_GT(channel(rimmed, 450, 100), 200);
+    EXPECT_NEAR(channel(rimmed, 450, 499), 158, 4);
+    // The side hairline is a gain and a lift below the backdrop.
+    EXPECT_NEAR(channel(rimmed, 300, 300), 102, 3);
+    EXPECT_NEAR(channel(rimmed, 599, 300), 102, 3);
+    // One pixel wide, with a short glow inside it along the lit edges only.
+    EXPECT_GT(channel(rimmed, 450, 101), body);
+    EXPECT_LT(channel(rimmed, 450, 101), 160);
+    EXPECT_EQ(channel(rimmed, 450, 120), body);
+    EXPECT_EQ(channel(rimmed, 301, 300), body);
+    EXPECT_EQ(channel(rimmed, 450, 99), 128);
+}
+
+TEST_F(ShadowPixelTest, GlassSaturationScalesTheBackdropAroundItsLuma)
+{
+    const QRect bounds(300, 100, 300, 400);
+    render::GlassParams glass = bareGlass();
+    glass.saturation = 0;
+    renderer->clear({0.25, 0.5, 0.75, 1});
+    renderer->drawBackgroundBlur(bounds, 24, bounds, glass);
+    const auto grey = pixels();
+    EXPECT_NEAR(channel(grey, 450, 300, 0), 119, 2);
+    EXPECT_NEAR(channel(grey, 450, 300, 1), 119, 2);
+    EXPECT_NEAR(channel(grey, 450, 300, 2), 119, 2);
+
+    glass.saturation = 1.5;
+    renderer->clear({0.25, 0.5, 0.75, 1});
+    renderer->drawBackgroundBlur(bounds, 24, bounds, glass);
+    const auto vivid = pixels();
+    EXPECT_LT(channel(vivid, 450, 300, 0), 40);
+    EXPECT_GT(channel(vivid, 450, 300, 2), 220);
+    EXPECT_NEAR(channel(vivid, 450, 99, 0), 64, 1);
+}
+
 TEST_F(ShadowPixelTest, BlurInsideAnimationSnapshotReadsTheParentBackdrop)
 {
     const QRect bounds(250, 150, 400, 350);

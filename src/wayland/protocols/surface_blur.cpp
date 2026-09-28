@@ -182,9 +182,37 @@ void unsetShape(wl_client *, wl_resource *, wl_resource *surfaceResource)
     getUserDataAs<compositor::Surface>(surfaceResource)->setBackgroundBlurShape({});
 }
 
+void setGlassSaturation(wl_client *, wl_resource *resource, wl_resource *surfaceResource,
+                        wl_fixed_t saturation)
+{
+    if (!valid(saturation, 0)) {
+        wl_resource_post_error(resource, CUTEFISH_SURFACE_BLUR_V1_ERROR_INVALID_GEOMETRY,
+                               "invalid glass saturation");
+        return;
+    }
+    auto *surface = getUserDataAs<compositor::Surface>(surfaceResource);
+    render::GlassParams glass = surface->pendingGlass();
+    glass.saturation = wl_fixed_to_double(saturation);
+    surface->setGlass(glass);
+}
+
+void setGlassRim(wl_client *, wl_resource *resource, wl_resource *surfaceResource,
+                 wl_fixed_t intensity)
+{
+    if (!valid(intensity, 0)) {
+        wl_resource_post_error(resource, CUTEFISH_SURFACE_BLUR_V1_ERROR_INVALID_GEOMETRY,
+                               "invalid glass rim");
+        return;
+    }
+    auto *surface = getUserDataAs<compositor::Surface>(surfaceResource);
+    render::GlassParams glass = surface->pendingGlass();
+    glass.rim = std::min(wl_fixed_to_double(intensity), 1.0);
+    surface->setGlass(glass);
+}
+
 const struct cutefish_surface_blur_v1_interface implementation = {
-        destroy,          set,          unset,    setGlass,  unsetGlass, setGlassMaterial,
-        setGlassLighting, setGlassTint, setShape, unsetShape};
+        destroy,          set,          unset,    setGlass,   unsetGlass,         setGlassMaterial,
+        setGlassLighting, setGlassTint, setShape, unsetShape, setGlassSaturation, setGlassRim};
 
 void bind(wl_client *client, void *, uint32_t, uint32_t id)
 {
