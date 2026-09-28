@@ -914,6 +914,52 @@ TEST_F(InputTest, AKeyboardIgnoresFocusOnSurfacesItsClientDoesNotOwn)
     EXPECT_EQ(1u, raw->enters.size());
 }
 
+TEST_F(InputTest, ABorrowedFocusLeavesTheOtherClientFocusedWithoutNewKeys)
+{
+    auto app = compositor.createSurface();
+    auto capture = compositor.createSurface();
+    map(app.get(), QPoint(0, 0), QSize(100, 100));
+    map(capture.get(), QPoint(0, 0), QSize(800, 600));
+
+    auto appDelegate = std::make_unique<FakeKeyboardDelegate>();
+    FakeKeyboardDelegate* appKeys = appDelegate.get();
+    appKeys->acceptable = {app.get()};
+    Keyboard appKeyboard(std::move(appDelegate), &seat);
+    auto captureDelegate = std::make_unique<FakeKeyboardDelegate>();
+    FakeKeyboardDelegate* captureKeys = captureDelegate.get();
+    captureKeys->acceptable = {capture.get()};
+    Keyboard captureKeyboard(std::move(captureDelegate), &seat);
+
+    seat.setFocusedSurface(app.get());
+    // The shortcut that opened the capture interface is still held.
+    seat.onKey(at(1), KEY_LEFTSHIFT, true);
+    seat.setFocusedSurface(capture.get(), true);
+    EXPECT_TRUE(appKeys->leaves.empty());
+    EXPECT_EQ(app.get(), appKeyboard.focusedSurface());
+    ASSERT_EQ(1u, captureKeys->enters.size());
+
+    appKeys->keys.clear();
+    seat.onKey(at(2), KEY_ESC, true);
+    seat.onKey(at(3), KEY_LEFTSHIFT, false);
+    seat.onKey(at(4), KEY_ESC, false);
+    // Only the release of what it held, so no key stays stuck.
+    ASSERT_EQ(1u, appKeys->keys.size());
+    EXPECT_EQ(KEY_LEFTSHIFT, appKeys->keys[0].code);
+    EXPECT_FALSE(appKeys->keys[0].pressed);
+    EXPECT_EQ(0u, appKeys->modifiers.back().depressed);
+    ASSERT_EQ(3u, captureKeys->keys.size());
+    EXPECT_EQ(KEY_ESC, captureKeys->keys[0].code);
+    EXPECT_TRUE(captureKeys->keys[0].pressed);
+
+    seat.setFocusedSurface(app.get());
+    EXPECT_TRUE(appKeys->leaves.empty());
+    EXPECT_EQ(1u, appKeys->enters.size());
+    ASSERT_EQ(1u, captureKeys->leaves.size());
+    seat.onKey(at(5), KEY_A, true);
+    ASSERT_EQ(2u, appKeys->keys.size());
+    EXPECT_EQ(KEY_A, appKeys->keys[1].code);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // InputManager
 

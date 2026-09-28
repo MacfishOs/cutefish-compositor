@@ -689,8 +689,9 @@ void WindowManager::setKeyboardGrab(Window *window)
     if (!hasWindow(window) || !window->isVisible() || !allowsActivation())
         return;
     m_keyboardGrab = window;
+    // Borrowed: a keyboard leave would make Qt draw the application inactive.
     if (m_seat)
-        m_seat->setFocusedSurface(window->rootSurface());
+        m_seat->setFocusedSurface(window->rootSurface(), true);
 }
 
 void WindowManager::activateForPress(Window *window)

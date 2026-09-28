@@ -968,6 +968,7 @@ TEST_F(PrivateShellProtocolTest, TheCaptureInterfaceTakesTheKeyboardAndStaysOutO
                     EXPECT_FALSE(capture->isActive());
                     EXPECT_TRUE(app->isActive());
                     EXPECT_EQ(capture->rootSurface(), seat.focusedSurface());
+                    EXPECT_TRUE(seat.focusIsBorrowed());
                     EXPECT_EQ(capture, windowManager.windows().back());
                     EXPECT_TRUE(capture->node()->isExcludedFromCapture());
                     EXPECT_FALSE(app->node()->isExcludedFromCapture());

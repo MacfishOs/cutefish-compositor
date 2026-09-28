@@ -62,6 +62,8 @@ private:
     Seat* m_seat = nullptr;
 
     compositor::Surface* m_focus = nullptr;
+    // Another client borrows the keys; `m_focus` keeps focus without a leave.
+    bool m_lent = false;
 
     // Keys pressed as of the moment focus was taken, plus everything pressed
     // since. Exo keeps this separate from the seat's set so that a key pressed

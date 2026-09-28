@@ -43,6 +43,7 @@ Keyboard::~Keyboard()
 
 void Keyboard::setFocus(compositor::Surface* surface)
 {
+    m_lent = false;
     if (m_focus) {
         m_delegate->onKeyboardLeave(m_focus);
         m_focus->removeSurfaceObserver(this);
@@ -64,8 +65,14 @@ void Keyboard::onSurfaceFocused(compositor::Surface* gainedFocus, compositor::Su
     compositor::Surface* target =
         gainedFocus && m_delegate->canAcceptKeyboardEventsForSurface(gainedFocus) ? gainedFocus
                                                                                   : nullptr;
+    if (!target && m_focus && m_seat->focusIsBorrowed()) {
+        m_lent = true;
+        return;
+    }
     if (target != m_focus)
         setFocus(target);
+    else
+        m_lent = false;
 }
 
 void Keyboard::onKeyboardModifierUpdated()
@@ -98,6 +105,7 @@ void Keyboard::onSurfaceDestroying(compositor::Surface* surface)
     // afterwards, and let it drop the observer registration itself.
     m_delegate->onKeyboardLeave(m_focus);
     m_focus = nullptr;
+    m_lent = false;
 }
 
 void Keyboard::onKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
@@ -106,6 +114,10 @@ void Keyboard::onKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
         return;
 
     if (pressed) {
+        // A lent keyboard still gets the releases and modifiers of what it
+        // holds, so nothing stays stuck, and no new presses.
+        if (m_lent)
+            return;
         // A second press without an intervening release is not forwarded; the
         // client is responsible for its own repeat.
         if (m_pressedKeys.find(evdevCode) != m_pressedKeys.end())
