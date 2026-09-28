@@ -36,6 +36,8 @@ public:
 
     int fd() const override { return -1; }
 
+    gbm_device *gbmDevice() const override { return gbm; }
+
     // --- Framebuffers. ---
 
     bool addFramebuffer(const backend::FramebufferParams &params, uint32_t *framebufferId) override
@@ -183,6 +185,8 @@ public:
     bool setCursorFails = false;
     bool dumbBufferFails = false;
     QSize maxCursor {64, 64};
+    // A real GBM device standing in for the renderer that shares this file.
+    gbm_device *gbm = nullptr;
 
     // --- Recorded state. ---
 

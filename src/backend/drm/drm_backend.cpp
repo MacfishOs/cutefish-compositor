@@ -202,14 +202,18 @@ bool DrmBackend::open(const QString &devicePath)
     }
     qCInfo(cfDrm) << "Atomic modesetting: yes";
 
-    m_device = std::make_unique<DrmDevice>(m_fd);
-
-    m_gbm = gbm_create_device(m_fd);
-    if (!m_gbm) {
-        qCCritical(cfDrm) << "Failed to create a GBM device";
-        closeDevice();
-        return false;
+    // A secondary device allocates from the rendering card's GBM device, which
+    // gbmDevice() hands out; one of its own would be a driver screen never used.
+    if (!m_renderBackend) {
+        m_gbm = gbm_create_device(m_fd);
+        if (!m_gbm) {
+            qCCritical(cfDrm) << "Failed to create a GBM device";
+            closeDevice();
+            return false;
+        }
     }
+
+    m_device = std::make_unique<DrmDevice>(m_fd, m_gbm);
 
     m_notifier = new QSocketNotifier(m_fd, QSocketNotifier::Read, this);
     connect(m_notifier, &QSocketNotifier::activated, this, &DrmBackend::onDrmEvent);

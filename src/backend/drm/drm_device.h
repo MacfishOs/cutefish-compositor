@@ -15,15 +15,17 @@
 
 namespace cutefish::backend {
 
-// DrmDeviceApi over a real DRM file descriptor. The fd stays owned by
-// DrmBackend, which opens it through the session.
+// DrmDeviceApi over a real DRM file descriptor. The fd stays owned by the
+// session and the GBM device by DrmBackend, which opens both.
 class DrmDevice final : public DrmDeviceApi
 {
 public:
-    explicit DrmDevice(int fd);
+    DrmDevice(int fd, gbm_device *gbm);
     ~DrmDevice() override;
 
     int fd() const override { return m_fd; }
+
+    gbm_device *gbmDevice() const override { return m_gbm; }
 
     bool addFramebuffer(const FramebufferParams &params, uint32_t *framebufferId) override;
     bool removeFramebuffer(uint32_t framebufferId) override;
@@ -52,6 +54,7 @@ public:
 
 private:
     int m_fd = -1;
+    gbm_device *m_gbm = nullptr;
     QSize m_maxCursorSize;
     // drmModeSetCursor2 carries the hotspot; drivers without it need the
     // caller to fold the hotspot into the cursor position instead.

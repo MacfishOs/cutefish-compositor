@@ -95,6 +95,9 @@ private:
     // GEM handles this framebuffer imported and must close. Empty for a GBM bo,
     // whose handles belong to GBM.
     std::vector<uint32_t> m_ownedHandles;
+    // A client DMA-BUF imported through the device's GBM device, which owns
+    // its handles and counts them with the renderer's import of the buffer.
+    gbm_bo *m_importedBo = nullptr;
     uint32_t m_dumbHandle = 0;
     uint32_t m_dumbStride = 0;
     uint64_t m_dumbSize = 0;

@@ -27,8 +27,8 @@ public:
     // master may be issued while inactive.
     virtual bool isActive() const = 0;
 
-    // Returns a file descriptor owned by the caller-visible session, or -1.
-    // `deviceId` receives the handle needed by closeDevice().
+    // Returns a file descriptor the session owns, or -1. `deviceId` receives the
+    // handle closeDevice() takes; closing the device closes the descriptor too.
     virtual int openDevice(const QString& path, int* deviceId) = 0;
     virtual void closeDevice(int deviceId) = 0;
 

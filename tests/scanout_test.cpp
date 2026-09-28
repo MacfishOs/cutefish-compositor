@@ -22,6 +22,7 @@
 #include <memory>
 #include <unistd.h>
 #include <vector>
+#include <xf86drm.h>
 #include <xf86drmMode.h>
 
 #include "backend/drm/drm_framebuffer.h"
@@ -975,6 +976,63 @@ TEST(CrossGpuScanout, EachBufferIsImportedOrCopiedOnceAndRetiredWithIt)
         gbm_bo_destroy(bo);
         EXPECT_TRUE(device.liveFramebuffers.empty());
         EXPECT_EQ(device.liveDumbBuffers, 0);
+    }
+    gbm_device_destroy(gbm);
+    ::close(fd);
+    ASSERT_NE(bo, nullptr);
+}
+
+TEST(SharedFileScanout, AClientBufferTakesTheRenderersHandleAndNeverClosesIt)
+{
+    // KMS and the renderer share the card's file, so the renderer's import of a
+    // client buffer holds the GEM handle KMS gets for it. The render node plays
+    // that file; the fake device is its KMS side.
+    const int fd = ::open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+    if (fd < 0)
+        GTEST_SKIP() << "No render node to allocate buffers on";
+    gbm_device *gbm = gbm_create_device(fd);
+    if (!gbm) {
+        ::close(fd);
+        GTEST_SKIP() << "No GBM on the render node";
+    }
+    gbm_bo *bo = gbm_bo_create(gbm, 64, 64, GBM_FORMAT_XRGB8888,
+                               GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR);
+    cutefish::testing::FakeDrmDevice device;
+    device.gbm = gbm;
+    if (bo) {
+        cutefish::render::DmaBufAttributes attributes;
+        attributes.size = QSize(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
+        attributes.format = gbm_bo_get_format(bo);
+        attributes.modifier = gbm_bo_get_modifier(bo);
+        for (int plane = 0; plane < gbm_bo_get_plane_count(bo); ++plane)
+            attributes.planes.push_back({cutefish::ScopedFd(gbm_bo_get_fd_for_plane(bo, plane)),
+                                         gbm_bo_get_offset(bo, plane),
+                                         gbm_bo_get_stride_for_plane(bo, plane)});
+        const uint32_t handle = gbm_bo_get_handle(bo).u32;
+        const auto handleIsOpen = [&] {
+            int exported = -1;
+            if (drmPrimeHandleToFD(fd, handle, DRM_CLOEXEC, &exported) != 0)
+                return false;
+            ::close(exported);
+            return true;
+        };
+
+        auto framebuffer = cutefish::backend::DrmFramebuffer::fromDmaBuf(&device, attributes);
+        ASSERT_TRUE(framebuffer);
+        ASSERT_EQ(device.addFramebufferCalls.size(), 1u);
+        EXPECT_EQ(device.addFramebufferCalls.back().handles[0], handle);
+        EXPECT_TRUE(device.openHandles.empty());
+        framebuffer.reset();
+        EXPECT_TRUE(device.liveFramebuffers.empty());
+        EXPECT_TRUE(device.closedHandles.empty());
+        EXPECT_TRUE(handleIsOpen());
+
+        // A buffer KMS rejects must not take the handle with it either.
+        device.addFramebufferFails = true;
+        EXPECT_FALSE(cutefish::backend::DrmFramebuffer::fromDmaBuf(&device, attributes));
+        EXPECT_TRUE(device.closedHandles.empty());
+        EXPECT_TRUE(handleIsOpen());
+        gbm_bo_destroy(bo);
     }
     gbm_device_destroy(gbm);
     ::close(fd);

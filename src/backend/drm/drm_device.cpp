@@ -29,8 +29,9 @@ constexpr uint64_t kMaxCursorSize = 256;
 
 } // namespace
 
-DrmDevice::DrmDevice(int fd)
+DrmDevice::DrmDevice(int fd, gbm_device *gbm)
     : m_fd(fd)
+    , m_gbm(gbm)
 {
     uint64_t width = 0;
     uint64_t height = 0;

@@ -5,6 +5,8 @@
 #ifndef CUTEFISH_BACKEND_SESSION_LIBSEAT_SESSION_H_
 #define CUTEFISH_BACKEND_SESSION_LIBSEAT_SESSION_H_
 
+#include <QHash>
+
 #include <memory>
 
 #include "backend/session/session.h"
@@ -44,6 +46,8 @@ private:
     QSocketNotifier* m_notifier = nullptr;
     QString m_seatName;
     bool m_active = false;
+    // Device id -> the descriptor libseat handed out, which libseat never closes.
+    QHash<int, int> m_deviceFds;
 };
 
 } // namespace cutefish::backend

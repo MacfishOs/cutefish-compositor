@@ -20,6 +20,8 @@
 
 #include "render/dmabuf.h"
 
+struct gbm_device;
+
 namespace cutefish::backend {
 
 // One property assignment in an atomic commit.
@@ -69,6 +71,10 @@ public:
     virtual ~DrmDeviceApi() = default;
 
     virtual int fd() const = 0;
+
+    // The renderer's GBM device when it shares this file, else null. The file's
+    // GEM handles are Mesa's then, so client buffers are imported through GBM.
+    virtual gbm_device* gbmDevice() const = 0;
 
     // --- Framebuffers. ---
 

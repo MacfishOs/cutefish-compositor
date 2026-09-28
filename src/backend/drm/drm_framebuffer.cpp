@@ -29,7 +29,8 @@ std::atomic_int g_instanceCount {0};
 // drmPrimeFDToHandle hands out the same GEM handle for the same underlying
 // buffer, so closing one framebuffer's handle would pull it out from under any
 // other framebuffer importing the same buffer. The handles are reference
-// counted per device to keep that from happening.
+// counted per device to keep that from happening. A device whose file the
+// renderer shares never gets here: Mesa holds the same handles there.
 using HandleCounts = std::map<std::pair<const DrmDeviceApi *, uint32_t>, int>;
 
 HandleCounts &handleCounts()
@@ -55,6 +56,22 @@ void releaseHandle(DrmDeviceApi *device, uint32_t handle)
     device->closeHandle(handle);
 }
 
+gbm_bo *importThroughGbm(gbm_device *gbm, const render::DmaBufAttributes &attributes)
+{
+    gbm_import_fd_modifier_data data = {};
+    data.width = static_cast<uint32_t>(attributes.size.width());
+    data.height = static_cast<uint32_t>(attributes.size.height());
+    data.format = attributes.format;
+    data.num_fds = static_cast<uint32_t>(attributes.planes.size());
+    data.modifier = attributes.modifier;
+    for (size_t i = 0; i < attributes.planes.size(); ++i) {
+        data.fds[i] = attributes.planes[i].fd.get();
+        data.strides[i] = static_cast<int>(attributes.planes[i].stride);
+        data.offsets[i] = static_cast<int>(attributes.planes[i].offset);
+    }
+    return gbm_bo_import(gbm, GBM_BO_IMPORT_FD_MODIFIER, &data, GBM_BO_USE_SCANOUT);
+}
+
 } // namespace
 
 DrmFramebuffer::DrmFramebuffer(DrmDeviceApi *device, uint32_t id, const QSize &size,
@@ -78,6 +95,8 @@ DrmFramebuffer::~DrmFramebuffer()
     // framebuffer built from it is a driver-visible use-after-free.
     for (uint32_t handle : m_ownedHandles)
         releaseHandle(m_device, handle);
+    if (m_importedBo)
+        gbm_bo_destroy(m_importedBo);
     if (m_dumbHandle)
         m_device->destroyDumbBuffer(m_dumbHandle);
     --g_instanceCount;
@@ -232,6 +251,35 @@ DrmFramebuffer::fromDmaBuf(DrmDeviceApi *device, const render::DmaBufAttributes 
     params.format = attributes.format;
     params.modifier = attributes.modifier;
     params.planeCount = attributes.planes.size();
+
+    // As Ozone's GbmPixmap: the renderer imported the buffer on this file too
+    // and got the same GEM handles, which only Mesa may close.
+    if (gbm_device *gbm = device->gbmDevice()) {
+        gbm_bo *bo = importThroughGbm(gbm, attributes);
+        if (!bo)
+            return nullptr;
+        for (size_t i = 0; i < params.planeCount; ++i) {
+            const gbm_bo_handle handle = gbm_bo_get_handle_for_plane(bo, static_cast<int>(i));
+            if (handle.s32 <= 0) {
+                gbm_bo_destroy(bo);
+                return nullptr;
+            }
+            params.handles[i] = handle.u32;
+            params.strides[i] = attributes.planes[i].stride;
+            params.offsets[i] = attributes.planes[i].offset;
+        }
+
+        uint32_t id = 0;
+        if (!device->addFramebuffer(params, &id)) {
+            gbm_bo_destroy(bo);
+            return nullptr;
+        }
+
+        auto framebuffer = std::unique_ptr<DrmFramebuffer>(new DrmFramebuffer(
+                device, id, attributes.size, params.format, params.modifier, {}));
+        framebuffer->m_importedBo = bo;
+        return framebuffer;
+    }
 
     std::vector<uint32_t> handles;
     for (size_t i = 0; i < params.planeCount; ++i) {

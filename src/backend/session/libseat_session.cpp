@@ -6,6 +6,8 @@
 
 #include <QSocketNotifier>
 
+#include <unistd.h>
+
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -125,6 +127,7 @@ int LibseatSession::openDevice(const QString& path, int* deviceId)
         qCWarning(cfSession) << "Failed to open device" << path << "through the seat";
         return -1;
     }
+    m_deviceFds.insert(id, fd);
     if (deviceId)
         *deviceId = id;
     return fd;
@@ -132,8 +135,17 @@ int LibseatSession::openDevice(const QString& path, int* deviceId)
 
 void LibseatSession::closeDevice(int deviceId)
 {
-    if (deviceId >= 0 && libseat_close_device(m_seat, deviceId) < 0)
+    if (deviceId < 0)
+        return;
+    if (libseat_close_device(m_seat, deviceId) < 0)
         qCWarning(cfSession) << "Failed to close device" << deviceId;
+    // Only afterwards: with logind the id is this descriptor, which
+    // libseat_close_device still stats to release the device.
+    const auto entry = m_deviceFds.constFind(deviceId);
+    if (entry != m_deviceFds.cend()) {
+        ::close(*entry);
+        m_deviceFds.erase(entry);
+    }
 }
 
 void LibseatSession::onEnableSeat(libseat*, void* userData)
