@@ -227,7 +227,7 @@ private:
     // What m_texture was drawn from: the subtree's damage since, whether it may
     // be reused at all, its raster scale, the output's viewport and the scene
     // root's revision, which session-wide appearance changes bump.
-    mutable DamageTracker m_textureDamage;
+    mutable DamageTracker m_textureDamage {true};
     mutable bool m_textureReusable = false;
     mutable double m_textureScale = 0;
     mutable QRect m_textureViewport;

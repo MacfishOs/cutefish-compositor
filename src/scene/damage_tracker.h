@@ -20,6 +20,14 @@ namespace cutefish::scene {
 class DamageTracker
 {
 public:
+    // With `rootIsViewport`, the root's own geometry and revision are what
+    // the viewport accounts for, as for a window whose texture spans it: a
+    // move or a change of its own is not damage, only its children's are.
+    explicit DamageTracker(bool rootIsViewport = false)
+        : m_rootIsViewport(rootIsViewport)
+    {
+    }
+
     // A blur reads what lies behind it. `backdropChanged`, when given, says
     // whether that changed where the tree tracked here does not reach, as for
     // a window drawn offscreen over the output.
@@ -58,17 +66,28 @@ private:
         std::vector<QRect> samples;
     };
 
+    // Bounds are kept relative to the viewport's origin: an output's viewport
+    // stays put, while a window texture's moves with the window, whose subtree
+    // then reads as unchanged, the way a cc render surface's damage is tracked
+    // in the surface's own space and not the target's.
     Frame collect(const Node &root, const QRect &viewport, double scale, uint32_t transform,
                   const std::function<bool(const QRect &)> &backdropChanged) const
     {
         Frame frame;
         QRegion &damage = frame.damage;
         bool filtered = false;
+        const QPoint origin = viewport.topLeft();
         const auto visit = [&](const auto &self, const Node &node, bool ancestorChanged,
                                bool redrawn) -> void {
             if (!node.isVisible() && !node.paintsWhenHidden())
                 return;
-            const Entry current {node.absolutePaintBounds(), node.revision(),
+            if (m_rootIsViewport && &node == &root) {
+                for (const Node *child : node.children())
+                    self(self, *child, false, false);
+                return;
+            }
+            const QRect absolute = node.absolutePaintBounds();
+            const Entry current {absolute.translated(-origin), node.revision(),
                                  node.contentRevision()};
             const auto previous = m_history.find(node.damageId());
             const bool changed = ancestorChanged || previous == m_history.end()
@@ -81,23 +100,23 @@ private:
             } else {
                 damage += expandedContentDamage(node,
                                                 node.damageSince(previous->second.contentRevision))
-                                  .translated(node.absolutePosition());
+                                  .translated(node.absolutePosition() - origin);
             }
             frame.history.emplace(node.damageId(), current);
             // Filter inputs and transformed subtrees need complete source pixels,
             // but only on the outputs they draw on.
             const auto *surface = dynamic_cast<const SurfaceNode *>(&node);
-            filtered |= node.requiresFullRepaint() && current.bounds.intersects(viewport);
+            filtered |= node.requiresFullRepaint() && absolute.intersects(viewport);
             if (surface && surface->hasBackgroundBlur()) {
                 if (transform != 0 || scale <= 0) {
-                    filtered |= current.bounds.intersects(viewport);
+                    filtered |= absolute.intersects(viewport);
                 } else {
                     // Every blur input, including the outward-rounded sample halo.
                     const int halo = render::kBackdropBlurSupport + int(std::ceil(2 / scale));
-                    const QRect sampled = current.bounds.adjusted(-halo, -halo, halo, halo);
+                    const QRect sampled = absolute.adjusted(-halo, -halo, halo, halo);
                     frame.samples.push_back(sampled);
                     if (redrawn || (backdropChanged && backdropChanged(sampled)))
-                        damage += sampled;
+                        damage += sampled.translated(-origin);
                 }
             }
             // A blur drawn again from scratch reads everything behind it again.
@@ -109,11 +128,11 @@ private:
         for (const auto &[id, previous] : m_history)
             if (!frame.history.contains(id))
                 damage += previous.bounds;
-        if (m_history.empty() || viewport != m_viewport || filtered)
-            damage = viewport;
+        if (m_history.empty() || viewport.size() != m_viewport.size() || filtered)
+            damage = QRect(QPoint(), viewport.size());
         else
-            damage = coverSamples(damage, frame.samples);
-        damage = damage.intersected(viewport);
+            damage = coverSamples(damage.translated(origin), frame.samples).translated(-origin);
+        damage = damage.translated(origin).intersected(viewport);
         return frame;
     }
 
@@ -157,6 +176,7 @@ private:
         return result;
     }
 
+    bool m_rootIsViewport = false;
     std::map<uint64_t, Entry> m_history;
     QRect m_viewport;
     std::vector<QRect> m_samples;

@@ -417,17 +417,36 @@ TEST_F(SnapshotReuse, UnchangedContentIsDrawnFromTheLastSnapshotAndStillPresente
     EXPECT_TRUE(submission.contains(content));
 }
 
-TEST_F(SnapshotReuse, DamageRedrawsItsPartAndMovementRedrawsAll)
+TEST_F(SnapshotReuse, DamageRedrawsItsPartAndAWholePixelMoveKeepsTheSnapshot)
 {
     // One more pixel on each side for linear filtering.
     surface->notifyDamage(QRect(0, 0, 10, 10));
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 2);
     EXPECT_EQ(renderer.lastRepaint, QRect(100, 100, 11, 11));
+    // Moved by whole device pixels, the subtree is unchanged in its own space
+    // and the snapshot is drawn where the window now is.
     window->setPosition({120, 100});
+    renderer.calls.clear();
+    scene.render(renderer);
+    EXPECT_EQ(renderer.captures, 2);
+    EXPECT_EQ(renderer.kinds().count(QStringLiteral("texture")), 1);
+    scene.render(renderer);
+    EXPECT_EQ(renderer.captures, 2);
+}
+
+TEST_F(SnapshotReuse, AFractionalPixelMoveRedrawsAll)
+{
+    renderer.setRasterScale(1.5);
+    scene.render(renderer);
+    EXPECT_EQ(renderer.captures, 2);
+    // One logical pixel is a pixel and a half: the content's subpixel phase changes.
+    window->setPosition({101, 100});
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 3);
     EXPECT_TRUE(renderer.lastRepaint.isEmpty());
+    // Two more are three device pixels.
+    window->setPosition({103, 100});
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 3);
 }

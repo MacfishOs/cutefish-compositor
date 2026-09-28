@@ -649,9 +649,17 @@ QRect WindowAnimation::textureCoverage() const
 bool WindowAnimation::textureReusable(const QRect &coverage, const QRect &viewport,
                                       double scale) const
 {
-    return m_textureReusable && m_texture && !animating() && coverage == m_coverage
-            && scale == m_textureScale && viewport == m_textureViewport
-            && sceneRoot(*this).revision() == m_textureRootRevision && !hasPromotedSurface(*this);
+    if (!m_textureReusable || !m_texture || animating() || coverage.size() != m_coverage.size()
+        || scale != m_textureScale || viewport != m_textureViewport
+        || sceneRoot(*this).revision() != m_textureRootRevision || hasPromotedSurface(*this))
+        return false;
+    // A window that only moved keeps its texture, as viz keeps a render pass
+    // whose content is unchanged (DirectRenderer::CanSkipRenderPass), when it
+    // moved by whole device pixels: the content inside is rasterized at the
+    // subpixel phase of the window's origin, and a fractional move changes it.
+    const QPointF moved = QPointF(coverage.topLeft() - m_coverage.topLeft()) * scale;
+    return qFuzzyIsNull(moved.x() - std::round(moved.x()))
+            && qFuzzyIsNull(moved.y() - std::round(moved.y()));
 }
 
 bool WindowAnimation::redrawsSubtree(const QRect &viewport, double scale) const
