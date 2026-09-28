@@ -44,6 +44,8 @@ signals:
     Q_SCRIPTABLE void ActiveChanged(bool active);
 
 private:
+    void releaseOwner(const QString &owner);
+
     SessionController *m_session;
     QDBusConnection m_bus;
     QDBusServiceWatcher m_watcher;

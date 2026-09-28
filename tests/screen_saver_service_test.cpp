@@ -5,10 +5,13 @@
 #include "scene/node.h"
 #include "session/screen_saver_service.h"
 #include "session/session_controller.h"
+#include <QDBusConnectionInterface>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
+#include <QDeadlineTimer>
 #include <QSignalSpy>
 #include <QTest>
+#include <QThread>
 
 using namespace cutefish;
 
@@ -166,6 +169,45 @@ private slots:
         first = QDBusConnection(QString());
         QTRY_COMPARE(count, 0);
         QDBusConnection::disconnectFromBus(QStringLiteral("screen-saver-second"));
+    }
+
+    void inhibitFromACallerThatAlreadyLeftIsReleased()
+    {
+        scene::Node root;
+        session::SecureContainer secure(&root);
+        session::SessionController controller(&secure);
+        session::ScreenSaverService service(&controller);
+        int acquired = 0;
+        int count = 0;
+        service.setInhibition(
+                [&] {
+                    ++acquired;
+                    ++count;
+                },
+                [&count] { --count; });
+        QVERIFY(service.registerService());
+        auto gone = QDBusConnection::connectToBus(QDBusConnection::SessionBus,
+                                                  QStringLiteral("screen-saver-gone"));
+        const QString name = gone.baseService();
+        auto message = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.ScreenSaver"),
+                                                      QStringLiteral("/ScreenSaver"),
+                                                      QStringLiteral("org.freedesktop.ScreenSaver"),
+                                                      QStringLiteral("Inhibit"));
+        message.setArguments({QStringLiteral("test"), QStringLiteral("video")});
+        // Sent without waiting for the cookie, as dbus-send does. Once the
+        // blocking call behind it is answered, the bus has routed the Inhibit.
+        QVERIFY(gone.send(message));
+        QVERIFY(gone.interface()->isServiceRegistered(name).value());
+        QDBusConnection::disconnectFromBus(QStringLiteral("screen-saver-gone"));
+        gone = QDBusConnection(QString());
+        // Blocking calls process no events here, so the service handles the
+        // Inhibit only after the bus has announced that the caller left.
+        QDeadlineTimer deadline(5000);
+        while (client.interface()->isServiceRegistered(name).value() && !deadline.hasExpired())
+            QThread::msleep(10);
+        QVERIFY(!client.interface()->isServiceRegistered(name).value());
+        QTRY_COMPARE(acquired, 1);
+        QTRY_COMPARE(count, 0);
     }
 
     void inhibitIsRefusedWithoutACounter()

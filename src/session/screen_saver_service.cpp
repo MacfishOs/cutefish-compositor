@@ -4,7 +4,10 @@
 
 #include "session/screen_saver_service.h"
 #include "session/session_controller.h"
+#include <QDBusConnectionInterface>
 #include <QDBusError>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QDebug>
 
 namespace cutefish::session {
@@ -23,18 +26,7 @@ ScreenSaverService::ScreenSaverService(SessionController *session, QDBusConnecti
     m_session->addObserver(this);
     // A caller that leaves the bus takes all of its cookies with it.
     connect(&m_watcher, &QDBusServiceWatcher::serviceUnregistered, this,
-            [this](const QString &owner) {
-                for (auto it = m_cookies.begin(); it != m_cookies.end();) {
-                    if (it.value() == owner) {
-                        it = m_cookies.erase(it);
-                        if (m_release)
-                            m_release();
-                    } else {
-                        ++it;
-                    }
-                }
-                m_watcher.removeWatchedService(owner);
-            });
+            &ScreenSaverService::releaseOwner);
 }
 
 ScreenSaverService::~ScreenSaverService()
@@ -127,6 +119,17 @@ uint ScreenSaverService::Inhibit(const QString &, const QString &)
     m_watcher.addWatchedService(owner);
     m_cookies.insert(m_nextCookie, owner);
     m_acquire();
+    // The watch never reports a caller that left before its match rule was in
+    // place; sent behind that rule on the same connection, NameHasOwner does.
+    auto *check = new QDBusPendingCallWatcher(
+            m_bus.interface()->asyncCall(QStringLiteral("NameHasOwner"), owner), this);
+    connect(check, &QDBusPendingCallWatcher::finished, this,
+            [this, owner](QDBusPendingCallWatcher *call) {
+                call->deleteLater();
+                const QDBusPendingReply<bool> reply = *call;
+                if (!reply.isError() && !reply.value())
+                    releaseOwner(owner);
+            });
     return m_nextCookie;
 }
 
@@ -143,6 +146,20 @@ void ScreenSaverService::UnInhibit(uint cookie)
         m_watcher.removeWatchedService(owner);
     if (m_release)
         m_release();
+}
+
+void ScreenSaverService::releaseOwner(const QString &owner)
+{
+    for (auto it = m_cookies.begin(); it != m_cookies.end();) {
+        if (it.value() == owner) {
+            it = m_cookies.erase(it);
+            if (m_release)
+                m_release();
+        } else {
+            ++it;
+        }
+    }
+    m_watcher.removeWatchedService(owner);
 }
 
 void ScreenSaverService::onSessionStateChanged(SessionState state)
