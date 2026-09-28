@@ -11,6 +11,7 @@
 #include "scene/overlay_candidate.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QRegion>
 
@@ -22,18 +23,33 @@ namespace cutefish::scene {
 
 namespace {
 
-bool needsComposition(const Node &node)
+// Animations step when they are drawn, and a minimize or close reports its
+// end from there, so one anywhere in the scene keeps composition going even
+// under a fullscreen surface that hides it.
+bool hasAnimation(const Node &node)
 {
     if (!node.isVisible() && !node.paintsWhenHidden())
         return false;
     if (const auto *animation = dynamic_cast<const WindowAnimation *>(&node);
         animation && animation->paintsSubtree())
         return true;
+    return std::any_of(node.children().begin(), node.children().end(), [](const Node *child) {
+        return hasAnimation(*child);
+    });
+}
+
+// A blur reads the buffers under it from the composition target, so no
+// overlay may take one of them away. Under an opaque fullscreen surface it
+// reads nothing anyone sees.
+bool hasBackgroundBlur(const Node &node)
+{
+    if (!node.isVisible())
+        return false;
     if (const auto *surface = dynamic_cast<const SurfaceNode *>(&node);
         surface && surface->hasBackgroundBlur())
         return true;
     return std::any_of(node.children().begin(), node.children().end(), [](const Node *child) {
-        return needsComposition(*child);
+        return hasBackgroundBlur(*child);
     });
 }
 
@@ -93,14 +109,19 @@ void flatten(Node &node, const QRect &outputRect, std::vector<SceneItem> &items)
         flatten(*children[i], outputRect, items);
 }
 
-// The buffer maps one-to-one onto its place on screen: no plane scaling and no
-// source crop, which is all the planner is willing to ask a plane for.
-bool isUnscaled(const SurfaceNode &surface)
+// The buffer maps one-to-one onto `pixels` of the plane: no plane scaling and
+// no source crop, which is all the planner is willing to ask a plane for.
+bool isUnscaled(const SurfaceNode &surface, const QSize &pixels)
 {
     const render::ScanoutBuffer *buffer = surface.scanoutBuffer().get();
     return buffer && !surface.hasContentShape() && surface.alpha() == 1.0f
             && surface.textureMapping().isIdentity() && !buffer->scanoutAttributes().yInvert
-            && buffer->scanoutAttributes().size == surface.geometry().size();
+            && buffer->scanoutAttributes().size == pixels;
+}
+
+bool isUnscaled(const SurfaceNode &surface)
+{
+    return isUnscaled(surface, surface.geometry().size());
 }
 
 OverlayCandidate makeCandidate(SurfaceNode &surface, const QRect &bounds, bool opaque, int zOrder)
@@ -121,8 +142,11 @@ OverlayCandidate makeCandidate(SurfaceNode &surface, const QRect &bounds, bool o
 // Port of OverlayStrategyFullscreen::Propose: the topmost visible item may take
 // the primary plane when it covers the whole output opaquely. Everything below
 // it is then invisible by construction, which is the same conclusion upstream
-// reaches through its BlackFullscreenOptimization.
-bool proposeFullscreen(std::vector<SceneItem> &items, const QRect &outputRect, OverlayPlan &plan)
+// reaches through its BlackFullscreenOptimization. `outputRect` is the output
+// in logical coordinates and `outputPixels` its mode: a buffer of the mode's
+// size goes on the plane at any scale, as viz promotes in device space.
+bool proposeFullscreen(std::vector<SceneItem> &items, const QRect &outputRect,
+                       const QSize &outputPixels, OverlayPlan &plan)
 {
     if (items.empty())
         return false;
@@ -130,10 +154,10 @@ bool proposeFullscreen(std::vector<SceneItem> &items, const QRect &outputRect, O
     SceneItem &top = items.back();
     if (!top.surface || !top.opaque || top.bounds != outputRect)
         return false;
-    if (!isUnscaled(*top.surface))
+    if (!isUnscaled(*top.surface, outputPixels))
         return false;
 
-    plan.primary = makeCandidate(*top.surface, top.bounds, true, 0);
+    plan.primary = makeCandidate(*top.surface, QRect(QPoint(), outputPixels), true, 0);
     return plan.primary.isValid();
 }
 
@@ -189,23 +213,26 @@ void removeOccludedPresentation(Node &root, const QSize &logicalSize,
 OverlayPlan proposeOverlays(Node &root, const QSize &outputSize, size_t maxOverlays,
                             double outputScale)
 {
-    // The current plane planner only represents identity device-space mapping.
-    if (outputScale != 1)
-        return {};
     OverlayPlan plan;
-    // Backdrop sampling needs the underlying buffers in the composition target.
-    if (outputSize.isEmpty() || needsComposition(root))
+    if (outputSize.isEmpty() || outputScale <= 0 || hasAnimation(root))
         return plan;
 
-    const QRect outputRect(QPoint(0, 0), outputSize);
+    // The logical extent the scene sees, as OutputScale::logicalSize rounds it.
+    const QRect outputRect(QPoint(0, 0),
+                           QSize(int(std::ceil(outputSize.width() / outputScale)),
+                                 int(std::ceil(outputSize.height() / outputScale))));
     std::vector<SceneItem> items;
     flatten(root, outputRect, items);
 
     // Fullscreen wins outright: with the primary plane showing a client buffer
     // there is nothing left for an overlay to sit on top of.
-    if (proposeFullscreen(items, outputRect, plan))
+    if (proposeFullscreen(items, outputRect, outputSize, plan))
         return plan;
 
+    // Overlays are placed at their logical bounds, which only at scale one
+    // are the plane's device pixels.
+    if (outputScale != 1 || hasBackgroundBlur(root))
+        return plan;
     proposeSingleOnTop(items, maxOverlays, plan);
     return plan;
 }

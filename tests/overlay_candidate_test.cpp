@@ -306,6 +306,35 @@ TEST_F(OverlayCandidateTest, OutputScaleFallsBackAndResetRestoresPromotion)
     }
 }
 
+TEST_F(OverlayCandidateTest, AFullscreenBufferOfTheModeSizeScansOutAtAFractionalScale)
+{
+    // A 2160x1440 mode at 150% is 1440x960 logical; the fullscreen client
+    // draws a buffer of the mode's size.
+    const QSize pixels(2160, 1440);
+    const QRect logical(QPoint(), QSize(1440, 960));
+    m_scene.setSize(logical.size());
+    scene::SurfaceNode *surface = addSurface(m_scene.root(), logical);
+    surface->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(pixels));
+
+    const scene::OverlayPlan plan = scene::proposeOverlays(*m_scene.root(), pixels, 2, 1.5);
+    ASSERT_TRUE(plan.hasDirectScanout());
+    EXPECT_EQ(plan.primary.displayRect, QRect(QPoint(), pixels));
+    EXPECT_EQ(plan.primary.sourceRect, QRect(QPoint(), pixels));
+    EXPECT_TRUE(plan.overlays.empty());
+
+    // A buffer of the logical size would have to be scaled by the plane.
+    surface->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(logical.size()));
+    EXPECT_FALSE(scene::proposeOverlays(*m_scene.root(), pixels, 2, 1.5).hasDirectScanout());
+
+    // Not fullscreen: an unoccluded opaque surface is not an overlay either, as
+    // its logical bounds are not device pixels.
+    surface->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(pixels));
+    surface->setGeometry(QRect(QPoint(0, 0), QSize(1440, 900)));
+    const scene::OverlayPlan partial = scene::proposeOverlays(*m_scene.root(), pixels, 2, 1.5);
+    EXPECT_FALSE(partial.hasDirectScanout());
+    EXPECT_TRUE(partial.overlays.empty());
+}
+
 TEST_F(OverlayCandidateTest, WindowVisualEffectsBlockOnlyTheirSubtreeAndRestoreEligibility)
 {
     auto animation = std::make_unique<scene::WindowAnimation>();
