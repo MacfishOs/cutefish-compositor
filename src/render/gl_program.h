@@ -27,6 +27,12 @@ public:
 
     GLint uniform(const char *name) const;
     GLint attribute(const char *name) const;
+
+    // Every shader here takes at most a position and a texture coordinate,
+    // bound to these locations before linking.
+    static constexpr GLuint kPositionAttribute = 0;
+    static constexpr GLuint kTexCoordAttribute = 1;
+    static constexpr GLuint kAttributeCount = 2;
     void reset();
 
 private:

@@ -24,7 +24,8 @@ public:
     void resetTextures();
     // Drops what no draw has used for a while; called with the context current.
     void frameEnded();
-    void draw(Renderer &renderer, const QRect &lens, int radius, const QRect &clip,
+    // `lens` is the exact device rectangle; it is rounded outward to pixels here.
+    void draw(Renderer &renderer, const QRectF &lens, int radius, const QRect &clip,
               const GlassParams &glass, double scale, const QPainterPath &shape,
               const std::vector<BackdropSource> &sources, std::vector<RoundedShape> &clips,
               const std::function<void(const QRectF &, float *)> &quadFor,

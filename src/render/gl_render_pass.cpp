@@ -7,8 +7,11 @@
 #include <GLES3/gl3.h>
 // Extension declarations require the core GL types first.
 #include <GLES2/gl2ext.h>
+#include <cmath>
 #include <cstring>
 #include <utility>
+
+#include "render/gl_program.h"
 
 namespace cutefish::render {
 namespace {
@@ -49,9 +52,9 @@ public:
         glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpack);
         glGetFloatv(GL_COLOR_CLEAR_VALUE, clear);
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer);
-        GLint count = 0;
-        glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &count);
-        attributes.resize(count);
+        // Only the attributes the renderer's programs are linked with; the
+        // other slots are never touched.
+        attributes.resize(GlProgram::kAttributeCount);
         for (GLuint i = 0; i < attributes.size(); ++i) {
             auto &a = attributes[i];
             glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &a.enabled);
@@ -489,7 +492,16 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     const QRectF deviceBounds(QPointF(bounds.topLeft()) * renderer.rasterScale(),
                               QSizeF(bounds.size()) * renderer.rasterScale());
     const QRect coverage = deviceBounds.toAlignedRect();
-    const QSize allocation = coverage.size();
+    // Rounded outward, the coverage is a pixel wider or taller depending on
+    // where its fractional origin falls, so at a fractional scale a moving
+    // window would take a new texture nearly every frame. The texture is sized
+    // for the largest coverage the bounds can round out to and keeps its size
+    // as the origin moves; contentPixels says where the content is in it, and
+    // the spare row and column stay clear.
+    const bool fractional = renderer.rasterScale() != std::floor(renderer.rasterScale());
+    const QSize allocation(int(std::ceil(bounds.width() * renderer.rasterScale())) + fractional,
+                           int(std::ceil(bounds.height() * renderer.rasterScale())) + fractional);
+    Q_ASSERT(allocation.width() >= coverage.width() && allocation.height() >= coverage.height());
     GLint limit = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
     if (allocation.width() > limit || allocation.height() > limit)
@@ -517,8 +529,19 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     target->contentPixels = deviceBounds.translated(-coverage.topLeft());
     GLint previous = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
-    Framebuffer framebuffer(target->name());
-    if (!framebuffer.complete())
+    // Every window and blur pass runs through here each frame, so framebuffer
+    // objects are kept and re-pointed rather than created and destroyed per
+    // pass: one per nesting depth, since a blur inside a window's pass copies
+    // out of the framebuffer the window is being drawn into.
+    const size_t depth = m_sources.size();
+    while (m_framebuffers.size() <= depth) {
+        GLuint name = 0;
+        glGenFramebuffers(1, &name);
+        m_framebuffers.push_back(name);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffers[depth]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->name(), 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         return false;
     ScopedValue sources(m_sources);
     ScopedValue viewport(m_viewport);
@@ -543,6 +566,13 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     renderer.clear({0, 0, 0, 0});
     paint();
     return true;
+}
+
+void GlRenderPass::releaseResources()
+{
+    if (!m_framebuffers.empty())
+        glDeleteFramebuffers(GLsizei(m_framebuffers.size()), m_framebuffers.data());
+    m_framebuffers.clear();
 }
 
 void GlRenderPass::generateMipmaps(Texture *texture)

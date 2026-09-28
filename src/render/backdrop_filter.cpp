@@ -121,15 +121,16 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
                 std::clamp(glass.tintAlpha, 0.0f, 1.0f));
 }
 
-void BackdropFilter::draw(Renderer &renderer, const QRect &lens, int radius, const QRect &clip,
-                          const GlassParams &glass, double scale, const QPainterPath &shape,
-                          const std::vector<BackdropSource> &sources,
+void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radius,
+                          const QRect &clip, const GlassParams &glass, double scale,
+                          const QPainterPath &shape, const std::vector<BackdropSource> &sources,
                           std::vector<RoundedShape> &clips,
                           const std::function<void(const QRectF &, float *)> &quadFor,
                           const std::function<void(const GlProgram &)> &applyRoundedClip)
 {
     Q_ASSERT(!sources.empty());
     const BackdropSource &target = sources.back();
+    const QRect lens = exactLens.toAlignedRect();
     const bool shaped = !shape.isEmpty();
     // A shaped glass draws over its whole outline, with the lens inside it.
     const QRect bounds = glass.enabled && shaped
@@ -149,11 +150,18 @@ void BackdropFilter::draw(Renderer &renderer, const QRect &lens, int radius, con
     const QRect visibleBounds = bounds.intersected(clip).intersected(output);
     if (visibleBounds.isEmpty())
         return;
-    const QRect coverage = visibleBounds
-                                   .adjusted(-qCeil(kBackdropBlurSupport * scale),
-                                             -qCeil(kBackdropBlurSupport * scale),
-                                             qCeil(kBackdropBlurSupport * scale),
-                                             qCeil(kBackdropBlurSupport * scale))
+    // Rounded outward, the lens is a pixel wider or taller depending on where
+    // its fractional origin falls. The capture is sized for the widest it can
+    // round out to, so a lens moving at a fractional scale keeps one set of
+    // scratch textures instead of cycling through four and reallocating.
+    QSize captured = visibleBounds.size();
+    if (visibleBounds == lens && scale != std::floor(scale)) {
+        captured = captured.expandedTo(QSize(int(std::ceil(exactLens.width())) + 1,
+                                             int(std::ceil(exactLens.height())) + 1));
+    }
+    const int halo = qCeil(kBackdropBlurSupport * scale);
+    const QRect coverage = QRect(visibleBounds.topLeft() - QPoint(halo, halo),
+                                 captured + QSize(2 * halo, 2 * halo))
                                    .intersected(output);
     const QSize reduced(std::max(1, int(std::ceil(coverage.width() * quality))),
                         std::max(1, int(std::ceil(coverage.height() * quality))));

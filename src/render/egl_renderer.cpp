@@ -39,6 +39,7 @@ EglRenderer::~EglRenderer()
         qFatal("Cannot make EGL context current for renderer retirement");
     m_backdrop.reset();
     m_dropShadow.reset();
+    m_pass.releaseResources();
     clearTextureCache();
     m_colorProgram.reset();
     m_textureProgram.reset();
@@ -790,7 +791,8 @@ void EglRenderer::drawBackgroundBlur(const QRect &bounds, int radius, const QRec
     m_pass.setGeometry(m_pass.viewport(), offset * scale);
     setRasterScale(1);
     m_backdrop->draw(
-            *this, coverage(bounds), qRound(radius * scale), coverage(clip), glass, scale, shape,
+            *this, QRectF(QPointF(bounds.topLeft()) * scale, QSizeF(bounds.size()) * scale),
+            qRound(radius * scale), coverage(clip), glass, scale, shape,
             sources, m_roundedClips,
             [this](const QRectF &rect, float *vertices) {
                 quadFor(rect.translated(-m_pass.offset()), vertices);

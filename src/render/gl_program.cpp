@@ -52,6 +52,10 @@ GLuint linkProgram(const char *vertexSource, const char *fragmentSource)
     }
     glAttachShader(program, vertex);
     glAttachShader(program, fragment);
+    // Fixed locations, so the state a nested pass saves and restores stops at
+    // GlProgram::kAttributeCount instead of every slot the GPU has.
+    glBindAttribLocation(program, GlProgram::kPositionAttribute, "aPosition");
+    glBindAttribLocation(program, GlProgram::kTexCoordAttribute, "aTexCoord");
     glLinkProgram(program);
     glDeleteShader(vertex);
     glDeleteShader(fragment);

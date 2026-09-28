@@ -25,6 +25,7 @@
 #include "input/pointer_delegate.h"
 #include "input/seat.h"
 #include "render/egl_renderer.h"
+#include "render/gl_texture.h"
 #include "scene/scene.h"
 #include "shm_test_util.h"
 
@@ -655,8 +656,16 @@ TEST_F(ViewporterPixelTest, FractionalOutputEdgesAndPhysicalSnapshotAllocation)
         ASSERT_TRUE(renderer->renderToTexture(snapshot, {3, 5, 17, 19}, [&] {
             renderer->fillRect({3, 5, 17, 19}, {0, 1, 0, 1});
         }));
+        // At a fractional scale the texture is sized for the widest coverage
+        // the bounds can round out to, so a move does not reallocate it.
+        const int spare = scale != std::floor(scale) ? 1 : 0;
         EXPECT_EQ(snapshot->size(),
-                  QRectF(QPointF(3, 5) * scale, QSizeF(17, 19) * scale).toAlignedRect().size());
+                  QSize(int(std::ceil(17 * scale)) + spare, int(std::ceil(19 * scale)) + spare));
+        EXPECT_EQ(static_cast<render::GlTexture *>(snapshot.get())->contentPixels,
+                  QRectF(QPointF(3, 5) * scale, QSizeF(17, 19) * scale)
+                          .translated(-QRectF(QPointF(3, 5) * scale, QSizeF(17, 19) * scale)
+                                               .toAlignedRect()
+                                               .topLeft()));
         renderer->drawTexture(snapshot.get(), {3, 5, 17, 19}, 1);
         image = pixels();
         EXPECT_EQ(channel(image, int(10 * scale), int(10 * scale), 1), 255);

@@ -12,6 +12,10 @@ namespace cutefish::render {
 void setGaussianKernel(const GlProgram &program, float sigma, float stepX, float stepY, int reach)
 {
     reach = std::clamp(reach, 0, kGaussianMaxReach);
+    // Beyond three and a half sigma the tail weighs under a thousandth, which
+    // no 8-bit output shows; the taps out there would only cost fetches.
+    if (sigma > 0)
+        reach = std::min(reach, int(std::ceil(3.5f * sigma)));
     float weights[kGaussianMaxReach + 1] = {};
     float total = 0;
     for (int i = 0; i <= reach; ++i) {

@@ -78,6 +78,8 @@ public:
     // The framebuffers a backdrop reads, outermost first. `transform` is the
     // current pass's own.
     std::vector<BackdropSource> backdropSources(double scale, uint32_t transform) const;
+    // Frees the GL objects kept between passes; the context must be current.
+    void releaseResources();
     QImage capture(Renderer &renderer, const QSize &size, const std::function<void()> &paint);
     QImage renderToImage(Renderer &renderer, const QSize &size, const std::function<void()> &paint);
     bool render(Renderer &renderer, std::unique_ptr<Texture> &texture, const QRect &bounds,
@@ -112,6 +114,9 @@ private:
     QPointF m_offset;
     BlendMode m_blendMode = BlendMode::SourceOver;
     std::vector<BackdropSource> m_sources;
+    // The framebuffer objects render() draws through, one per nesting depth,
+    // made on first use.
+    std::vector<unsigned int> m_framebuffers;
 };
 
 } // namespace cutefish::render
