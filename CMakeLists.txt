@@ -356,6 +356,8 @@ add_library(cutefish-mouse-settings STATIC
     src/input/mouse_settings.h
     src/input/pointer_acceleration.cpp
     src/input/pointer_acceleration.h
+    src/input/touchpad_click.cpp
+    src/input/touchpad_click.h
     src/input/touchpad_settings.cpp
     src/input/touchpad_settings.h
     src/input/touchscreen_settings.cpp
@@ -783,6 +785,8 @@ add_library(cutefish-backend STATIC
     src/backend/drm/drm_selection.h
     src/backend/input/libinput_backend.cpp
     src/backend/input/libinput_backend.h
+    src/backend/input/touchpad_contacts.cpp
+    src/backend/input/touchpad_contacts.h
 )
 target_link_libraries(cutefish-backend
     PUBLIC cutefish-core cutefish-render cutefish-input cutefish-mouse-settings PkgConfig::Libdrm

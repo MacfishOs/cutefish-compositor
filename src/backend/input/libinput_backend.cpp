@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <libinput.h>
 #include <libudev.h>
+#include <linux/input-event-codes.h>
 #include <unistd.h>
 
 #include <QFile>
@@ -18,11 +19,13 @@
 #include <chrono>
 #include <cstring>
 
+#include "backend/input/touchpad_contacts.h"
 #include "backend/session/session.h"
 #include "core/logging.h"
 #include "input/input_manager.h"
 #include "input/pointer_acceleration.h"
 #include "input/seat.h"
+#include "input/touchpad_click.h"
 #include "input/xkb_tracker.h"
 
 namespace cutefish::backend {
@@ -167,12 +170,17 @@ int LibinputBackend::openRestricted(const char *path, int flags, void *userData)
         fcntl(fd, F_SETFL, (current & ~O_ACCMODE) | (flags & O_ACCMODE) | (flags & O_NONBLOCK));
 
     self->m_deviceIds[fd] = deviceId;
+    self->m_deviceFds[path] = fd;
     return fd;
 }
 
 void LibinputBackend::closeRestricted(int fd, void *userData)
 {
     auto *self = static_cast<LibinputBackend *>(userData);
+    std::erase_if(self->m_deviceFds, [fd](const auto &entry) { return entry.second == fd; });
+    // libinput closes devices on suspend before it reports them removed.
+    std::erase_if(self->m_touchpadContacts,
+                  [fd](const auto &entry) { return entry.second->fd() == fd; });
     auto it = self->m_deviceIds.find(fd);
     if (it == self->m_deviceIds.end()) {
         close(fd);
@@ -248,6 +256,11 @@ void LibinputBackend::dispatch()
         return;
     }
 
+    // Fingers are stamped as they arrive, ahead of the clicks that follow.
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto &[device, contacts] : m_touchpadContacts)
+        contacts->update(now);
+
     while (libinput_event *event = libinput_get_event(m_libinput)) {
         processEvent(event);
         libinput_event_destroy(event);
@@ -269,10 +282,16 @@ void LibinputBackend::addPointingDevice(libinput_device *device)
     const bool mouse = tagged("ID_INPUT_MOUSE") && !touchpad
             && !tagged("ID_INPUT_POINTINGSTICK") && !tagged("ID_INPUT_TABLET")
             && !tagged("ID_INPUT_TOUCHSCREEN");
+    const char *devnode = udev_device_get_devnode(udevDevice);
+    const auto fd = devnode ? m_deviceFds.find(devnode) : m_deviceFds.end();
     udev_device_unref(udevDevice);
     if (touchpad) {
         if (m_touchpads.insert(device).second)
             libinput_device_ref(device);
+        if (fd != m_deviceFds.end()) {
+            if (auto contacts = TouchpadContacts::create(fd->second))
+                m_touchpadContacts[device] = std::move(contacts);
+        }
         applyTouchpadSettings(device);
         m_touchpadSettings.setAvailable(true);
         m_touchpadSettings.setSecondaryClickConfigurable(
@@ -292,6 +311,9 @@ void LibinputBackend::removePointingDevice(libinput_device *device)
         libinput_device_unref(device);
         m_mouseSettings.setAvailable(!m_mice.empty());
     }
+    m_touchpadContacts.erase(device);
+    std::erase_if(m_touchpadButtons,
+                  [device](const auto &entry) { return entry.first.first == device; });
     if (m_touchpads.erase(device)) {
         libinput_device_unref(device);
         m_touchpadSettings.setAvailable(!m_touchpads.empty());
@@ -401,6 +423,33 @@ void LibinputBackend::applyTouchpadSettings(libinput_device *device)
         check(libinput_device_config_accel_set_speed(device,
                                                      m_touchpadSettings.pointerAcceleration()),
               "pointer speed");
+}
+
+uint32_t LibinputBackend::touchpadButton(libinput_device *device, uint32_t button, bool pressed,
+                                         input::Timestamp time)
+{
+    const auto key = std::make_pair(device, button);
+    if (!pressed) {
+        const auto sent = m_touchpadButtons.find(key);
+        if (sent == m_touchpadButtons.end())
+            return button;
+        const uint32_t result = sent->second;
+        m_touchpadButtons.erase(sent);
+        return result;
+    }
+
+    const auto contacts = m_touchpadContacts.find(device);
+    if (button != BTN_LEFT || contacts == m_touchpadContacts.end()
+        || libinput_device_config_click_get_method(device)
+                != LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER
+        || !contacts->second->clicked())
+        return button;
+    const auto fingers = contacts->second->contacts();
+    if (fingers.size() != 2
+        || !input::isTwoFingerClick(fingers[0], fingers[1], time, contacts->second->size()))
+        return button;
+    m_touchpadButtons[key] = BTN_RIGHT;
+    return BTN_RIGHT;
 }
 
 void LibinputBackend::addTouchscreen(libinput_device *device)
@@ -546,10 +595,14 @@ void LibinputBackend::processEvent(libinput_event *event)
                             ? "press"
                             : "release")
                 << "seat-count-after" << libinput_event_pointer_get_seat_button_count(button);
+        const auto timestamp = timestampFromUsec(libinput_event_pointer_get_time_usec(button));
+        const bool pressed =
+                libinput_event_pointer_get_button_state(button) == LIBINPUT_BUTTON_STATE_PRESSED;
         m_inputManager->onPointerButton(
-                timestampFromUsec(libinput_event_pointer_get_time_usec(button)),
-                libinput_event_pointer_get_button(button),
-                libinput_event_pointer_get_button_state(button) == LIBINPUT_BUTTON_STATE_PRESSED);
+                timestamp,
+                touchpadButton(libinput_event_get_device(event),
+                               libinput_event_pointer_get_button(button), pressed, timestamp),
+                pressed);
         break;
     }
     case LIBINPUT_EVENT_POINTER_SCROLL_WHEEL: {

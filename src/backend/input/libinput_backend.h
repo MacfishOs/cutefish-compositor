@@ -15,6 +15,8 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
+#include <utility>
 
 struct libinput;
 struct libinput_event;
@@ -29,6 +31,7 @@ class InputManager;
 namespace cutefish::backend {
 
 class Session;
+class TouchpadContacts;
 
 // Opens the seat's input devices through libinput and pumps them from the Qt
 // event loop, feeding an input::InputManager.
@@ -69,6 +72,10 @@ private:
     void removePointingDevice(libinput_device *device);
     void applyMouseSettings(libinput_device *device);
     void applyTouchpadSettings(libinput_device *device);
+    // The button a touchpad's press or release is sent as: a press libinput's
+    // clickfinger counted as one finger may be two by isTwoFingerClick.
+    uint32_t touchpadButton(libinput_device *device, uint32_t button, bool pressed,
+                            input::Timestamp time);
     void addTouchscreen(libinput_device *device);
     void removeTouchscreen(libinput_device *device);
     void updateTouchscreenList();
@@ -86,6 +93,7 @@ private:
 
     // Session device handles, keyed by the fd libinput knows them as.
     std::map<int, int> m_deviceIds;
+    std::map<std::string, int> m_deviceFds;
     bool m_active = true;
     input::MouseSettings m_mouseSettings;
     input::TouchpadSettings m_touchpadSettings;
@@ -93,6 +101,9 @@ private:
     std::set<libinput_device *> m_mice;
     std::set<libinput_device *> m_touchpads;
     std::set<libinput_device *> m_touchscreens;
+    std::map<libinput_device *, std::unique_ptr<TouchpadContacts>> m_touchpadContacts;
+    // Touchpad presses sent as another button, so their releases follow.
+    std::map<std::pair<libinput_device *, uint32_t>, uint32_t> m_touchpadButtons;
     std::map<libinput_device *, input::KeyboardModifierLayout> m_keyboardLayouts;
     uint32_t m_leds = 0;
 };
