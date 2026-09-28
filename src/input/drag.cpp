@@ -538,9 +538,9 @@ void DragController::onSurfaceCommit(compositor::Surface *surface)
 {
     if (surface == m_icon)
         updateIcon();
-    if (surface == m_origin && !surface->isMapped())
-        cancel();
-    else if (surface == m_target && !surface->isMapped())
+    // Only a destroyed origin ends the drag, as in exo: Chrome hides the window
+    // it drags by its tab when merging it into another, and drags on.
+    if (surface == m_target && !surface->isMapped())
         leave();
 }
 

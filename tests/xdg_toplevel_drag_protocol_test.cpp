@@ -616,6 +616,59 @@ TEST_F(XdgToplevelDragProtocolTest, UnmappingTheWindowDetachesItAndTheDragGoesOn
     });
 }
 
+// Chrome drags a window by its only tab, starting the drag from that window,
+// and hides it once the tab is merged into another window's tab strip.
+TEST_F(XdgToplevelDragProtocolTest, HidingTheWindowTheDragStartedFromDoesNotEndIt)
+{
+    run([&](Client &c) {
+        Toplevel *target = c.makeToplevel();
+        c.map(target, QSize(300, 200));
+        check([&] {
+            windowAt(0)->setBounds(QRect(500, 100, 300, 200));
+        });
+        Toplevel *origin = mapSourceWindowAndPress(c);
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        xdg_toplevel_drag_v1_attach(drag, origin->toplevel, 50, 50);
+        c.sync();
+        check([&] {
+            manager.onPointerMotionAbsolute(at(3), QPointF(550, 150));
+        });
+        c.sync();
+        ASSERT_EQ(target->surface, c.dragEnterSurface);
+        wl_data_offer_accept(c.dragOffer, c.dragEnterSerial, "application/x-cutefish-tab");
+        wl_data_offer_set_actions(c.dragOffer, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
+                                  WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+        c.sync();
+
+        // The client keeps the surface of the window it hides, as Chrome does.
+        wl_surface_attach(origin->surface, nullptr, 0, 0);
+        wl_surface_commit(origin->surface);
+        xdg_toplevel_destroy(std::exchange(origin->toplevel, nullptr));
+        xdg_surface_destroy(std::exchange(origin->xdgSurface, nullptr));
+        c.sync();
+        check([&] {
+            EXPECT_EQ(1u, windowManager.windows().size());
+            EXPECT_TRUE(seat.drag()->active());
+            manager.onPointerMotionAbsolute(at(4), QPointF(560, 160));
+        });
+        c.sync();
+        EXPECT_EQ(target->surface, c.dragEnterSurface);
+        EXPECT_EQ(0, c.cancels);
+
+        check([&] {
+            manager.onPointerButton(at(5), BTN_LEFT, false);
+        });
+        c.sync();
+        EXPECT_EQ(1, c.dropsPerformed);
+        EXPECT_EQ(0, c.cancels);
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
 TEST_F(XdgToplevelDragProtocolTest, UnmappingADroppedWindowActivatesTheWindowItWasDroppedOn)
 {
     run([&](Client &c) {
