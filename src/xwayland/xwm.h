@@ -72,6 +72,10 @@ private:
     void shape(X11Window &window);
     void present(X11Window &window);
     void detach(X11Window &window);
+    // Follows a new child of the root, unless its client holds too many windows.
+    X11Window *adopt(uint32_t window, const QRect &xGeometry, bool overrideRedirect);
+    // Stops following a window that is gone from the root.
+    void forget(uint32_t window);
     void synchronize(X11Window &window);
     void roots();
     void focus(X11Window &window, bool active);

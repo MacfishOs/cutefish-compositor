@@ -8,10 +8,17 @@
 
 namespace cutefish::xwayland {
 
+bool SurfaceAssociation::claimSurfaceSerial(uint64_t serial)
+{
+    if (serial <= m_lastSurfaceSerial)
+        return false;
+    m_lastSurfaceSerial = serial;
+    return true;
+}
+
 bool SurfaceAssociation::addSurface(uint64_t serial, Surface* surface)
 {
-    if (!serial || !surface || m_surfaceSerials.size() >= limit ||
-        !m_surfaceSerials.insert(serial).second)
+    if (!serial || !surface)
         return false;
     m_surfaces[serial] = surface;
     match(serial);
@@ -20,9 +27,9 @@ bool SurfaceAssociation::addSurface(uint64_t serial, Surface* surface)
 
 bool SurfaceAssociation::addWindow(uint64_t serial, uint32_t window)
 {
-    if (!serial || !window || m_windowSerials.size() >= limit ||
-        !m_windowSerials.insert(serial).second)
+    if (!window || serial <= m_lastWindowSerial)
         return false;
+    m_lastWindowSerial = serial;
     removeWindow(window);
     m_windows[serial] = window;
     match(serial);

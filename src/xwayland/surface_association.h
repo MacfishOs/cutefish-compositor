@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <functional>
 #include <map>
-#include <set>
 
 namespace cutefish::compositor {
 class Surface;
@@ -15,7 +14,8 @@ class Surface;
 
 namespace cutefish::xwayland {
 
-// One instance belongs to one Xwayland generation. Retired serials are never reused.
+// One instance belongs to one Xwayland generation. Xwayland hands out serials
+// in increasing order, so a matched or abandoned serial cannot come back.
 class SurfaceAssociation
 {
 public:
@@ -27,6 +27,9 @@ public:
         return uint64_t(low) | (uint64_t(high) << 32);
     }
 
+    // Takes a serial from set_serial, which carries them in Xwayland's order;
+    // the commits that add them may come in any order.
+    bool claimSurfaceSerial(uint64_t serial);
     bool addSurface(uint64_t serial, Surface* surface);
     bool addWindow(uint64_t serial, uint32_t window);
     void removeSurface(Surface* surface);
@@ -39,8 +42,8 @@ private:
     void match(uint64_t serial);
     std::map<uint64_t, Surface*> m_surfaces;
     std::map<uint64_t, uint32_t> m_windows;
-    std::set<uint64_t> m_surfaceSerials;
-    std::set<uint64_t> m_windowSerials;
+    uint64_t m_lastSurfaceSerial = 0;
+    uint64_t m_lastWindowSerial = 0;
 };
 
 } // namespace cutefish::xwayland

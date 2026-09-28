@@ -202,6 +202,9 @@ struct Xwm::X11Window : compositor::SurfaceObserver, wm::WindowObserver {
     wm::Window *window = nullptr;
     // Logical geometry, and the X11 geometry it came from.
     QRect geometry, xGeometry;
+    // Adopted from a ReparentNotify, which has no size; xGeometry holds a
+    // placeholder one until the geometry is read or configured.
+    bool sizeUnknown = false;
     // In X11 pixels, relative to the window.
     std::optional<QRegion> boundingShape, inputShape;
     uint64_t shapeGeneration = 0;
@@ -1365,6 +1368,76 @@ void Xwm::detach(X11Window &w)
     }
 }
 
+Xwm::X11Window *Xwm::adopt(uint32_t window, const QRect &xGeometry, bool overrideRedirect)
+{
+    if (window == m_support || (m_dnd && m_dnd->owns(window)))
+        return nullptr;
+    const uint32_t clientBits = ~xcb_get_setup(m_connection)->resource_id_mask;
+    if (m_windows.size() < std::min(m_windowLimit, SurfaceAssociation::limit)) {
+        m_disconnecting = 0;
+    } else if ((window & clientBits) == m_disconnecting) {
+        // Created before the disconnection took effect; its windows are going.
+        return nullptr;
+    } else {
+        // Only a client holding that many windows gets here. It is the one
+        // to go; restarting Xwayland would take every other X11 client too.
+        std::map<uint32_t, std::pair<size_t, uint32_t>> clients;
+        for (const auto &[id, other] : m_windows) {
+            if ((id & clientBits) == (m_support & clientBits))
+                continue;
+            auto &client = clients[id & clientBits];
+            ++client.first;
+            client.second = id;
+        }
+        const auto greediest = std::max_element(
+                clients.begin(), clients.end(), [](const auto &a, const auto &b) {
+                    return a.second.first < b.second.first;
+                });
+        if (greediest == clients.end())
+            return nullptr;
+        if (greediest->first != m_disconnecting) {
+            qWarning() << "Xwayland window limit reached; disconnecting the X11 client with"
+                       << greediest->second.first << "windows";
+            xcb_kill_client(m_connection, greediest->second.second);
+            xcb_flush(m_connection);
+            m_disconnecting = greediest->first;
+        }
+        if ((window & clientBits) == greediest->first)
+            return nullptr;
+    }
+    auto w = std::make_unique<X11Window>(this, window, ++m_generation);
+    w->xGeometry = xGeometry;
+    w->geometry = QRect(fromX(w->xGeometry.topLeft()), sizeFromX(w->xGeometry.size()));
+    w->overrideRedirect = overrideRedirect;
+    uint32_t mask = XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE;
+    xcb_change_window_attributes(m_connection, window, XCB_CW_EVENT_MASK, &mask);
+    if (m_shapeEvent) {
+        xcb_shape_select_input(m_connection, window, 1);
+        shape(*w);
+    }
+    auto *adopted = w.get();
+    m_windows[window] = std::move(w);
+    return adopted;
+}
+
+void Xwm::forget(uint32_t window)
+{
+    auto it = m_windows.find(window);
+    if (it == m_windows.end())
+        return;
+    m_association->removeWindow(window);
+    auto owned = std::move(it->second);
+    m_windows.erase(it);
+    detach(*owned);
+    for (auto &[childId, child] : m_windows) {
+        if (child->transient == window) {
+            child->transient = 0;
+            if (child->overrideRedirect || child->popup)
+                present(*child);
+        }
+    }
+}
+
 void Xwm::synchronize(X11Window &w)
 {
     if (!w.window || w.syncing)
@@ -1408,6 +1481,7 @@ void Xwm::synchronize(X11Window &w)
             requestSync(w);
     }
     if (!deferred) {
+        w.sizeUnknown = false;
         w.xGeometry = QRect(xPosition, xSize);
         uint32_t values[] = {uint32_t(xPosition.x()), uint32_t(xPosition.y()),
                              uint32_t(xSize.width()), uint32_t(xSize.height()), 0};
@@ -1579,53 +1653,35 @@ void Xwm::event(xcb_generic_event_t *generic)
     }
     if (type == XCB_CREATE_NOTIFY) {
         auto *e = reinterpret_cast<xcb_create_notify_event_t *>(generic);
-        if (e->window == m_support || e->parent != m_root || (m_dnd && m_dnd->owns(e->window)))
-            return;
-        const uint32_t clientBits = ~xcb_get_setup(m_connection)->resource_id_mask;
-        if (m_windows.size() < std::min(m_windowLimit, SurfaceAssociation::limit)) {
-            m_disconnecting = 0;
-        } else if ((e->window & clientBits) == m_disconnecting) {
-            // Created before the disconnection took effect; its windows are going.
-            return;
-        } else {
-            // Only a client holding that many windows gets here. It is the one
-            // to go; restarting Xwayland would take every other X11 client too.
-            std::map<uint32_t, std::pair<size_t, uint32_t>> clients;
-            for (const auto &[id, window] : m_windows) {
-                if ((id & clientBits) == (m_support & clientBits))
-                    continue;
-                auto &client = clients[id & clientBits];
-                ++client.first;
-                client.second = id;
-            }
-            const auto greediest = std::max_element(
-                    clients.begin(), clients.end(), [](const auto &a, const auto &b) {
-                        return a.second.first < b.second.first;
-                    });
-            if (greediest == clients.end())
-                return;
-            if (greediest->first != m_disconnecting) {
-                qWarning() << "Xwayland window limit reached; disconnecting the X11 client with"
-                           << greediest->second.first << "windows";
-                xcb_kill_client(m_connection, greediest->second.second);
-                xcb_flush(m_connection);
-                m_disconnecting = greediest->first;
-            }
-            if ((e->window & clientBits) == greediest->first)
-                return;
-        }
-        auto w = std::make_unique<X11Window>(this, e->window, ++m_generation);
-        w->xGeometry = QRect(e->x, e->y, e->width, e->height);
-        w->geometry = QRect(fromX(w->xGeometry.topLeft()), sizeFromX(w->xGeometry.size()));
-        w->overrideRedirect = e->override_redirect;
-        uint32_t mask = XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE;
-        xcb_change_window_attributes(m_connection, e->window, XCB_CW_EVENT_MASK, &mask);
-        if (m_shapeEvent) {
-            xcb_shape_select_input(m_connection, e->window, 1);
-            shape(*w);
-        }
-        m_windows[e->window] = std::move(w);
+        if (e->parent == m_root)
+            adopt(e->window, QRect(e->x, e->y, e->width, e->height), e->override_redirect);
         return;
+    }
+    if (type == XCB_REPARENT_NOTIFY) {
+        auto *e = reinterpret_cast<xcb_reparent_notify_event_t *>(generic);
+        if (e->parent == m_root && !m_windows.contains(e->window)) {
+            // Moved onto the root from another window; the event has no size.
+            auto *w = adopt(e->window, QRect(e->x, e->y, 1, 1), e->override_redirect);
+            if (!w)
+                return;
+            w->sizeUnknown = true;
+            const auto id = w->id;
+            const auto generation = w->generation;
+            reply(xcb_get_geometry(m_connection, id).sequence, [this, id, generation](void *p) {
+                auto it = m_windows.find(id);
+                if (!p || it == m_windows.end() || it->second->generation != generation)
+                    return;
+                auto &w = *it->second;
+                // A configure handled since then is at least as new as the reply.
+                if (!std::exchange(w.sizeUnknown, false) || w.window)
+                    return;
+                auto *r = static_cast<xcb_get_geometry_reply_t *>(p);
+                w.xGeometry = QRect(r->x, r->y, r->width, r->height);
+                w.geometry = QRect(fromX(w.xGeometry.topLeft()), sizeFromX(w.xGeometry.size()));
+                present(w);
+            });
+            return;
+        }
     }
     if (type == XCB_CLIENT_MESSAGE) {
         auto *e = reinterpret_cast<xcb_client_message_event_t *>(generic);
@@ -1696,13 +1752,10 @@ void Xwm::event(xcb_generic_event_t *generic)
                 focus(w, false);
         }
     } else if (type == XCB_REPARENT_NOTIFY) {
-        auto *e = reinterpret_cast<xcb_reparent_notify_event_t *>(generic);
-        if (e->parent != m_root) {
-            w.mapped = false;
-            w.roleLocked = w.metadataReady = false;
-            w.stateRequests.clear();
-            m_association->removeWindow(id);
-            detach(w);
+        // Only children of the root are followed; the DestroyNotify of one
+        // moved into another window goes to its new parent instead.
+        if (reinterpret_cast<xcb_reparent_notify_event_t *>(generic)->parent != m_root) {
+            forget(id);
             roots();
         }
     } else if (type == XCB_MAP_REQUEST) {
@@ -1724,19 +1777,10 @@ void Xwm::event(xcb_generic_event_t *generic)
         w.mapped = false;
         w.roleLocked = w.metadataReady = false;
         w.stateRequests.clear();
-        m_association->removeWindow(id);
         if (type == XCB_DESTROY_NOTIFY) {
-            auto owned = std::move(it->second);
-            m_windows.erase(it);
-            detach(*owned);
-            for (auto &[childId, child] : m_windows) {
-                if (child->transient == id) {
-                    child->transient = 0;
-                    if (child->overrideRedirect || child->popup)
-                        present(*child);
-                }
-            }
+            forget(id);
         } else {
+            m_association->removeWindow(id);
             detach(w);
             property(id, "WM_STATE", atom("WM_STATE"), {0, 0});
         }
@@ -1762,6 +1806,10 @@ void Xwm::event(xcb_generic_event_t *generic)
         QRect xRect = w.window ? QRect(toX(w.window->contentBounds().topLeft()),
                                        sizeToX(w.window->contentBounds().size()))
                                : w.xGeometry;
+        // The event fills what the request leaves out from the server's geometry, which
+        // can predate our answer to an earlier request; it only replaces an unknown size.
+        if (!w.window && std::exchange(w.sizeUnknown, false))
+            xRect = QRect(e->x, e->y, e->width, e->height);
         if (e->value_mask & XCB_CONFIG_WINDOW_X)
             xRect.moveLeft(e->x);
         if (e->value_mask & XCB_CONFIG_WINDOW_Y)
@@ -1787,6 +1835,7 @@ void Xwm::event(xcb_generic_event_t *generic)
         auto *e = reinterpret_cast<xcb_configure_notify_event_t *>(generic);
         shape(w);
         if (!w.window) {
+            w.sizeUnknown = false;
             w.xGeometry = QRect(e->x, e->y, e->width, e->height);
             w.geometry = QRect(fromX(w.xGeometry.topLeft()), sizeFromX(w.xGeometry.size()));
             present(w);
@@ -1797,6 +1846,10 @@ void Xwm::event(xcb_generic_event_t *generic)
             return;
         auto *d = e->data.data32;
         if (e->type == atom("WL_SURFACE_SERIAL")) {
+            // Xwayland delivers its own; a copy another client sent could take a
+            // serial ahead of Xwayland's and leave every later window unmatched.
+            if (generic->response_type & 0x80)
+                return;
             if (!m_association->addWindow(SurfaceAssociation::serial(d[0], d[1]), id))
                 qWarning() << "Xwayland rejected window serial" << id;
         } else if (e->type == atom("_NET_REQUEST_FRAME_EXTENTS")) {

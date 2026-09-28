@@ -66,18 +66,16 @@ struct XwaylandShell::Role : compositor::SurfaceObserver {
             return;
         }
         committed = true;
-        if (!association->addSurface(serial, surface) && resource)
-            wl_resource_post_error(resource, XWAYLAND_SURFACE_V1_ERROR_INVALID_SERIAL,
-                                   "reused serial or session serial limit reached");
+        association->addSurface(serial, surface);
     }
 
     static void setSerial(wl_client*, wl_resource* resource, uint32_t low, uint32_t high)
     {
         auto* role = static_cast<Role*>(wl_resource_get_user_data(resource));
         const auto serial = SurfaceAssociation::serial(low, high);
-        if (!serial || !role->surface) {
+        if (!role->surface || !role->association->claimSurfaceSerial(serial)) {
             wl_resource_post_error(resource, XWAYLAND_SURFACE_V1_ERROR_INVALID_SERIAL,
-                                   "zero serial or destroyed surface");
+                                   "serial not above the last one, or destroyed surface");
             return;
         }
         role->pending = serial;

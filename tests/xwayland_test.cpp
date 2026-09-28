@@ -197,14 +197,20 @@ TEST(SurfaceAssociation, WordsOrdersAndRetirement)
     EXPECT_EQ(serial, 0x12345678fedcba98ULL);
     EXPECT_TRUE(association.addWindow(serial, 42));
     EXPECT_EQ(matched, 0u);
+    EXPECT_TRUE(association.claimSurfaceSerial(serial));
     EXPECT_TRUE(association.addSurface(serial, first.get()));
     EXPECT_EQ(matched, 42u);
     EXPECT_FALSE(association.addWindow(serial, 99));
-    EXPECT_FALSE(association.addSurface(serial, second.get()));
-    EXPECT_TRUE(association.addSurface(2, second.get()));
-    EXPECT_TRUE(association.addWindow(2, 43));
+    EXPECT_FALSE(association.claimSurfaceSerial(serial));
+    // Serials only increase on each side.
+    EXPECT_FALSE(association.addWindow(2, 43));
+    EXPECT_FALSE(association.claimSurfaceSerial(2));
+    EXPECT_TRUE(association.claimSurfaceSerial(serial + 1));
+    EXPECT_TRUE(association.addSurface(serial + 1, second.get()));
+    EXPECT_TRUE(association.addWindow(serial + 1, 43));
     EXPECT_EQ(matched, 43u);
     EXPECT_FALSE(association.addWindow(0, 44));
+    EXPECT_FALSE(association.claimSurfaceSerial(0));
     EXPECT_EQ(association.pendingCount(), 0u);
 }
 
@@ -219,15 +225,41 @@ TEST(SurfaceAssociation, DestructionRemapAndNewGeneration)
     };
     ASSERT_TRUE(association.addWindow(10, 42));
     association.removeWindow(42);
+    EXPECT_FALSE(association.addWindow(10, 42));
+    ASSERT_TRUE(association.claimSurfaceSerial(10));
     ASSERT_TRUE(association.addSurface(10, surface.get()));
     EXPECT_EQ(matches, 0);
     association.removeSurface(surface.get());
-    EXPECT_FALSE(association.addSurface(10, surface.get()));
+    EXPECT_FALSE(association.claimSurfaceSerial(10));
     ASSERT_TRUE(association.addWindow(11, 42));
+    ASSERT_TRUE(association.claimSurfaceSerial(11));
     ASSERT_TRUE(association.addSurface(11, surface.get()));
     EXPECT_EQ(matches, 1);
+    EXPECT_EQ(association.pendingCount(), 0u);
     xwayland::SurfaceAssociation next;
-    EXPECT_TRUE(next.addSurface(10, surface.get()));
+    EXPECT_TRUE(next.claimSurfaceSerial(10));
+    EXPECT_TRUE(next.addWindow(10, 42));
+}
+
+// Xwayland takes a new serial for every map, so a long session keeps going
+// past any count of them.
+TEST(SurfaceAssociation, SerialsDoNotRunOutInALongSession)
+{
+    compositor::Compositor compositor(nullptr);
+    auto surface = compositor.createSurface();
+    xwayland::SurfaceAssociation association;
+    uint64_t matches = 0;
+    association.associated = [&](auto, auto *) {
+        ++matches;
+    };
+    const uint64_t maps = xwayland::SurfaceAssociation::limit + 16;
+    for (uint64_t serial = 1; serial <= maps; ++serial) {
+        ASSERT_TRUE(association.addWindow(serial, 42)) << serial;
+        ASSERT_TRUE(association.claimSurfaceSerial(serial)) << serial;
+        ASSERT_TRUE(association.addSurface(serial, surface.get())) << serial;
+    }
+    EXPECT_EQ(matches, maps);
+    EXPECT_EQ(association.pendingCount(), 0u);
 }
 
 TEST_F(XwaylandTest, MissingExecutable)
@@ -394,6 +426,100 @@ TEST_F(XwaylandTest, WindowLimitDisconnectsOnlyTheGreediestClient)
     EXPECT_TRUE(answers(modest));
     EXPECT_TRUE(xwayland->isReady());
     EXPECT_EQ(pid, xwayland->processId());
+}
+
+// A window moved into another is forgotten, since its DestroyNotify goes to the
+// new parent, and never counts against the limit; moved back, it is followed again.
+TEST_F(XwaylandTest, AWindowMovedOffTheRootIsForgottenAndAdoptedWhenItReturns)
+{
+    windowLimit = 8;
+    ASSERT_TRUE(start()) << xwayland->error().toStdString();
+    const auto pid = xwayland->processId();
+    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    auto *c = xcbReply([&] {
+        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+    });
+    ASSERT_EQ(xcb_connection_has_error(c), 0);
+    auto cleanup = qScopeGuard([&] {
+        xcb_disconnect(c);
+    });
+    auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
+    const auto create = [&] {
+        const auto id = xcb_generate_id(c);
+        const uint32_t values[] = {screen->white_pixel};
+        xcb_create_window(c, XCB_COPY_FROM_PARENT, id, screen->root, 0, 0, 200, 100, 0,
+                          XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, XCB_CW_BACK_PIXEL,
+                          values);
+        return id;
+    };
+    const auto embedder = create();
+    for (int i = 0; i < 16; ++i) {
+        const auto plug = create();
+        xcb_reparent_window(c, plug, embedder, 0, 0);
+        xcb_destroy_window(c, plug);
+    }
+    const auto returning = create();
+    xcb_reparent_window(c, returning, embedder, 0, 0);
+    xcb_reparent_window(c, returning, screen->root, 30, 40);
+    // A restack and a move before its size is read keep the window's own size.
+    const uint32_t above[] = {XCB_STACK_MODE_ABOVE};
+    xcb_configure_window(c, returning, XCB_CONFIG_WINDOW_STACK_MODE, above);
+    const uint32_t position[] = {50, 60};
+    xcb_configure_window(c, returning, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y, position);
+    xcb_map_window(c, returning);
+    xcb_flush(c);
+    ASSERT_TRUE(until([&] {
+        return manager->windows().size() == 1
+                && manager->windows()[0]->rootSurface()->contentSize() == QSize(200, 100);
+    }));
+    auto *geometry = xcbReply([&] {
+        return xcb_get_geometry_reply(c, xcb_get_geometry(c, returning), nullptr);
+    });
+    const QSize size = geometry ? QSize(geometry->width, geometry->height) : QSize();
+    free(geometry);
+    EXPECT_EQ(size, QSize(200, 100));
+    auto *reply = xcbReply([&] {
+        return xcb_get_input_focus_reply(c, xcb_get_input_focus(c), nullptr);
+    });
+    EXPECT_TRUE(reply);
+    free(reply);
+    EXPECT_TRUE(xwayland->isReady());
+    EXPECT_EQ(pid, xwayland->processId());
+}
+
+// Serials only increase, so a client sending a WL_SURFACE_SERIAL far ahead of
+// Xwayland's would leave every later window unmatched but for the SendEvent check.
+TEST_F(XwaylandTest, ASurfaceSerialSentByAClientIsIgnored)
+{
+    ASSERT_TRUE(start()) << xwayland->error().toStdString();
+    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    auto *c = xcbReply([&] {
+        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+    });
+    ASSERT_EQ(xcb_connection_has_error(c), 0);
+    auto cleanup = qScopeGuard([&] {
+        xcb_disconnect(c);
+    });
+    auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
+    const auto id = xcb_generate_id(c);
+    const uint32_t values[] = {screen->white_pixel};
+    xcb_create_window(c, XCB_COPY_FROM_PARENT, id, screen->root, 0, 0, 200, 100, 0,
+                      XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, XCB_CW_BACK_PIXEL,
+                      values);
+    xcb_client_message_event_t forged {};
+    forged.response_type = XCB_CLIENT_MESSAGE;
+    forged.format = 32;
+    forged.window = id;
+    forged.type = intern(c, "WL_SURFACE_SERIAL");
+    forged.data.data32[0] = 0xffffffff;
+    forged.data.data32[1] = 0xffffffff;
+    xcb_send_event(c, 0, screen->root, XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT,
+                   reinterpret_cast<const char *>(&forged));
+    xcb_map_window(c, id);
+    xcb_flush(c);
+    EXPECT_TRUE(until([&] {
+        return manager->windows().size() == 1;
+    }));
 }
 
 // Xwayland is fully dead before the event loop runs again, so its exit and both
@@ -3596,6 +3722,38 @@ TEST_F(XwaylandProtocolTest, RepeatedCommitRejected)
               XWAYLAND_SURFACE_V1_ERROR_ALREADY_ASSOCIATED);
     wl_proxy_destroy(reinterpret_cast<wl_proxy *>(role));
     wl_proxy_destroy(reinterpret_cast<wl_proxy *>(surface));
+}
+
+// set_serial carries Xwayland's serials in order, but the surfaces may commit
+// them in any order; a serial that does not increase is refused.
+TEST_F(XwaylandProtocolTest, SerialsIncreaseButCommitInAnyOrder)
+{
+    std::vector<wl_proxy *> proxies;
+    const auto withSerial = [&](uint32_t serial) {
+        auto *surface = wl_compositor_create_surface(clientCompositor);
+        auto *role = xwayland_shell_v1_get_xwayland_surface(clientShell, surface);
+        xwayland_surface_v1_set_serial(role, serial, 0);
+        proxies.push_back(reinterpret_cast<wl_proxy *>(role));
+        proxies.push_back(reinterpret_cast<wl_proxy *>(surface));
+        return surface;
+    };
+    auto *first = withSerial(1);
+    auto *second = withSerial(2);
+    wl_surface_commit(second);
+    wl_surface_commit(first);
+    ASSERT_GE(sync(), 0);
+    EXPECT_EQ(association.pendingCount(), 2u);
+    EXPECT_TRUE(association.addWindow(1, 11));
+    EXPECT_TRUE(association.addWindow(2, 12));
+    EXPECT_EQ(association.pendingCount(), 0u);
+    withSerial(2);
+    EXPECT_EQ(sync(), -1);
+    const wl_interface *interface = nullptr;
+    EXPECT_EQ(wl_display_get_protocol_error(client, &interface, nullptr),
+              XWAYLAND_SURFACE_V1_ERROR_INVALID_SERIAL);
+    EXPECT_STREQ(interface->name, "xwayland_surface_v1");
+    for (auto *proxy : proxies)
+        wl_proxy_destroy(proxy);
 }
 
 TEST_F(XwaylandProtocolTest, RegistryFilterAndForgedBind)
