@@ -69,6 +69,14 @@ public:
         outlines.append(color.a);
     }
 
+    int blurs = 0;
+
+    void drawBackgroundBlur(const QRect &, int, const QRect &, const render::GlassParams &,
+                            const QPainterPath &) override
+    {
+        ++blurs;
+    }
+
     void drawTextureF(render::Texture *texture, const QRectF &target, float alpha) override
     {
         lastTarget = target;
@@ -579,6 +587,21 @@ TEST_F(BlurredSnapshot, ABlurDrawnFromWhatTheOutputLeftIsNotKept)
     renderer.repainted.reset();
     scene.render(renderer);
     EXPECT_FALSE(redrawn());
+}
+
+TEST_F(SnapshotReuse, AScaledPresentationDrawsNoBlurs)
+{
+    // Scaled, the window is not where its blurs would read the screen.
+    surface->setBackgroundBlur({0, 0, 400, 300}, 12);
+    scene.render(renderer);
+    EXPECT_EQ(renderer.blurs, 1);
+    window->setPresentationScale(0.5, {200, 150}, false);
+    scene.render(renderer);
+    EXPECT_EQ(renderer.blurs, 1);
+    window->setPresentationScale(1, {200, 150}, false);
+    window->setOpacity(0.5);
+    scene.render(renderer);
+    EXPECT_EQ(renderer.blurs, 2);
 }
 
 TEST(WindowAnimation, CloseRetainsOnlyPixelsAndCollectsAfterCompletion)

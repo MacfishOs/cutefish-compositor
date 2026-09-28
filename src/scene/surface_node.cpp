@@ -62,7 +62,7 @@ void SurfaceNode::paint(render::Renderer &renderer, const QRect &absoluteGeometr
         return;
     // The client may still be writing this buffer; the wait is queued on the
     // GPU, so composition does not block the compositor thread.
-    if (hasBackgroundBlur())
+    if (hasBackgroundBlur() && !renderer.suppressBackgroundBlur)
         renderer.drawBackgroundBlur(m_blurRect.translated(absoluteGeometry.topLeft()), m_blurRadius,
                                     absoluteGeometry, m_glass,
                                     m_blurShape.translated(absoluteGeometry.topLeft()));

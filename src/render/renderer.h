@@ -116,6 +116,10 @@ public:
     // Animation snapshots retain the body; the physical-width outline is drawn afterward.
     bool suppressWindowOutlines = false;
 
+    // A window drawn scaled from its snapshot is not where its blurs would
+    // read the screen, so it goes without them.
+    bool suppressBackgroundBlur = false;
+
     // Set by an animation morphing a window's corners into its snapshot: the
     // window's visual node clips its content with these instead of its own.
     struct WindowCorners {

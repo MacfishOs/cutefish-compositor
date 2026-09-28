@@ -540,6 +540,8 @@ void WindowAnimation::setPresentationScale(double scale, const QPointF &anchor, 
     m_scaleTo = scale;
     m_scaleStarted = -1;
     m_scaleAnchor = anchor;
+    // Whether the snapshot has its blurs may change.
+    m_textureReusable = false;
     changed();
 }
 
@@ -774,11 +776,14 @@ void WindowAnimation::render(render::Renderer &renderer) const
             const bool reusable = !animating() && !hasPromotedSurface(*this);
             if (!renderer.renderToTexture(m_texture, coverage, repaint, [&] {
                     const bool suppressed = renderer.suppressWindowOutlines;
+                    const bool blurSuppressed = renderer.suppressBackgroundBlur;
                     renderer.suppressWindowOutlines = true;
+                    renderer.suppressBackgroundBlur = blurSuppressed || presentedScaled();
                     renderer.presentationSubmission = submission;
                     renderer.windowCorners = corners;
                     Node::render(renderer);
                     renderer.windowCorners.reset();
+                    renderer.suppressBackgroundBlur = blurSuppressed;
                     renderer.suppressWindowOutlines = suppressed;
                 })) {
                 m_textureReusable = false;

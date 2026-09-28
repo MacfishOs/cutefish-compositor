@@ -146,7 +146,7 @@ public:
     // transformed or blended, so nothing under it can reach a hardware plane.
     bool paintsSubtree() const override
     {
-        return animating() || m_opacity < 1 || m_scaleFrom != 1 || m_scaleTo != 1;
+        return animating() || m_opacity < 1 || presentedScaled();
     }
 
     // Other animations draw only inside absolutePaintBounds(). A cross-fade
@@ -179,6 +179,7 @@ private:
     // What this frame draws differs from the subtree as it stands. A static
     // opacity does not count: the snapshot is the same, only blended.
     bool animating() const { return m_running || m_holding || m_firstFrame || m_closing; }
+    bool presentedScaled() const { return m_scaleFrom != 1 || m_scaleTo != 1; }
     // Damages what this animation draws, rather than the whole window layer.
     void changed() const;
     Sample current() const;
