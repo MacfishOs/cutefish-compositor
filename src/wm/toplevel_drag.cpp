@@ -35,6 +35,12 @@ QPointF grabPoint(WindowManager *manager, Window *window)
     return seat ? seat->pointerLocation() - QPointF(window->bounds().topLeft()) : QPointF();
 }
 
+double previewScale(Window *window)
+{
+    return std::min(ToplevelDrag::kPreviewMaxScale,
+                    ToplevelDrag::kPreviewWidth / std::max(1, window->bounds().width()));
+}
+
 void settlePreview(WindowManager *manager, Window *preview)
 {
     preview->setDragPreview(false);
@@ -108,10 +114,9 @@ void ToplevelDrag::onWindowAdded(Window *window)
     if (m_dragging) {
         window->setDragPreview(true);
         window->setOpacity(kPreviewOpacity);
-        window->setPresentationScale(
-                std::min(kPreviewMaxScale, kPreviewWidth / std::max(1, window->bounds().width())),
-                grabPoint(m_manager, window), false);
+        window->setPresentationScale(previewScale(window), grabPoint(m_manager, window), false);
         m_preview = window->id();
+        m_previewWidth = window->bounds().width();
         startMove(window);
     }
 }
@@ -195,6 +200,14 @@ void ToplevelDrag::dragTargetChanged(compositor::Surface *target, bool accepted)
 
 void ToplevelDrag::onSurfaceCommit(compositor::Surface *surface)
 {
+    // A client that drew the state it mapped without at first resizes now;
+    // the thumbnail keeps its width.
+    if (Window *preview = m_manager->windowById(m_preview);
+        preview && surface == m_surface && m_dragging
+        && preview->bounds().width() != m_previewWidth) {
+        m_previewWidth = preview->bounds().width();
+        preview->setPresentationScale(previewScale(preview), grabPoint(m_manager, preview), false);
+    }
     if (surface != m_dockTarget)
         return;
     unwatchDockTarget();

@@ -62,6 +62,8 @@ struct Toplevel {
     xdg_toplevel *toplevel = nullptr;
     wl_buffer *buffer = nullptr;
     uint32_t configureSerial = 0;
+    bool maximized = false;
+    QSize configuredSize;
 };
 
 struct Client {
@@ -192,7 +194,7 @@ struct Client {
     }
 
     // A toplevel that has had its initial configure but no buffer yet.
-    Toplevel *makeToplevel()
+    Toplevel *makeToplevel(const char *appId = nullptr)
     {
         toplevels.push_back(std::make_unique<Toplevel>());
         Toplevel *toplevel = toplevels.back().get();
@@ -205,6 +207,22 @@ struct Client {
         };
         xdg_surface_add_listener(toplevel->xdgSurface, &surfaceListener, toplevel);
         toplevel->toplevel = xdg_surface_get_toplevel(toplevel->xdgSurface);
+        static const xdg_toplevel_listener toplevelListener = {
+                [](void *data, xdg_toplevel *, int32_t width, int32_t height, wl_array *states) {
+                    auto *toplevel = static_cast<Toplevel *>(data);
+                    toplevel->configuredSize = QSize(width, height);
+                    toplevel->maximized = false;
+                    const auto *state = static_cast<const uint32_t *>(states->data);
+                    for (size_t i = 0; i < states->size / sizeof(uint32_t); ++i)
+                        toplevel->maximized |= state[i] == XDG_TOPLEVEL_STATE_MAXIMIZED;
+                },
+                [](void *, xdg_toplevel *) {},
+                nullptr,
+                nullptr,
+        };
+        xdg_toplevel_add_listener(toplevel->toplevel, &toplevelListener, toplevel);
+        if (appId)
+            xdg_toplevel_set_app_id(toplevel->toplevel, appId);
         wl_surface_commit(toplevel->surface);
         sync();
         return toplevel;
@@ -331,9 +349,9 @@ protected:
 
     // Maps a 300x200 window at (100, 100) and presses the button over it at
     // (150, 150), which is where every drag here starts.
-    Toplevel *mapSourceWindowAndPress(Client &c)
+    Toplevel *mapSourceWindowAndPress(Client &c, const char *appId = nullptr)
     {
-        Toplevel *source = c.makeToplevel();
+        Toplevel *source = c.makeToplevel(appId);
         c.map(source, QSize(300, 200));
         check([&] {
             // Just mapped, so on top.
@@ -454,6 +472,77 @@ TEST_F(XdgToplevelDragProtocolTest, ANewWindowMapsUnderThePointerAndStaysWhereIt
 
         xdg_toplevel_drag_v1_destroy(drag);
         wl_data_source_destroy(source);
+        c.sync();
+    });
+}
+
+// A new window of an application with a maximized window is told to maximize
+// in its initial configure. Qt maps it at that size before the attach reaches
+// the compositor, so it must neither be maximized after it is placed under the
+// pointer nor have its client's resize undone by the move.
+TEST_F(XdgToplevelDragProtocolTest, AnAttachedWindowTakesNoInheritedStateAndMayResize)
+{
+    run([&](Client &c) {
+        Toplevel *origin = mapSourceWindowAndPress(c, "tabs");
+        wl_data_source *source = c.makeSource();
+        auto *drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(c.dragManager, source);
+        wl_data_device_start_drag(c.dataDevice, source, origin->surface, nullptr, c.buttonSerial);
+        c.sync();
+        check([&] {
+            ASSERT_TRUE(seat.drag()->active());
+            windowAt(0)->maximize();
+        });
+
+        Toplevel *detached = c.makeToplevel("tabs");
+        EXPECT_TRUE(detached->maximized);
+        const uint32_t maximizedSerial = detached->configureSerial;
+        xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
+        c.sync();
+        // Normal, at a size of the client's choosing.
+        EXPECT_FALSE(detached->maximized);
+        EXPECT_EQ(QSize(0, 0), detached->configuredSize);
+        EXPECT_NE(maximizedSerial, detached->configureSerial);
+
+        // Drawn for the configure the attach overtook.
+        xdg_surface_ack_configure(detached->xdgSurface, maximizedSerial);
+        wl_buffer *maximizedBuffer = c.makeBuffer(kOutput.size());
+        wl_surface_attach(detached->surface, maximizedBuffer, 0, 0);
+        wl_surface_damage(detached->surface, 0, 0, kOutput.width(), kOutput.height());
+        wl_surface_commit(detached->surface);
+        c.sync();
+        // Nothing holds the client to the size it mapped at.
+        EXPECT_FALSE(detached->maximized);
+        EXPECT_EQ(QSize(0, 0), detached->configuredSize);
+        check([&] {
+            wm::Window *window = windowAt(1);
+            ASSERT_NE(nullptr, window);
+            EXPECT_EQ(wm::WindowStateType::Normal, window->stateType());
+            EXPECT_EQ(QRect(QPoint(130, 140), kOutput.size()), window->bounds());
+            EXPECT_TRUE(window->isDragPreview());
+            EXPECT_DOUBLE_EQ(wm::ToplevelDrag::kPreviewWidth / kOutput.width(),
+                             static_cast<scene::WindowAnimation *>(window->node())
+                                     ->presentationScale());
+        });
+
+        c.map(detached, QSize(200, 150));
+        check([&] {
+            wm::Window *window = windowAt(1);
+            ASSERT_NE(nullptr, window);
+            EXPECT_EQ(QRect(130, 140, 200, 150), window->bounds());
+            EXPECT_DOUBLE_EQ(wm::ToplevelDrag::kPreviewMaxScale,
+                             static_cast<scene::WindowAnimation *>(window->node())
+                                     ->presentationScale());
+            manager.onPointerMotionAbsolute(at(3), QPointF(250, 200));
+            EXPECT_EQ(QRect(230, 190, 200, 150), window->bounds());
+            manager.onPointerButton(at(4), BTN_LEFT, false);
+            EXPECT_EQ(wm::WindowStateType::Normal, window->stateType());
+            EXPECT_EQ(QRect(230, 190, 200, 150), window->bounds());
+        });
+        c.sync();
+
+        xdg_toplevel_drag_v1_destroy(drag);
+        wl_data_source_destroy(source);
+        wl_buffer_destroy(maximizedBuffer);
         c.sync();
     });
 }

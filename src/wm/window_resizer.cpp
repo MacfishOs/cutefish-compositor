@@ -104,6 +104,9 @@ QRect WindowResizer::calculateBoundsForDrag(const QPointF &location) const
 
     QPoint origin = m_initialBounds.topLeft();
     if (!isResize()) {
+        // Unlike ash, a move leaves the size alone: a client may resize while
+        // it is dragged, as a pulled-out tab's window leaving an inherited state does.
+        size = m_window->bounds().size();
         origin += QPoint(deltaX, deltaY);
         if (!m_restoreBounds.isEmpty() && !m_initialBounds.isEmpty()) {
             // The window shrinks back to its restored size under the pointer.

@@ -108,6 +108,8 @@ private:
     quint64 m_dropWindow = 0;
     // The preview, while the drag runs and a little after.
     quint64 m_preview = 0;
+    // The width its thumbnail scale was worked out for.
+    int m_previewWidth = 0;
     // The window of the same process under the drag that takes the drop, or
     // zero. The preview is not drawn over it from its next commit, which the
     // root surface below is watched for.

@@ -423,6 +423,16 @@ void ShellSurface::setFullscreen(bool fullscreen)
         m_manager->clearWindowOutput(m_window);
 }
 
+void ShellSurface::dropInheritedState()
+{
+    if (m_window || !m_initialStateInherited)
+        return;
+    m_initialStateInherited = false;
+    m_initialStateType = WindowStateType::Normal;
+    if (m_initialConfigureSent)
+        configure();
+}
+
 void ShellSurface::setFullscreenOutput(const QString &waylandName)
 {
     m_fullscreenOutputName = waylandName;

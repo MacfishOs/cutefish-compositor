@@ -221,6 +221,12 @@ public:
     void setFullscreen(bool fullscreen);
     void setFullscreenOutput(const QString &waylandName);
 
+    // A toplevel attached to a drag before it maps follows the pointer, so it
+    // maps in the normal state instead of one it would inherit from another
+    // window of its application. The client is configured again if it was
+    // told that state.
+    void dropInheritedState();
+
     // Both validate nothing: the protocol layer checks the serial first.
     // `byTouch` drags with the newest touch point still down on the window,
     // and fails if there is none; otherwise the pointer drags.

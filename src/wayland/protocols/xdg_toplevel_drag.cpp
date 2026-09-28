@@ -42,8 +42,10 @@ void drag_attach(wl_client *, wl_resource *resource, wl_resource *toplevel, int3
     }
     // A toplevel whose xdg_surface or wl_surface is gone has nothing left to move.
     wm::ShellSurface *shellSurface = shellSurfaceForToplevel(toplevel);
-    if (shellSurface && shellSurface->rootSurface())
+    if (shellSurface && shellSurface->rootSurface()) {
+        shellSurface->dropInheritedState();
         drag->attach(shellSurface->rootSurface(), QPoint(x, y));
+    }
 }
 
 const struct xdg_toplevel_drag_v1_interface drag_implementation = {
