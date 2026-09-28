@@ -292,10 +292,30 @@ void DisplayRuntime::replaceOutputs(QList<compositor::Output *> models)
     cursor.setSink(nullptr);
     if (cursorRouter)
         cursorRouter->setTargets({});
-    for (auto *global : outputGlobals)
-        wayland::removeOutputGlobal(global);
+    // A connector that is still there keeps its wl_output global, with the
+    // bindings and capture sources clients hold on it; publish() sends it the
+    // new metrics. Only a connector that went away is withdrawn. Withdrawing
+    // and re-announcing an unchanged output on every reprobe - the seat
+    // activation at startup included - is a hotplug clients need not see, and
+    // one SDL2 cannot survive while it recreates its window.
+    std::vector<wl_global *> kept(models.size(), nullptr);
+    for (int index = 0; index < outputModels.size() && index < int(outputGlobals.size());
+         ++index) {
+        auto *global = outputGlobals[index];
+        if (!global)
+            continue;
+        int next = -1;
+        for (int candidate = 0; candidate < models.size() && next < 0; ++candidate) {
+            if (models.at(candidate)->name == outputModels.at(index)->name && !kept[candidate])
+                next = candidate;
+        }
+        if (next < 0)
+            wayland::removeOutputGlobal(global);
+        else
+            kept[next] = global;
+    }
     outputGlobal = nullptr;
-    outputGlobals.assign(models.size(), nullptr);
+    outputGlobals = std::move(kept);
     outputModels = std::move(models);
     bindFrames();
 }
@@ -324,6 +344,14 @@ std::optional<HardwareSnapshot> DisplayRuntime::reprobe()
                                    displayManager.hardware()->topologyGeneration + 1, identity);
     replaceOutputs(models);
     ownedModels = std::move(replacement);
+    // A display that went away takes its power state and wake-on-input entry
+    // along, or every later input event would try to power it on.
+    QSet<DisplayId> present;
+    for (const auto &display : hardware.displays)
+        present.insert(display.sessionId);
+    for (auto it = powerStates.begin(); it != powerStates.end();)
+        it = present.contains(it.key()) ? std::next(it) : powerStates.erase(it);
+    wakeOnInput.intersect(present);
     return hardware;
 }
 
@@ -1050,6 +1078,12 @@ ConfigurationResult DisplayRuntime::setPower(const QList<DisplayId> &displays,
             wakeOnInput.insert(physical.sessionId);
     }
     powerStates = std::move(next);
+    // With every display off nothing draws, so closing windows are done now
+    // rather than kept, snapshot and all, until a display comes back.
+    if (std::all_of(displayManager.applied()->physicalDisplays.begin(),
+                    displayManager.applied()->physicalDisplays.end(),
+                    [this](const auto &physical) { return isPoweredOff(physical.sessionId); }))
+        scene.retireClosing();
     if (backend && secureScanout && securelyPresented) {
         for (size_t index = 0; index < backend->allOutputs().size(); ++index) {
             if (backend->allOutputs()[index]->lastPresentedFrameWasSecure())
@@ -1074,10 +1108,10 @@ void DisplayRuntime::requireNativeRecovery()
 void DisplayRuntime::publish()
 {
     if (!displayManager.applied()) {
-        for (auto *&global : outputGlobals) {
-            cutefish::wayland::removeOutputGlobal(global);
-            global = nullptr;
-        }
+        // Unpublished, not gone: the connectors are still there, so their
+        // wl_output globals stay announced with their last metrics and are
+        // brought up to date by the next publication. replaceOutputs()
+        // withdraws the ones a reprobe finds missing.
         outputGlobal = nullptr;
         compositor.setOutputViews({});
         inputManager.setTopology({});
@@ -1099,6 +1133,10 @@ void DisplayRuntime::publish()
             maximumScaleChanged(scale);
     }
     const auto &models = outputModels;
+    // The topology coordinator's empty baseline, between a reprobe and the
+    // configuration it reconciles: no display is disabled by it, so no global
+    // is withdrawn for it.
+    const bool baseline = displayManager.applied()->logicalDisplays.isEmpty();
     QList<cutefish::compositor::Compositor::OutputView> views;
     QList<QRect> topology;
     QSet<QString> logicalViews;
@@ -1126,7 +1164,7 @@ void DisplayRuntime::publish()
                     published && logical->primary
                     && displayManager.applied()->logicalDisplays.size() == 1
                     && logical->destinations.size() == 1);
-        if (!published && index < int(outputGlobals.size()) && outputGlobals[index]) {
+        if (!published && !baseline && index < int(outputGlobals.size()) && outputGlobals[index]) {
             if (outputGlobal == outputGlobals[index])
                 outputGlobal = nullptr;
             cutefish::wayland::removeOutputGlobal(outputGlobals[index]);

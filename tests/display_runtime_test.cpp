@@ -511,6 +511,71 @@ TEST_F(DisplayRuntimeTest, HotplugRestoresSavedMirrorAfterPrimaryRemovalAndZeroO
     EXPECT_EQ(saved.readAll(), bytes);
 }
 
+// The seat activation at startup reprobes, and SDL2 cannot survive its only
+// output being withdrawn and re-announced while it recreates its window.
+TEST_F(DisplayRuntimeTest, AReprobeKeepsTheOutputGlobalOfAConnectorThatStays)
+{
+    ASSERT_TRUE(apply(request()).succeeded);
+    ASSERT_EQ(globals.size(), 2u);
+    wl_global *const firstGlobal = globals[0];
+    wl_global *const secondGlobal = globals[1];
+    ASSERT_NE(firstGlobal, nullptr);
+    ASSERT_NE(secondGlobal, nullptr);
+
+    runtime->replaceOutputs({&second, &first});
+    ASSERT_EQ(globals.size(), 2u);
+    EXPECT_EQ(globals[0], secondGlobal);
+    EXPECT_EQ(globals[1], firstGlobal);
+
+    runtime->replaceOutputs({&first});
+    ASSERT_EQ(globals.size(), 1u);
+    EXPECT_EQ(globals[0], firstGlobal);
+
+    compositor::Output other;
+    other.name = QStringLiteral("Virtual-3");
+    other.model = other.name;
+    runtime->replaceOutputs({&other, &first});
+    ASSERT_EQ(globals.size(), 2u);
+    EXPECT_EQ(globals[0], nullptr);
+    EXPECT_EQ(globals[1], firstGlobal);
+    runtime->replaceOutputs({&first, &second});
+}
+
+// Between a reprobe and the configuration it reconciles, the coordinator
+// installs a baseline with no logical display. That disables nothing, so no
+// client sees its output go away and come back.
+TEST_F(DisplayRuntimeTest, TheRecoveryBaselineKeepsTheOutputGlobals)
+{
+    ASSERT_TRUE(apply(request()).succeeded);
+    wl_global *const firstGlobal = globals[0];
+    wl_global *const secondGlobal = globals[1];
+    ASSERT_NE(firstGlobal, nullptr);
+    ASSERT_NE(secondGlobal, nullptr);
+
+    const auto hardware = *manager.hardware();
+    manager.clearApplied(hardware.topologyGeneration);
+    EXPECT_FALSE(manager.applied());
+    EXPECT_EQ(globals[0], firstGlobal);
+    EXPECT_EQ(globals[1], secondGlobal);
+    EXPECT_EQ(primaryGlobal, nullptr);
+
+    display::AppliedConfiguration empty;
+    empty.compositorInstanceId = hardware.compositorInstanceId;
+    empty.topologyGeneration = hardware.topologyGeneration;
+    empty.revision = 1000;
+    empty.physicalDisplays = hardware.displays;
+    for (auto &physical : empty.physicalDisplays)
+        physical.currentMode.reset();
+    ASSERT_TRUE(manager.installApplied(empty));
+    EXPECT_EQ(globals[0], firstGlobal);
+    EXPECT_EQ(globals[1], secondGlobal);
+
+    ASSERT_TRUE(apply(request()).succeeded);
+    EXPECT_EQ(globals[0], firstGlobal);
+    EXPECT_EQ(globals[1], secondGlobal);
+    EXPECT_EQ(primaryGlobal, firstGlobal);
+}
+
 TEST_F(DisplayRuntimeTest, InvalidationCancelsQueuedCommitBeforeNativeExecution)
 {
     int commits = 0;
