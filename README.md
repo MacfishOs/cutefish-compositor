@@ -9,9 +9,9 @@ switcher are drawn with Qt Quick.
 
 ## Dependencies
 
-Qt 6.8 or newer is required. At runtime it needs `adwaita-icon-theme` for
-cursors and `xwayland` for X11 applications. Tests additionally need
-`libgtest-dev`.
+Qt 6.8 and libwayland 1.23 or newer are required. At runtime it needs
+`adwaita-icon-theme` for cursors and `xwayland` for X11 applications. Tests
+additionally need `libgtest-dev`.
 
 ## Build
 

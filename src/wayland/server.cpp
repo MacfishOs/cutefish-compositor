@@ -51,6 +51,10 @@ Server::Server(QObject* parent)
         return;
     }
 
+    // A client that stops reading while it works through a burst of input
+    // (GTK does) otherwise overflows the default 4 KiB and is disconnected.
+    wl_display_set_default_max_buffer_size(m_display.get(), 1024 * 1024);
+
     displayServerMap().emplace(m_display.get(), this);
     m_serialTracker = std::make_unique<SerialTracker>(m_display.get());
     m_clientTracker = std::make_unique<ClientTracker>(m_display.get());
