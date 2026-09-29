@@ -108,6 +108,13 @@ struct Environment {
     // as the dock does; false when the window is gone.
     std::function<std::vector<WindowInfo>()> windows;
     std::function<bool(quint64 id)> activateWindow;
+    // A window of a process that shows system dialogs. Closing and setting
+    // the frame return false when the window is gone or cannot take it.
+    std::function<bool(quint64 id)> protectedWindow;
+    std::function<bool(quint64 id)> closeWindow;
+    std::function<bool(quint64 id, const QRect &frame)> setWindowFrame;
+    // Replaces the clipboard with UTF-8 text.
+    std::function<void(const std::string &text)> setClipboard;
     std::function<input::Timestamp()> now;
 };
 
@@ -194,6 +201,9 @@ public:
     void typeText(const std::string &text);
     void listWindows();
     void activateWindow(uint32_t handle);
+    void closeWindow(uint32_t handle);
+    void setWindowFrame(uint32_t handle, const QRect &frame);
+    void setClipboard(const std::string &text);
     void queryPointer();
 
 private:
@@ -209,6 +219,8 @@ private:
             const QString &agentName);
 
     void stroke(const input::KeyStroke &stroke);
+    void changeWindow(uint32_t handle, bool guarded,
+                      const std::function<bool(quint64 id)> &change);
 
     Controller *m_controller;
     ControlClient *const m_client;

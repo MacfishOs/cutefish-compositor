@@ -29,6 +29,7 @@
 #include "backend/headless/headless_backend.h"
 #include "backend/input/libinput_backend.h"
 #include "backend/session/libseat_session.h"
+#include "clipboard/stored_source.h"
 #include "compositor/surface.h"
 #include "computer_control/computer_control_service.h"
 #include "computer_control/controller.h"
@@ -73,6 +74,7 @@
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
 #include "wm/window_state.h"
+#include "wm/wm_event.h"
 
 #ifdef CUTEFISH_ENABLE_XWAYLAND
 #include "xwayland/xwayland_server.h"
@@ -311,6 +313,61 @@ void CompositorShell::initComputerControl()
             return false;
         m_windowManager.activation()->activate(window);
         return true;
+    };
+    environment.protectedWindow = [this, showsSystemDialogs](quint64 id) {
+        wm::Window *window = m_windowManager.windowById(id);
+        return window && showsSystemDialogs(window->processId());
+    };
+    // What the close button does (commands::closeWindow).
+    environment.closeWindow = [this](quint64 id) {
+        wm::Window *window = m_windowManager.windowById(id);
+        if (!window || !wm::canIncludeWindowInMruList(window) || !window->canClose())
+            return false;
+        window->requestClose();
+        return true;
+    };
+    // A window out of view is brought back with activateWindow first, so the
+    // agent sees what it moves.
+    environment.setWindowFrame = [this](quint64 id, const QRect &frame) {
+        wm::Window *window = m_windowManager.windowById(id);
+        if (!window || !wm::canIncludeWindowInMruList(window) || window->isHidden()
+            || window->isDeskHidden() || window->state()->isMinimized())
+            return false;
+        QRect bounds = frame;
+        if (!window->isResizable()) {
+            bounds.setSize(window->bounds().size());
+        } else {
+            // No larger than the work area, as a resize by hand (WindowResizer).
+            QSize maximum = m_windowManager.workAreaFor(window).size();
+            if (const QSize limit = window->maximumOuterSize(); !limit.isEmpty())
+                maximum = maximum.isEmpty() ? limit : maximum.boundedTo(limit);
+            if (!maximum.isEmpty()) {
+                bounds.setWidth(std::min(bounds.width(), maximum.width()));
+                bounds.setHeight(std::min(bounds.height(), maximum.height()));
+            }
+        }
+        wm::WindowState *state = window->state();
+        // As Ash's tiling does: a tiled window leaves its state for the bounds.
+        if (!state->isNormal()) {
+            state->setRestoreBounds(bounds);
+            state->onEvent(wm::WMEvent(wm::WMEventType::Normal));
+        } else {
+            window->requestBounds(bounds);
+        }
+        // Placed like a window moved by hand: nothing left to restore to.
+        state->clearRestoreBounds();
+        return true;
+    };
+    // The text as wl-copy offers it, so Xwayland clients get it too.
+    environment.setClipboard = [this](const std::string &text) {
+        auto source = std::make_shared<clipboard::StoredSource>();
+        const QByteArray data = QByteArray::fromStdString(text);
+        for (const char *mime : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING",
+                                 "STRING", "TEXT"}) {
+            source->offer(mime);
+            source->payloads[mime] = data;
+        }
+        m_seat.selection()->setSource(std::move(source));
     };
     m_computerControl = std::make_unique<computer_control::Controller>(&m_inputManager,
                                                                        std::move(environment));

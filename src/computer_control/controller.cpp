@@ -457,6 +457,29 @@ void Control::listWindows()
 
 void Control::activateWindow(uint32_t handle)
 {
+    changeWindow(handle, false, m_controller ? m_controller->m_environment.activateWindow
+                                             : std::function<bool(quint64)> {});
+}
+
+void Control::closeWindow(uint32_t handle)
+{
+    changeWindow(handle, true, m_controller ? m_controller->m_environment.closeWindow
+                                            : std::function<bool(quint64)> {});
+}
+
+void Control::setWindowFrame(uint32_t handle, const QRect &frame)
+{
+    std::function<bool(quint64)> change;
+    if (m_controller && m_controller->m_environment.setWindowFrame) {
+        change = [this, frame](quint64 id) {
+            return m_controller->m_environment.setWindowFrame(id, frame);
+        };
+    }
+    changeWindow(handle, true, change);
+}
+
+void Control::setClipboard(const std::string &text)
+{
     Controller *controller = m_controller;
     if (!controller) {
         m_client->rejected(Rejection::NotGranted);
@@ -464,16 +487,8 @@ void Control::activateWindow(uint32_t handle)
     }
     if (!controller->admits(this))
         return;
-    const auto &environment = controller->m_environment;
-    const auto window = m_handleWindows.find(handle);
-    bool activated = false;
-    if (window != m_handleWindows.end() && environment.activateWindow) {
-        controller->inject([&] {
-            activated = environment.activateWindow(window->second);
-        });
-    }
-    if (!activated)
-        m_client->rejected(Rejection::NoWindow);
+    if (controller->m_environment.setClipboard)
+        controller->m_environment.setClipboard(text);
 }
 
 void Control::queryPointer()
@@ -485,6 +500,32 @@ void Control::queryPointer()
     }
     if (controller->granted(this))
         m_client->pointer(controller->m_input->pointerPosition());
+}
+
+void Control::changeWindow(uint32_t handle, bool guarded,
+                           const std::function<bool(quint64 id)> &change)
+{
+    Controller *controller = m_controller;
+    if (!controller) {
+        m_client->rejected(Rejection::NotGranted);
+        return;
+    }
+    const auto &environment = controller->m_environment;
+    const auto window = m_handleWindows.find(handle);
+    const bool known = window != m_handleWindows.end();
+    if (!controller->admits(this, [&] {
+            return guarded && known && environment.protectedWindow
+                    && environment.protectedWindow(window->second);
+        }))
+        return;
+    bool changed = false;
+    if (known && change) {
+        controller->inject([&] {
+            changed = change(window->second);
+        });
+    }
+    if (!changed)
+        m_client->rejected(Rejection::NoWindow);
 }
 
 void Control::stroke(const input::KeyStroke &stroke)

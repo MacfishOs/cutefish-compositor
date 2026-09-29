@@ -16,68 +16,18 @@
 #include <unistd.h>
 #include <xcb/xfixes.h>
 
+#include "clipboard/stored_source.h"
+
 namespace cutefish::xwayland {
 namespace {
 constexpr uint32_t chunkSize = 64 * 1024;
 constexpr size_t transferLimit = 64;
 } // namespace
 
-namespace {
-class StoredSource : public clipboard::DataSource
-{
-public:
-    std::map<std::string, QByteArray> payloads;
-
-    void send(const std::string &mime, int fd) override
-    {
-        auto it = payloads.find(mime);
-        if (it == payloads.end() || fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) < 0) {
-            close(fd);
-            return;
-        }
-
-        struct Writer : QObject {
-            int fd;
-            QByteArray data;
-            qsizetype offset = 0;
-            QSocketNotifier notifier;
-            QTimer timeout;
-
-            Writer(int fd, QByteArray data)
-                : fd(fd)
-                , data(std::move(data))
-                , notifier(fd, QSocketNotifier::Write)
-            {
-                timeout.setSingleShot(true);
-                timeout.start(10000);
-                connect(&timeout, &QTimer::timeout, this, &QObject::deleteLater);
-                connect(&notifier, &QSocketNotifier::activated, this, [this] {
-                    auto count = write(this->fd, this->data.constData() + offset,
-                                       this->data.size() - offset);
-                    if (count > 0) {
-                        offset += count;
-                        timeout.start(10000);
-                    }
-                    if (offset == this->data.size()
-                        || (count < 0 && errno != EAGAIN && errno != EINTR)) {
-                        notifier.setEnabled(false);
-                        deleteLater();
-                    }
-                });
-            }
-
-            ~Writer() override { close(fd); }
-        };
-
-        new Writer(fd, it->second);
-    }
-};
-} // namespace
-
 struct SelectionBridge::Save {
     xcb_selection_request_event_t request {};
     std::shared_ptr<Source> source;
-    std::shared_ptr<StoredSource> stored = std::make_shared<StoredSource>();
+    std::shared_ptr<clipboard::StoredSource> stored = std::make_shared<clipboard::StoredSource>();
     std::vector<xcb_atom_t> requested;
     std::vector<std::string> formats;
     size_t index = 0;

@@ -7,9 +7,11 @@
 // Revision: 8abbac30b9cf2fe976422c58c000c94685648b65
 
 #include <QString>
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -115,6 +117,10 @@ protected:
     std::vector<std::string> commits;
     std::vector<WindowInfo> windows;
     std::vector<quint64> activations;
+    std::optional<quint64> protectedWindow;
+    std::vector<quint64> closes;
+    std::vector<std::pair<quint64, QRect>> frames;
+    std::vector<std::string> clipboards;
     std::vector<bool> activeChanges;
     std::unique_ptr<Controller> controller;
 
@@ -167,6 +173,29 @@ protected:
                 }
             }
             return false;
+        };
+        const auto listed = [this](quint64 id) {
+            return std::any_of(windows.begin(), windows.end(), [id](const WindowInfo &window) {
+                return window.id == id;
+            });
+        };
+        environment.protectedWindow = [this](quint64 id) {
+            return protectedWindow == id;
+        };
+        environment.closeWindow = [this, listed](quint64 id) {
+            if (!listed(id))
+                return false;
+            closes.push_back(id);
+            return true;
+        };
+        environment.setWindowFrame = [this, listed](quint64 id, const QRect &frame) {
+            if (!listed(id))
+                return false;
+            frames.emplace_back(id, frame);
+            return true;
+        };
+        environment.setClipboard = [this](const std::string &text) {
+            clipboards.push_back(text);
         };
         controller = std::make_unique<Controller>(&input, std::move(environment));
         QObject::connect(controller.get(), &Controller::activeChanged, [this](bool active) {
@@ -594,4 +623,63 @@ TEST_F(ComputerControlTest, AWindowIsActivatedByItsHandle)
     control->activateWindow(1);
     EXPECT_EQ(Rejection::Paused, client.rejections.back());
     EXPECT_EQ(std::vector<quint64> {3}, activations);
+}
+
+TEST_F(ComputerControlTest, TheClipboardIsSetOnlyWhileGrantedAndNotPaused)
+{
+    FakeClient client;
+    auto control = controller->request(&client, &client, QStringLiteral("Agent"));
+    control->setClipboard("pending");
+    EXPECT_EQ(std::vector<Rejection> {Rejection::NotGranted}, client.rejections);
+
+    answer(ConsentResult::Allowed);
+    control->setClipboard("line one\nline two");
+    EXPECT_EQ(std::vector<std::string> {"line one\nline two"}, clipboards);
+
+    // It replaces what the user copied, so it waits for the user too.
+    input.onPointerMotion(clock, QPointF(1, 0));
+    control->setClipboard("while typing");
+    EXPECT_EQ(Rejection::Paused, client.rejections.back());
+    EXPECT_EQ(1u, clipboards.size());
+}
+
+TEST_F(ComputerControlTest, AWindowIsClosedAndPlacedByItsHandle)
+{
+    windows = {{7, QStringLiteral("gedit"), QStringLiteral("Notes"), QRect(), 0},
+               {3, QStringLiteral("polkit"), QStringLiteral("Authenticate"), QRect(), 0}};
+    protectedWindow = 3;
+    FakeClient client;
+    auto control = grant(client);
+
+    control->closeWindow(1);
+    EXPECT_EQ(std::vector<Rejection> {Rejection::NoWindow}, client.rejections);
+
+    control->listWindows();
+    control->closeWindow(1);
+    control->setWindowFrame(1, QRect(10, 20, 300, 200));
+    EXPECT_EQ(std::vector<quint64> {7}, closes);
+    using Frames = std::vector<std::pair<quint64, QRect>>;
+    EXPECT_EQ((Frames {{7, QRect(10, 20, 300, 200)}}), frames);
+
+    // The dialogs that answer for the user are left alone, though bringing
+    // one forward is harmless.
+    control->closeWindow(2);
+    control->setWindowFrame(2, QRect(0, 0, 100, 100));
+    EXPECT_EQ((std::vector<Rejection> {Rejection::NoWindow, Rejection::Protected,
+                                       Rejection::Protected}),
+              client.rejections);
+    control->activateWindow(2);
+    EXPECT_EQ(std::vector<quint64> {3}, activations);
+    EXPECT_EQ(3u, client.rejections.size());
+
+    windows.erase(windows.begin());
+    control->closeWindow(1);
+    control->setWindowFrame(1, QRect(0, 0, 100, 100));
+    EXPECT_EQ(Rejection::NoWindow, client.rejections[3]);
+    EXPECT_EQ(Rejection::NoWindow, client.rejections[4]);
+
+    input.onPointerMotion(clock, QPointF(1, 0));
+    control->closeWindow(2);
+    EXPECT_EQ(Rejection::Paused, client.rejections.back());
+    EXPECT_EQ(std::vector<quint64> {7}, closes);
 }

@@ -4,11 +4,16 @@
 
 #include "wayland/protocols/cutefish_computer_control.h"
 
+#include <cerrno>
 #include <memory>
 #include <optional>
+#include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
 
 #include <QPointF>
+#include <QRect>
 
 #include <cutefish-computer-control-v1-server-protocol.h>
 
@@ -78,6 +83,36 @@ std::optional<bool> pressed(wl_resource *resource, uint32_t state)
     return state == CUTEFISH_COMPUTER_CONTROL_V1_STATE_PRESSED;
 }
 
+// Only a regular file is read at once, so the client cannot keep the
+// compositor waiting.
+constexpr off_t kClipboardLimit = 16 * 1024 * 1024;
+
+// Returns the text, or nothing after posting the error. Closes the fd.
+std::optional<std::string> readClipboard(wl_resource *resource, int fd)
+{
+    struct stat info {};
+    if (fstat(fd, &info) < 0 || !S_ISREG(info.st_mode) || info.st_size > kClipboardLimit) {
+        close(fd);
+        wl_resource_post_error(resource, CUTEFISH_COMPUTER_CONTROL_V1_ERROR_INVALID_CLIPBOARD,
+                               "the fd must be a regular file of at most 16 MiB");
+        return std::nullopt;
+    }
+    std::string text(static_cast<size_t>(info.st_size), '\0');
+    size_t done = 0;
+    while (done < text.size()) {
+        const ssize_t count = pread(fd, text.data() + done, text.size() - done,
+                                    static_cast<off_t>(done));
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            break;
+        done += static_cast<size_t>(count);
+    }
+    close(fd);
+    text.resize(done);
+    return text;
+}
+
 void destroy(wl_client *, wl_resource *resource)
 {
     wl_resource_destroy(resource);
@@ -114,6 +149,17 @@ const struct cutefish_computer_control_v1_interface controlImplementation = {
         },
         [](wl_client *, wl_resource *resource) {
             controlOf(resource)->queryPointer();
+        },
+        [](wl_client *, wl_resource *resource, uint32_t handle) {
+            controlOf(resource)->closeWindow(handle);
+        },
+        [](wl_client *, wl_resource *resource, uint32_t handle, int32_t x, int32_t y,
+           int32_t width, int32_t height) {
+            controlOf(resource)->setWindowFrame(handle, QRect(x, y, width, height));
+        },
+        [](wl_client *, wl_resource *resource, int32_t fd) {
+            if (const auto text = readClipboard(resource, fd))
+                controlOf(resource)->setClipboard(*text);
         },
 };
 

@@ -386,6 +386,8 @@ target_link_libraries(cutefish-input-method-settings PUBLIC Qt6::Core Qt6::DBus)
 add_library(cutefish-input STATIC
     src/clipboard/selection.cpp
     src/clipboard/selection.h
+    src/clipboard/stored_source.cpp
+    src/clipboard/stored_source.h
     src/input/types.cpp
     src/input/types.h
     src/input/xkb_tracker.cpp
