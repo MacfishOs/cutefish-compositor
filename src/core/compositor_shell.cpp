@@ -72,6 +72,7 @@
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
+#include "wm/window_state.h"
 
 #ifdef CUTEFISH_ENABLE_XWAYLAND
 #include "xwayland/xwayland_server.h"
@@ -272,6 +273,44 @@ void CompositorShell::initComputerControl()
     };
     environment.sessionBlocked = [this] {
         return m_sessionController.isBlocked();
+    };
+    // Every desk's windows, as Ash's autotest API lists them
+    // (ash/autotest_private_api_utils.cc, GetAppWindowList).
+    environment.windows = [this] {
+        std::vector<computer_control::WindowInfo> windows;
+        for (wm::Window *window : m_windowManager.mruWindowTracker()->buildMruWindowList()) {
+            computer_control::WindowInfo info;
+            info.id = window->id();
+            info.applicationId = window->applicationId();
+            info.title = window->title();
+            info.bounds = window->bounds();
+            if (window->isActive())
+                info.flags |= computer_control::WindowInfo::Active;
+            if (window->state()->isMinimized())
+                info.flags |= computer_control::WindowInfo::Minimized;
+            if (window->isHidden())
+                info.flags |= computer_control::WindowInfo::Hidden;
+            if (window->isDeskHidden())
+                info.flags |= computer_control::WindowInfo::OtherDesk;
+            windows.push_back(info);
+        }
+        return windows;
+    };
+    // What the dock's click on a task does; each step can end the window.
+    environment.activateWindow = [this](quint64 id) {
+        wm::Window *window = m_windowManager.windowById(id);
+        if (!window || !wm::canIncludeWindowInMruList(window))
+            return false;
+        m_windowManager.unhideApplication(window);
+        window->setHidden(false);
+        window = m_windowManager.windowById(id);
+        if (window && window->state()->isMinimized())
+            window->restore();
+        window = m_windowManager.windowById(id);
+        if (!window)
+            return false;
+        m_windowManager.activation()->activate(window);
+        return true;
     };
     m_computerControl = std::make_unique<computer_control::Controller>(&m_inputManager,
                                                                        std::move(environment));

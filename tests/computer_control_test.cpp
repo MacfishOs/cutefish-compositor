@@ -11,6 +11,7 @@
 #include <linux/input-event-codes.h>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -67,10 +68,22 @@ public:
     int granteds = 0;
     std::vector<RevokeReason> revokes;
     std::vector<Rejection> rejections;
+    // Handle and title of each window event since the last windows_done.
+    std::vector<std::pair<uint32_t, QString>> windows;
+    int windowsDones = 0;
+    std::vector<QPointF> pointers;
 
     void granted() override { ++granteds; }
     void revoked(RevokeReason reason) override { revokes.push_back(reason); }
     void rejected(Rejection rejection) override { rejections.push_back(rejection); }
+
+    void window(uint32_t handle, const WindowInfo &window) override
+    {
+        windows.emplace_back(handle, window.title);
+    }
+
+    void windowsDone() override { ++windowsDones; }
+    void pointer(const QPointF &position) override { pointers.push_back(position); }
 };
 
 std::string key(uint32_t code, bool pressed)
@@ -100,6 +113,8 @@ protected:
     bool blocked = false;
     bool commitAccepted = true;
     std::vector<std::string> commits;
+    std::vector<WindowInfo> windows;
+    std::vector<quint64> activations;
     std::vector<bool> activeChanges;
     std::unique_ptr<Controller> controller;
 
@@ -140,6 +155,18 @@ protected:
         };
         environment.now = [this] {
             return clock;
+        };
+        environment.windows = [this] {
+            return windows;
+        };
+        environment.activateWindow = [this](quint64 id) {
+            for (const WindowInfo &window : windows) {
+                if (window.id == id) {
+                    activations.push_back(id);
+                    return true;
+                }
+            }
+            return false;
         };
         controller = std::make_unique<Controller>(&input, std::move(environment));
         QObject::connect(controller.get(), &Controller::activeChanged, [this](bool active) {
@@ -502,4 +529,69 @@ TEST_F(ComputerControlTest, AControlOutlivingTheControllerRefusesEverything)
     EXPECT_TRUE(sink.events.empty());
     EXPECT_EQ(std::vector<Rejection> {Rejection::NotGranted}, client.rejections);
     control.reset();
+}
+
+TEST_F(ComputerControlTest, WindowsAreListedWhileGranted)
+{
+    windows = {{7, QStringLiteral("gedit"), QStringLiteral("Notes"), QRect(10, 20, 300, 200),
+                WindowInfo::Active},
+               {3, QStringLiteral("firefox"), QStringLiteral("Mail"), QRect(), 0}};
+    FakeClient client;
+    auto control = controller->request(&client, &client, QStringLiteral("Agent"));
+    control->listWindows();
+    control->queryPointer();
+    EXPECT_EQ((std::vector<Rejection> {Rejection::NotGranted, Rejection::NotGranted}),
+              client.rejections);
+    EXPECT_TRUE(client.windows.empty());
+    EXPECT_EQ(0, client.windowsDones);
+    EXPECT_TRUE(client.pointers.empty());
+
+    answer(ConsentResult::Allowed);
+    control->listWindows();
+    using Listed = std::vector<std::pair<uint32_t, QString>>;
+    EXPECT_EQ((Listed {{1, QStringLiteral("Notes")}, {2, QStringLiteral("Mail")}}),
+              client.windows);
+    EXPECT_EQ(1, client.windowsDones);
+
+    // A window keeps its handle in a later list, in whatever order.
+    windows = {windows[1], {9, QString(), QStringLiteral("New"), QRect(), 0}, windows[0]};
+    client.windows.clear();
+    control->listWindows();
+    EXPECT_EQ((Listed {{2, QStringLiteral("Mail")}, {3, QStringLiteral("New")},
+                       {1, QStringLiteral("Notes")}}),
+              client.windows);
+
+    control->motion(QPointF(40, 30));
+    control->queryPointer();
+    EXPECT_EQ(std::vector<QPointF> {QPointF(40, 30)}, client.pointers);
+    EXPECT_EQ(2u, client.rejections.size());
+}
+
+TEST_F(ComputerControlTest, AWindowIsActivatedByItsHandle)
+{
+    windows = {{7, QStringLiteral("gedit"), QStringLiteral("Notes"), QRect(), 0},
+               {3, QStringLiteral("firefox"), QStringLiteral("Mail"), QRect(), 0}};
+    FakeClient client;
+    auto control = grant(client);
+
+    // Only handles this control listed name a window.
+    control->activateWindow(1);
+    EXPECT_EQ(std::vector<Rejection> {Rejection::NoWindow}, client.rejections);
+
+    control->listWindows();
+    control->activateWindow(2);
+    EXPECT_EQ(std::vector<quint64> {3}, activations);
+
+    windows.pop_back();
+    control->activateWindow(2);
+    control->activateWindow(99);
+    EXPECT_EQ((std::vector<Rejection> {Rejection::NoWindow, Rejection::NoWindow,
+                                       Rejection::NoWindow}),
+              client.rejections);
+
+    // Activation changes what the user's keys reach, so it waits for them too.
+    input.onPointerMotion(clock, QPointF(1, 0));
+    control->activateWindow(1);
+    EXPECT_EQ(Rejection::Paused, client.rejections.back());
+    EXPECT_EQ(std::vector<quint64> {3}, activations);
 }

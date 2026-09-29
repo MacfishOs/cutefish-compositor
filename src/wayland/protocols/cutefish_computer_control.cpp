@@ -22,6 +22,7 @@ using computer_control::Control;
 using computer_control::Controller;
 using computer_control::Rejection;
 using computer_control::RevokeReason;
+using computer_control::WindowInfo;
 
 struct ControlResource final : computer_control::ControlClient {
     explicit ControlResource(wl_resource *resource)
@@ -39,6 +40,22 @@ struct ControlResource final : computer_control::ControlClient {
     void rejected(Rejection rejection) override
     {
         cutefish_computer_control_v1_send_rejected(resource, static_cast<uint32_t>(rejection));
+    }
+
+    void window(uint32_t handle, const WindowInfo &window) override
+    {
+        cutefish_computer_control_v1_send_window(
+                resource, handle, window.applicationId.toUtf8().constData(),
+                window.title.toUtf8().constData(), window.bounds.x(), window.bounds.y(),
+                window.bounds.width(), window.bounds.height(), window.flags);
+    }
+
+    void windowsDone() override { cutefish_computer_control_v1_send_windows_done(resource); }
+
+    void pointer(const QPointF &position) override
+    {
+        cutefish_computer_control_v1_send_pointer(resource, wl_fixed_from_double(position.x()),
+                                                  wl_fixed_from_double(position.y()));
     }
 
     wl_resource *const resource;
@@ -88,6 +105,15 @@ const struct cutefish_computer_control_v1_interface controlImplementation = {
         },
         [](wl_client *, wl_resource *resource, const char *text) {
             controlOf(resource)->typeText(text);
+        },
+        [](wl_client *, wl_resource *resource) {
+            controlOf(resource)->listWindows();
+        },
+        [](wl_client *, wl_resource *resource, uint32_t handle) {
+            controlOf(resource)->activateWindow(handle);
+        },
+        [](wl_client *, wl_resource *resource) {
+            controlOf(resource)->queryPointer();
         },
 };
 

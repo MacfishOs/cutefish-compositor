@@ -12,6 +12,7 @@
 
 #include <QObject>
 #include <QPointF>
+#include <QRect>
 #include <QString>
 #include <chrono>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "input/types.h"
 #include "input/xkb_tracker.h"
@@ -45,6 +47,24 @@ enum class Rejection : uint32_t {
     Paused = 1,
     Protected = 2,
     Untypable = 3,
+    NoWindow = 4,
+};
+
+// An application window as the agent sees it.
+struct WindowInfo {
+    // The value is cutefish_computer_control_v1's window_state.
+    enum Flag : uint32_t {
+        Active = 1,
+        Minimized = 2,
+        Hidden = 4,
+        OtherDesk = 8,
+    };
+
+    quint64 id = 0;
+    QString applicationId;
+    QString title;
+    QRect bounds;
+    uint32_t flags = 0;
 };
 
 enum class ConsentResult {
@@ -62,6 +82,9 @@ public:
     virtual void granted() = 0;
     virtual void revoked(RevokeReason reason) = 0;
     virtual void rejected(Rejection rejection) = 0;
+    virtual void window(uint32_t handle, const WindowInfo &window) = 0;
+    virtual void windowsDone() = 0;
+    virtual void pointer(const QPointF &position) = 0;
 };
 
 // What the controller asks of the rest of the compositor.
@@ -81,6 +104,10 @@ struct Environment {
     std::function<bool()> inputMethodGrabsKeyboard;
     std::function<bool(const std::string &text)> commitText;
     std::function<bool()> sessionBlocked;
+    // Application windows, most recently used first, and bringing one forward
+    // as the dock does; false when the window is gone.
+    std::function<std::vector<WindowInfo>()> windows;
+    std::function<bool(quint64 id)> activateWindow;
     std::function<input::Timestamp()> now;
 };
 
@@ -126,6 +153,8 @@ private:
     input::Timestamp now() const;
     bool paused(const Control *control) const;
 
+    // Whether `control` is granted, telling its client otherwise.
+    bool granted(Control *control);
     // Whether `control` may inject now, telling its client why not otherwise.
     // `protectedTarget` is asked last, once nothing else refuses.
     bool admits(Control *control, const std::function<bool()> &protectedTarget = {});
@@ -163,6 +192,9 @@ public:
     // The key that types `keysym` on the current layout, as `key`.
     void keysym(uint32_t keysym, bool pressed);
     void typeText(const std::string &text);
+    void listWindows();
+    void activateWindow(uint32_t handle);
+    void queryPointer();
 
 private:
     friend class Controller;
@@ -189,6 +221,9 @@ private:
     std::set<uint32_t> m_keys;
     // The key each keysym press pressed, for its release after a layout change.
     std::map<uint32_t, uint32_t> m_keysymKeys;
+    // The handle of each window listed so far, and back.
+    std::map<quint64, uint32_t> m_windowHandles;
+    std::map<uint32_t, quint64> m_handleWindows;
 };
 
 } // namespace cutefish::computer_control

@@ -133,17 +133,26 @@ bool Controller::paused(const Control *control) const
     return (seat->pressedButtons() & ~agentButtons) != input::NoButton;
 }
 
-bool Controller::admits(Control *control, const std::function<bool()> &protectedTarget)
+bool Controller::granted(Control *control)
 {
     // A block that has not reached sessionBlocked() yet still ends the control.
     if (control->m_state == Control::State::Granted && m_environment.sessionBlocked
         && m_environment.sessionBlocked())
         end(control, RevokeReason::Locked);
 
+    if (control->m_state == Control::State::Granted)
+        return true;
+    control->m_client->rejected(Rejection::NotGranted);
+    return false;
+}
+
+bool Controller::admits(Control *control, const std::function<bool()> &protectedTarget)
+{
+    if (!granted(control))
+        return false;
+
     std::optional<Rejection> rejection;
-    if (control->m_state != Control::State::Granted)
-        rejection = Rejection::NotGranted;
-    else if (paused(control))
+    if (paused(control))
         rejection = Rejection::Paused;
     else if (protectedTarget && protectedTarget())
         rejection = Rejection::Protected;
@@ -422,6 +431,60 @@ void Control::typeText(const std::string &text)
     });
     if (!typed)
         m_client->rejected(Rejection::Untypable);
+}
+
+void Control::listWindows()
+{
+    Controller *controller = m_controller;
+    if (!controller) {
+        m_client->rejected(Rejection::NotGranted);
+        return;
+    }
+    if (!controller->granted(this))
+        return;
+    const auto &environment = controller->m_environment;
+    const std::vector<WindowInfo> windows =
+            environment.windows ? environment.windows() : std::vector<WindowInfo> {};
+    for (const WindowInfo &window : windows) {
+        auto [it, added] = m_windowHandles.try_emplace(
+                window.id, static_cast<uint32_t>(m_windowHandles.size() + 1));
+        if (added)
+            m_handleWindows.emplace(it->second, window.id);
+        m_client->window(it->second, window);
+    }
+    m_client->windowsDone();
+}
+
+void Control::activateWindow(uint32_t handle)
+{
+    Controller *controller = m_controller;
+    if (!controller) {
+        m_client->rejected(Rejection::NotGranted);
+        return;
+    }
+    if (!controller->admits(this))
+        return;
+    const auto &environment = controller->m_environment;
+    const auto window = m_handleWindows.find(handle);
+    bool activated = false;
+    if (window != m_handleWindows.end() && environment.activateWindow) {
+        controller->inject([&] {
+            activated = environment.activateWindow(window->second);
+        });
+    }
+    if (!activated)
+        m_client->rejected(Rejection::NoWindow);
+}
+
+void Control::queryPointer()
+{
+    Controller *controller = m_controller;
+    if (!controller) {
+        m_client->rejected(Rejection::NotGranted);
+        return;
+    }
+    if (controller->granted(this))
+        m_client->pointer(controller->m_input->pointerPosition());
 }
 
 void Control::stroke(const input::KeyStroke &stroke)
