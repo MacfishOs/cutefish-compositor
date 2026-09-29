@@ -138,23 +138,34 @@ void shade() {
     if (peak > 1.0)
         color /= peak;
 
-    // The edges facing up and down catch a light from above: a lifted hairline
-    // with a glow fading inwards, weaker along the bottom. The sides get a
-    // softer darker hairline and no glow.
+    // A darker hairline wraps the whole edge. Inside it the edges facing up and
+    // down catch a light from above: a lifted hairline with a glow fading
+    // inwards, weaker along the bottom. Sharing a pixel, the two would cancel
+    // into a smudge, and a lit edge with nothing outside it reads as cut off.
     if (uRim.x > 0.0) {
         vec2 outward = outwardAt(insideLens(p, halfSize, r), halfSize, r);
         // Surface-local y grows downwards, so the top faces -y.
-        float lit = outward.y * outward.y * mix(1.0, 0.35, 0.5 + 0.5 * outward.y);
-        float facing = outward.y * outward.y;
+        float lit = abs(outward.y) * mix(1.0, 0.35, 0.5 + 0.5 * outward.y);
         float inset = -sd;
         // Three quarters and half a logical pixel, never thinner than a device pixel.
         float litWidth = max(0.75 * uRim.y, 1.0);
         float shadeWidth = max(0.5 * uRim.y, 1.0);
-        float hairline = 1.0 - smoothstep(litWidth - 0.5, litWidth + 0.5, inset);
-        float glow = exp(-max(inset - litWidth, 0.0) / (1.7 * uRim.y));
-        // Additive, so the same edge shows over a white window and a dark one.
-        color += uRim.x * lit * (0.075 * glow + 0.26 * hairline);
-        float shade = (1.0 - facing) * (1.0 - smoothstep(shadeWidth - 0.5, shadeWidth + 0.5, inset));
+        float litStart = shadeWidth;
+        // The part of this device pixel the lit hairline covers.
+        float hairline = clamp(min(inset + 0.5, litStart + litWidth) - max(inset - 0.5, litStart), 0.0, 1.0);
+        float glow = exp(-max(inset - litStart - litWidth, 0.0) / (1.7 * uRim.y))
+                   * clamp(inset + 0.5 - litStart, 0.0, 1.0);
+        // The glow is additive, so the same glow shows over a white window and a
+        // dark one. A body within a few levels of white has no room for it: the
+        // light would clip into a soft white band instead of stepping down.
+        float headroom = 1.0 - smoothstep(0.88, 1.0, dot(color, vec3(0.2126, 0.7152, 0.0722)));
+        color += uRim.x * lit * headroom * 0.075 * glow;
+        // The hairline screens: a dark body gets a bright line, a light one a
+        // faint one. Added, it clipped to white over a light body, and a clipped
+        // line loses its antialiasing and steps along the corners.
+        color = 1.0 - (1.0 - color) * (1.0 - uRim.x * lit * 0.43 * hairline);
+        // Lighter along the top and bottom, where the lit hairline sits inside it.
+        float shade = (0.3 + 0.7 * outward.x * outward.x) * (1.0 - smoothstep(shadeWidth - 0.5, shadeWidth + 0.5, inset));
         color = mix(color, color * (1.0 - 0.1 * uRim.x) - 0.05 * uRim.x, shade);
         color = clamp(color, 0.0, 1.0);
     }

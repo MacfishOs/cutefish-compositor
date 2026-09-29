@@ -676,7 +676,7 @@ TEST_F(ShadowPixelTest, GlassTintsTheBodyAndLeavesTheEdgeToTheOutline)
     EXPECT_EQ(channel(occluded, 450, 110), channel(occluded, 450, 300));
 }
 
-TEST_F(ShadowPixelTest, GlassRimLightsTheTopAndBottomAndShadesTheSides)
+TEST_F(ShadowPixelTest, GlassRimWrapsTheEdgeInADarkLineAndLightsTheTopInsideIt)
 {
     const QRect bounds(300, 100, 300, 400);
     render::GlassParams glass = bareGlass();
@@ -686,18 +686,54 @@ TEST_F(ShadowPixelTest, GlassRimLightsTheTopAndBottomAndShadesTheSides)
     const auto rimmed = pixels();
     const int body = channel(rimmed, 450, 300);
     EXPECT_NEAR(body, 128, 1);
-    // Lit from above, so the bottom edge catches about a third as much.
-    EXPECT_GT(channel(rimmed, 450, 100), 200);
-    EXPECT_NEAR(channel(rimmed, 450, 499), 158, 4);
-    // The side hairline is a gain and a lift below the backdrop.
+    // The dark hairline runs all the way round, lightest along the top and
+    // bottom; on the sides it is a gain and a lift below the backdrop.
+    EXPECT_LT(channel(rimmed, 450, 100), body - 5);
+    EXPECT_LT(channel(rimmed, 450, 499), body - 5);
     EXPECT_NEAR(channel(rimmed, 300, 300), 102, 3);
     EXPECT_NEAR(channel(rimmed, 599, 300), 102, 3);
-    // One pixel wide, with a short glow inside it along the lit edges only.
-    EXPECT_GT(channel(rimmed, 450, 101), body);
-    EXPECT_LT(channel(rimmed, 450, 101), 160);
+    // Just inside it, lit from above, so the bottom catches about a third as much.
+    EXPECT_GT(channel(rimmed, 450, 101), 185);
+    EXPECT_NEAR(channel(rimmed, 450, 498), 153, 4);
+    // A short glow inside the lit edges only.
+    EXPECT_GT(channel(rimmed, 450, 102), body);
+    EXPECT_LT(channel(rimmed, 450, 102), 160);
     EXPECT_EQ(channel(rimmed, 450, 120), body);
     EXPECT_EQ(channel(rimmed, 301, 300), body);
     EXPECT_EQ(channel(rimmed, 450, 99), 128);
+}
+
+TEST_F(ShadowPixelTest, GlassRimCornerPutsTheLitHairlineInsideTheDarkOne)
+{
+    const QRect bounds(300, 100, 300, 400);
+    render::GlassParams glass = bareGlass();
+    glass.rim = 1;
+    renderer->clear({0.5, 0.5, 0.5, 1});
+    renderer->drawBackgroundBlur(bounds, 24, bounds, glass);
+    const auto rimmed = pixels();
+    const int body = channel(rimmed, 450, 300);
+    // On the diagonal of the top left corner, the outermost pixel is darkened
+    // and the next one in is lit.
+    EXPECT_LT(channel(rimmed, 307, 107), body - 3);
+    EXPECT_GT(channel(rimmed, 308, 108), body + 15);
+}
+
+TEST_F(ShadowPixelTest, GlassRimFadesOverANearlyWhiteBody)
+{
+    const QRect bounds(300, 100, 300, 400);
+    render::GlassParams glass = bareGlass();
+    glass.rim = 1;
+    glass.tintRed = glass.tintGreen = glass.tintBlue = 0;
+    glass.tintAlpha = 0.04f;
+    renderer->clear({1, 1, 1, 1});
+    renderer->drawBackgroundBlur(bounds, 24, bounds, glass);
+    const auto rimmed = pixels();
+    const int body = channel(rimmed, 450, 300);
+    EXPECT_NEAR(body, 245, 1);
+    // The glow inside the hairline would clip at white; it steps down to the
+    // body right away.
+    EXPECT_LE(channel(rimmed, 450, 102), body + 5);
+    EXPECT_LE(channel(rimmed, 450, 104), body + 2);
 }
 
 TEST_F(ShadowPixelTest, GlassSaturationScalesTheBackdropAroundItsLuma)
