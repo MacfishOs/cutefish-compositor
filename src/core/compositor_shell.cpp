@@ -4,6 +4,8 @@
 
 #include "core/compositor_shell.h"
 
+#include <linux/sockios.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -369,9 +371,24 @@ void CompositorShell::initComputerControl()
         }
         m_seat.selection()->setSource(std::move(source));
     };
+    // SIOCOUTQ on a Unix socket counts what the peer has not read yet.
+    environment.inputRead = [this] {
+        for (compositor::Surface *surface : {m_seat.focusedSurface(), m_seat.pointerFocus()}) {
+            wl_resource *resource = surface ? wayland::getSurfaceResource(surface) : nullptr;
+            if (!resource)
+                continue;
+            int unread = 0;
+            if (ioctl(wl_client_get_fd(wl_resource_get_client(resource)), SIOCOUTQ, &unread) == 0
+                && unread > 0)
+                return false;
+        }
+        return true;
+    };
     m_computerControl = std::make_unique<computer_control::Controller>(&m_inputManager,
                                                                        std::move(environment));
     m_computerControlPolicy.setController(m_computerControl.get());
+    QObject::connect(&m_compositor, &compositor::Compositor::outputDrawn,
+                     m_computerControl.get(), &computer_control::Controller::drawn);
 
     m_computerControlService =
             std::make_unique<computer_control::ComputerControlService>(m_computerControl.get());

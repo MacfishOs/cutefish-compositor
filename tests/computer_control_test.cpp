@@ -114,6 +114,7 @@ protected:
     bool composing = false;
     bool blocked = false;
     bool commitAccepted = true;
+    bool inputRead = true;
     std::vector<std::string> commits;
     std::vector<WindowInfo> windows;
     std::vector<quint64> activations;
@@ -158,6 +159,9 @@ protected:
         };
         environment.sessionBlocked = [this] {
             return blocked;
+        };
+        environment.inputRead = [this] {
+            return inputRead;
         };
         environment.now = [this] {
             return clock;
@@ -682,4 +686,93 @@ TEST_F(ComputerControlTest, AWindowIsClosedAndPlacedByItsHandle)
     control->closeWindow(2);
     EXPECT_EQ(Rejection::Paused, client.rejections.back());
     EXPECT_EQ(std::vector<quint64> {7}, closes);
+}
+
+TEST_F(ComputerControlTest, ASettleWaitsUntilNothingHasDrawnForAWhile)
+{
+    FakeClient client;
+    auto control = grant(client);
+    std::vector<bool> answers;
+    control->settle(1000ms, [&](bool settled) {
+        answers.push_back(settled);
+    });
+
+    clock += 100ms;
+    controller->drawn();
+    controller->checkSettles();
+    clock += 100ms;
+    controller->checkSettles();
+    EXPECT_TRUE(answers.empty());
+
+    clock += 50ms;
+    controller->checkSettles();
+    EXPECT_EQ(std::vector<bool> {true}, answers);
+    controller->checkSettles();
+    EXPECT_EQ(1u, answers.size());
+}
+
+TEST_F(ComputerControlTest, ASettleGivesAClientThatReadItsInputTimeToDraw)
+{
+    FakeClient client;
+    auto control = grant(client);
+    std::vector<bool> answers;
+    inputRead = false;
+    control->settle(1000ms, [&](bool settled) {
+        answers.push_back(settled);
+    });
+
+    clock += 200ms;
+    controller->checkSettles();
+    inputRead = true;
+    clock += 100ms;
+    controller->checkSettles();
+    EXPECT_TRUE(answers.empty());
+
+    clock += 50ms;
+    controller->checkSettles();
+    EXPECT_EQ(std::vector<bool> {true}, answers);
+}
+
+TEST_F(ComputerControlTest, ASettleTimesOutWhileSomethingAnimates)
+{
+    FakeClient client;
+    auto control = grant(client);
+    std::vector<bool> answers;
+    control->settle(500ms, [&](bool settled) {
+        answers.push_back(settled);
+    });
+    for (int frame = 0; frame < 4; ++frame) {
+        clock += 100ms;
+        controller->drawn();
+        controller->checkSettles();
+    }
+    EXPECT_TRUE(answers.empty());
+
+    clock += 100ms;
+    controller->checkSettles();
+    EXPECT_EQ(std::vector<bool> {false}, answers);
+}
+
+TEST_F(ComputerControlTest, ASettleEndsWithItsControl)
+{
+    FakeClient client;
+    auto control = grant(client);
+    int answers = 0;
+    control->settle(1000ms, [&](bool) {
+        ++answers;
+    });
+    control.reset();
+    clock += 1s;
+    controller->checkSettles();
+    EXPECT_EQ(0, answers);
+
+    // Without a controller there is nothing to wait for.
+    FakeClient other;
+    auto orphan = grant(other);
+    controller.reset();
+    std::vector<bool> settled;
+    orphan->settle(1000ms, [&](bool value) {
+        settled.push_back(value);
+    });
+    EXPECT_EQ(std::vector<bool> {false}, settled);
 }

@@ -14,6 +14,7 @@
 #include <QPointF>
 #include <QRect>
 #include <QString>
+#include <QTimer>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -115,6 +116,9 @@ struct Environment {
     std::function<bool(quint64 id, const QRect &frame)> setWindowFrame;
     // Replaces the clipboard with UTF-8 text.
     std::function<void(const std::string &text)> setClipboard;
+    // The clients with the keyboard and pointer focus have read every event
+    // sent to them.
+    std::function<bool()> inputRead;
     std::function<input::Timestamp()> now;
 };
 
@@ -128,6 +132,10 @@ public:
     // Real input blocks injection this long, as RemoteInputFilter's
     // kRemoteBlockTimeout.
     static constexpr std::chrono::milliseconds kPauseAfterInput {2000};
+    // How long the screen and the focused clients stay quiet before a settle
+    // is answered, and the longest a settle waits.
+    static constexpr std::chrono::milliseconds kSettleQuiet {150};
+    static constexpr std::chrono::milliseconds kMaxSettleTimeout {10000};
 
     Controller(input::InputManager *input, Environment environment, QObject *parent = nullptr);
     ~Controller() override;
@@ -151,6 +159,12 @@ public:
     // Ends it with Locked; call when the session becomes blocked.
     void sessionBlocked();
 
+    // An output drew a frame.
+    void drawn();
+    // Answers the settles that are due; a timer calls it every frame while
+    // one waits.
+    void checkSettles();
+
 Q_SIGNALS:
     void activeChanged(bool active);
 
@@ -169,6 +183,7 @@ private:
     void end(Control *control, std::optional<RevokeReason> reason);
     void releaseAll(Control *control);
     void realInput();
+    void dropSettles(const Control *control);
 
     // Injects through the InputManager with real input detection off.
     void inject(const std::function<void()> &event);
@@ -180,6 +195,17 @@ private:
     uint64_t m_serial = 0;
     bool m_injecting = false;
     std::optional<input::Timestamp> m_lastRealInput;
+
+    struct Settle {
+        const Control *control;
+        input::Timestamp deadline;
+        // Since when the focused clients have read their input.
+        input::Timestamp readSince;
+        std::function<void(bool settled)> done;
+    };
+    std::vector<Settle> m_settles;
+    std::optional<input::Timestamp> m_lastDrawn;
+    QTimer m_settleTimer;
 };
 
 // One control, as cutefish_computer_control_v1 describes it. Input requests
@@ -205,6 +231,10 @@ public:
     void setWindowFrame(uint32_t handle, const QRect &frame);
     void setClipboard(const std::string &text);
     void queryPointer();
+    // `done` runs once the screen and the focused clients are quiet, with
+    // false when `timeout` passes first. Modelled on the NotifyWhenDone calls
+    // of chromium/src/ui/base/test/ui_controls.h at the revision above.
+    void settle(std::chrono::milliseconds timeout, std::function<void(bool settled)> done);
 
 private:
     friend class Controller;

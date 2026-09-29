@@ -6,6 +6,7 @@
 
 #include <QList>
 #include <QScopedValueRollback>
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,9 @@ Controller::Controller(input::InputManager *input, Environment environment, QObj
     // that follows the signal is dispatched.
     connect(m_input, &input::InputManager::userActivity, this, &Controller::realInput,
             Qt::DirectConnection);
+
+    m_settleTimer.setInterval(16);
+    connect(&m_settleTimer, &QTimer::timeout, this, &Controller::checkSettles);
 }
 
 Controller::~Controller()
@@ -109,6 +113,36 @@ void Controller::sessionBlocked()
 {
     if (m_current)
         end(m_current, RevokeReason::Locked);
+}
+
+void Controller::drawn()
+{
+    m_lastDrawn = now();
+}
+
+void Controller::checkSettles()
+{
+    const input::Timestamp time = now();
+    const bool read = !m_environment.inputRead || m_environment.inputRead();
+    std::vector<std::pair<std::function<void(bool)>, bool>> answers;
+    for (auto it = m_settles.begin(); it != m_settles.end();) {
+        if (!read)
+            it->readSince = time;
+        // Once a client reads its input, it gets the quiet time to draw.
+        const input::Timestamp quietSince =
+                m_lastDrawn ? std::max(it->readSince, *m_lastDrawn) : it->readSince;
+        const bool settled = time - quietSince >= kSettleQuiet;
+        if (settled || time >= it->deadline) {
+            answers.emplace_back(std::move(it->done), settled);
+            it = m_settles.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (m_settles.empty())
+        m_settleTimer.stop();
+    for (auto &[done, settled] : answers)
+        done(settled);
 }
 
 input::Timestamp Controller::now() const
@@ -218,6 +252,15 @@ void Controller::realInput()
         releaseAll(m_current);
 }
 
+void Controller::dropSettles(const Control *control)
+{
+    std::erase_if(m_settles, [control](const Settle &settle) {
+        return settle.control == control;
+    });
+    if (m_settles.empty())
+        m_settleTimer.stop();
+}
+
 void Controller::inject(const std::function<void()> &event)
 {
     QScopedValueRollback injecting(m_injecting, true);
@@ -238,6 +281,7 @@ Control::~Control()
     if (!m_controller)
         return;
     m_controller->end(this, std::nullopt);
+    m_controller->dropSettles(this);
     m_controller->m_controls.erase(this);
 }
 
@@ -500,6 +544,20 @@ void Control::queryPointer()
     }
     if (controller->granted(this))
         m_client->pointer(controller->m_input->pointerPosition());
+}
+
+void Control::settle(std::chrono::milliseconds timeout, std::function<void(bool settled)> done)
+{
+    Controller *controller = m_controller;
+    if (!controller) {
+        done(false);
+        return;
+    }
+    const input::Timestamp time = controller->now();
+    controller->m_settles.push_back({this, time + std::min(timeout, Controller::kMaxSettleTimeout),
+                                     time, std::move(done)});
+    if (!controller->m_settleTimer.isActive())
+        controller->m_settleTimer.start();
 }
 
 void Control::changeWindow(uint32_t handle, bool guarded,

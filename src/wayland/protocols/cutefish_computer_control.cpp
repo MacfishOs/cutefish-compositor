@@ -5,6 +5,7 @@
 #include "wayland/protocols/cutefish_computer_control.h"
 
 #include <cerrno>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +17,7 @@
 #include <QRect>
 
 #include <cutefish-computer-control-v1-server-protocol.h>
+#include <wayland-server-protocol.h>
 
 #include "computer_control/controller.h"
 #include "wayland/server_util.h"
@@ -118,6 +120,34 @@ void destroy(wl_client *, wl_resource *resource)
     wl_resource_destroy(resource);
 }
 
+// Nulled when the client destroys the wl_callback before the answer.
+struct CallbackOwner {
+    explicit CallbackOwner(std::shared_ptr<wl_resource *> token)
+        : token(std::move(token))
+    {
+    }
+    ~CallbackOwner() { *token = nullptr; }
+
+    std::shared_ptr<wl_resource *> token;
+};
+
+void settle(wl_client *client, wl_resource *resource, uint32_t id, uint32_t timeout)
+{
+    wl_resource *callback = wl_resource_create(client, &wl_callback_interface, 1, id);
+    if (!callback) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    auto token = std::make_shared<wl_resource *>(callback);
+    setImplementation(callback, nullptr, std::make_unique<CallbackOwner>(token));
+    controlOf(resource)->settle(std::chrono::milliseconds(timeout), [token](bool settled) {
+        if (wl_resource *callback = *token) {
+            wl_callback_send_done(callback, settled ? 1 : 0);
+            wl_resource_destroy(callback);
+        }
+    });
+}
+
 const struct cutefish_computer_control_v1_interface controlImplementation = {
         destroy,
         [](wl_client *, wl_resource *resource, wl_fixed_t x, wl_fixed_t y) {
@@ -161,6 +191,7 @@ const struct cutefish_computer_control_v1_interface controlImplementation = {
             if (const auto text = readClipboard(resource, fd))
                 controlOf(resource)->setClipboard(*text);
         },
+        settle,
 };
 
 void requestControl(wl_client *client, wl_resource *manager, uint32_t id, const char *agentName)
