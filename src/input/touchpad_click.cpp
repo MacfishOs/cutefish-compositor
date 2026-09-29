@@ -11,8 +11,9 @@ namespace cutefish::input {
 
 namespace {
 
-// libgestures' "Two Finger Horizontal/Vertical Close Distance Thresh".
-constexpr double kCloseHorizontal = 50.0;
+// libgestures' "Two Finger Horizontal/Vertical Close Distance Thresh", cut from
+// 50 x 45 mm; the recorded diagonal presses need about 45 mm on both axes.
+constexpr double kCloseHorizontal = 45.0;
 constexpr double kCloseVertical = 45.0;
 // "Right Click Start Time Diff Thresh": fingers this close in time are one hand.
 constexpr auto kTogether = std::chrono::milliseconds(100);

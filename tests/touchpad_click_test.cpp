@@ -41,6 +41,8 @@ TEST(TouchpadClick, KeepsFarApartFingersApart)
                                   kPad));
     EXPECT_FALSE(isTwoFingerClick(finger({50.0, 5.0}, 60ms), finger({50.0, 52.0}, 60ms), kPress,
                                   kPad));
+    EXPECT_FALSE(isTwoFingerClick(finger({30.0, 30.0}, 60ms), finger({77.0, 30.0}, 60ms), kPress,
+                                  kPad));
 }
 
 TEST(TouchpadClick, IgnoresARestingThumb)
