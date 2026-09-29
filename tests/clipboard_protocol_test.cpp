@@ -315,3 +315,28 @@ int main(int argc, char** argv)
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
+
+// Exo's DataDeviceTest.ClipboardFocusedSurfaceDestroyed: once the focused
+// surface is gone, selection changes no longer reach its client.
+TEST(ClipboardProtocol, SelectionChangesDoNotReachAClientWhoseFocusedSurfaceIsGone)
+{
+    Harness h;
+    auto& a = h.addClient();
+    auto& b = h.addClient();
+    h.publish(a, {{"text/plain", "first"}});
+    h.focus(b);
+    ASSERT_NE(nullptr, b.selection);
+    wl_surface_destroy(b.surface);
+    b.surface = nullptr;
+    h.sync(b);
+    EXPECT_EQ(nullptr, h.seat.focusedSurface());
+    b.events.clear();
+
+    auto* source = a.sources.back();
+    wl_data_source_destroy(source);
+    std::erase(a.sources, source);
+    h.sync(a);
+    h.sync(b);
+    EXPECT_TRUE(b.events.empty());
+    EXPECT_FALSE(h.seat.selection()->source());
+}

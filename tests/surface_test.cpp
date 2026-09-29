@@ -11,7 +11,9 @@
 
 #include "compositor/buffer.h"
 #include "compositor/compositor.h"
+#include "compositor/sub_surface.h"
 #include "compositor/surface.h"
+#include "compositor/surface_observer.h"
 #include "fake_renderer.h"
 #include "scene/scene.h"
 #include "scene/surface_node.h"
@@ -597,6 +599,134 @@ TEST_F(SurfaceTest, SurfacesRegisterWithTheCompositor)
 
     second.reset();
     EXPECT_EQ(1u, m_compositor.surfaces().size());
+}
+
+TEST_F(SurfaceTest, DestroyAttachedBuffer)
+{
+    std::shared_ptr<ShmBuffer> buffer = makeBuffer(QSize(1, 1));
+    m_surface->attach(buffer, QPoint());
+    m_surface->commit();
+    ASSERT_TRUE(m_surface->updateTexture(m_renderer));
+
+    // The content keeps its size after the client destroys the buffer.
+    buffer.reset();
+    m_surface->commit();
+    m_surface->updateTexture(m_renderer);
+    EXPECT_EQ(QSize(1, 1), m_surface->contentSize());
+    EXPECT_TRUE(m_surface->isMapped());
+}
+
+TEST_F(SurfaceTest, CommitWithoutAnythingPending)
+{
+    m_surface->commit();
+    m_surface->commit();
+    EXPECT_FALSE(m_surface->hasContents());
+    EXPECT_FALSE(m_surface->isMapped());
+}
+
+class RecordingObserver : public SurfaceObserver
+{
+public:
+    explicit RecordingObserver(Surface *surface)
+        : m_surface(surface)
+    {
+        m_surface->addSurfaceObserver(this);
+    }
+
+    ~RecordingObserver() override
+    {
+        if (m_surface)
+            m_surface->removeSurfaceObserver(this);
+    }
+
+    void onSurfaceDestroying(Surface *surface) override
+    {
+        EXPECT_EQ(m_surface, surface);
+        ++destroying;
+        surface->removeSurfaceObserver(this);
+        m_surface = nullptr;
+    }
+
+    void onSurfaceCommit(Surface *) override { ++others; }
+
+    void onScaleFactorChanged(Surface *) override { ++others; }
+
+    void onSurfaceMenuChanged(Surface *) override { ++others; }
+
+    void onSurfaceWindowHintsChanged(Surface *) override { ++others; }
+
+    bool onSurfaceStateApplying(Surface *) override
+    {
+        ++others;
+        return true;
+    }
+
+    int destroying = 0;
+    int others = 0;
+
+private:
+    Surface *m_surface;
+};
+
+// Exo's ObserversNotCalledWhenDestroying and NoOcclusionUpdateOnDestroyingSurface:
+// tearing down a parent detaches its children, and that must not reach the
+// parent's observers as anything but its destruction.
+TEST_F(SurfaceTest, ObserversNotCalledWhenDestroying)
+{
+    std::shared_ptr<ShmBuffer> buffer = makeBuffer(QSize(16, 16));
+    std::unique_ptr<Surface> child = m_compositor.createSurface();
+    std::unique_ptr<SubSurface> sub = SubSurface::create(child.get(), m_surface.get());
+    child->attach(buffer, QPoint());
+    child->commit();
+    m_surface->attach(buffer, QPoint());
+    m_surface->commit();
+    m_surface->updateTexture(m_renderer);
+
+    RecordingObserver parentObserver(m_surface.get());
+    RecordingObserver childObserver(child.get());
+    m_surface.reset();
+    EXPECT_EQ(1, parentObserver.destroying);
+    EXPECT_EQ(0, parentObserver.others);
+    EXPECT_EQ(0, childObserver.destroying);
+
+    // The orphaned child is unmapped but stays a usable surface.
+    EXPECT_FALSE(child->isMapped());
+    child->commit();
+    sub.reset();
+    child.reset();
+    EXPECT_EQ(1, childObserver.destroying);
+}
+
+// Exo's BufferTest.ProduceTransferableResourceFailure: a texture that cannot
+// be created leaves the surface showing nothing, lets the client have its
+// buffer back, and the next commit tries again.
+TEST_F(SurfaceTest, TextureCreationFailureShowsNothingAndRecovers)
+{
+    std::shared_ptr<ShmBuffer> buffer = makeBuffer(QSize(32, 16));
+    int releases = 0;
+    buffer->setReleaseCallback([&releases] {
+        ++releases;
+    });
+
+    m_renderer.failTextureCreation = true;
+    m_surface->attach(buffer, QPoint());
+    m_surface->commit();
+    EXPECT_FALSE(m_surface->updateTexture(m_renderer));
+    EXPECT_EQ(nullptr, m_surface->node()->texture());
+    EXPECT_EQ(1, releases);
+    m_renderer.calls.clear();
+    m_scene.root()->render(m_renderer);
+    for (const auto &call : m_renderer.calls)
+        EXPECT_EQ(nullptr, call.texture);
+
+    m_renderer.failTextureCreation = false;
+    m_surface->attach(buffer, QPoint());
+    m_surface->damage(QRect(0, 0, 4, 4));
+    m_surface->commit();
+    EXPECT_TRUE(m_surface->updateTexture(m_renderer));
+    ASSERT_NE(nullptr, m_surface->node()->texture());
+    EXPECT_EQ(QSize(32, 16), m_surface->node()->texture()->size());
+    EXPECT_EQ(2, releases);
 }
 
 } // namespace

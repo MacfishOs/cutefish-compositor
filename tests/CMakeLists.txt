@@ -78,6 +78,8 @@ cutefish_add_test(decoration_test cutefish-decoration)
 cutefish_add_test(text_test cutefish-decoration)
 cutefish_add_test(xdg_shell_protocol_test cutefish-wayland-shell cutefish-wayland-input
     PkgConfig::WaylandClient)
+cutefish_add_test(protocol_binding_test cutefish-wayland-globals PkgConfig::WaylandClient)
+set_tests_properties(protocol_binding_test PROPERTIES TIMEOUT 60)
 cutefish_add_test(xdg_foreign_protocol_test cutefish-wayland-shell cutefish-wayland-input
     PkgConfig::WaylandClient)
 cutefish_add_test(xdg_toplevel_drag_protocol_test cutefish-wayland-shell cutefish-wayland-input
@@ -287,6 +289,7 @@ cutefish_add_test(damage_test cutefish-compositor-core)
 cutefish_add_test(damage_pixel_test cutefish-scene cutefish-render)
 set_tests_properties(damage_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 cutefish_add_test(damage_gbm_test cutefish-scene cutefish-render PkgConfig::Gbm)
+cutefish_add_test(dmabuf_format_gbm_test cutefish-render PkgConfig::Gbm)
 cutefish_add_test(capture_dmabuf_gbm_test cutefish-render PkgConfig::Gbm PkgConfig::Libdrm)
 
 target_compile_definitions(window_visual_toolkit_test PRIVATE QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>")

@@ -1691,6 +1691,75 @@ TEST_F(XdgShellProtocolTest, DestroyingTheToplevelKeepsTheXdgSurfaceUsable)
     });
 }
 
+// Exo's ShellDestruction: whether the client closes the window itself or does
+// so because the window manager asked, nothing of the window is left behind.
+TEST_F(XdgShellProtocolTest, AToplevelClosedOnRequestLeavesNothingBehind)
+{
+    run([&](Client &c) {
+        for (bool onRequest : {false, true}) {
+            XdgWindow *window = c.makeMappedToplevel(QSize(256, 256));
+            if (onRequest) {
+                check([&] {
+                    ASSERT_NE(nullptr, onlyWindow());
+                    onlyWindow()->requestClose();
+                });
+                c.sync();
+                EXPECT_EQ(1, window->closes);
+            }
+            c.destroyWindowObjects(window);
+            c.sync();
+            check([&] {
+                EXPECT_TRUE(windowManager.windows().empty());
+                EXPECT_TRUE(compositor.surfaces().empty());
+                EXPECT_EQ(nullptr, windowManager.activation()->activeWindow());
+            });
+        }
+    });
+}
+
+TEST_F(XdgShellProtocolTest, DestroyingTheWmBaseBeforeItsSurfacesIsAnError)
+{
+    run([&](Client &c) {
+        c.makeMappedToplevel(QSize(100, 100));
+        xdg_wm_base_destroy(c.wmBase);
+        c.wmBase = nullptr;
+        EXPECT_EQ(uint32_t(XDG_WM_BASE_ERROR_DEFUNCT_SURFACES), c.syncExpectingError());
+    });
+}
+
+TEST_F(XdgShellProtocolTest, DestroyingTheWmBaseAfterItsSurfacesIsAllowed)
+{
+    run([&](Client &c) {
+        XdgWindow *window = c.makeMappedToplevel(QSize(100, 100));
+        c.destroyWindowObjects(window);
+        xdg_wm_base_destroy(c.wmBase);
+        c.wmBase = nullptr;
+        EXPECT_EQ(0u, c.syncExpectingError());
+    });
+}
+
+// Exo's DestroyRootSurfaceBeforeCommit: a surface torn down with a buffer
+// attached but never committed leaves no surface and no window.
+TEST_F(XdgShellProtocolTest, DestroyingARoleSurfaceBeforeItsFirstCommit)
+{
+    run([&](Client &c) {
+        XdgWindow *window = c.makeToplevel();
+        window->buffer = c.makeBuffer(QSize(256, 256));
+        wl_surface_attach(window->surface, window->buffer, 0, 0);
+        c.sync();
+        check([&] {
+            EXPECT_EQ(1u, compositor.surfaces().size());
+            EXPECT_TRUE(windowManager.windows().empty());
+        });
+        c.destroyWindowObjects(window);
+        EXPECT_EQ(0u, c.syncExpectingError());
+        check([&] {
+            EXPECT_TRUE(compositor.surfaces().empty());
+            EXPECT_TRUE(windowManager.windows().empty());
+        });
+    });
+}
+
 TEST_F(XdgShellProtocolTest, DisconnectingWithAnActiveToplevelLeavesNothingBehind)
 {
     run([&](Client &c) {

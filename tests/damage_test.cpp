@@ -301,3 +301,133 @@ TEST(Damage, SynchronizedSurfaceDamageWaitsForParentAndSurvivesUpload)
     compositor.updateTextures(renderer);
     EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(QRect(0, 0, 32, 32)));
 }
+
+namespace {
+
+// A parent with one subsurface, both mapped and uploaded, and a tracker that
+// has seen them once. Modelled on exo's SurfaceTest subsurface damage cases.
+struct SubsurfaceDamageFixture {
+    scene::Scene scene;
+    compositor::Compositor compositor {scene.root()};
+    std::unique_ptr<compositor::Surface> parent = compositor.createSurface();
+    std::unique_ptr<compositor::Surface> child = compositor.createSurface();
+    std::unique_ptr<compositor::SubSurface> sub =
+            compositor::SubSurface::create(child.get(), parent.get());
+    std::shared_ptr<compositor::ShmPool> pool = testsupport::makePool(1024 * 1024);
+    std::shared_ptr<compositor::ShmBuffer> parentBuffer =
+            pool->createBuffer({256, 512}, 0, 1024, render::PixelFormat::Bgrx8888, nullptr);
+    std::shared_ptr<compositor::ShmBuffer> childBuffer = pool->createBuffer(
+            {64, 128}, 256 * 512 * 4, 256, render::PixelFormat::Bgrx8888, nullptr);
+    testsupport::FakeRenderer renderer;
+    scene::DamageTracker tracker;
+    const QRect viewport {0, 0, 400, 600};
+
+    explicit SubsurfaceDamageFixture(bool synchronized)
+    {
+        sub->setCommitBehavior(synchronized);
+        child->attach(childBuffer, {});
+        child->commit();
+        parent->attach(parentBuffer, {});
+        parent->commit();
+        compositor.updateTextures(renderer);
+    }
+
+    QRegion update()
+    {
+        compositor.updateTextures(renderer);
+        return tracker.update(*scene.root(), viewport);
+    }
+};
+
+// Linear sampling reaches one texel past damage at scale 1, as exo's margin.
+bool approximately(const QRegion &damage, const QRect &expected)
+{
+    return damage.boundingRect().contains(expected)
+            && expected.adjusted(-1, -1, 1, 1).contains(damage.boundingRect());
+}
+
+} // namespace
+
+TEST(Damage, SubsurfaceDamageAggregation)
+{
+    SubsurfaceDamageFixture f(true);
+    EXPECT_EQ(f.update(), QRegion(f.viewport));
+
+    f.child->damage({32, 32, 16, 16});
+    f.child->commit();
+    f.parent->commit();
+    EXPECT_TRUE(approximately(f.update(), QRect(32, 32, 16, 16)));
+
+    // A root commit without a child commit must not repeat the child's damage.
+    f.parent->damage({0, 0, 16, 16});
+    f.parent->commit();
+    const QRegion damage = f.update();
+    EXPECT_TRUE(approximately(damage, QRect(0, 0, 16, 16)));
+    EXPECT_FALSE(damage.intersects(QRect(32, 32, 16, 16)));
+}
+
+TEST(Damage, SubsurfaceDamageSynchronizedCommitBehavior)
+{
+    SubsurfaceDamageFixture f(true);
+    f.update();
+
+    f.child->damage({32, 32, 16, 16});
+    EXPECT_EQ(f.child->pendingDamage(), QRegion(QRect(32, 32, 16, 16)));
+    f.child->commit();
+    EXPECT_TRUE(f.child->pendingDamage().isEmpty());
+    EXPECT_TRUE(f.update().isEmpty());
+
+    // Pending damage stays behind; the parent applies only what was cached.
+    f.child->damage({0, 0, 16, 16});
+    f.parent->commit();
+    const QRegion damage = f.update();
+    EXPECT_TRUE(approximately(damage, QRect(32, 32, 16, 16)));
+    EXPECT_FALSE(damage.intersects(QRect(0, 0, 16, 16)));
+    EXPECT_EQ(f.child->pendingDamage(), QRegion(QRect(0, 0, 16, 16)));
+}
+
+TEST(Damage, SubsurfaceDamageDesynchronizedCommitBehavior)
+{
+    SubsurfaceDamageFixture f(false);
+    f.update();
+
+    f.child->damage({32, 32, 16, 16});
+    f.child->commit();
+    EXPECT_TRUE(f.child->pendingDamage().isEmpty());
+    EXPECT_TRUE(approximately(f.update(), QRect(32, 32, 16, 16)));
+}
+
+TEST(Damage, SubsurfaceReorderDamagesOnlyWhenTheOrderChanges)
+{
+    SubsurfaceDamageFixture f(true);
+    auto sibling = f.compositor.createSurface();
+    auto siblingSub = compositor::SubSurface::create(sibling.get(), f.parent.get());
+    siblingSub->setPosition({100, 0});
+    sibling->attach(f.childBuffer, {});
+    sibling->commit();
+    f.parent->commit();
+    f.update();
+
+    // Already in this order: nothing to repaint.
+    siblingSub->placeAbove(f.child.get());
+    f.sub->placeBelow(sibling.get());
+    f.parent->commit();
+    EXPECT_TRUE(f.update().isEmpty());
+
+    siblingSub->placeBelow(f.child.get());
+    f.parent->commit();
+    EXPECT_FALSE(f.update().isEmpty());
+}
+
+TEST(Damage, RemovingASubsurfaceDamagesOnlyWhereItWas)
+{
+    SubsurfaceDamageFixture f(true);
+    f.sub->setPosition({20, 10});
+    f.parent->commit();
+    f.update();
+
+    f.sub.reset();
+    EXPECT_TRUE(f.parent->pendingDamage().isEmpty());
+    EXPECT_EQ(f.update(), QRegion(QRect(20, 10, 64, 128)));
+    EXPECT_TRUE(f.update().isEmpty());
+}

@@ -1546,6 +1546,78 @@ TEST_F(SeatProtocolTest, DestroyingTheSurfaceOrTheConstraintReleasesThePointer)
     });
 }
 
+// Exo's UAFViaDuplicatePreTargetHandlerOnSubsurfaces: persistent locks on
+// several subsurfaces of the active window, broken by the user, then the
+// wl_pointer released while they still exist, and input keeps flowing.
+TEST_F(SeatProtocolTest, LocksOnSeveralSubsurfacesSurviveBreakingAndPointerRelease)
+{
+    run([&](Client& c) {
+        c.getPointer();
+        wl_surface* parent = c.makeSurface(QSize(120, 120));
+        std::vector<wl_subsurface*> subs;
+        std::vector<wl_surface*> children;
+        for (int i = 0; i < 3; ++i) {
+            children.push_back(c.makeSurface(QSize(20, 20)));
+            subs.push_back(wl_subcompositor_get_subsurface(c.subcompositor, children.back(), parent));
+            wl_subsurface_set_position(subs.back(), 10 + i * 30, 10);
+        }
+        wl_surface_commit(parent);
+        c.sync();
+        const QRect content = activateWindow(0, QPoint(100, 100));
+        check([&] { manager.onPointerMotionAbsolute(at(1), content.topLeft() + QPoint(15, 15)); });
+        for (wl_surface* child : children)
+            c.lock(child, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+        c.sync();
+        EXPECT_EQ(0, wl_display_get_error(c.display));
+
+        check([&] { seat.breakInputCapture(); });
+        c.sync();
+        wl_pointer_release(c.pointer);
+        c.pointer = nullptr;
+        c.sync();
+        check([&] {
+            manager.onPointerMotionAbsolute(at(2), QPointF(50, 50));
+            manager.onPointerMotion(at(3), QPointF(5, 5));
+            manager.onPointerButton(at(4), BTN_LEFT, true);
+            manager.onPointerButton(at(5), BTN_LEFT, false);
+            EXPECT_FALSE(seat.pointerConstraints()->isLocked());
+        });
+        c.sync();
+        for (wl_subsurface* sub : subs)
+            wl_subsurface_destroy(sub);
+        for (wl_surface* child : children)
+            c.destroySurface(child);
+        c.sync();
+        check([&] { manager.onPointerMotion(at(6), QPointF(5, 5)); });
+        c.sync();
+    });
+}
+
+// Exo's ConstrainPointerWithUncommittedShellSurface: a lock on a surface with
+// no window yet stays inactive, and tearing it down is safe.
+TEST_F(SeatProtocolTest, ALockOnASurfaceWithoutAWindowStaysInactive)
+{
+    run([&](Client& c) {
+        c.getPointer();
+        wl_surface* surface = wl_compositor_create_surface(c.compositor);
+        c.lock(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+        c.sync();
+        check([&] {
+            manager.onPointerMotionAbsolute(at(1), QPointF(10, 10));
+            manager.onPointerButton(at(2), BTN_LEFT, true);
+            manager.onPointerButton(at(3), BTN_LEFT, false);
+            EXPECT_EQ(nullptr, seat.pointerConstraints()->active());
+        });
+        c.sync();
+        EXPECT_TRUE(c.observed.constraintEvents.empty());
+        wl_surface_destroy(surface);
+        c.sync();
+        check([&] { manager.onPointerMotion(at(4), QPointF(5, 5)); });
+        c.sync();
+        EXPECT_EQ(0, wl_display_get_error(c.display));
+    });
+}
+
 TEST_F(SeatProtocolTest, ASecondConstraintOnASurfaceIsAProtocolError)
 {
     run([&](Client& c) {

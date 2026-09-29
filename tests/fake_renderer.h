@@ -104,7 +104,7 @@ public:
     std::unique_ptr<render::Texture> createTexture(const QSize &size, const uint8_t *pixels,
                                                    int stride, render::PixelFormat format) override
     {
-        if (size.isEmpty() || !pixels || stride < size.width() * 4)
+        if (size.isEmpty() || !pixels || stride < size.width() * 4 || failTextureCreation)
             return nullptr;
         ++createdTextures;
         return std::make_unique<FakeTexture>(size, pixels, stride, format);
@@ -120,6 +120,9 @@ public:
         fake->upload(pixels, stride);
         return true;
     }
+
+    // Stands in for the GPU refusing an allocation.
+    bool failTextureCreation = false;
 
     // What the last partial update was asked to take.
     std::optional<QRegion> lastUploadDamage;

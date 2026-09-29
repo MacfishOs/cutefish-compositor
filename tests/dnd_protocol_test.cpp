@@ -534,3 +534,128 @@ TEST(DndProtocol, ALiftedFingerCannotStartADrag)
     EXPECT_FALSE(h.seat.drag()->active());
     EXPECT_EQ(1u, a.cancelled);
 }
+
+// Exo's DataDeviceManagerTest.StartDragInvalidIcon.
+TEST(DndProtocol, AnIconThatAlreadyHasARoleIsAProtocolError)
+{
+    Harness h;
+    auto &a = h.addClient();
+    map(h, a, 0);
+    h.focus(a);
+    h.seat.onPointerMotion({}, {10, 10});
+    h.seat.onPointerButton({}, {10, 10}, BTN_LEFT, true);
+    h.sync(a);
+    auto *icon = wl_compositor_create_surface(a.compositor);
+    h.sync(a);
+    wayland::surfaceFromResource(
+            wl_client_get_object(a.serverClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(icon))))
+            ->setHasRole(true);
+    auto *source = a.source({{"text/plain", "icon"}});
+    wl_data_device_start_drag(a.devices.front(), source, a.surface, icon, a.buttonSerial);
+    a.expectError = true;
+    ASSERT_TRUE(h.until([&] {
+        return wl_display_get_error(a.display) != 0;
+    }));
+    const wl_interface *interface = nullptr;
+    uint32_t id = 0;
+    EXPECT_EQ(uint32_t(WL_DATA_DEVICE_ERROR_ROLE),
+              wl_display_get_protocol_error(a.display, &interface, &id));
+    ASSERT_NE(nullptr, interface);
+    EXPECT_STREQ("wl_data_device", interface->name);
+    EXPECT_FALSE(h.seat.drag()->active());
+    h.seat.onPointerButton({}, {10, 10}, BTN_LEFT, false);
+    wl_surface_destroy(icon);
+}
+
+// Exo's DataDeviceManagerTest.StartDragOriginNoRootWindow: an origin that was
+// never mapped cancels the source instead of starting a drag.
+TEST(DndProtocol, AnUnmappedOriginCancelsTheDrag)
+{
+    Harness h;
+    auto &a = h.addClient();
+    map(h, a, 0);
+    h.focus(a);
+    h.seat.onPointerMotion({}, {10, 10});
+    h.seat.onPointerButton({}, {10, 10}, BTN_LEFT, true);
+    h.sync(a);
+    auto *origin = wl_compositor_create_surface(a.compositor);
+    auto *source = a.source({{"text/plain", "origin"}});
+    wl_data_device_start_drag(a.devices.front(), source, origin, nullptr, a.buttonSerial);
+    h.sync(a);
+    EXPECT_FALSE(h.seat.drag()->active());
+    EXPECT_EQ(1u, a.cancelled);
+    EXPECT_FALSE(h.seat.cursorOverride());
+
+    // The source is spent, but the press can still start a drag from the window.
+    source = a.source({{"text/plain", "window"}});
+    wl_data_device_start_drag(a.devices.front(), source, a.surface, nullptr, a.buttonSerial);
+    h.sync(a);
+    EXPECT_TRUE(h.seat.drag()->active());
+    h.seat.onKey({}, KEY_ESC, true);
+    h.seat.onKey({}, KEY_ESC, false);
+    h.seat.onPointerButton({}, {10, 10}, BTN_LEFT, false);
+    h.sync(a);
+    EXPECT_FALSE(h.seat.drag()->active());
+    wl_surface_destroy(origin);
+}
+
+// Exo's DataDeviceTest.DataOfferNotFinished: a destination that drops its
+// offer after the drop without finishing it cancels the source.
+TEST(DndProtocol, AnOfferDestroyedAfterTheDropWithoutFinishCancelsTheSource)
+{
+    Harness h;
+    auto &a = h.addClient();
+    auto &b = h.addClient();
+    map(h, a, 0);
+    map(h, b, 150);
+    start(h, a);
+    h.seat.onPointerMotion({}, {160, 10});
+    h.sync(b);
+    accept(h, b);
+    h.seat.onPointerButton({}, {160, 10}, BTN_LEFT, false);
+    h.sync(b);
+    ASSERT_EQ(1u, b.drops);
+    wl_data_offer_destroy(b.dragOffer);
+    std::erase(b.offers, b.dragOffer);
+    b.dragOffer = nullptr;
+    h.sync(b);
+    h.sync(a);
+    EXPECT_EQ(0u, a.finished);
+    EXPECT_EQ(1u, a.cancelled);
+    EXPECT_FALSE(h.seat.drag()->active());
+    EXPECT_FALSE(h.seat.cursorOverride());
+}
+
+// Exo's PointerTest.DragDropAndPointerEnterLeaveEvents: the origin loses
+// pointer focus once when the drag starts and sees no pointer input while it
+// runs. Exo re-enters on the next motion after Ash's nested drag loop; here the
+// drop hands the pointer back at once, without the release that ended the drag.
+TEST(DndProtocol, PointerFocusLeavesForTheDragAndReturnsAfterTheDrop)
+{
+    Harness h;
+    auto &a = h.addClient();
+    map(h, a, 0);
+    start(h, a);
+    h.sync(a);
+    ASSERT_EQ(1u, a.pointerEnters);
+    EXPECT_EQ(1u, a.pointerLeaves);
+    const size_t buttons = a.pointerButtons;
+
+    h.seat.onPointerMotion({}, {11, 11});
+    h.sync(a);
+    EXPECT_EQ(1u, a.pointerEnters);
+    EXPECT_EQ(1u, a.pointerLeaves);
+    h.seat.onPointerButton({}, {11, 11}, BTN_LEFT, false);
+    h.sync(a);
+    EXPECT_FALSE(h.seat.drag()->active());
+    EXPECT_EQ(2u, a.pointerEnters);
+    EXPECT_EQ(buttons, a.pointerButtons);
+
+    h.seat.onPointerMotion({}, {12, 12});
+    h.seat.onPointerButton({}, {12, 12}, BTN_LEFT, true);
+    h.seat.onPointerButton({}, {12, 12}, BTN_LEFT, false);
+    h.sync(a);
+    EXPECT_EQ(2u, a.pointerEnters);
+    EXPECT_EQ(1u, a.pointerLeaves);
+    EXPECT_EQ(buttons + 2, a.pointerButtons);
+}

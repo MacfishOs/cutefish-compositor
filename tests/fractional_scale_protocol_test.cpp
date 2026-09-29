@@ -394,6 +394,82 @@ TEST_F(FractionalScaleProtocolTest, OutputMetricsVersionsAndMultipleExtensions)
     }
 }
 
+// Exo's DuplicateGetXdgOutputDoesNotUAF: a client dying with two xdg_outputs
+// on one wl_output tears them down after the wl_output (lower object id).
+TEST_F(FractionalScaleProtocolTest, DisconnectingWithDuplicateXdgOutputsIsSafe)
+{
+    for (bool withdrawFirst : {false, true}) {
+        int sockets[2];
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets), 0);
+        wl_client *serverClient = wl_client_create(server, sockets[0]);
+        ASSERT_TRUE(serverClient);
+        wl_display *other = wl_display_connect_to_fd(sockets[1]);
+        ASSERT_TRUE(other);
+        const auto otherRoundtrip = [&] {
+            std::atomic<bool> done = false;
+            int result = -1;
+            std::thread worker([&] {
+                result = wl_display_roundtrip(other);
+                done = true;
+            });
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            while (!done && std::chrono::steady_clock::now() < deadline) {
+                wl_event_loop_dispatch(wl_display_get_event_loop(server), 1);
+                wl_display_flush_clients(server);
+            }
+            if (!done)
+                shutdown(wl_display_get_fd(other), SHUT_RDWR);
+            worker.join();
+            return result;
+        };
+
+        auto *otherRegistry = wl_display_get_registry(other);
+        auto *out = static_cast<wl_output *>(
+                wl_registry_bind(otherRegistry, outputName, &wl_output_interface, 4));
+        auto *manager = static_cast<zxdg_output_manager_v1 *>(
+                wl_registry_bind(otherRegistry, xdgName, &zxdg_output_manager_v1_interface, 3));
+        auto *first = zxdg_output_manager_v1_get_xdg_output(manager, out);
+        auto *second = zxdg_output_manager_v1_get_xdg_output(manager, out);
+        ASSERT_GE(otherRoundtrip(), 0);
+        EXPECT_EQ(wl_display_get_error(other), 0);
+
+        wl_global *replacement = nullptr;
+        if (withdrawFirst) {
+            wayland::removeOutputGlobal(outputGlobal);
+            replacement = wayland::createOutputGlobal(server, &output);
+            ASSERT_TRUE(replacement);
+            ASSERT_GE(otherRoundtrip(), 0);
+        }
+
+        bool destroyed = false;
+        struct Listener {
+            wl_listener listener;
+            bool *destroyed;
+        } listener {{}, &destroyed};
+        listener.listener.notify = [](wl_listener *listener, void *) {
+            *reinterpret_cast<Listener *>(listener)->destroyed = true;
+        };
+        wl_client_add_destroy_listener(serverClient, &listener.listener);
+
+        // Local proxy destruction only: nothing reaches the server.
+        for (auto *proxy : {reinterpret_cast<wl_proxy *>(first), reinterpret_cast<wl_proxy *>(second),
+                            reinterpret_cast<wl_proxy *>(manager), reinterpret_cast<wl_proxy *>(out),
+                            reinterpret_cast<wl_proxy *>(otherRegistry)})
+            wl_proxy_destroy(proxy);
+        wl_display_disconnect(other);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (!destroyed && std::chrono::steady_clock::now() < deadline)
+            wl_event_loop_dispatch(wl_display_get_event_loop(server), 1);
+        EXPECT_TRUE(destroyed);
+
+        if (replacement)
+            outputGlobal = replacement;
+        // The output and its other bindings carry on.
+        wayland::updateOutputGlobal(outputGlobal, &output);
+        ASSERT_GE(roundtrip(), 0);
+    }
+}
+
 TEST_F(FractionalScaleProtocolTest, LateOutputBindingEnterLeaveAndScaleDoesNotCycle)
 {
     int enters = 0, leaves = 0;

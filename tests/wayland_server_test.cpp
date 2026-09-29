@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include <wayland-client.h>
+#include <wayland-server-protocol.h>
 
 #include <atomic>
 #include <thread>
@@ -186,6 +187,88 @@ TEST_F(WaylandServerTest, ServerShutsDownWithAClientStillConnected)
 
     client.requestDisconnect();
     ASSERT_TRUE(waitFor([&] { return client.finished(); }));
+    client.join();
+}
+
+TEST_F(WaylandServerTest, DispatchWithoutTheEventLoopAcceptsAClient)
+{
+    ASSERT_TRUE(m_server->addSocket());
+
+    struct Listener {
+        wl_listener listener;
+        bool notified = false;
+    } created;
+    created.listener.notify = [](wl_listener* listener, void*) {
+        reinterpret_cast<Listener*>(listener)->notified = true;
+    };
+    wl_display_add_client_created_listener(m_server->display(), &created.listener);
+
+    TestClient client;
+    client.start(m_server->socketName());
+    QDeadlineTimer deadline(5000);
+    while (!created.notified && !deadline.hasExpired())
+        ASSERT_TRUE(m_server->dispatch(std::chrono::milliseconds(10)));
+    wl_list_remove(&created.listener.link);
+    ASSERT_TRUE(created.notified);
+
+    // The roundtrip needs the server to dispatch and flush by hand too.
+    while (!client.roundtripDone() && !deadline.hasExpired()) {
+        m_server->dispatch(std::chrono::milliseconds(10));
+        m_server->flush();
+    }
+    EXPECT_TRUE(client.roundtripDone());
+
+    client.requestDisconnect();
+    while (!client.finished() && !deadline.hasExpired())
+        m_server->dispatch(std::chrono::milliseconds(10));
+    while (m_server->trackedClientCount() != 0 && !deadline.hasExpired())
+        m_server->dispatch(std::chrono::milliseconds(10));
+    EXPECT_EQ(0, m_server->trackedClientCount());
+    client.join();
+}
+
+TEST_F(WaylandServerTest, FlushWithoutClients)
+{
+    m_server->flush();
+    ASSERT_TRUE(m_server->addSocket());
+    ASSERT_TRUE(m_server->start());
+    m_server->flush();
+}
+
+// Regression test for crbug.com/1508130: a resource destructor that flushes
+// while its client is being destroyed, with events still queued for it.
+TEST_F(WaylandServerTest, FlushDoesNotCrashDuringClientDisconnect)
+{
+    ASSERT_TRUE(m_server->addSocket());
+    ASSERT_TRUE(m_server->start());
+
+    TestClient client;
+    client.start(m_server->socketName());
+    ASSERT_TRUE(waitFor([&] { return client.roundtripDone(); }));
+
+    wl_list* clients = wl_display_get_client_list(m_server->display());
+    ASSERT_FALSE(wl_list_empty(clients));
+    wl_client* wlClient = wl_client_from_link(clients->next);
+    EXPECT_FALSE(m_server->isClientDestroyed(wlClient));
+
+    struct Context {
+        Server* server;
+        wl_client* client;
+        bool destroyed = false;
+    } context {m_server.get(), wlClient};
+    wl_resource* output = wl_resource_create(wlClient, &wl_output_interface, 4, 0);
+    ASSERT_NE(nullptr, output);
+    wl_resource_set_implementation(output, nullptr, &context, [](wl_resource* resource) {
+        auto* context = static_cast<Context*>(wl_resource_get_user_data(resource));
+        EXPECT_TRUE(context->server->isClientDestroyed(context->client));
+        context->server->flush();
+        context->destroyed = true;
+    });
+    wl_output_send_name(output, "test_output");
+
+    client.requestDisconnect();
+    ASSERT_TRUE(waitFor([&] { return context.destroyed; }));
+    ASSERT_TRUE(waitFor([&] { return m_server->trackedClientCount() == 0; }));
     client.join();
 }
 

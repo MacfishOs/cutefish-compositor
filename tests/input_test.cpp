@@ -1353,3 +1353,61 @@ TEST_F(InputTest, PairedReleaseMayDestroyItsPointer)
     EXPECT_EQ(delegate.frames, frames);
     EXPECT_EQ(seat.pressedButtons(), NoButton);
 }
+
+// Exo's OnKeyboardKey_ChangeFocusInPreTargetHandler: a handler that moves
+// focus while it takes a key must leave the new surface with a consistent
+// view of what is held.
+TEST_F(InputTest, FocusMovedWhileAKeyIsConsumedKeepsTheNewSurfaceConsistent)
+{
+    auto first = compositor.createSurface();
+    auto second = compositor.createSurface();
+    map(first.get(), QPoint(0, 0), QSize(100, 100));
+    map(second.get(), QPoint(200, 0), QSize(100, 100));
+    auto delegate = std::make_unique<FakeKeyboardDelegate>();
+    FakeKeyboardDelegate* raw = delegate.get();
+    Keyboard keyboard(std::move(delegate), &seat);
+    seat.setFocusedSurface(first.get());
+    raw->keys.clear();
+
+    struct Sink : EventSink {
+        Seat* seat = nullptr;
+        compositor::Surface* target = nullptr;
+
+        bool onKey(Timestamp, uint32_t code, bool pressed) override
+        {
+            if (code != KEY_A)
+                return false;
+            if (pressed)
+                seat->setFocusedSurface(target);
+            return true;
+        }
+    } sink;
+
+    sink.seat = &seat;
+    sink.target = second.get();
+    InputManager manager(&seat);
+    manager.setEventSink(&sink);
+    manager.onKey(at(1), KEY_A, true);
+    EXPECT_EQ(second.get(), keyboard.focusedSurface());
+    ASSERT_EQ(1u, raw->leaves.size());
+    ASSERT_EQ(2u, raw->enters.size());
+    manager.onKey(at(2), KEY_A, false);
+    manager.setEventSink(nullptr);
+
+    // Neither the press nor a release the surface could not pair reaches it.
+    size_t presses = 0, releases = 0;
+    for (const auto& key : raw->keys) {
+        if (key.code == KEY_A)
+            ++(key.pressed ? presses : releases);
+    }
+    EXPECT_EQ(0u, presses);
+    EXPECT_EQ(raw->enterKeys.count(KEY_A), releases);
+
+    // Keys after the change go to the new surface as usual.
+    raw->keys.clear();
+    manager.onKey(at(3), KEY_B, true);
+    manager.onKey(at(4), KEY_B, false);
+    ASSERT_EQ(2u, raw->keys.size());
+    EXPECT_EQ(KEY_B, raw->keys[0].code);
+    EXPECT_TRUE(raw->keys[0].pressed);
+}

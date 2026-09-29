@@ -419,6 +419,23 @@ TEST_F(SubSurfaceTest, CacheMergesCallbacksDamageAndLastBuffer)
     EXPECT_EQ(2u, fired.size());
 }
 
+TEST_F(SubSurfaceTest, AttachOffsetDesynchronizedSubsurface)
+{
+    child->attach(a, {});
+    sub->setCommitBehavior(false);
+    EXPECT_EQ(QPoint(), child->offset());
+
+    child->attach(a, {1, 2});
+    // The parent's commit does not apply a desynchronized child's pending state.
+    parent->commit();
+    EXPECT_EQ(QPoint(), child->offset());
+
+    // An uncommitted attachment is replaced, offset included.
+    child->attach(a, {10, 20});
+    child->commit();
+    EXPECT_EQ(QPoint(10, 20), child->offset());
+}
+
 } // namespace
 
 TEST_F(SubSurfaceTest, BackgroundBlurWaitsForSynchronizedParentCommit)

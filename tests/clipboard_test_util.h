@@ -46,6 +46,9 @@ struct Client {
     wl_data_offer* dragOffer = nullptr;
     std::vector<std::pair<uint32_t, bool>> keyEvents;
     uint32_t buttonSerial = 0;
+    size_t pointerEnters = 0;
+    size_t pointerLeaves = 0;
+    size_t pointerButtons = 0;
     uint32_t touchSerial = 0;
     size_t touchCancels = 0;
     uint32_t dragSerial = 0;
@@ -144,12 +147,18 @@ struct Client {
         wl_keyboard_add_listener(keyboard, &keys, this);
         pointer = wl_seat_get_pointer(seat);
         static const wl_pointer_listener pointerListener = {
-            [](void*, wl_pointer*, uint32_t, wl_surface*, wl_fixed_t, wl_fixed_t) {},
-            [](void*, wl_pointer*, uint32_t, wl_surface*) {},
+            [](void* data, wl_pointer*, uint32_t, wl_surface*, wl_fixed_t, wl_fixed_t) {
+                ++static_cast<Client*>(data)->pointerEnters;
+            },
+            [](void* data, wl_pointer*, uint32_t, wl_surface*) {
+                ++static_cast<Client*>(data)->pointerLeaves;
+            },
             [](void*, wl_pointer*, uint32_t, wl_fixed_t, wl_fixed_t) {},
             [](void* data, wl_pointer*, uint32_t serial, uint32_t, uint32_t, uint32_t state) {
+                auto* client = static_cast<Client*>(data);
+                ++client->pointerButtons;
                 if (state == WL_POINTER_BUTTON_STATE_PRESSED)
-                    static_cast<Client*>(data)->buttonSerial = serial;
+                    client->buttonSerial = serial;
             },
             [](void*, wl_pointer*, uint32_t, uint32_t, wl_fixed_t) {},
             [](void*, wl_pointer*) {},
