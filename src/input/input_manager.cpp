@@ -238,6 +238,13 @@ void InputManager::onPointerMotionAbsolute(Timestamp timestamp, const QPointF &p
     moveAbsolute(timestamp, position / m_deviceScale);
 }
 
+void InputManager::onPointerMotionLogical(Timestamp timestamp, const QPointF &position)
+{
+    emit userActivity();
+    const QPointF delta = position - m_pointerPosition;
+    movePointer(timestamp, position, {delta, delta});
+}
+
 void InputManager::onPointerMotionNormalized(Timestamp timestamp, const QPointF &position)
 {
     emit userActivity();

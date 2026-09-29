@@ -136,6 +136,9 @@ protected:
                 },
                 [&] {
                     repaint = true;
+                },
+                [](const wl_client *) {
+                    return true;
                 });
         manager->setCaptureAllowed([&] {
             return sessionController.allowsCapture();
@@ -622,6 +625,37 @@ TEST_F(ImageCaptureTest, RevokedAuthorizationFails)
     submit();
     ASSERT_TRUE(roundtrip());
     EXPECT_EQ(failed, EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_STOPPED);
+}
+
+// The computer-use service binds the managers before the user lets it capture.
+class ImageCaptureBeforeConsentTest : public ImageCaptureTest
+{
+protected:
+    void SetUp() override
+    {
+        allowed = false;
+        ImageCaptureTest::SetUp();
+    }
+};
+
+TEST_F(ImageCaptureBeforeConsentTest, ABoundClientCapturesOnlyOnceAuthorized)
+{
+    EXPECT_EQ(stopped, 1);
+    EXPECT_EQ(wl_display_get_error(client), 0);
+
+    allowed = true;
+    ext_image_copy_capture_session_v1_destroy(session);
+    ext_image_capture_source_v1_destroy(source);
+    source = ext_output_image_capture_source_manager_v1_create_source(sources, output);
+    session = ext_image_copy_capture_manager_v1_create_session(copies, source, 0);
+    ext_image_copy_capture_session_v1_add_listener(session, sessionListener(), this);
+    ASSERT_TRUE(roundtrip());
+    makeFrame();
+    submit();
+    manager->presented(17, 1000000123);
+    ASSERT_TRUE(roundtrip());
+    EXPECT_EQ(ready, 1);
+    EXPECT_EQ(failed, -1);
 }
 
 TEST_F(ImageCaptureTest, ALockedSessionHoldsCaptureUntilUnlocked)

@@ -26,6 +26,10 @@ namespace cutefish::input {
 // reads on Linux, so the two are directly comparable.
 using Timestamp = std::chrono::steady_clock::time_point;
 
+// One wheel click in InputManager::onPointerAxis offsets, which are Wayland
+// axis units.
+constexpr double kAxisUnitsPerClick = 10.0;
+
 // Stands in for ui::EventFlags' mouse-button bits. Exo's delegate passes a
 // bitmask of changed buttons, and a mask of pressed buttons on enter.
 enum ButtonFlag : uint32_t {

@@ -10,8 +10,12 @@
 
 #include "input/xkb_tracker.h"
 
+#include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <iterator>
+
+#include <linux/input-event-codes.h>
 
 #include "core/logging.h"
 
@@ -118,6 +122,57 @@ uint32_t XkbTracker::baseKeysym(uint32_t evdevCode) const
     const xkb_keysym_t keysym =
             count > 0 ? syms[0] : xkb_state_key_get_one_sym(m_state.get(), keycode);
     return xkb_keysym_to_lower(keysym);
+}
+
+std::optional<KeyStroke> XkbTracker::keyStroke(uint32_t keysym) const
+{
+    if (!m_state || keysym == XKB_KEY_NoSymbol)
+        return std::nullopt;
+    const std::unique_ptr<xkb_state, StateDeleter> scratch(xkb_state_new(m_keymap.get()));
+    if (!scratch)
+        return std::nullopt;
+
+    // The modifier each key sets, read from the keymap rather than assumed.
+    const auto maskOf = [&](uint32_t evdevCode) {
+        xkb_state_update_mask(scratch.get(), 0, 0, 0, 0, 0, 0);
+        xkb_state_update_key(scratch.get(), evdevCode + kEvdevToXkbOffset, XKB_KEY_DOWN);
+        return xkb_state_serialize_mods(scratch.get(), XKB_STATE_MODS_DEPRESSED);
+    };
+    std::vector<std::pair<uint32_t, xkb_mod_mask_t>> keys {{KEY_LEFTSHIFT, maskOf(KEY_LEFTSHIFT)}};
+    if (baseKeysym(KEY_RIGHTALT) == XKB_KEY_ISO_Level3_Shift)
+        keys.emplace_back(KEY_RIGHTALT, maskOf(KEY_RIGHTALT));
+
+    const xkb_mod_mask_t locked = xkb_state_serialize_mods(m_state.get(), XKB_STATE_MODS_LOCKED);
+    const xkb_layout_index_t layout =
+            xkb_state_serialize_layout(m_state.get(), XKB_STATE_LAYOUT_EFFECTIVE);
+    const xkb_keycode_t first = std::max<xkb_keycode_t>(xkb_keymap_min_keycode(m_keymap.get()),
+                                                         kEvdevToXkbOffset);
+    const xkb_keycode_t last = xkb_keymap_max_keycode(m_keymap.get());
+
+    // Subsets of `keys` in order of size: none, Shift, AltGr, both.
+    const uint32_t combinations = 1u << keys.size();
+    for (uint32_t size = 0; size <= keys.size(); ++size) {
+        for (uint32_t combination = 0; combination < combinations; ++combination) {
+            if (uint32_t(std::popcount(combination)) != size)
+                continue;
+            KeyStroke stroke;
+            xkb_mod_mask_t depressed = 0;
+            for (size_t i = 0; i < keys.size(); ++i) {
+                if (combination & (1u << i)) {
+                    stroke.modifiers.push_back(keys[i].first);
+                    depressed |= keys[i].second;
+                }
+            }
+            xkb_state_update_mask(scratch.get(), depressed, 0, locked, 0, 0, layout);
+            for (xkb_keycode_t keycode = first; keycode <= last; ++keycode) {
+                if (xkb_state_key_get_one_sym(scratch.get(), keycode) == keysym) {
+                    stroke.key = keycode - kEvdevToXkbOffset;
+                    return stroke;
+                }
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 bool XkbTracker::modifierPressed(const char *name) const

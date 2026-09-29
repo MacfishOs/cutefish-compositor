@@ -65,6 +65,10 @@ std::optional<CompositorOptions> CompositorOptions::parse(const QCoreApplication
     QCommandLineOption captureClientOption(
             "capture-client", "Allow this executable to capture outputs (repeatable).", "path");
     parser.addOption(captureClientOption);
+    QCommandLineOption computerControlClientOption(
+            "computer-control-client",
+            "Allow this executable to ask for control of the computer (repeatable).", "path");
+    parser.addOption(computerControlClientOption);
     QCommandLineOption inputMethodOption(
             QStringLiteral("input-method"),
             QStringLiteral("Development only: run this input-method desktop file id instead of "
@@ -128,6 +132,7 @@ std::optional<CompositorOptions> CompositorOptions::parse(const QCoreApplication
     options.login = parser.isSet(loginOption);
     options.clipboardClients = parser.values(clipboardClientOption);
     options.captureClients = parser.values(captureClientOption);
+    options.computerControlClients = parser.values(computerControlClientOption);
     options.inputMethodId =
             parser.isSet(inputMethodOption) ? parser.value(inputMethodOption) : QString();
     options.displayConfigService = parser.value(displayServiceOption);

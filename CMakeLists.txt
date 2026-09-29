@@ -106,6 +106,8 @@ cutefish_wayland_protocol(cutefish-shell-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-shell-v1.xml)
 cutefish_wayland_protocol(cutefish-window-management-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-window-management-v1.xml)
+cutefish_wayland_protocol(cutefish-computer-control-v1
+    ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-computer-control-v1.xml)
 
 cutefish_wayland_protocol(cursor-shape-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/cursor-shape/cursor-shape-v1.xml)
@@ -168,7 +170,8 @@ add_library(cutefish-protocols STATIC
     ${xdg-toplevel-drag-v1_SOURCES}
     ${cursor-shape-v1_SOURCES} ${tablet-v2_SOURCES} ${linux-dmabuf-v1_SOURCES}
     ${linux-drm-syncobj-v1_SOURCES} ${cutefish-shell-v1_SOURCES}
-    ${cutefish-window-management-v1_SOURCES})
+    ${cutefish-window-management-v1_SOURCES}
+    ${cutefish-computer-control-v1_SOURCES})
 target_include_directories(cutefish-protocols PUBLIC ${CUTEFISH_PROTOCOL_DIR})
 target_link_libraries(cutefish-protocols PUBLIC PkgConfig::WaylandServer)
 set_target_properties(cutefish-protocols PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -599,6 +602,20 @@ target_include_directories(cutefish-session PUBLIC src)
 target_link_libraries(cutefish-session PUBLIC cutefish-compositor-core cutefish-wm Qt6::DBus Qt6::Concurrent)
 set_target_properties(cutefish-session PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# An agent driving the seat once the user agrees, over
+# cutefish-computer-control-v1: consent, injection, and the pause on real input.
+add_library(cutefish-computer-control STATIC
+    src/computer_control/computer_control_service.cpp
+    src/computer_control/computer_control_service.h
+    src/computer_control/controller.cpp
+    src/computer_control/controller.h
+    src/computer_control/permission_consent.cpp
+    src/computer_control/permission_consent.h
+)
+target_include_directories(cutefish-computer-control PUBLIC src)
+target_link_libraries(cutefish-computer-control PUBLIC cutefish-input Qt6::DBus)
+set_target_properties(cutefish-computer-control PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Keyboard shortcuts: the Ash accelerator controller and its configuration,
 # above the window manager and the session, exposed to Settings over D-Bus.
 add_library(cutefish-accelerators STATIC
@@ -847,12 +864,14 @@ set_target_properties(cutefish-headless PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(cutefish-wayland-globals STATIC
     src/wayland/protocol_globals.cpp
     src/wayland/protocol_globals.h
+    src/wayland/protocols/cutefish_computer_control.cpp
+    src/wayland/protocols/cutefish_computer_control.h
 )
 target_include_directories(cutefish-wayland-globals PUBLIC src)
 target_link_libraries(cutefish-wayland-globals
     PUBLIC cutefish-wayland cutefish-compositor-core cutefish-wayland-input
            cutefish-wayland-shell cutefish-wayland-private-shell cutefish-wm
-           cutefish-input cutefish-input-method-settings
+           cutefish-input cutefish-input-method-settings cutefish-computer-control
 )
 set_target_properties(cutefish-wayland-globals PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

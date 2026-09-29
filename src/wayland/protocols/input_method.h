@@ -9,6 +9,7 @@
 #include <QSize>
 #include <functional>
 #include <memory>
+#include <string>
 #include <wayland-server-core.h>
 
 namespace cutefish::scene {
@@ -47,6 +48,16 @@ public:
 
     // Restricts input-method and virtual-keyboard binds; unset allows every client.
     void setAuthorizer(std::function<bool(const wl_client *)> authorizer);
+
+    // A text field of the keyboard-focused client is enabled.
+    bool hasFocusedTextInput() const;
+
+    // The input method takes the keys typed into that field, to compose.
+    bool grabsKeyboard() const;
+
+    // Commits UTF-8 text to that field as an input method would, keeping the
+    // input method's preedit. False, and nothing sent, without one.
+    bool commitText(const std::string &text);
 
     wl_global *textInputGlobal() const;
     wl_global *textInputV1Global() const;

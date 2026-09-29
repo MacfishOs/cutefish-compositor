@@ -745,6 +745,27 @@ void InputMethodManager::setAuthorizer(std::function<bool(const wl_client *)> au
         m_impl->authorizer = std::move(authorizer);
 }
 
+bool InputMethodManager::hasFocusedTextInput() const
+{
+    return m_impl && m_impl->m_active && m_impl->eligible(m_impl->m_active);
+}
+
+bool InputMethodManager::grabsKeyboard() const
+{
+    return hasFocusedTextInput() && m_impl->grab && m_impl->method
+            && m_impl->current(m_impl->method) && m_impl->grabGeneration == m_impl->generation;
+}
+
+bool InputMethodManager::commitText(const std::string &text)
+{
+    if (!hasFocusedTextInput() || !validImeText(text))
+        return false;
+    TextInputEdit edit = m_impl->currentPreedit(m_impl->m_active);
+    edit.commit = text;
+    m_impl->m_active->sendEdit(edit);
+    return true;
+}
+
 wl_global *InputMethodManager::textInputGlobal() const
 {
     return m_impl ? m_impl->textGlobal : nullptr;

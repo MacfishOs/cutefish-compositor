@@ -17,6 +17,10 @@ namespace compositor {
 class Compositor;
 }
 
+namespace computer_control {
+class Controller;
+}
+
 namespace input {
 class InputMethodSettings;
 class Seat;
@@ -42,6 +46,7 @@ class InputMethodManager;
 class PrivilegedClients;
 class SecurityDelegate;
 class Server;
+class WaylandComputerControl;
 class WaylandCutefishShell;
 class WaylandCutefishWindowManagement;
 class WaylandXdgActivation;
@@ -71,6 +76,8 @@ public:
         // screen.
         scene::Node *inputMethodPopupLayer = nullptr;
         SecurityDelegate *security = nullptr;
+        // Null leaves computer control out.
+        computer_control::Controller *computerControl = nullptr;
         // The greeter and development instances must not take over the user's
         // input method.
         bool launchInputMethod = false;
@@ -111,11 +118,14 @@ public:
 
     InputMethodLauncher *inputMethodLauncher() { return m_inputMethodLauncher.get(); }
 
+    InputMethodManager *inputMethod() { return m_inputMethod.get(); }
+
 private:
     bool registerCoreGlobals();
     bool registerInputMethod();
     bool registerClipboard();
     bool registerCapture();
+    bool registerComputerControl();
     bool registerPrivateShell();
     bool registerQtHardwareIntegration();
 
@@ -135,6 +145,7 @@ private:
     std::unique_ptr<DataControlManager> m_dataControl;
     std::unique_ptr<ImageCaptureManager> m_imageCapture;
     std::unique_ptr<ForeignToplevelList> m_toplevelList;
+    std::unique_ptr<WaylandComputerControl> m_computerControl;
     std::unique_ptr<WaylandCutefishShell> m_cutefishShell;
     std::unique_ptr<WaylandCutefishWindowManagement> m_windowManagement;
     wl_global *m_qtHardwareIntegration = nullptr;

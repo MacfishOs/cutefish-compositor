@@ -50,7 +50,10 @@ public:
         const scene::Node *root = nullptr;
     };
 
-    ImageCaptureManager(wl_display *display, Authorize authorize, std::function<void()> repaint);
+    // `bindable` lets a client hold the managers before it may capture, as the
+    // computer-use service does until consent; empty means `authorize`.
+    ImageCaptureManager(wl_display *display, Authorize authorize, std::function<void()> repaint,
+                        Authorize bindable = {});
     ~ImageCaptureManager();
 
     // Releases the globals; must run before the display is destroyed.

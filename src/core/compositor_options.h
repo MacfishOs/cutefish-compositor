@@ -35,6 +35,7 @@ struct CompositorOptions {
     int readyFd = -1;
     QStringList clipboardClients;
     QStringList captureClients;
+    QStringList computerControlClients;
     // Development override; empty means use the saved selection.
     QString inputMethodId;
     compositor::OutputScale scale;

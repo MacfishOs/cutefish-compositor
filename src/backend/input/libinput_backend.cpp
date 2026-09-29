@@ -37,10 +37,8 @@ input::Timestamp timestampFromUsec(uint64_t usec)
     return input::Timestamp(std::chrono::microseconds(usec));
 }
 
-// libinput reports wheel movement in 1/120 of a click; Wayland's axis unit is
-// 10 per click.
+// libinput reports wheel movement in 1/120 of a click.
 constexpr double kV120PerClick = 120.0;
-constexpr double kAxisUnitsPerClick = 10.0;
 
 input::GestureType gestureType(libinput_event_type type)
 {
@@ -611,7 +609,7 @@ void LibinputBackend::processEvent(libinput_event *event)
             if (!libinput_event_pointer_has_axis(scroll, axis))
                 return 0.0;
             return libinput_event_pointer_get_scroll_value_v120(scroll, axis) / kV120PerClick
-                    * kAxisUnitsPerClick;
+                    * input::kAxisUnitsPerClick;
         };
         m_inputManager->onPointerAxis(
                 timestampFromUsec(libinput_event_pointer_get_time_usec(scroll)),

@@ -8,6 +8,7 @@
 #include <QProcessEnvironment>
 
 #include "compositor/compositor.h"
+#include "computer_control/controller.h"
 #include "core/logging.h"
 #include "core/process_environment.h"
 #include "display/display_manager.h"
@@ -17,6 +18,7 @@
 #include "wayland/privileged_client.h"
 #include "wayland/protocols/application_menu.h"
 #include "wayland/protocols/cursor_shape.h"
+#include "wayland/protocols/cutefish_computer_control.h"
 #include "wayland/protocols/cutefish_shell.h"
 #include "wayland/protocols/cutefish_window_management.h"
 #include "wayland/protocols/data_control.h"
@@ -66,7 +68,8 @@ ProtocolGlobals::~ProtocolGlobals() = default;
 bool ProtocolGlobals::initialize()
 {
     return registerCoreGlobals() && registerInputMethod() && registerClipboard()
-            && registerCapture() && registerPrivateShell() && registerQtHardwareIntegration();
+            && registerCapture() && registerComputerControl() && registerPrivateShell()
+            && registerQtHardwareIntegration();
 }
 
 bool ProtocolGlobals::registerCoreGlobals()
@@ -160,20 +163,29 @@ bool ProtocolGlobals::registerClipboard()
 bool ProtocolGlobals::registerCapture()
 {
     // The shell takes screenshots itself; recordings run in an allowlisted helper.
-    const auto authorize = [security = m_deps.security,
-                            privileged = m_privileged.get()](const wl_client *client) {
-        return privileged->isTrusted(client) || security->canCaptureOutputs(client);
+    // The computer-use service reads the screen only while the user lets it
+    // control the computer, but binds the output managers beforehand: it cannot
+    // bind once it has dropped its /proc identity. It never sees window lists.
+    const auto authorize = [security = m_deps.security, privileged = m_privileged.get(),
+                            control = m_deps.computerControl](const wl_client *client) {
+        return privileged->isTrusted(client) || security->canCaptureOutputs(client)
+                || (control && control->allowsCapture(client));
     };
-    m_imageCapture = std::make_unique<ImageCaptureManager>(m_deps.server->display(), authorize,
-                                                           [compositor = m_deps.compositor] {
-                                                               compositor->scheduleRepaint();
-                                                           });
+    const auto visible = [security = m_deps.security, authorize](const wl_client *client) {
+        return authorize(client) || security->canControlComputer(client);
+    };
+    m_imageCapture = std::make_unique<ImageCaptureManager>(
+            m_deps.server->display(), authorize,
+            [compositor = m_deps.compositor] {
+                compositor->scheduleRepaint();
+            },
+            visible);
     if (!m_imageCapture->sourceGlobal() || !m_imageCapture->toplevelSourceGlobal()
         || !m_imageCapture->copyGlobal())
         return false;
-    m_privileged->addRestrictedGlobal(m_imageCapture->sourceGlobal(), authorize);
+    m_privileged->addRestrictedGlobal(m_imageCapture->sourceGlobal(), visible);
     m_privileged->addRestrictedGlobal(m_imageCapture->toplevelSourceGlobal(), authorize);
-    m_privileged->addRestrictedGlobal(m_imageCapture->copyGlobal(), authorize);
+    m_privileged->addRestrictedGlobal(m_imageCapture->copyGlobal(), visible);
     // Window sources need the toplevel list, which the same clients may bind.
     m_toplevelList = std::make_unique<ForeignToplevelList>(
             m_deps.server->display(), m_deps.windowManager, m_deps.compositor, authorize);
@@ -183,6 +195,21 @@ bool ProtocolGlobals::registerCapture()
     m_imageCapture->setToplevelSourceResolver([list = m_toplevelList.get()](wl_resource *handle) {
         return list->sourceFor(handle);
     });
+    return true;
+}
+
+bool ProtocolGlobals::registerComputerControl()
+{
+    if (!m_deps.computerControl)
+        return true;
+    const auto authorize = [security = m_deps.security](const wl_client *client) {
+        return security->canControlComputer(client);
+    };
+    m_computerControl = std::make_unique<WaylandComputerControl>(
+            m_deps.server->display(), m_deps.computerControl, authorize);
+    if (!m_computerControl->global())
+        return false;
+    m_privileged->addRestrictedGlobal(m_computerControl->global(), authorize);
     return true;
 }
 
@@ -290,6 +317,9 @@ void ProtocolGlobals::shutdown()
     }
     if (m_privileged && m_toplevelList)
         m_privileged->removeRestrictedGlobal(m_toplevelList->global());
+    if (m_privileged && m_computerControl)
+        m_privileged->removeRestrictedGlobal(m_computerControl->global());
+    m_computerControl.reset();
     if (m_privileged && m_qtHardwareIntegration)
         m_privileged->removeRestrictedGlobal(m_qtHardwareIntegration);
     if (m_imageCapture)

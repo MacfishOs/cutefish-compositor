@@ -49,11 +49,13 @@ ExecutableSecurityDelegate::ExecutableSecurityDelegate(const QStringList &clipbo
                                                        const QStringList &captureClients,
                                                        const QStringList &systemDialogClients,
                                                        bool captureEnabled,
-                                                       const QStringList &floatingClients)
+                                                       const QStringList &floatingClients,
+                                                       const QStringList &computerControlClients)
     : m_clipboardClients(canonicalPaths(clipboardClients))
     , m_captureClients(canonicalPaths(captureClients))
     , m_systemDialogClients(canonicalPaths(systemDialogClients))
     , m_floatingClients(canonicalPaths(floatingClients))
+    , m_computerControlClients(canonicalPaths(computerControlClients))
     , m_captureEnabled(captureEnabled)
 {
 }
@@ -76,6 +78,11 @@ bool ExecutableSecurityDelegate::showsSystemDialogs(qint64 pid) const
 bool ExecutableSecurityDelegate::showsFloatingWindows(qint64 pid) const
 {
     return runsOneOf(static_cast<pid_t>(pid), m_floatingClients);
+}
+
+bool ExecutableSecurityDelegate::canControlComputer(const wl_client *client) const
+{
+    return m_captureEnabled && runsOneOf(client, m_computerControlClients);
 }
 
 } // namespace cutefish::wayland

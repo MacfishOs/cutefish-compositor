@@ -17,13 +17,21 @@
 #define CUTEFISH_INPUT_XKB_TRACKER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <xkbcommon/xkbcommon.h>
 
 #include "input/types.h"
 
 namespace cutefish::input {
+
+// The evdev key that types a keysym, with the modifier keys to hold for it.
+struct KeyStroke {
+    uint32_t key = 0;
+    std::vector<uint32_t> modifiers;
+};
 
 // Owns the xkb context, keymap and state used by every wl_keyboard.
 class XkbTracker
@@ -51,6 +59,11 @@ public:
     // The keysym at the base shift level of the active layout, lower-cased:
     // what ui::KeyboardCode is to Ash accelerators. Shift+1 is "1", not "!".
     uint32_t baseKeysym(uint32_t evdevCode) const;
+
+    // How to type `keysym` under the current keymap, layout and locks, using
+    // Shift and the layout's AltGr at most; fewest modifiers first. Nothing
+    // when the layout has no key for it.
+    std::optional<KeyStroke> keyStroke(uint32_t keysym) const;
 
     // Whether a modifier is depressed or latched, ignoring locks: Caps Lock
     // does not make Ctrl+A a different accelerator.

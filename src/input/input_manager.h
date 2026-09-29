@@ -117,6 +117,9 @@ public:
     void onPointerMotionAbsolute(Timestamp timestamp, const QPointF &position);
     // Normalized absolute coordinates map to the current logical desktop extent.
     void onPointerMotionNormalized(Timestamp timestamp, const QPointF &position);
+    // A point already in global logical coordinates, from a source other than
+    // a device (computer control).
+    void onPointerMotionLogical(Timestamp timestamp, const QPointF &position);
     void onPointerButton(Timestamp timestamp, uint32_t evdevButton, bool pressed);
     void onPointerAxis(Timestamp timestamp, const QPointF &offset, bool discrete);
     void onPointerAxisStop(Timestamp timestamp);

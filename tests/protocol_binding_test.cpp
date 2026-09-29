@@ -130,7 +130,8 @@ const std::map<std::string, const wl_interface *> &knownInterfaces()
     return interfaces;
 }
 
-// No executable is allowlisted: every restricted global needs the trusted shell.
+// No executable is allowlisted: every restricted global needs the trusted shell,
+// except what the one computer-use client, if any, may see.
 class DenyingSecurityDelegate final : public wayland::SecurityDelegate
 {
 public:
@@ -138,7 +139,14 @@ public:
 
     bool canCaptureOutputs(const wl_client *) const override { return false; }
 
+    bool canControlComputer(const wl_client *client) const override
+    {
+        return client && client == computerUse;
+    }
+
     bool showsSystemDialogs(qint64) const override { return false; }
+
+    const wl_client *computerUse = nullptr;
 };
 
 struct Global {
@@ -205,13 +213,15 @@ protected:
             m_globals->shutdown();
     }
 
-    std::unique_ptr<Client> connect(bool trusted = false)
+    std::unique_ptr<Client> connect(bool trusted = false, bool computerUse = false)
     {
         int fds[2];
         EXPECT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds));
         wl_client *serverClient = trusted ? m_globals->privileged()->adoptShellConnection(fds[0])
                                           : wl_client_create(m_server.display(), fds[0]);
         EXPECT_NE(nullptr, serverClient);
+        if (computerUse)
+            m_security.computerUse = serverClient;
         auto client = std::make_unique<Client>();
         client->display = wl_display_connect_to_fd(fds[1]);
         EXPECT_NE(nullptr, client->display);
@@ -342,6 +352,29 @@ TEST_F(ProtocolBindingTest, OrdinaryClientsDoNotSeeRestrictedGlobals)
     // What the ordinary client sees, the shell sees too.
     for (const auto &[interface, global] : ordinary->globals)
         EXPECT_TRUE(trusted->globals.contains(interface)) << interface;
+}
+
+// The computer-use service binds output capture at startup, before the user
+// lets it capture anything, and never learns the window list.
+TEST_F(ProtocolBindingTest, TheComputerUseServiceBindsOutputCaptureButSeesNoWindows)
+{
+    auto client = connect(false, true);
+    for (const char *hidden : {
+                 "ext_foreign_toplevel_image_capture_source_manager_v1",
+                 "ext_foreign_toplevel_list_v1",
+         })
+        EXPECT_FALSE(client->globals.contains(hidden)) << hidden;
+    for (const auto *interface : {
+                 &ext_output_image_capture_source_manager_v1_interface,
+                 &ext_image_copy_capture_manager_v1_interface,
+         }) {
+        const auto global = client->globals.find(interface->name);
+        ASSERT_NE(client->globals.end(), global) << interface->name;
+        client->bound.push_back(static_cast<wl_proxy *>(
+                wl_registry_bind(client->registry, global->second.name, interface, 1)));
+    }
+    EXPECT_GE(roundtrip(*client), 0);
+    EXPECT_EQ(0, wl_display_get_error(client->display));
 }
 
 // Exo's security binding checks: a hidden global stays out of reach even when

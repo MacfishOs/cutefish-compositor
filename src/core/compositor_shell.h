@@ -55,6 +55,12 @@ class LibinputBackend;
 class LibseatSession;
 } // namespace backend
 
+namespace computer_control {
+class ComputerControlService;
+class Controller;
+class PermissionConsent;
+} // namespace computer_control
+
 namespace display {
 class CallbackNativeDisplayDelegate;
 class DisplayConfigurationController;
@@ -138,6 +144,7 @@ private:
     bool initWayland();
     bool initHeadless();
     void initKeyboard();
+    void initComputerControl();
     void initAccelerators();
     bool initDrm();
     bool initDisplay();
@@ -178,6 +185,17 @@ private:
     private:
         QPointer<wayland::IdleInhibition> m_inhibition;
         bool m_blocked = false;
+    };
+
+    // A blocked session ends an agent's control, and a pending request for it.
+    class ComputerControlPolicy : public session::SessionObserver
+    {
+    public:
+        void setController(computer_control::Controller *controller);
+        void onSessionStateChanged(session::SessionState state) override;
+
+    private:
+        computer_control::Controller *m_controller = nullptr;
     };
 
     const CompositorOptions m_options;
@@ -241,6 +259,7 @@ private:
     session::SessionController m_sessionController;
     SecureScanoutPolicy m_secureScanoutPolicy;
     IdleInhibitionPolicy m_idleInhibitionPolicy;
+    ComputerControlPolicy m_computerControlPolicy;
     auth::AuthUi m_authUi;
     session::ScreenSaverService m_screenSaver;
     session::SleepLock m_sleepLock;
@@ -266,6 +285,11 @@ private:
     std::unique_ptr<wm::QuitAll> m_quitAll;
     std::unique_ptr<session::ApplicationsService> m_applicationsService;
     std::unique_ptr<session::WindowDebugService> m_windowDebugService;
+    // An agent driving the seat. The consent outlives the controller that asks
+    // it; the controller goes before the input manager it injects into.
+    std::unique_ptr<computer_control::PermissionConsent> m_computerControlConsent;
+    std::unique_ptr<computer_control::Controller> m_computerControl;
+    std::unique_ptr<computer_control::ComputerControlService> m_computerControlService;
 
     compositor::Output m_outputModel;
     std::vector<std::unique_ptr<compositor::Output>> m_additionalOutputModels;

@@ -35,6 +35,7 @@ struct Frame;
 
 struct ImageCaptureManager::State {
     Authorize authorize;
+    Authorize bindable;
     std::function<bool()> captureAllowed;
     std::function<void()> repaint;
     ToplevelSourceResolver toplevelSource;
@@ -395,7 +396,7 @@ void bind(wl_client *client, void *data, uint32_t, uint32_t id, const wl_interfa
           const void *implementation)
 {
     auto state = *static_cast<std::shared_ptr<State> *>(data);
-    if (!state->authorize(client)) {
+    if (!state->bindable(client)) {
         wl_client_post_implementation_error(client, "capture access denied");
         return;
     }
@@ -478,10 +479,11 @@ void ImageCaptureManager::setRenderer(const render::Renderer *renderer)
 }
 
 ImageCaptureManager::ImageCaptureManager(wl_display *display, Authorize authorize,
-                                         std::function<void()> repaint)
+                                         std::function<void()> repaint, Authorize bindable)
     : m_state(std::make_shared<State>())
 {
     m_state->authorize = std::move(authorize);
+    m_state->bindable = bindable ? std::move(bindable) : m_state->authorize;
     m_state->repaint = std::move(repaint);
     m_sourceGlobal = wl_global_create(
             display, &ext_output_image_capture_source_manager_v1_interface, 1, &m_state,
@@ -515,6 +517,7 @@ void ImageCaptureManager::shutdown()
     m_state->authorize = [](const wl_client *) {
         return false;
     };
+    m_state->bindable = m_state->authorize;
     m_state->repaint = {};
     m_state->toplevelSource = {};
     m_state->renderer = nullptr;

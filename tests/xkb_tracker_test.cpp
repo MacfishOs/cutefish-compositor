@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon.h>
 
@@ -140,4 +142,49 @@ TEST(XkbTrackerTest, AnUncompilableLayoutLeavesThePreviousKeymapInPlace)
     EXPECT_FALSE(tracker.updateKeyboardLayout("definitely-not-a-layout"));
     EXPECT_EQ(german, tracker.keymap());
     EXPECT_EQ(XKB_KEY_z, tracker.keysym(KEY_Y));
+}
+
+TEST(XkbTrackerTest, AKeyStrokeUsesTheFewestModifiers)
+{
+    XkbTracker tracker;
+    const auto plain = tracker.keyStroke(XKB_KEY_a);
+    ASSERT_TRUE(plain);
+    EXPECT_EQ(uint32_t(KEY_A), plain->key);
+    EXPECT_TRUE(plain->modifiers.empty());
+
+    const auto shifted = tracker.keyStroke(XKB_KEY_exclam);
+    ASSERT_TRUE(shifted);
+    EXPECT_EQ(uint32_t(KEY_1), shifted->key);
+    EXPECT_EQ(std::vector<uint32_t> {KEY_LEFTSHIFT}, shifted->modifiers);
+
+    // Nothing on a US layout types Greek.
+    EXPECT_FALSE(tracker.keyStroke(XKB_KEY_Greek_alpha));
+    EXPECT_FALSE(tracker.keyStroke(XKB_KEY_NoSymbol));
+}
+
+TEST(XkbTrackerTest, AKeyStrokeFollowsTheLayoutAndItsAltGr)
+{
+    XkbTracker tracker;
+    ASSERT_TRUE(tracker.updateKeyboardLayout("de"));
+
+    const auto z = tracker.keyStroke(XKB_KEY_z);
+    ASSERT_TRUE(z);
+    EXPECT_EQ(uint32_t(KEY_Y), z->key);
+
+    const auto at = tracker.keyStroke(XKB_KEY_at);
+    ASSERT_TRUE(at);
+    EXPECT_EQ(uint32_t(KEY_Q), at->key);
+    EXPECT_EQ(std::vector<uint32_t> {KEY_RIGHTALT}, at->modifiers);
+}
+
+TEST(XkbTrackerTest, AKeyStrokeAccountsForCapsLock)
+{
+    XkbTracker tracker;
+    tracker.updateKey(KEY_CAPSLOCK, true);
+    tracker.updateKey(KEY_CAPSLOCK, false);
+
+    const auto upper = tracker.keyStroke(XKB_KEY_A);
+    ASSERT_TRUE(upper);
+    EXPECT_EQ(uint32_t(KEY_A), upper->key);
+    EXPECT_TRUE(upper->modifiers.empty());
 }

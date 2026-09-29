@@ -30,6 +30,9 @@
 #include "backend/input/libinput_backend.h"
 #include "backend/session/libseat_session.h"
 #include "compositor/surface.h"
+#include "computer_control/computer_control_service.h"
+#include "computer_control/controller.h"
+#include "computer_control/permission_consent.h"
 #include "core/logging.h"
 #include "display/callback_native_display_delegate.h"
 #include "display/display_configuration_controller.h"
@@ -49,6 +52,7 @@
 #include "wayland/privileged_client.h"
 #include "wayland/protocol_globals.h"
 #include "wayland/protocols/image_capture.h"
+#include "wayland/protocols/input_method.h"
 #include "wayland/protocols/dmabuf_feedback_manager.h"
 #include "wayland/protocols/dmabuf_scanout_policy.h"
 #include "wayland/protocols/linux_dmabuf.h"
@@ -110,6 +114,18 @@ void CompositorShell::IdleInhibitionPolicy::onSessionStateChanged(session::Sessi
     m_blocked = session::isSessionBlocked(state);
     if (m_inhibition)
         m_inhibition->setIgnored(m_blocked);
+}
+
+void CompositorShell::ComputerControlPolicy::setController(
+        computer_control::Controller *controller)
+{
+    m_controller = controller;
+}
+
+void CompositorShell::ComputerControlPolicy::onSessionStateChanged(session::SessionState state)
+{
+    if (m_controller && session::isSessionBlocked(state))
+        m_controller->sessionBlocked();
 }
 
 CompositorShell::CompositorShell(const CompositorOptions &options)
@@ -210,6 +226,63 @@ void CompositorShell::initKeyboard()
         m_keyboardSettings.registerService();
 }
 
+void CompositorShell::initComputerControl()
+{
+    // As with capture: the greeter has no one to hand the seat to, and a
+    // development instance has no display to show.
+    if (m_options.login || m_options.noDrm)
+        return;
+
+    const auto showsSystemDialogs = [this](qint64 pid) {
+        return m_security && m_security->showsSystemDialogs(pid);
+    };
+    m_computerControlConsent =
+            std::make_unique<computer_control::PermissionConsent>(showsSystemDialogs);
+
+    computer_control::Environment environment;
+    environment.askConsent = [consent = m_computerControlConsent.get()](
+                                     const QString &agentName,
+                                     std::function<void(computer_control::ConsentResult)> answer) {
+        return consent->ask(agentName, std::move(answer));
+    };
+    // The permission prompt and the authentication dialogs are the user's to
+    // answer, so the agent neither clicks nor types into them.
+    environment.protectedAt = [this, showsSystemDialogs](const QPointF &position) {
+        wm::Window *window = m_windowManager.windowAt(position);
+        if (!window)
+            window = m_windowManager.frameAt(position);
+        return window && showsSystemDialogs(window->processId());
+    };
+    environment.protectedFocus = [this, showsSystemDialogs] {
+        wm::Window *window = m_windowManager.windowForSurface(m_seat.focusedSurface());
+        return window && showsSystemDialogs(window->processId());
+    };
+    // Wayland comes up after this, so the input method is looked up late.
+    const auto inputMethod = [this]() -> wayland::InputMethodManager * {
+        return m_globals ? m_globals->inputMethod() : nullptr;
+    };
+    environment.textInputFocused = [inputMethod] {
+        return inputMethod() && inputMethod()->hasFocusedTextInput();
+    };
+    environment.inputMethodGrabsKeyboard = [inputMethod] {
+        return inputMethod() && inputMethod()->grabsKeyboard();
+    };
+    environment.commitText = [inputMethod](const std::string &text) {
+        return inputMethod() && inputMethod()->commitText(text);
+    };
+    environment.sessionBlocked = [this] {
+        return m_sessionController.isBlocked();
+    };
+    m_computerControl = std::make_unique<computer_control::Controller>(&m_inputManager,
+                                                                       std::move(environment));
+    m_computerControlPolicy.setController(m_computerControl.get());
+
+    m_computerControlService =
+            std::make_unique<computer_control::ComputerControlService>(m_computerControl.get());
+    if (!m_computerControlService->registerService())
+        qCWarning(cfWayland) << "The computer control service is unavailable";
+}
+
 void CompositorShell::initAccelerators()
 {
     m_windowCycle = std::make_unique<wm::WindowCycleController>(
@@ -305,6 +378,7 @@ bool CompositorShell::init()
     });
     m_sessionController.addObserver(&m_secureScanoutPolicy);
     m_sessionController.addObserver(&m_idleInhibitionPolicy);
+    m_sessionController.addObserver(&m_computerControlPolicy);
     QObject::connect(&m_authUi, &auth::AuthUi::cursorShapeChanged, qApp,
                      [this](Qt::CursorShape shape) {
                          m_seat.setCompositorCursorShape(input::cursorShapeFromQt(shape));
@@ -335,6 +409,8 @@ bool CompositorShell::init()
     }
     // Before the accelerators, which read the layout once to pick the lookup.
     initKeyboard();
+    // Before Wayland, whose control global and capture filter read it.
+    initComputerControl();
     initAccelerators();
 
     // The greeter has no desks, and development instances must not take over
@@ -460,7 +536,9 @@ bool CompositorShell::initWayland()
             QStringList {QStringLiteral("/usr/bin/cutefish-services"),
                          QStringLiteral("/usr/bin/cutefish-polkit-agent")},
             !m_options.noDrm,
-            QStringList {QStringLiteral(CUTEFISH_FILEPREVIEW)});
+            QStringList {QStringLiteral(CUTEFISH_FILEPREVIEW)},
+            QStringList {QStringLiteral("/usr/bin/cutefish-computer-use")}
+                    + m_options.computerControlClients);
     m_windowManager.setSystemDialogPolicy([this](qint64 pid) {
         return m_security->showsSystemDialogs(pid);
     });
@@ -476,6 +554,7 @@ bool CompositorShell::initWayland()
     dependencies.windowManager = &m_windowManager;
     dependencies.inputMethodPopupLayer = m_inputMethodContainer;
     dependencies.security = m_security.get();
+    dependencies.computerControl = m_computerControl.get();
     // The greeter and development instances must not take over the user's input
     // method.
     dependencies.launchInputMethod =
@@ -965,6 +1044,10 @@ CompositorShell::~CompositorShell()
     m_acceleratorService.reset();
     m_acceleratorFilter.reset();
     m_acceleratorController.reset();
+    // With input stopped, so what the agent holds is left to the seat's teardown.
+    m_computerControlPolicy.setController(nullptr);
+    m_computerControlService.reset();
+    m_computerControl.reset();
     if (m_windowCycle)
         m_windowCycle->setView(nullptr);
     m_switcherView.reset();

@@ -27,6 +27,9 @@ public:
     // above every application window.
     virtual bool showsSystemDialogs(qint64 pid) const = 0;
     virtual bool showsFloatingWindows(qint64) const { return false; }
+    // The computer-use service, which may ask the user to let an agent drive
+    // the seat, and reads the screen while it does.
+    virtual bool canControlComputer(const wl_client *) const { return false; }
 };
 
 // Grants a privilege when the connecting process runs one of a fixed set of
@@ -40,19 +43,23 @@ public:
     ExecutableSecurityDelegate(const QStringList &clipboardClients,
                                const QStringList &captureClients,
                                const QStringList &systemDialogClients, bool captureEnabled,
-                               const QStringList &floatingClients = {});
+                               const QStringList &floatingClients = {},
+                               const QStringList &computerControlClients = {});
 
     bool canManageClipboard(const wl_client *client) const override;
     bool canCaptureOutputs(const wl_client *client) const override;
     bool showsSystemDialogs(qint64 pid) const override;
     bool showsFloatingWindows(qint64 pid) const override;
+    bool canControlComputer(const wl_client *client) const override;
 
 private:
     const QStringList m_clipboardClients;
     const QStringList m_captureClients;
     const QStringList m_systemDialogClients;
     const QStringList m_floatingClients;
-    // Capture has nothing to read without a display.
+    const QStringList m_computerControlClients;
+    // Capture has nothing to read without a display, and computer control
+    // nothing to show.
     const bool m_captureEnabled;
 };
 
