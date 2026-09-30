@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFileInfo>
 
+#include "core/preferences.h"
 #include "wm/dock_layout_manager.h"
 
 namespace cutefish::wm {
@@ -31,8 +32,9 @@ DockAutoHideBehavior behaviorFromSetting(int visibility)
 DockPreferences::DockPreferences(DockLayoutManager &layout, QObject *parent)
     : QObject(parent)
     , m_layout(layout)
-    , m_settings(QSettings::UserScope, QStringLiteral("cutefish"), QStringLiteral("dock"))
+    , m_settings(preferencesFile(QStringLiteral("shell")), QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Dock"));
     const auto directory = QFileInfo(m_settings.fileName()).absolutePath();
     QDir().mkpath(directory);
     m_watcher.addPath(directory);

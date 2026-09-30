@@ -24,6 +24,7 @@
 #include <QVariantMap>
 
 #include "core/logging.h"
+#include "core/preferences.h"
 #include "decoration/decoration_theme.h"
 #include "decoration/shadow.h"
 #include "decoration/shadow_node.h"
@@ -298,8 +299,8 @@ int SwitcherView::iconPixels(double scale)
 
 void SwitcherView::followIconTheme()
 {
-    const QSettings settings(QSettings::UserScope, QStringLiteral("cutefish"),
-                             QStringLiteral("theme"));
+    QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
+    settings.beginGroup(QStringLiteral("Appearance"));
     const QString theme =
             settings.value(QStringLiteral("IconTheme"), QStringLiteral("Cutefish")).toString();
     if (theme == m_iconTheme)

@@ -176,10 +176,12 @@ target_include_directories(cutefish-protocols PUBLIC ${CUTEFISH_PROTOCOL_DIR})
 target_link_libraries(cutefish-protocols PUBLIC PkgConfig::WaylandServer)
 set_target_properties(cutefish-protocols PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Shared logging categories and process environment.
+# Shared logging categories, preference files and process environment.
 add_library(cutefish-core STATIC
     src/core/logging.cpp
     src/core/logging.h
+    src/core/preferences.cpp
+    src/core/preferences.h
     src/core/process_environment.cpp
     src/core/process_environment.h
 )
@@ -367,21 +369,21 @@ add_library(cutefish-mouse-settings STATIC
     src/input/touchscreen_settings.h
 )
 target_include_directories(cutefish-mouse-settings PUBLIC src)
-target_link_libraries(cutefish-mouse-settings PUBLIC Qt6::Core Qt6::DBus)
+target_link_libraries(cutefish-mouse-settings PUBLIC cutefish-core Qt6::Core Qt6::DBus)
 
 add_library(cutefish-keyboard-settings STATIC
     src/input/keyboard_settings.cpp
     src/input/keyboard_settings.h
 )
 target_include_directories(cutefish-keyboard-settings PUBLIC src)
-target_link_libraries(cutefish-keyboard-settings PUBLIC Qt6::Core Qt6::DBus)
+target_link_libraries(cutefish-keyboard-settings PUBLIC cutefish-core Qt6::Core Qt6::DBus)
 
 add_library(cutefish-input-method-settings STATIC
     src/input/input_method_settings.cpp
     src/input/input_method_settings.h
 )
 target_include_directories(cutefish-input-method-settings PUBLIC src)
-target_link_libraries(cutefish-input-method-settings PUBLIC Qt6::Core Qt6::DBus)
+target_link_libraries(cutefish-input-method-settings PUBLIC cutefish-core Qt6::Core Qt6::DBus)
 
 add_library(cutefish-input STATIC
     src/clipboard/selection.cpp

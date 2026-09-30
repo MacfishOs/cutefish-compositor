@@ -7,7 +7,6 @@
 // rewritten against the Cutefish window manager. No DRM, no GL.
 
 #include <QCoreApplication>
-#include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -455,7 +454,7 @@ TEST_F(DesksTest, DeskNamesAreTheUsersOrEmpty)
 TEST_F(DesksTest, PreferencesKeepTheDesksAcrossSessions)
 {
     QTemporaryDir home;
-    QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, home.path());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
     {
         DeskPreferences preferences(desks);
         addDesks(2);

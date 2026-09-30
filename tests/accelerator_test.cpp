@@ -160,7 +160,7 @@ protected:
         ASSERT_TRUE(seat.xkbTracker()->updateKeyboardLayout("us"));
 
         configuration = std::make_unique<AcceleratorConfiguration>(
-                directory.filePath(QStringLiteral("shortcuts.conf")));
+                directory.filePath(QStringLiteral("compositor.conf")));
         configuration->initialize();
         mru = std::make_unique<wm::MruWindowTracker>(&manager);
         cycle = std::make_unique<wm::WindowCycleController>(&manager, mru.get());
@@ -335,7 +335,7 @@ TEST(AcceleratorManager, LaterTargetsWinAndPriorityHandlersGoFirst)
 TEST(AcceleratorConfiguration, AddRemoveReplaceAndRestore)
 {
     QTemporaryDir directory;
-    AcceleratorConfiguration configuration(directory.filePath(QStringLiteral("shortcuts.conf")));
+    AcceleratorConfiguration configuration(directory.filePath(QStringLiteral("compositor.conf")));
     configuration.initialize();
     QSignalSpy updates(&configuration, &AcceleratorConfiguration::acceleratorsUpdated);
 
@@ -388,7 +388,7 @@ TEST(AcceleratorConfiguration, AddRemoveReplaceAndRestore)
 TEST(AcceleratorConfiguration, OverridesPersistAcrossInstances)
 {
     QTemporaryDir directory;
-    const QString file = directory.filePath(QStringLiteral("shortcuts.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     const auto lock = toActionId(AcceleratorAction::LockScreen);
     const auto maximize = toActionId(AcceleratorAction::ToggleMaximized);
     const Accelerator metaL(XKB_KEY_l, MetaDown);
@@ -429,7 +429,7 @@ TEST(AcceleratorConfiguration, OverridesPersistAcrossInstances)
 TEST(AcceleratorConfiguration, EachConventionKeepsItsOwnOverrides)
 {
     QTemporaryDir directory;
-    const QString file = directory.filePath(QStringLiteral("shortcuts.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     const auto maximize = toActionId(AcceleratorAction::ToggleMaximized);
     const auto launcher = toActionId(AcceleratorAction::ToggleAppList);
     const Accelerator pcBinding(XKB_KEY_k, MetaDown | ControlDown);
@@ -465,10 +465,10 @@ TEST(AcceleratorConfiguration, EachConventionKeepsItsOwnOverrides)
 TEST(AcceleratorConfiguration, MalformedOverridesAreDropped)
 {
     QTemporaryDir directory;
-    const QString file = directory.filePath(QStringLiteral("shortcuts.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         QSettings settings(file, QSettings::IniFormat);
-        settings.beginGroup(QStringLiteral("overrides"));
+        settings.beginGroup(QStringLiteral("Shortcuts"));
         settings.setValue(QStringLiteral("no-such-action"), QStringLiteral("[]"));
         settings.setValue(QStringLiteral("lock-screen"), QStringLiteral("not json"));
         settings.setValue(QStringLiteral("toggle-maximized"),
@@ -482,7 +482,7 @@ TEST(AcceleratorConfiguration, MalformedOverridesAreDropped)
     EXPECT_EQ(AcceleratorAction::LockScreen,
               *configuration.findAcceleratorAction(Accelerator(XKB_KEY_l, MetaDown)));
     QSettings settings(file, QSettings::IniFormat);
-    settings.beginGroup(QStringLiteral("overrides"));
+    settings.beginGroup(QStringLiteral("Shortcuts"));
     EXPECT_EQ(QStringList {QStringLiteral("toggle-maximized")}, settings.childKeys());
 }
 

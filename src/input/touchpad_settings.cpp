@@ -8,23 +8,21 @@
 #include <QDebug>
 #include <cmath>
 
+#include "core/preferences.h"
+
 namespace cutefish::input {
 namespace {
 constexpr auto service = "com.cutefish.Touchpad1";
 constexpr auto path = "/com/cutefish/Touchpad1";
-
-QString preferenceFile()
-{
-    QSettings settings(QSettings::UserScope, QStringLiteral("cutefish"),
-                       QStringLiteral("touchpad"));
-    return settings.fileName();
-}
 } // namespace
 
 TouchpadSettings::TouchpadSettings(QObject *parent, const QString &settingsFile)
     : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferenceFile() : settingsFile, QSettings::IniFormat)
+    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
+                                       : settingsFile,
+                 QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Touchpad"));
     const auto flag = [this](const char *key, bool fallback) {
         return m_settings.value(QLatin1String(key), fallback).toBool();
     };

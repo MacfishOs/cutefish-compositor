@@ -21,7 +21,7 @@ TEST(KeyboardSettings, DefaultsAndClampedStoredValues)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("keyboard.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         KeyboardSettings settings(nullptr, file);
         EXPECT_TRUE(settings.repeatEnabled());
@@ -31,6 +31,7 @@ TEST(KeyboardSettings, DefaultsAndClampedStoredValues)
     }
     {
         QSettings stored(file, QSettings::IniFormat);
+        stored.beginGroup(QStringLiteral("Keyboard"));
         stored.setValue(QStringLiteral("repeatDelay"), 1);
         stored.setValue(QStringLiteral("repeatInterval"), QStringLiteral("fast"));
     }
@@ -43,7 +44,7 @@ TEST(KeyboardSettings, RepeatPersistsAndNotifiesOnlyOnChanges)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("keyboard.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         KeyboardSettings settings(nullptr, file);
         QSignalSpy delay(&settings, &KeyboardSettings::repeatDelayChanged);
@@ -68,7 +69,7 @@ TEST(KeyboardSettings, LayoutIsSavedOnlyWhenItApplies)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("keyboard.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     QStringList applied;
     const auto applier = [&applied](const QString &name) {
         if (name == QLatin1String("broken"))
@@ -101,6 +102,7 @@ TEST(KeyboardSettings, LayoutIsSavedOnlyWhenItApplies)
         EXPECT_NE(restored.layout(), QStringLiteral("de-neo"));
     }
     QSettings stored(file, QSettings::IniFormat);
+    stored.beginGroup(QStringLiteral("Keyboard"));
     EXPECT_FALSE(stored.contains(QStringLiteral("layout")));
 }
 
@@ -108,9 +110,10 @@ TEST(KeyboardSettings, ASavedLayoutThatNoLongerAppliesFallsBack)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("keyboard.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         QSettings stored(file, QSettings::IniFormat);
+        stored.beginGroup(QStringLiteral("Keyboard"));
         stored.setValue(QStringLiteral("layout"), QStringLiteral("broken"));
     }
     KeyboardSettings settings(nullptr, file);
@@ -127,7 +130,7 @@ TEST(KeyboardSettings, TheShortcutConventionIsSavedAndStartsAsPc)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("keyboard.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         KeyboardSettings settings(nullptr, file);
         EXPECT_EQ(settings.shortcutConvention(), ShortcutConvention::Pc);
@@ -144,6 +147,7 @@ TEST(KeyboardSettings, TheShortcutConventionIsSavedAndStartsAsPc)
         EXPECT_TRUE(restored.setShortcutConvention(QStringLiteral("pc")));
     }
     QSettings stored(file, QSettings::IniFormat);
+    stored.beginGroup(QStringLiteral("Keyboard"));
     EXPECT_FALSE(stored.contains(QStringLiteral("shortcutConvention")));
 }
 
@@ -152,7 +156,7 @@ TEST(KeyboardSettings, DBusPropertiesAndMethods)
     ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    KeyboardSettings settings(nullptr, directory.filePath(QStringLiteral("keyboard.conf")));
+    KeyboardSettings settings(nullptr, directory.filePath(QStringLiteral("compositor.conf")));
     settings.setLayoutApplier([](const QString &name) {
         return name != QLatin1String("broken");
     });

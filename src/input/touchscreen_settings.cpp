@@ -7,23 +7,21 @@
 #include <QDBusError>
 #include <QDebug>
 
+#include "core/preferences.h"
+
 namespace cutefish::input {
 namespace {
 constexpr auto service = "com.cutefish.Touchscreen1";
 constexpr auto path = "/com/cutefish/Touchscreen1";
-
-QString preferenceFile()
-{
-    QSettings settings(QSettings::UserScope, QStringLiteral("cutefish"),
-                       QStringLiteral("touchscreen"));
-    return settings.fileName();
-}
 } // namespace
 
 TouchscreenSettings::TouchscreenSettings(QObject *parent, const QString &settingsFile)
     : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferenceFile() : settingsFile, QSettings::IniFormat)
+    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
+                                       : settingsFile,
+                 QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Touchscreen"));
     m_disabledDevices = m_settings.value(QStringLiteral("disabledDevices")).toStringList();
     m_disabledDevices.removeAll(QString());
     m_disabledDevices.removeDuplicates();

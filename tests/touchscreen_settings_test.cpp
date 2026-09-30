@@ -25,7 +25,7 @@ TEST(TouchscreenSettings, EveryDeviceStartsEnabled)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    TouchscreenSettings settings(nullptr, directory.filePath(QStringLiteral("touchscreen.conf")));
+    TouchscreenSettings settings(nullptr, directory.filePath(QStringLiteral("compositor.conf")));
     EXPECT_TRUE(settings.devices().isEmpty());
     EXPECT_TRUE(settings.disabledDevices().isEmpty());
     EXPECT_TRUE(settings.deviceEnabled(elan));
@@ -35,7 +35,7 @@ TEST(TouchscreenSettings, PersistsPerDeviceAndNotifiesOnlyOnChanges)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("touchscreen.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         TouchscreenSettings settings(nullptr, file);
         QSignalSpy changes(&settings, &TouchscreenSettings::settingsChanged);
@@ -71,7 +71,7 @@ TEST(TouchscreenSettings, DBusPropertiesMethodsAndServiceRestart)
     ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("touchscreen.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     for (int iteration = 0; iteration < 2; ++iteration) {
         TouchscreenSettings settings(nullptr, file);
         ASSERT_TRUE(settings.registerService());

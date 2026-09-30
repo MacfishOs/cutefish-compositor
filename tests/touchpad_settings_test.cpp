@@ -21,7 +21,7 @@ TEST(TouchpadSettings, DefaultsFollowChromiumAndLibinput)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    TouchpadSettings settings(nullptr, directory.filePath(QStringLiteral("touchpad.conf")));
+    TouchpadSettings settings(nullptr, directory.filePath(QStringLiteral("compositor.conf")));
     EXPECT_FALSE(settings.available());
     EXPECT_TRUE(settings.enabled());
     EXPECT_FALSE(settings.disableWithMouse());
@@ -39,7 +39,7 @@ TEST(TouchpadSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("touchpad.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         TouchpadSettings settings(nullptr, file);
         QSignalSpy changes(&settings, &TouchpadSettings::settingsChanged);
@@ -85,9 +85,10 @@ TEST(TouchpadSettings, RejectsNonFiniteSpeedAndClampsRange)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("touchpad.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         QSettings stored(file, QSettings::IniFormat);
+        stored.beginGroup(QStringLiteral("Touchpad"));
         stored.setValue(QStringLiteral("pointerAcceleration"), QStringLiteral("nan"));
         stored.setValue(QStringLiteral("scrollSpeed"), QStringLiteral("inf"));
     }
@@ -115,7 +116,7 @@ TEST(TouchpadSettings, DBusPropertiesMethodsAndServiceRestart)
     ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("touchpad.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     for (int iteration = 0; iteration < 2; ++iteration) {
         TouchpadSettings settings(nullptr, file);
         ASSERT_TRUE(settings.registerService());

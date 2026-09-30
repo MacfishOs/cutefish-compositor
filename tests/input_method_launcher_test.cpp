@@ -114,7 +114,7 @@ TEST(InputMethodSettings, PersistsValidSelectionsOnly)
     QTemporaryDir directory, applications;
     ASSERT_TRUE(directory.isValid() && applications.isValid());
     writeFile(applications.filePath("ime.desktop"), provider("/bin/sh -c true"));
-    const QString file = directory.filePath("inputmethod.conf");
+    const QString file = directory.filePath("compositor.conf");
     {
         InputMethodSettings settings(nullptr, file, {applications.path()});
         EXPECT_TRUE(settings.inputMethod().isEmpty());
@@ -142,7 +142,7 @@ TEST(InputMethodSettings, ExportsTheSessionService)
         GTEST_SKIP() << "No session bus";
     QTemporaryDir directory, applications;
     writeFile(applications.filePath("ime.desktop"), provider("/bin/sh"));
-    InputMethodSettings settings(nullptr, directory.filePath("inputmethod.conf"),
+    InputMethodSettings settings(nullptr, directory.filePath("compositor.conf"),
                                  {applications.path()});
     ASSERT_TRUE(settings.registerService());
     QDBusInterface remote("com.cutefish.InputMethod1", "/com/cutefish/InputMethod1",

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "cursor/preferences.h"
+#include "core/preferences.h"
 #include "cursor/cursor.h"
 
 #include <QDBusConnection>
@@ -12,8 +13,9 @@
 namespace cutefish::cursor {
 Preferences::Preferences(Cursor &cursor)
     : m_cursor(cursor)
-    , m_settings(QSettings::UserScope, QStringLiteral("cutefish"), QStringLiteral("theme"))
+    , m_settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Appearance"));
     const auto directory = QFileInfo(m_settings.fileName()).absolutePath();
     QDir().mkpath(directory);
     m_watcher.addPath(directory);

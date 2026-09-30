@@ -18,25 +18,19 @@
 #include <QJsonObject>
 
 #include "core/logging.h"
+#include "core/preferences.h"
 
 namespace cutefish::accelerators {
 
 namespace {
 
 // Meta is a different key under each convention, so each keeps its own.
-constexpr auto kOverridesGroup = "overrides";
-constexpr auto kCommandOverridesGroup = "command-overrides";
+constexpr auto kOverridesGroup = "Shortcuts";
+constexpr auto kCommandOverridesGroup = "CommandShortcuts";
 constexpr auto kKeyField = "key";
 constexpr auto kModifiersField = "modifiers";
 constexpr auto kStateField = "state";
 constexpr auto kActionField = "action";
-
-QString preferenceFile()
-{
-    QSettings settings(QSettings::UserScope, QStringLiteral("cutefish"),
-                       QStringLiteral("shortcuts"));
-    return settings.fileName();
-}
 
 const std::array<std::pair<uint32_t, const char *>, 5> kModifierNames = {{
         {ControlDown, "Ctrl"},
@@ -166,7 +160,9 @@ const char *toString(AcceleratorConfigResult result)
 
 AcceleratorConfiguration::AcceleratorConfiguration(const QString &settingsFile, QObject *parent)
     : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferenceFile() : settingsFile, QSettings::IniFormat)
+    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
+                                       : settingsFile,
+                 QSettings::IniFormat)
 {
 }
 

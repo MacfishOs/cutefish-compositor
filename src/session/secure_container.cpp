@@ -4,6 +4,7 @@
 
 #include "session/secure_container.h"
 
+#include "core/preferences.h"
 #include "scene/node.h"
 #include <QCoreApplication>
 #include <QDateTime>
@@ -91,7 +92,8 @@ QImage blurPass(const QImage &source, int radius, bool horizontal)
 QImage loadWallpaper(const QSize &size)
 {
     QImage image;
-    QSettings settings(QStringLiteral("cutefish"), QStringLiteral("theme"));
+    QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
+    settings.beginGroup(QStringLiteral("Appearance"));
     const QSize target(qMax(1, size.width() / 8), qMax(1, size.height() / 8));
     if (settings.value(QStringLiteral("BackgroundType"), 0).toInt() == 0) {
         QString path =
@@ -324,7 +326,8 @@ bool SecureContainer::isWallpaperReady() const
 
 void SecureContainer::refreshWallpaper()
 {
-    QSettings settings(QStringLiteral("cutefish"), QStringLiteral("theme"));
+    QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
+    settings.beginGroup(QStringLiteral("Appearance"));
     const QString path =
             settings.value(QStringLiteral("Wallpaper"),
                            QStringLiteral("/usr/share/backgrounds/cutefishos/default.jpg"))

@@ -6,8 +6,8 @@
 //           chromium/src/ash/public/cpp/accelerator_configuration.h
 // Revision: 8abbac30b9cf2fe976422c58c000c94685648b65
 //
-// Adapted for Cutefish: the pref dictionary becomes a QSettings file keyed by
-// action name; deprecated accelerators and the enterprise policy gate are
+// Adapted for Cutefish: the pref dictionary becomes a group of the compositor's
+// settings file keyed by action name; deprecated accelerators and the enterprise policy gate are
 // dropped; the update callback and the observer list collapse into one
 // signal.
 
@@ -60,7 +60,7 @@ class AcceleratorConfiguration : public QObject
     Q_OBJECT
 
 public:
-    // `settingsFile` overrides the user's shortcuts file, for tests.
+    // `settingsFile` overrides the compositor's settings file, for tests.
     explicit AcceleratorConfiguration(const QString &settingsFile = {},
                                       QObject *parent = nullptr);
     ~AcceleratorConfiguration() override;

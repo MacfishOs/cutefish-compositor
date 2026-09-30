@@ -8,6 +8,7 @@
 #include <QDBusError>
 #include <QDebug>
 
+#include "core/preferences.h"
 #include "input/types.h"
 
 namespace cutefish::input {
@@ -17,13 +18,6 @@ constexpr auto path = "/com/cutefish/Keyboard1";
 
 constexpr auto pcConvention = "pc";
 constexpr auto commandConvention = "command";
-
-QString preferenceFile()
-{
-    QSettings settings(QSettings::UserScope, QStringLiteral("cutefish"),
-                       QStringLiteral("keyboard"));
-    return settings.fileName();
-}
 
 // What xkbcommon compiles for empty rule names.
 QString defaultLayout()
@@ -46,8 +40,11 @@ int storedMilliseconds(const QSettings &settings, const QString &key, int fallba
 
 KeyboardSettings::KeyboardSettings(QObject *parent, const QString &settingsFile)
     : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferenceFile() : settingsFile, QSettings::IniFormat)
+    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
+                                       : settingsFile,
+                 QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Keyboard"));
     m_repeatEnabled = m_settings.value(QStringLiteral("repeatEnabled"), true).toBool();
     m_repeatDelay = storedMilliseconds(m_settings, QStringLiteral("repeatDelay"),
                                        kDefaultKeyRepeatDelayMs, kMinRepeatDelayMs,

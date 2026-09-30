@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "decoration/theme_preferences.h"
+#include "core/preferences.h"
 #include "decoration/decoration_theme.h"
 
 #include <QDBusConnection>
@@ -13,8 +14,9 @@
 namespace cutefish::decoration {
 ThemePreferences::ThemePreferences(Theme &theme)
     : m_theme(theme)
-    , m_settings(QSettings::UserScope, QStringLiteral("cutefish"), QStringLiteral("theme"))
+    , m_settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Appearance"));
     const auto directory = QFileInfo(m_settings.fileName()).absolutePath();
     QDir().mkpath(directory);
     m_watcher.addPath(directory);

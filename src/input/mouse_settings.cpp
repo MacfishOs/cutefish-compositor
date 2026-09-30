@@ -8,22 +8,21 @@
 #include <QDebug>
 #include <cmath>
 
+#include "core/preferences.h"
+
 namespace cutefish::input {
 namespace {
 constexpr auto service = "com.cutefish.Mouse1";
 constexpr auto path = "/com/cutefish/Mouse1";
-
-QString preferenceFile()
-{
-    QSettings settings(QSettings::UserScope, QStringLiteral("cutefish"), QStringLiteral("mouse"));
-    return settings.fileName();
-}
 } // namespace
 
 MouseSettings::MouseSettings(QObject *parent, const QString &settingsFile)
     : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferenceFile() : settingsFile, QSettings::IniFormat)
+    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
+                                       : settingsFile,
+                 QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Mouse"));
     m_leftHanded = m_settings.value(QStringLiteral("leftHanded"), false).toBool();
     m_naturalScroll = m_settings.value(QStringLiteral("naturalScroll"), false).toBool();
     // The legacy accelerationProfile preference means flat (acceleration disabled).

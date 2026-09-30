@@ -17,18 +17,13 @@
 #include <QSet>
 #include <QStandardPaths>
 
+#include "core/preferences.h"
+
 namespace cutefish::input {
 namespace {
 constexpr auto service = "com.cutefish.InputMethod1";
 constexpr auto path = "/com/cutefish/InputMethod1";
 constexpr auto selectionKey = "inputMethod";
-
-QString preferenceFile()
-{
-    QSettings settings(QSettings::UserScope, QStringLiteral("cutefish"),
-                       QStringLiteral("inputmethod"));
-    return settings.fileName();
-}
 
 QString unescape(const QString &value)
 {
@@ -192,12 +187,15 @@ QList<InputMethodProvider> findInputMethodProviders(const QStringList &applicati
 InputMethodSettings::InputMethodSettings(QObject *parent, const QString &settingsFile,
                                          const QStringList &applicationDirs)
     : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferenceFile() : settingsFile, QSettings::IniFormat)
+    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
+                                       : settingsFile,
+                 QSettings::IniFormat)
     , m_applicationDirs(applicationDirs.isEmpty() ? QStandardPaths::standardLocations(
                                                             QStandardPaths::ApplicationsLocation)
                                                   : applicationDirs)
-    , m_selected(m_settings.value(QLatin1String(selectionKey)).toString())
 {
+    m_settings.beginGroup(QStringLiteral("InputMethod"));
+    m_selected = m_settings.value(QLatin1String(selectionKey)).toString();
 }
 
 InputMethodSettings::~InputMethodSettings()

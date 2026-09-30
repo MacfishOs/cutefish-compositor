@@ -21,9 +21,10 @@ TEST(MouseSettings, RestoresLegacyPreferencesAndAccelerationMeaning)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("mouse.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         QSettings legacy(file, QSettings::IniFormat);
+        legacy.beginGroup(QStringLiteral("Mouse"));
         legacy.setValue(QStringLiteral("leftHanded"), true);
         legacy.setValue(QStringLiteral("naturalScroll"), true);
         legacy.setValue(QStringLiteral("accelerationProfile"), true);
@@ -41,7 +42,7 @@ TEST(MouseSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("mouse.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     {
         MouseSettings settings(nullptr, file);
         EXPECT_TRUE(settings.acceleration());
@@ -71,7 +72,7 @@ TEST(MouseSettings, RejectsNonFiniteSpeedAndClampsRange)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("mouse.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     MouseSettings settings(nullptr, file);
     QSignalSpy changes(&settings, &MouseSettings::settingsChanged);
     settings.setPointerAcceleration(std::numeric_limits<double>::quiet_NaN());
@@ -90,11 +91,12 @@ TEST(MouseSettings, SanitizesStoredSpeed)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("mouse.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     for (const auto &value :
          {QStringLiteral("nan"), QStringLiteral("inf"), QStringLiteral("invalid")}) {
         {
             QSettings stored(file, QSettings::IniFormat);
+            stored.beginGroup(QStringLiteral("Mouse"));
             stored.setValue(QStringLiteral("pointerAcceleration"), value);
         }
         MouseSettings settings(nullptr, file);
@@ -102,6 +104,7 @@ TEST(MouseSettings, SanitizesStoredSpeed)
     }
     {
         QSettings stored(file, QSettings::IniFormat);
+        stored.beginGroup(QStringLiteral("Mouse"));
         stored.setValue(QStringLiteral("pointerAcceleration"), 20);
     }
     MouseSettings settings(nullptr, file);
@@ -113,7 +116,7 @@ TEST(MouseSettings, DBusPropertiesMethodsAndServiceRestart)
     ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("mouse.conf"));
+    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
     for (int iteration = 0; iteration < 2; ++iteration) {
         MouseSettings settings(nullptr, file);
         ASSERT_TRUE(settings.registerService());

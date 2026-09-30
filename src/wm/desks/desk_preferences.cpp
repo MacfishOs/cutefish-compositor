@@ -12,6 +12,7 @@
 #include <QScopedValueRollback>
 #include <QStringList>
 
+#include "core/preferences.h"
 #include "wm/desks/desk.h"
 
 namespace cutefish::wm {
@@ -27,8 +28,9 @@ const QString kNames = QStringLiteral("Names");
 
 DeskPreferences::DeskPreferences(DesksController *desks)
     : m_desks(desks)
-    , m_settings(QSettings::UserScope, QStringLiteral("cutefish"), QStringLiteral("desks"))
+    , m_settings(preferencesFile(QStringLiteral("compositor")), QSettings::IniFormat)
 {
+    m_settings.beginGroup(QStringLiteral("Desks"));
     restore();
     m_desks->addObserver(this);
 }

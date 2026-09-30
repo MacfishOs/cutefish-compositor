@@ -5,6 +5,7 @@
 #include "auth/auth_controller.h"
 #include "auth/auth_ui.h"
 #include "compositor/compositor.h"
+#include "core/preferences.h"
 #include "fake_backend.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
@@ -41,7 +42,8 @@ private slots:
             for (int x = 40; x < source.width(); ++x)
                 source.setPixelColor(x, y, Qt::blue);
         QVERIFY(source.save(path));
-        QSettings settings(QStringLiteral("cutefish"), QStringLiteral("theme"));
+        QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
+        settings.beginGroup(QStringLiteral("Appearance"));
         settings.setValue(QStringLiteral("Wallpaper"), path);
         settings.sync();
         scene::Node root;
@@ -143,7 +145,8 @@ private slots:
             const QString path = files.filePath(name);
             return image.save(path) ? path : QString();
         };
-        QSettings settings(QStringLiteral("cutefish"), QStringLiteral("theme"));
+        QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
+        settings.beginGroup(QStringLiteral("Appearance"));
         settings.setValue(QStringLiteral("Wallpaper"), save(QStringLiteral("red.png"), Qt::red));
         settings.sync();
         scene::Node root;
@@ -711,7 +714,7 @@ int main(int argc, char **argv)
     auth::AuthUi::configurePlatform();
     QGuiApplication app(argc, argv);
     QTemporaryDir configuration;
-    QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, configuration.path());
+    qputenv("XDG_CONFIG_HOME", configuration.path().toUtf8());
     AuthUiTest test;
     return QTest::qExec(&test, argc, argv);
 }
