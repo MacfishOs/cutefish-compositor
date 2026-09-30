@@ -108,8 +108,10 @@ private:
                                               const OutputRenderContext &context,
                                               const QSize &size,
                                               const std::function<void()> &paint);
+    int maxTextureSize();
 
     std::shared_ptr<EglContext> m_context;
+    int m_maxTextureSize = 0;
     QSize m_viewport;
     QPointF m_offset;
     BlendMode m_blendMode = BlendMode::SourceOver;

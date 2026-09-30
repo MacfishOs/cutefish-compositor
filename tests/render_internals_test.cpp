@@ -330,32 +330,19 @@ TEST_F(RenderInternals, APartialPassRedrawsOnlyItsRectAndKeepsTheRest)
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
-TEST_F(RenderInternals, NestedPassAndExceptionRestoreGeometryPresentationAndGlState)
+// A nested pass gives back the target it drew over: framebuffer, viewport and
+// scissor, with the renderer's own geometry and presentation state. Every
+// draw sets its program, textures, blend and attributes itself, so a pass
+// neither reads nor restores those.
+TEST_F(RenderInternals, NestedPassAndExceptionRestoreGeometryPresentationAndTarget)
 {
     PresentationSubmission submission;
     renderer->presentationSubmission = &submission;
     renderer->setRasterScale(1.25);
     const auto context = renderer->outputContext();
-    auto program = GlProgram::create(vertex, fragment);
-    ASSERT_TRUE(program);
-    glUseProgram(program);
     glViewport(2, 3, 23, 17);
     glEnable(GL_SCISSOR_TEST);
     glScissor(4, 5, 6, 7);
-    glEnable(GL_BLEND);
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ZERO, GL_ONE);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 8);
-    GLuint textures[3];
-    glGenTextures(3, textures);
-    for (int i = 0; i < 3; ++i) {
-        glActiveTexture(GL_TEXTURE0 + i);
-        glBindTexture(GL_TEXTURE_2D, textures[i]);
-    }
-    float vertices[] = {0, 0, 1, 0, 0, 1};
-    const GLuint attribute = program.attribute("position");
-    glVertexAttribPointer(attribute, 2, GL_FLOAT, GL_FALSE, 0, vertices);
-    glEnableVertexAttribArray(attribute);
 
     const auto check = [&] {
         EXPECT_EQ(renderer->viewportSize(), QSize(32, 32));
@@ -375,29 +362,6 @@ TEST_F(RenderInternals, NestedPassAndExceptionRestoreGeometryPresentationAndGlSt
         for (int i = 0; i < 4; ++i)
             EXPECT_EQ(values[i], 4 + i);
         EXPECT_TRUE(glIsEnabled(GL_SCISSOR_TEST));
-        EXPECT_TRUE(glIsEnabled(GL_BLEND));
-        glGetIntegerv(GL_BLEND_SRC_RGB, &value);
-        EXPECT_EQ(value, GL_SRC_ALPHA);
-        glGetIntegerv(GL_BLEND_DST_ALPHA, &value);
-        EXPECT_EQ(value, GL_ONE);
-        glGetIntegerv(GL_CURRENT_PROGRAM, &value);
-        EXPECT_EQ(GLuint(value), GLuint(program));
-        glGetIntegerv(GL_PACK_ALIGNMENT, &value);
-        EXPECT_EQ(value, 1);
-        glGetIntegerv(GL_UNPACK_ALIGNMENT, &value);
-        EXPECT_EQ(value, 8);
-        glGetIntegerv(GL_ACTIVE_TEXTURE, &value);
-        EXPECT_EQ(value, GL_TEXTURE2);
-        for (int i = 0; i < 3; ++i) {
-            glActiveTexture(GL_TEXTURE0 + i);
-            glGetIntegerv(GL_TEXTURE_BINDING_2D, &value);
-            EXPECT_EQ(GLuint(value), textures[i]);
-        }
-        glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &value);
-        EXPECT_TRUE(value);
-        void *pointer = nullptr;
-        glGetVertexAttribPointerv(attribute, GL_VERTEX_ATTRIB_ARRAY_POINTER, &pointer);
-        EXPECT_EQ(pointer, vertices);
         EXPECT_EQ(glGetError(), GL_NO_ERROR);
     };
 
@@ -429,13 +393,14 @@ TEST_F(RenderInternals, NestedPassAndExceptionRestoreGeometryPresentationAndGlSt
     }),
                  std::runtime_error);
     check();
-    glDisableVertexAttribArray(attribute);
-    glUseProgram(0);
-    glDeleteTextures(3, textures);
+    glDisable(GL_SCISSOR_TEST);
     renderer->presentationSubmission = nullptr;
 }
 
-TEST_F(RenderInternals, ReadbackRestoresEs3BuffersAndIntegerAttributes)
+// A pixel transfer buffer left bound would turn the pass's uploads and
+// readbacks into buffer offsets, so a pass drops both bindings. The array
+// buffer and attributes beyond GlProgram::kAttributeCount are never touched.
+TEST_F(RenderInternals, ReadbackUnbindsTransferBuffersAndKeepsForeignState)
 {
     if (!renderer->glesVersion().startsWith("OpenGL ES 3"))
         GTEST_SKIP() << "ES3 transfer-buffer state requires an ES3 context";
@@ -467,14 +432,16 @@ TEST_F(RenderInternals, ReadbackRestoresEs3BuffersAndIntegerAttributes)
     EXPECT_EQ(GLuint(value), readFramebuffer);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &value);
     EXPECT_EQ(value, 0);
-    const GLenum bindings[] = {GL_PIXEL_PACK_BUFFER_BINDING, GL_PIXEL_UNPACK_BUFFER_BINDING,
-                               GL_ARRAY_BUFFER_BINDING};
-    for (int i = 0; i < 3; ++i) {
-        glGetIntegerv(bindings[i], &value);
-        EXPECT_EQ(GLuint(value), buffers[i]);
-        glBindBuffer(targets[i], 0);
-    }
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &value);
+    EXPECT_EQ(value, 0);
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &value);
+    EXPECT_EQ(value, 0);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &value);
+    EXPECT_EQ(GLuint(value), buffers[2]);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_INTEGER, &value);
+    EXPECT_TRUE(value);
+    glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &value);
     EXPECT_TRUE(value);
     glDisableVertexAttribArray(7);
     glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, 0, nullptr);

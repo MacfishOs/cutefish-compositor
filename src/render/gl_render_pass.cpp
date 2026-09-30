@@ -16,119 +16,48 @@
 namespace cutefish::render {
 namespace {
 
+// The target an offscreen pass draws over and gives back: the framebuffer,
+// the viewport and the scissor. Every draw here sets its own program,
+// textures, blend and vertex attributes, so none of that is saved, as
+// gl::ScopedFramebufferBinder restores only the binding it took and Skia's
+// GrGLGpu re-flushes its cached state per draw instead of reading it back.
+// A pixel transfer buffer left bound would turn the pass's own uploads and
+// readbacks into buffer offsets, so those two bindings are dropped.
 class ScopedGlState
 {
 public:
     explicit ScopedGlState(const EglContext &context)
+        : es3(context.glVersion().startsWith("OpenGL ES 3"))
     {
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
-        es3 = context.glVersion().startsWith("OpenGL ES 3");
-        external = context.supportsGl("GL_OES_EGL_image_external");
         if (es3) {
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
-            glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &packBuffer);
-            glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
             glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         }
         glGetIntegerv(GL_VIEWPORT, viewport);
         glGetIntegerv(GL_SCISSOR_BOX, scissor);
         scissored = glIsEnabled(GL_SCISSOR_TEST);
-        blended = glIsEnabled(GL_BLEND);
-        glGetIntegerv(GL_BLEND_SRC_RGB, &blend[0]);
-        glGetIntegerv(GL_BLEND_DST_RGB, &blend[1]);
-        glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend[2]);
-        glGetIntegerv(GL_BLEND_DST_ALPHA, &blend[3]);
-        glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-        glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
-        for (int i = 0; i < 2; ++i) {
-            glActiveTexture(GL_TEXTURE0 + i);
-            glGetIntegerv(GL_TEXTURE_BINDING_2D, &textures[i]);
-            if (external)
-                glGetIntegerv(GL_TEXTURE_BINDING_EXTERNAL_OES, &externalTextures[i]);
-        }
-        glActiveTexture(GL_TEXTURE0);
-        glGetIntegerv(GL_PACK_ALIGNMENT, &pack);
-        glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpack);
-        glGetFloatv(GL_COLOR_CLEAR_VALUE, clear);
-        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer);
-        // Only the attributes the renderer's programs are linked with; the
-        // other slots are never touched.
-        attributes.resize(GlProgram::kAttributeCount);
-        for (GLuint i = 0; i < attributes.size(); ++i) {
-            auto &a = attributes[i];
-            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &a.enabled);
-            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_SIZE, &a.size);
-            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_TYPE, &a.type);
-            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &a.normalized);
-            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &a.stride);
-            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &a.buffer);
-            if (es3)
-                glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_INTEGER, &a.integer);
-            glGetVertexAttribPointerv(i, GL_VERTEX_ATTRIB_ARRAY_POINTER, &a.pointer);
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
         glDisable(GL_SCISSOR_TEST);
     }
 
     ~ScopedGlState()
     {
         glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-        if (es3) {
+        if (es3)
             glBindFramebuffer(GL_READ_FRAMEBUFFER, readFramebuffer);
-            glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer);
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
-        }
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
         scissored ? glEnable(GL_SCISSOR_TEST) : glDisable(GL_SCISSOR_TEST);
-        blended ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
-        glBlendFuncSeparate(blend[0], blend[1], blend[2], blend[3]);
-        glUseProgram(program);
-        for (int i = 0; i < 2; ++i) {
-            glActiveTexture(GL_TEXTURE0 + i);
-            glBindTexture(GL_TEXTURE_2D, textures[i]);
-            if (external)
-                glBindTexture(GL_TEXTURE_EXTERNAL_OES, externalTextures[i]);
-        }
-        glActiveTexture(active);
-        glPixelStorei(GL_PACK_ALIGNMENT, pack);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, unpack);
-        glClearColor(clear[0], clear[1], clear[2], clear[3]);
-        for (GLuint i = 0; i < attributes.size(); ++i) {
-            const auto &a = attributes[i];
-            glBindBuffer(GL_ARRAY_BUFFER, a.buffer);
-            if (a.integer)
-                glVertexAttribIPointer(i, a.size, a.type, a.stride, a.pointer);
-            else
-                glVertexAttribPointer(i, a.size, a.type, a.normalized, a.stride, a.pointer);
-            if (a.enabled)
-                glEnableVertexAttribArray(i);
-            else
-                glDisableVertexAttribArray(i);
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer);
     }
 
     ScopedGlState(const ScopedGlState &) = delete;
     ScopedGlState &operator=(const ScopedGlState &) = delete;
 
 private:
-    GLint framebuffer, viewport[4], scissor[4], blend[4], program, active, textures[2], pack,
-            unpack;
-    GLfloat clear[4];
-    bool scissored, blended;
-    bool es3, external;
-    GLint readFramebuffer = 0, packBuffer = 0, unpackBuffer = 0, arrayBuffer = 0;
-    GLint externalTextures[2] = {};
-
-    struct Attribute {
-        GLint enabled, size, type, normalized, stride, buffer;
-        GLint integer = 0;
-        void *pointer;
-    };
-
-    std::vector<Attribute> attributes;
+    bool es3;
+    GLint framebuffer = 0, readFramebuffer = 0, viewport[4] = {}, scissor[4] = {};
+    bool scissored = false;
 };
 
 class Framebuffer
@@ -302,8 +231,7 @@ std::unique_ptr<GlTexture> GlRenderPass::captureTexture(Renderer &renderer,
 {
     if (size.isEmpty())
         return nullptr;
-    GLint limit = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
+    const GLint limit = maxTextureSize();
     if (size.width() > limit || size.height() > limit)
         return nullptr;
     auto texture = allocate(m_context, size, GL_NEAREST);
@@ -444,8 +372,7 @@ QImage GlRenderPass::renderToImage(Renderer &renderer, const QSize &size,
     if (size.isEmpty())
         return {};
     ScopedGlState state(*m_context);
-    GLint limit = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
+    const GLint limit = maxTextureSize();
     if (size.width() > limit || size.height() > limit)
         return {};
     QImage image(size, QImage::Format_RGBA8888_Premultiplied);
@@ -502,8 +429,7 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     const QSize allocation(int(std::ceil(bounds.width() * renderer.rasterScale())) + fractional,
                            int(std::ceil(bounds.height() * renderer.rasterScale())) + fractional);
     Q_ASSERT(allocation.width() >= coverage.width() && allocation.height() >= coverage.height());
-    GLint limit = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
+    const GLint limit = maxTextureSize();
     if (allocation.width() > limit || allocation.height() > limit)
         return false;
     auto *target = dynamic_cast<GlTexture *>(texture.get());
@@ -575,6 +501,16 @@ void GlRenderPass::releaseResources()
     m_framebuffers.clear();
 }
 
+int GlRenderPass::maxTextureSize()
+{
+    if (!m_maxTextureSize) {
+        GLint limit = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
+        m_maxTextureSize = limit;
+    }
+    return m_maxTextureSize;
+}
+
 void GlRenderPass::generateMipmaps(Texture *texture)
 {
     auto *target = dynamic_cast<GlTexture *>(texture);
@@ -584,13 +520,13 @@ void GlRenderPass::generateMipmaps(Texture *texture)
     if (!m_context->glVersion().startsWith("OpenGL ES 3")
         && !m_context->supportsGl("GL_OES_texture_npot"))
         return;
-    ScopedGlState state(*m_context);
     glBindTexture(GL_TEXTURE_2D, target->name());
     glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     target->mipmapped = glGetError() == GL_NO_ERROR;
     if (!target->mipmapped)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void GlRenderPass::limitMipmapLevel(Texture *texture, int level)
@@ -599,10 +535,10 @@ void GlRenderPass::limitMipmapLevel(Texture *texture, int level)
     // GLES 2 has no LOD range.
     if (!target || !target->mipmapped || !m_context->glVersion().startsWith("OpenGL ES 3"))
         return;
-    ScopedGlState state(*m_context);
     glBindTexture(GL_TEXTURE_2D, target->name());
     // 1000 is GL's initial GL_TEXTURE_MAX_LOD.
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, level < 0 ? 1000.0f : float(level));
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 } // namespace cutefish::render
