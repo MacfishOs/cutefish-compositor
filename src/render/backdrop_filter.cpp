@@ -294,8 +294,8 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
         quadFor(target, vertices);
         const float coordinates[8] = {0, 0, 1, 0, 0, 1, 1, 1};
         const float flipped[8] = {0, 1, 1, 1, 0, 0, 1, 0};
-        const GLint position = program.attribute("aPosition");
-        const GLint coord = program.attribute("aTexCoord");
+        const GLuint position = GlProgram::kPositionAttribute;
+        const GLuint coord = GlProgram::kTexCoordAttribute;
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture->name());
         glUniform1i(program.uniform("uTexture"), 0);
@@ -311,6 +311,7 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     const auto filter = [&](Texture *input, std::unique_ptr<Texture> &result, bool horizontal) {
         return renderer.renderToTexture(result, reducedBounds, [&] {
             glUseProgram(m_blurProgram);
+            glDisable(GL_BLEND);
             const float scaledSigma = sigma
                     * (horizontal ? float(reduced.width()) / coverage.width()
                                   : float(reduced.height()) / coverage.height());

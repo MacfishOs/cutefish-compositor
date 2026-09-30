@@ -185,6 +185,20 @@ public:
     virtual void drawTextureMapped(Texture *texture, const QRect &target, float alpha,
                                    const QTransform &mapping) = 0;
 
+    struct MappedRect {
+        QRect target;
+        QTransform mapping;
+    };
+
+    // drawTextureMapped() for several rectangles of one texture, as the
+    // slices of a shadow: a renderer that can draws them in one call.
+    virtual void drawTextureMappedRects(Texture *texture, const std::vector<MappedRect> &rects,
+                                        float alpha)
+    {
+        for (const MappedRect &rect : rects)
+            drawTextureMapped(texture, rect.target, alpha, rect.mapping);
+    }
+
     // A non-empty `shape`, in the same coordinates as `bounds`, masks the blur
     // instead of the rounded rectangle.
     virtual void drawBackgroundBlur(const QRect &bounds, int radius, const QRect &clip,

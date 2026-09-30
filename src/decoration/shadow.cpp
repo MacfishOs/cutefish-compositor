@@ -293,6 +293,7 @@ void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, con
     if (!image)
         return;
     const QSizeF size = image->size();
+    std::vector<render::Renderer::MappedRect> slices;
     for (size_t i = 0; i < 9; ++i) {
         const QRect source = geometry.sources()[i];
         const QRect target = geometry.targets()[i];
@@ -304,8 +305,9 @@ void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, con
         const QTransform mapping(source.width() / size.width(), 0, 0,
                                  source.height() / size.height(), source.x() / size.width(),
                                  source.y() / size.height());
-        renderer.drawTextureMapped(image, target.translated(position), opacity, mapping);
+        slices.push_back({target.translated(position), mapping});
     }
+    renderer.drawTextureMappedRects(image, slices, opacity);
 }
 
 } // namespace cutefish::decoration

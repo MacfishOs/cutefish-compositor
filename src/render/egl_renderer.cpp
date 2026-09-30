@@ -102,7 +102,46 @@ bool EglRenderer::initPrograms(const char *fragmentOverride, const char *externa
     m_colorProgram = std::move(color);
     m_textureProgram = std::move(texture);
     m_externalProgram = std::move(external);
+    // A deleted program's name can come back on a new one.
+    m_clipUniforms.clear();
+    m_colorUniform = m_colorProgram.uniform("uColor");
+    resolveTextureUniforms(m_textureUniforms, m_textureProgram);
+    if (m_externalProgram)
+        resolveTextureUniforms(m_externalUniforms, m_externalProgram);
     return true;
+}
+
+void EglRenderer::resolveTextureUniforms(TextureUniforms &uniforms, const GlProgram &program)
+{
+    uniforms = TextureUniforms();
+    uniforms.texture = program.uniform("uTexture");
+    uniforms.alpha = program.uniform("uAlpha");
+    uniforms.swizzle = program.uniform("uSwizzle");
+    uniforms.hasAlpha = program.uniform("uHasAlpha");
+    // The sampler always reads unit 0.
+    glUseProgram(program);
+    glUniform1i(uniforms.texture, 0);
+}
+
+EglRenderer::ClipUniforms &EglRenderer::clipUniforms(const GlProgram &program)
+{
+    for (ClipUniforms &entry : m_clipUniforms) {
+        if (entry.program == program)
+            return entry;
+    }
+    ClipUniforms entry;
+    entry.program = program;
+    entry.count = program.uniform("uClipCount");
+    entry.clips = program.uniform("uClips");
+    entry.clipRadii = program.uniform("uClipRadii");
+    entry.viewportRect = program.uniform("uViewportRect");
+    entry.outputTransform = program.uniform("uOutputTransform");
+    entry.outlineBounds = program.uniform("uOutlineBounds");
+    entry.outlineRadius = program.uniform("uOutlineRadius");
+    entry.outlineWidth = program.uniform("uOutlineWidth");
+    entry.continuousCorners = program.uniform("uContinuousCorners");
+    m_clipUniforms.push_back(entry);
+    return m_clipUniforms.back();
 }
 
 bool EglRenderer::makeCurrent(EglRenderTarget *target)
@@ -506,40 +545,60 @@ void EglRenderer::quadFor(const std::array<QPointF, 4> &corners, float *vertices
 
 void EglRenderer::applyRoundedClip(const GlProgram &program)
 {
-    glUniform1i(program.uniform("uClipCount"), int(m_roundedClips.size()));
-    GLint viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    glUniform4f(program.uniform("uViewportRect"), viewport[0], viewport[1], viewport[2],
-                viewport[3]);
-    glUniform1i(program.uniform("uOutputTransform"), outputContext().transform);
+    ClipUniforms::State state;
+    state.count = int(m_roundedClips.size());
+    glGetIntegerv(GL_VIEWPORT, state.viewport);
+    state.transform = outputContext().transform;
     const auto device = [&](const RoundedShape &shape) {
         return QRectF((shape.bounds.topLeft() - m_pass.offset()) * rasterScale(),
                       shape.bounds.size() * rasterScale());
     };
-    float bounds[16 * 4] = {};
-    float radii[32] = {};
     const size_t count = std::min(m_roundedClips.size(), size_t(16));
     for (size_t i = 0; i < count; ++i) {
         const QRectF rect = device(m_roundedClips[i]);
-        bounds[i * 4] = rect.x();
-        bounds[i * 4 + 1] = rect.y();
-        bounds[i * 4 + 2] = rect.width();
-        bounds[i * 4 + 3] = rect.height();
-        radii[i * 2] =
+        state.bounds[i * 4] = rect.x();
+        state.bounds[i * 4 + 1] = rect.y();
+        state.bounds[i * 4 + 2] = rect.width();
+        state.bounds[i * 4 + 3] = rect.height();
+        state.radii[i * 2] =
                 m_roundedClips[i].radius * m_roundedClips[i].radiusScale.width() * rasterScale();
-        radii[i * 2 + 1] =
+        state.radii[i * 2 + 1] =
                 m_roundedClips[i].radius * m_roundedClips[i].radiusScale.height() * rasterScale();
     }
-    glUniform4fv(program.uniform("uClips"), 16, bounds);
-    glUniform2fv(program.uniform("uClipRadii"), 16, radii);
     const QRectF outline = device(m_outlineShape);
-    glUniform4f(program.uniform("uOutlineBounds"), outline.x(), outline.y(), outline.width(),
-                outline.height());
-    glUniform2f(program.uniform("uOutlineRadius"),
-                m_outlineShape.radius * m_outlineShape.radiusScale.width() * rasterScale(),
-                m_outlineShape.radius * m_outlineShape.radiusScale.height() * rasterScale());
-    glUniform1f(program.uniform("uOutlineWidth"), m_outlineWidth);
-    glUniform1f(program.uniform("uContinuousCorners"), continuousCorners() ? 1.0f : 0.0f);
+    state.outline[0] = outline.x();
+    state.outline[1] = outline.y();
+    state.outline[2] = outline.width();
+    state.outline[3] = outline.height();
+    state.outlineRadii[0] =
+            m_outlineShape.radius * m_outlineShape.radiusScale.width() * rasterScale();
+    state.outlineRadii[1] =
+            m_outlineShape.radius * m_outlineShape.radiusScale.height() * rasterScale();
+    state.outlineWidth = m_outlineWidth;
+    state.continuous = continuousCorners() ? 1.0f : 0.0f;
+
+    ClipUniforms &uniforms = clipUniforms(program);
+    if (uniforms.uploaded && *uniforms.uploaded == state)
+        return;
+    const bool clipsChanged = !uniforms.uploaded
+            || !std::equal(std::begin(state.bounds), std::end(state.bounds),
+                           std::begin(uniforms.uploaded->bounds))
+            || !std::equal(std::begin(state.radii), std::end(state.radii),
+                           std::begin(uniforms.uploaded->radii));
+    glUniform1i(uniforms.count, state.count);
+    glUniform4f(uniforms.viewportRect, state.viewport[0], state.viewport[1], state.viewport[2],
+                state.viewport[3]);
+    glUniform1i(uniforms.outputTransform, int(state.transform));
+    if (clipsChanged) {
+        glUniform4fv(uniforms.clips, 16, state.bounds);
+        glUniform2fv(uniforms.clipRadii, 16, state.radii);
+    }
+    glUniform4f(uniforms.outlineBounds, state.outline[0], state.outline[1], state.outline[2],
+                state.outline[3]);
+    glUniform2f(uniforms.outlineRadius, state.outlineRadii[0], state.outlineRadii[1]);
+    glUniform1f(uniforms.outlineWidth, state.outlineWidth);
+    glUniform1f(uniforms.continuousCorners, state.continuous);
+    uniforms.uploaded = state;
 }
 
 void EglRenderer::drawRoundedOutline(const RoundedShape &shape, const Color &color, qreal widthPx)
@@ -600,11 +659,9 @@ void EglRenderer::fillColorRects(std::initializer_list<QRectF> rects, const Colo
 
     glUseProgram(m_colorProgram);
     applyRoundedClip(m_colorProgram);
-    glUniform4f(m_colorProgram.uniform("uColor"), color.r * color.a, color.g * color.a,
-                color.b * color.a, color.a);
-    glVertexAttribPointer(m_colorProgram.attribute("aPosition"), 2, GL_FLOAT, GL_FALSE, 0,
-                          vertices);
-    glEnableVertexAttribArray(m_colorProgram.attribute("aPosition"));
+    glUniform4f(m_colorUniform, color.r * color.a, color.g * color.a, color.b * color.a, color.a);
+    glVertexAttribPointer(GlProgram::kPositionAttribute, 2, GL_FLOAT, GL_FALSE, 0, vertices);
+    glEnableVertexAttribArray(GlProgram::kPositionAttribute);
 
     if (color.a < 1.0f || !m_roundedClips.empty() || m_outlineWidth > 0) {
         glEnable(GL_BLEND);
@@ -614,7 +671,7 @@ void EglRenderer::fillColorRects(std::initializer_list<QRectF> rects, const Colo
     glDrawArrays(GL_TRIANGLES, 0, count / 2);
 
     glDisable(GL_BLEND);
-    glDisableVertexAttribArray(m_colorProgram.attribute("aPosition"));
+    glDisableVertexAttribArray(GlProgram::kPositionAttribute);
 }
 
 void EglRenderer::drawTexture(Texture *texture, const QRect &target, float alpha)
@@ -643,8 +700,43 @@ void EglRenderer::drawTextureTransformed(Texture *texture, const QRectF &target,
 void EglRenderer::drawTextureMapped(Texture *texture, const QRect &target, float alpha,
                                     const QTransform &mapping)
 {
-    QRectF aligned = target;
-    QTransform texelMapping = mapping;
+    QRectF aligned;
+    QTransform texelMapping;
+    alignTextureDraw(texture, target, mapping, aligned, texelMapping);
+    drawTextureMappedF(texture, aligned, alpha, texelMapping);
+}
+
+void EglRenderer::drawTextureMappedRects(Texture *texture, const std::vector<MappedRect> &rects,
+                                         float alpha)
+{
+    auto *glTexture = dynamic_cast<GlTexture *>(texture);
+    if (!m_current || !glTexture)
+        return;
+    constexpr size_t kBatch = 16;
+    TextureQuad quads[kBatch];
+    size_t count = 0;
+    for (const MappedRect &rect : rects) {
+        QRectF aligned;
+        QTransform texelMapping;
+        alignTextureDraw(texture, rect.target, rect.mapping, aligned, texelMapping);
+        if (aligned.isEmpty())
+            continue;
+        textureQuad(*glTexture, aligned, texelMapping, QTransform(), quads[count++]);
+        if (count == kBatch) {
+            drawTextureQuads(glTexture, quads, count, alpha);
+            count = 0;
+        }
+    }
+    if (count)
+        drawTextureQuads(glTexture, quads, count, alpha);
+}
+
+void EglRenderer::alignTextureDraw(const Texture *texture, const QRect &target,
+                                   const QTransform &mapping, QRectF &aligned,
+                                   QTransform &texelMapping) const
+{
+    aligned = target;
+    texelMapping = mapping;
     if (texture && rasterScale() > 0) {
         const QSize pixels = texture->size();
         const auto sourcePoint = [&](const QPointF &point) {
@@ -681,7 +773,24 @@ void EglRenderer::drawTextureMapped(Texture *texture, const QRect &target, float
             aligned = QRectF(pixelAligned(target.topLeft()), QSizeF(deviceSize) / rasterScale());
         }
     }
-    drawTextureMappedF(texture, aligned, alpha, texelMapping);
+}
+
+void EglRenderer::textureQuad(const GlTexture &texture, const QRectF &target,
+                              const QTransform &mapping, const QTransform &geometry,
+                              TextureQuad &quad) const
+{
+    const auto corner = [&](const QPointF &point) {
+        return geometry.map(point) - m_pass.offset();
+    };
+    quadFor({corner(target.topLeft()), corner(target.topRight()), corner(target.bottomLeft()),
+             corner(target.bottomRight())},
+            quad.vertices);
+    // Matches the vertex order in quadFor(); the image origin is top left.
+    for (int i = 0; i < 4; ++i) {
+        const QPointF uv = mapping.map(QPointF(i % 2, i / 2));
+        quad.texCoords[2 * i] = uv.x();
+        quad.texCoords[2 * i + 1] = texture.inverted ? 1 - uv.y() : uv.y();
+    }
 }
 
 void EglRenderer::drawTextureMappedF(Texture *texture, const QRectF &target, float alpha,
@@ -690,49 +799,56 @@ void EglRenderer::drawTextureMappedF(Texture *texture, const QRectF &target, flo
     auto *glTexture = dynamic_cast<GlTexture *>(texture);
     if (!m_current || !glTexture || target.isEmpty())
         return;
+    TextureQuad quad;
+    textureQuad(*glTexture, target, mapping, geometry, quad);
+    drawTextureQuads(glTexture, &quad, 1, alpha);
+}
 
-    float vertices[8] = {};
-    const auto corner = [&](const QPointF &point) {
-        return geometry.map(point) - m_pass.offset();
-    };
-    quadFor({corner(target.topLeft()), corner(target.topRight()), corner(target.bottomLeft()),
-             corner(target.bottomRight())},
-            vertices);
-
-    // Matches the vertex order in quadFor(); the image origin is top left.
-    float texCoords[8];
-    for (int i = 0; i < 4; ++i) {
-        const QPointF uv = mapping.map(QPointF(i % 2, i / 2));
-        texCoords[2 * i] = uv.x();
-        texCoords[2 * i + 1] = glTexture->inverted ? 1 - uv.y() : uv.y();
-    }
-
+void EglRenderer::drawTextureQuads(GlTexture *glTexture, const TextureQuad *quads, size_t count,
+                                   float alpha)
+{
+    if (!count)
+        return;
     const bool external = glTexture->target() == GL_TEXTURE_EXTERNAL_OES;
     if (external && !m_externalProgram)
         return;
 
-    const int positionAttr = external ? m_externalProgram.attribute("aPosition")
-                                      : m_textureProgram.attribute("aPosition");
-    const int coordAttr = external ? m_externalProgram.attribute("aTexCoord")
-                                   : m_textureProgram.attribute("aTexCoord");
+    // Each quad as two triangles, the same two a strip of its corners makes.
+    float vertices[16 * 12];
+    float texCoords[16 * 12];
+    int filled = 0;
+    for (size_t q = 0; q < count; ++q) {
+        for (int index : {0, 1, 2, 2, 1, 3}) {
+            vertices[filled] = quads[q].vertices[index * 2];
+            texCoords[filled++] = quads[q].texCoords[index * 2];
+            vertices[filled] = quads[q].vertices[index * 2 + 1];
+            texCoords[filled++] = quads[q].texCoords[index * 2 + 1];
+        }
+    }
 
-    glUseProgram(external ? m_externalProgram : m_textureProgram);
-    applyRoundedClip(external ? m_externalProgram : m_textureProgram);
+    const GlProgram &program = external ? m_externalProgram : m_textureProgram;
+    TextureUniforms &uniforms = external ? m_externalUniforms : m_textureUniforms;
+    glUseProgram(program);
+    applyRoundedClip(program);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(glTexture->target(), glTexture->name());
-    glUniform1i(external ? m_externalProgram.uniform("uTexture")
-                         : m_textureProgram.uniform("uTexture"),
-                0);
-    glUniform1f(external ? m_externalProgram.uniform("uAlpha") : m_textureProgram.uniform("uAlpha"),
-                alpha);
-    if (!external)
-        glUniform1f(m_textureProgram.uniform("uSwizzle"),
-                    pixelFormatIsBgr(glTexture->format()) ? 1.0f : 0.0f);
+    if (alpha != uniforms.lastAlpha) {
+        glUniform1f(uniforms.alpha, alpha);
+        uniforms.lastAlpha = alpha;
+    }
+    const float swizzle = !external && pixelFormatIsBgr(glTexture->format()) ? 1.0f : 0.0f;
+    if (!external && swizzle != uniforms.lastSwizzle) {
+        glUniform1f(uniforms.swizzle, swizzle);
+        uniforms.lastSwizzle = swizzle;
+    }
     const bool hasAlpha = pixelFormatHasAlpha(glTexture->format()) && !glTexture->contentOpaque;
-    glUniform1f(external ? m_externalProgram.uniform("uHasAlpha")
-                         : m_textureProgram.uniform("uHasAlpha"),
-                hasAlpha ? 1.0f : 0.0f);
+    if (float(hasAlpha) != uniforms.lastHasAlpha) {
+        glUniform1f(uniforms.hasAlpha, hasAlpha ? 1.0f : 0.0f);
+        uniforms.lastHasAlpha = float(hasAlpha);
+    }
 
+    const GLuint positionAttr = GlProgram::kPositionAttribute;
+    const GLuint coordAttr = GlProgram::kTexCoordAttribute;
     glVertexAttribPointer(positionAttr, 2, GL_FLOAT, GL_FALSE, 0, vertices);
     glEnableVertexAttribArray(positionAttr);
     glVertexAttribPointer(coordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
@@ -748,7 +864,7 @@ void EglRenderer::drawTextureMappedF(Texture *texture, const QRectF &target, flo
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDrawArrays(GL_TRIANGLES, 0, filled / 2);
 
     glDisable(GL_BLEND);
     glDisableVertexAttribArray(positionAttr);

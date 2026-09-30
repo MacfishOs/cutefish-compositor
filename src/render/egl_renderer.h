@@ -69,6 +69,8 @@ public:
     void drawTexture(Texture *texture, const QRect &target, float alpha) override;
     void drawTextureMapped(Texture *texture, const QRect &target, float alpha,
                            const QTransform &mapping) override;
+    void drawTextureMappedRects(Texture *texture, const std::vector<MappedRect> &rects,
+                                float alpha) override;
 
     std::unique_ptr<Texture> createTexture(const QSize &size, const uint8_t *pixels, int stride,
                                            PixelFormat format) override;
@@ -130,8 +132,68 @@ private:
     bool makeCurrent(EglRenderTarget *target);
     bool makeContextCurrent();
     void applyRepaint(const QRect &repaint);
+
+    // What the clip shader was last given through one program. Every draw
+    // wants the clip stack, and most draws in a row want the same one, so the
+    // values are compared here and uploaded only when they differ, as Skia's
+    // GrGLGpu keeps a cache of the GL state it set and skips what is unchanged.
+    struct ClipUniforms {
+        GLuint program = 0;
+        GLint count = -1;
+        GLint clips = -1;
+        GLint clipRadii = -1;
+        GLint viewportRect = -1;
+        GLint outputTransform = -1;
+        GLint outlineBounds = -1;
+        GLint outlineRadius = -1;
+        GLint outlineWidth = -1;
+        GLint continuousCorners = -1;
+        struct State {
+            int count = 0;
+            float bounds[16 * 4] = {};
+            float radii[16 * 2] = {};
+            GLint viewport[4] = {};
+            uint32_t transform = 0;
+            float outline[4] = {};
+            float outlineRadii[2] = {};
+            float outlineWidth = 0;
+            float continuous = 0;
+            bool operator==(const State &) const = default;
+        };
+        std::optional<State> uploaded;
+    };
+    ClipUniforms &clipUniforms(const GlProgram &program);
+
+    // The per-draw uniforms of the texture programs, resolved once and
+    // uploaded only when a draw changes them.
+    struct TextureUniforms {
+        GLint texture = -1;
+        GLint alpha = -1;
+        GLint swizzle = -1;
+        GLint hasAlpha = -1;
+        float lastAlpha = -1;
+        float lastSwizzle = -1;
+        float lastHasAlpha = -1;
+    };
+    void resolveTextureUniforms(TextureUniforms &uniforms, const GlProgram &program);
     void drawTextureMappedF(Texture *texture, const QRectF &target, float alpha,
                             const QTransform &mapping, const QTransform &geometry = QTransform());
+
+    // Two triangles of a texture draw: positions in clip space and texture
+    // coordinates, in quadFor()'s corner order.
+    struct TextureQuad {
+        float vertices[8];
+        float texCoords[8];
+    };
+    // Where a mapped draw lands and what it samples once native-density
+    // texels are put on physical pixels.
+    void alignTextureDraw(const Texture *texture, const QRect &target, const QTransform &mapping,
+                          QRectF &aligned, QTransform &texelMapping) const;
+    void textureQuad(const GlTexture &texture, const QRectF &target, const QTransform &mapping,
+                     const QTransform &geometry, TextureQuad &quad) const;
+    // One draw of up to sixteen quads of `texture`.
+    void drawTextureQuads(GlTexture *texture, const TextureQuad *quads, size_t count,
+                          float alpha);
     void applyRoundedClip(const GlProgram &program);
     void fillColorRects(std::initializer_list<QRectF> rects, const Color &color);
     void quadFor(const QRectF &rect, float *vertices) const;
@@ -152,6 +214,10 @@ private:
     GlProgram m_colorProgram;
     GlProgram m_textureProgram;
     GlProgram m_externalProgram;
+    std::vector<ClipUniforms> m_clipUniforms;
+    GLint m_colorUniform = -1;
+    TextureUniforms m_textureUniforms;
+    TextureUniforms m_externalUniforms;
     RoundedShape m_outlineShape;
     qreal m_outlineWidth = 0;
     EglSwapState m_swapState;

@@ -128,8 +128,8 @@ void DropShadow::draw(Texture *texture, const QRectF &rect, const QSize &viewpor
     const float s = float(extent.x());
     const float t = float(extent.y());
     const float coordinates[8] = {0, 0, s, 0, 0, t, s, t};
-    const GLint position = m_program.attribute("aPosition");
-    const GLint coord = m_program.attribute("aTexCoord");
+    const GLuint position = GlProgram::kPositionAttribute;
+    const GLuint coord = GlProgram::kTexCoordAttribute;
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, static_cast<GlTexture *>(texture)->name());
     glUniform1i(m_program.uniform("uTexture"), 0);
