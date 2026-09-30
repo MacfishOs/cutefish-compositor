@@ -92,6 +92,13 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_Print, ShiftDown, AcceleratorAction::TakeScreenshot},
         {true, XKB_KEY_Print, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
         {true, XKB_KEY_Escape, ControlDown | MetaDown, AcceleratorAction::StopScreenRecording},
+
+        // Device keys.
+        {true, XKB_KEY_XF86AudioMute, NoModifier, AcceleratorAction::VolumeMuteToggle},
+        {true, XKB_KEY_XF86AudioLowerVolume, NoModifier, AcceleratorAction::VolumeDown},
+        {true, XKB_KEY_XF86AudioRaiseVolume, NoModifier, AcceleratorAction::VolumeUp},
+        {true, XKB_KEY_XF86MonBrightnessDown, NoModifier, AcceleratorAction::BrightnessDown},
+        {true, XKB_KEY_XF86MonBrightnessUp, NoModifier, AcceleratorAction::BrightnessUp},
 });
 
 // The defaults under input::ShortcutConvention::Command. Command reaches the
@@ -100,9 +107,10 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
 // never see, apart from a few actions on Command alone: Command+Tab switches
 // applications, Command+M minimizes, and Command+Q, Command+H and
 // Command+Option+H are the application menu's Quit, Hide and Hide Others.
-// Keys no application uses stay as under PC: Print and its combinations, and
-// Control+Command+Escape stops a recording. Command+Shift+3, 4 and 5 capture
-// as well, onto the clipboard with Control. The launcher has no default.
+// Keys no application uses stay as under PC: Print and its combinations, the
+// device keys, and Control+Command+Escape stops a recording. Command+Shift+3,
+// 4 and 5 capture as well, onto the clipboard with Control. The launcher has
+// no default.
 inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_q, ControlDown | MetaDown, AcceleratorAction::LockScreen},
 
@@ -154,6 +162,13 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_Print, ShiftDown, AcceleratorAction::TakeScreenshot},
         {true, XKB_KEY_Print, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
         {true, XKB_KEY_Escape, ControlDown | MetaDown, AcceleratorAction::StopScreenRecording},
+
+        // Device keys.
+        {true, XKB_KEY_XF86AudioMute, NoModifier, AcceleratorAction::VolumeMuteToggle},
+        {true, XKB_KEY_XF86AudioLowerVolume, NoModifier, AcceleratorAction::VolumeDown},
+        {true, XKB_KEY_XF86AudioRaiseVolume, NoModifier, AcceleratorAction::VolumeUp},
+        {true, XKB_KEY_XF86MonBrightnessDown, NoModifier, AcceleratorAction::BrightnessDown},
+        {true, XKB_KEY_XF86MonBrightnessUp, NoModifier, AcceleratorAction::BrightnessUp},
 });
 
 // Switching applications always switches, over a fullscreen game too.
@@ -168,12 +183,31 @@ inline constexpr std::array kReservedActions = {
 };
 
 // Actions allowed while the session is blocked: the lock screen and the login
-// screen. Ash lists the device keys here; Cutefish has none yet.
-inline constexpr std::array<AcceleratorAction, 0> kActionsAllowedAtLockScreen = {};
+// screen.
+inline constexpr std::array kActionsAllowedAtLockScreen = {
+        AcceleratorAction::BrightnessDown,
+        AcceleratorAction::BrightnessUp,
+        AcceleratorAction::VolumeDown,
+        AcceleratorAction::VolumeMuteToggle,
+        AcceleratorAction::VolumeUp,
+};
 
 // Actions allowed while a system-modal dialog is up.
 inline constexpr std::array kActionsAllowedAtModalWindow = {
+        AcceleratorAction::BrightnessDown,
+        AcceleratorAction::BrightnessUp,
         AcceleratorAction::LockScreen,
+        AcceleratorAction::VolumeDown,
+        AcceleratorAction::VolumeMuteToggle,
+        AcceleratorAction::VolumeUp,
+};
+
+// Actions performed again while their key is held.
+inline constexpr std::array kRepeatableActions = {
+        AcceleratorAction::BrightnessDown,
+        AcceleratorAction::BrightnessUp,
+        AcceleratorAction::VolumeDown,
+        AcceleratorAction::VolumeUp,
 };
 
 // Actions that require at least one window.

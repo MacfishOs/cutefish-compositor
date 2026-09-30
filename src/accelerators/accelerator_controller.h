@@ -7,9 +7,9 @@
 //
 // Adapted for Cutefish: the restriction sets that have a Cutefish state
 // behind them (blocked session, system-modal dialog, no window), the launcher
-// state machine. Tablet volume, caps lock, suspend and IME state machines, the
-// exit warning, key repeat, deprecated accelerators, enterprise policy and
-// metrics are dropped.
+// state machine, the repeatable actions. Tablet volume, caps lock, suspend and
+// IME state machines, the exit warning, deprecated accelerators, enterprise
+// policy and metrics are dropped.
 
 #ifndef CUTEFISH_ACCELERATORS_ACCELERATOR_CONTROLLER_H_
 #define CUTEFISH_ACCELERATORS_ACCELERATOR_CONTROLLER_H_
@@ -67,6 +67,9 @@ public:
     // unless the window is fullscreen.
     bool isPreferred(const Accelerator &accelerator) const;
 
+    // A repeatable accelerator is performed again while its key is held.
+    bool isRepeatable(const Accelerator &accelerator) const;
+
     bool performActionIfEnabled(AcceleratorAction action, const Accelerator &accelerator);
 
     bool doesAcceleratorMatchAction(const Accelerator &accelerator,
@@ -117,6 +120,7 @@ private:
     std::set<AcceleratorAction> m_preferredActions;
     std::set<AcceleratorAction> m_reservedActions;
     std::set<AcceleratorAction> m_actionsNeedingWindow;
+    std::set<AcceleratorAction> m_repeatableActions;
 
     bool m_preventProcessing = false;
 };

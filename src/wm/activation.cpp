@@ -36,6 +36,9 @@ bool Activation::canActivate(const Window *window) const
     // keyboard away from the application behind it.
     if (window->isPopup() || window->focusPolicy() == FocusPolicy::NoFocus)
         return false;
+    // Shown by a key the focused window has to keep hearing the rest of.
+    if (window->role() == WindowRole::Osd)
+        return false;
     // The capture interface only borrows the keyboard: see
     // WindowManager::setKeyboardGrab().
     if (window->role() == WindowRole::Capture)

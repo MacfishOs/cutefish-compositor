@@ -233,6 +233,31 @@ void stopScreenRecording(const CommandContext &context)
     context.delegate->stopScreenRecording();
 }
 
+void volumeDown(const CommandContext &context)
+{
+    context.delegate->volumeDown();
+}
+
+void volumeUp(const CommandContext &context)
+{
+    context.delegate->volumeUp();
+}
+
+void volumeMuteToggle(const CommandContext &context)
+{
+    context.delegate->toggleMute();
+}
+
+void brightnessDown(const CommandContext &context)
+{
+    context.delegate->brightnessDown();
+}
+
+void brightnessUp(const CommandContext &context)
+{
+    context.delegate->brightnessUp();
+}
+
 void activateDesk(const CommandContext &context, bool activateLeft)
 {
     context.windowManager->desks()->activateAdjacentDesk(activateLeft,

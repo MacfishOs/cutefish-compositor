@@ -32,6 +32,12 @@ public:
     virtual bool onPointerAxis(Timestamp, const QPointF&, const QPointF&, bool) { return false; }
     virtual bool onPointerAxisStop(Timestamp, const QPointF&) { return false; }
     virtual bool onKey(Timestamp timestamp, uint32_t evdevCode, bool pressed) { return false; }
+    // A key on its way to the lock screen instead of onKey(). True keeps it
+    // from the lock screen: the volume and brightness keys work there too.
+    virtual bool onSecureKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
+    {
+        return false;
+    }
 
     // A touch point landing at `location`. Returning true takes the whole
     // point: its motion, release or cancellation come here and none of it

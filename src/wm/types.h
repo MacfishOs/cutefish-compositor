@@ -44,6 +44,8 @@ enum class WindowRole {
     Notification,
     // The screen capture interface; never painted into a capture.
     Capture,
+    // The on-screen display of a volume or brightness key; never focusable.
+    Osd,
 };
 
 // Whether a window may take the keyboard. A Panel or Dock still receives

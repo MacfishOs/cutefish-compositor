@@ -21,6 +21,14 @@ void callScreenshot(const QString &method, const QVariantList &arguments = {})
     QDBusConnection::sessionBus().asyncCall(message);
 }
 
+void callOsd(const QString &method)
+{
+    QDBusMessage message = QDBusMessage::createMethodCall(
+            QStringLiteral("com.cutefish.Osd"), QStringLiteral("/Osd"),
+            QStringLiteral("com.cutefish.Osd"), method);
+    QDBusConnection::sessionBus().asyncCall(message);
+}
+
 } // namespace
 
 void DBusAcceleratorDelegate::toggleAppList()
@@ -49,6 +57,31 @@ void DBusAcceleratorDelegate::startCaptureMode()
 void DBusAcceleratorDelegate::stopScreenRecording()
 {
     callScreenshot(QStringLiteral("stopRecording"));
+}
+
+void DBusAcceleratorDelegate::volumeDown()
+{
+    callOsd(QStringLiteral("volumeDown"));
+}
+
+void DBusAcceleratorDelegate::volumeUp()
+{
+    callOsd(QStringLiteral("volumeUp"));
+}
+
+void DBusAcceleratorDelegate::toggleMute()
+{
+    callOsd(QStringLiteral("toggleMute"));
+}
+
+void DBusAcceleratorDelegate::brightnessDown()
+{
+    callOsd(QStringLiteral("brightnessDown"));
+}
+
+void DBusAcceleratorDelegate::brightnessUp()
+{
+    callOsd(QStringLiteral("brightnessUp"));
 }
 
 } // namespace cutefish::accelerators

@@ -25,6 +25,8 @@ StackingLayer layerFor(WindowRole role, PanelBehavior behavior)
                                                           : StackingLayer::Dock;
     case WindowRole::Notification:
         return StackingLayer::Notification;
+    case WindowRole::Osd:
+        return StackingLayer::Osd;
     case WindowRole::Capture:
         return StackingLayer::Capture;
     }

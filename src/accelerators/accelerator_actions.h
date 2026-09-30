@@ -6,9 +6,9 @@
 // Revision: 8abbac30b9cf2fe976422c58c000c94685648b65
 //
 // Adapted for Cutefish: the launcher, the lock screen, the window actions,
-// the application menu's Quit, Hide and Hide Others, desks and screen capture.
-// Device keys (volume, brightness, media) wait for the shell's OSD; browser,
-// IME, accessibility, tablet and debug actions have nothing to act on.
+// the application menu's Quit, Hide and Hide Others, desks, screen capture and
+// the volume and brightness keys. Media keys stay with the applications;
+// browser, IME, accessibility, tablet and debug actions have nothing to act on.
 
 #ifndef CUTEFISH_ACCELERATORS_ACCELERATOR_ACTIONS_H_
 #define CUTEFISH_ACCELERATORS_ACCELERATOR_ACTIONS_H_
@@ -66,6 +66,13 @@ enum class AcceleratorAction : uint32_t {
     TakePartialScreenshotToClipboard,
     StartCaptureMode,
     StopScreenRecording,
+
+    // Device keys, performed by the shell, which shows the new level.
+    VolumeMuteToggle,
+    VolumeDown,
+    VolumeUp,
+    BrightnessDown,
+    BrightnessUp,
 };
 
 using AcceleratorActionId = uint32_t;

@@ -45,6 +45,8 @@ std::optional<WindowRole> roleFromWayland(uint32_t role)
         return WindowRole::Notification;
     case CUTEFISH_SHELL_SURFACE_V1_ROLE_CAPTURE:
         return WindowRole::Capture;
+    case CUTEFISH_SHELL_SURFACE_V1_ROLE_OSD:
+        return WindowRole::Osd;
     default:
         return std::nullopt;
     }

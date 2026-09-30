@@ -4,7 +4,8 @@
   <description summary="private shell surface roles for cutefish-shell">
     This protocol lets the trusted Cutefish shell process describe what its
     surfaces are for: a desktop background, a panel, a dock, the launcher, a
-    notification banner or the screen capture interface.
+    notification banner, the on-screen display or the screen capture
+    interface.
 
     It is an *extension* of an ordinary wl_surface, not a replacement for
     xdg-shell. The shell keeps creating xdg_toplevel objects through
@@ -79,6 +80,9 @@
 
         A capture surface never becomes the active window: activating it only
         takes the keyboard, and the window that was active stays active.
+
+        An osd surface never takes the keyboard, whatever its focus policy,
+        and it stays above the notification banners.
       </description>
       <entry name="desktop" value="0" summary="the desktop background, below everything"/>
       <entry name="panel" value="1" summary="a panel such as the status bar"/>
@@ -87,6 +91,8 @@
       <entry name="notification" value="4" summary="a notification banner"/>
       <entry name="capture" value="5"
              summary="the screen capture interface, above everything else"/>
+      <entry name="osd" value="6"
+             summary="the on-screen display of a volume or brightness change"/>
     </enum>
 
     <enum name="panel_behavior">

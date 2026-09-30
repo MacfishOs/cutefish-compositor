@@ -212,6 +212,8 @@ void CompositorShell::initKeyboard()
         settings.interval = std::chrono::milliseconds(m_keyboardSettings.repeatInterval());
         m_seat.setKeyRepeatSettings(settings);
         m_authUi.setKeyRepeatSettings(settings);
+        if (m_acceleratorFilter)
+            m_acceleratorFilter->setKeyRepeatSettings(settings);
     };
     applyRepeat();
     QObject::connect(&m_keyboardSettings, &input::KeyboardSettings::repeatEnabledChanged, qApp,
@@ -433,6 +435,7 @@ void CompositorShell::initAccelerators()
     m_acceleratorFilter = std::make_unique<accelerators::AcceleratorFilter>(
             m_acceleratorController.get(), m_seat.xkbTracker(), &m_windowManager,
             m_windowCycle.get(), m_inputManager.eventSink());
+    m_acceleratorFilter->setKeyRepeatSettings(m_seat.keyRepeatSettings());
     m_inputManager.setEventSink(m_acceleratorFilter.get());
 
     m_acceleratorService = std::make_unique<accelerators::AcceleratorService>(

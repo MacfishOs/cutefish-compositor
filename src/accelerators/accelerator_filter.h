@@ -15,9 +15,11 @@
 #define CUTEFISH_ACCELERATORS_ACCELERATOR_FILTER_H_
 
 #include <QObject>
+#include <QTimer>
 
 #include "accelerators/accelerator.h"
 #include "input/event_sink.h"
+#include "input/types.h"
 
 namespace cutefish::input {
 class XkbTracker;
@@ -51,6 +53,10 @@ public:
     // xkb state, which the seat has already advanced for it.
     Accelerator acceleratorForKey(uint32_t evdevCode, bool pressed) const;
 
+    // libinput sends no repeats, so a held repeatable accelerator is performed
+    // again at the keyboard's own rate, the way the seat repeats for clients.
+    void setKeyRepeatSettings(const input::KeyRepeatSettings &settings);
+
     // input::EventSink:
     bool onPointerMotion(input::Timestamp timestamp, const QPointF &location) override;
     bool onPointerButton(input::Timestamp timestamp, const QPointF &location,
@@ -59,6 +65,7 @@ public:
                        const QPointF &offset, bool discrete) override;
     bool onPointerAxisStop(input::Timestamp timestamp, const QPointF &location) override;
     bool onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
+    bool onSecureKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
     // Touch passes straight through: ash's launcher state machine and window
     // cycle filter watch the mouse only.
     bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
@@ -70,6 +77,11 @@ private:
     // PreTargetAcceleratorHandler::ProcessAccelerator.
     bool processAccelerator(const Accelerator &accelerator);
     bool shouldProcessAcceleratorNow(const Accelerator &accelerator) const;
+    bool canConsumeSystemKeys() const;
+
+    void startRepeat(const Accelerator &accelerator);
+    void stopRepeat();
+    void onRepeat();
 
     AcceleratorController *m_controller = nullptr;
     const input::XkbTracker *m_xkb = nullptr;
@@ -78,6 +90,10 @@ private:
     wm::WindowManager *m_windowManager = nullptr;
     wm::WindowCycleController *m_windowCycle = nullptr;
     input::EventSink *m_next = nullptr;
+
+    input::KeyRepeatSettings m_repeatSettings;
+    QTimer m_repeatTimer;
+    Accelerator m_repeatAccelerator;
 };
 
 } // namespace cutefish::accelerators

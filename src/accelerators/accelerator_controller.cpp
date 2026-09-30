@@ -61,6 +61,7 @@ void AcceleratorController::init()
     m_preferredActions.insert(kPreferredActions.begin(), kPreferredActions.end());
     m_reservedActions.insert(kReservedActions.begin(), kReservedActions.end());
     m_actionsNeedingWindow.insert(kActionsNeedingWindow.begin(), kActionsNeedingWindow.end());
+    m_repeatableActions.insert(kRepeatableActions.begin(), kRepeatableActions.end());
     registerAccelerators(m_configuration->allAccelerators());
 }
 
@@ -95,6 +96,12 @@ bool AcceleratorController::isPreferred(const Accelerator &accelerator) const
 {
     const AcceleratorAction *action = m_configuration->findAcceleratorAction(accelerator);
     return action && m_preferredActions.contains(*action);
+}
+
+bool AcceleratorController::isRepeatable(const Accelerator &accelerator) const
+{
+    const AcceleratorAction *action = m_configuration->findAcceleratorAction(accelerator);
+    return action && m_repeatableActions.contains(*action);
 }
 
 bool AcceleratorController::performActionIfEnabled(AcceleratorAction action,
@@ -193,6 +200,11 @@ bool AcceleratorController::canPerformAction(AcceleratorAction action,
     case AcceleratorAction::TakePartialScreenshotToClipboard:
     case AcceleratorAction::StartCaptureMode:
     case AcceleratorAction::StopScreenRecording:
+    case AcceleratorAction::VolumeMuteToggle:
+    case AcceleratorAction::VolumeDown:
+    case AcceleratorAction::VolumeUp:
+    case AcceleratorAction::BrightnessDown:
+    case AcceleratorAction::BrightnessUp:
         return true;
     }
     return false;
@@ -289,6 +301,21 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
         break;
     case AcceleratorAction::StopScreenRecording:
         commands::stopScreenRecording(m_context);
+        break;
+    case AcceleratorAction::VolumeMuteToggle:
+        commands::volumeMuteToggle(m_context);
+        break;
+    case AcceleratorAction::VolumeDown:
+        commands::volumeDown(m_context);
+        break;
+    case AcceleratorAction::VolumeUp:
+        commands::volumeUp(m_context);
+        break;
+    case AcceleratorAction::BrightnessDown:
+        commands::brightnessDown(m_context);
+        break;
+    case AcceleratorAction::BrightnessUp:
+        commands::brightnessUp(m_context);
         break;
     }
 }

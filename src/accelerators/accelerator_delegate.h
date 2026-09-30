@@ -26,6 +26,13 @@ public:
     virtual void takePartialScreenshot(bool toClipboard) = 0;
     virtual void startCaptureMode() = 0;
     virtual void stopScreenRecording() = 0;
+
+    // com.cutefish.Osd: changes the level and shows it.
+    virtual void volumeDown() = 0;
+    virtual void volumeUp() = 0;
+    virtual void toggleMute() = 0;
+    virtual void brightnessDown() = 0;
+    virtual void brightnessUp() = 0;
 };
 
 // The production delegate.
@@ -37,6 +44,11 @@ public:
     void takePartialScreenshot(bool toClipboard) override;
     void startCaptureMode() override;
     void stopScreenRecording() override;
+    void volumeDown() override;
+    void volumeUp() override;
+    void toggleMute() override;
+    void brightnessDown() override;
+    void brightnessUp() override;
 };
 
 } // namespace cutefish::accelerators

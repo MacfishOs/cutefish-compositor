@@ -42,6 +42,8 @@ const char* toString(WindowRole role)
         return "notification";
     case WindowRole::Capture:
         return "capture";
+    case WindowRole::Osd:
+        return "osd";
     }
     return "unknown";
 }

@@ -87,9 +87,15 @@ public:
     }
     void startCaptureMode() override { captures.push_back("capture-mode"); }
     void stopScreenRecording() override { captures.push_back("stop-recording"); }
+    void volumeDown() override { levels.push_back("volume-down"); }
+    void volumeUp() override { levels.push_back("volume-up"); }
+    void toggleMute() override { levels.push_back("mute"); }
+    void brightnessDown() override { levels.push_back("brightness-down"); }
+    void brightnessUp() override { levels.push_back("brightness-up"); }
 
     int appListToggles = 0;
     std::vector<std::string> captures;
+    std::vector<std::string> levels;
 };
 
 // Records what reaches a client keyboard.
@@ -687,10 +693,59 @@ TEST_F(AcceleratorTest, ConsumedKeysNeverReachTheClientAndOthersDo)
     expected = {{KEY_LEFTCTRL, true}, {KEY_C, true}, {KEY_C, false}, {KEY_LEFTCTRL, false}};
     EXPECT_EQ(expected, keyboardDelegate->keys);
 
-    // Device keys have no action yet, so they belong to the client.
+    // Device keys are the system's, with or without an action behind them.
     keyboardDelegate->keys.clear();
     tap(KEY_VOLUMEUP);
+    chord({KEY_LEFTSHIFT}, KEY_BRIGHTNESSDOWN);
+    tap(KEY_MUTE);
+    expected = {{KEY_LEFTSHIFT, true}, {KEY_LEFTSHIFT, false}};
+    EXPECT_EQ(expected, keyboardDelegate->keys);
+    const std::vector<std::string> levels = {"volume-up", "mute"};
+    EXPECT_EQ(levels, delegate.levels);
+
+    // Media keys have no action, so they belong to the client.
+    keyboardDelegate->keys.clear();
+    tap(KEY_PLAYPAUSE);
     EXPECT_EQ(2u, keyboardDelegate->keys.size());
+}
+
+TEST_F(AcceleratorTest, HeldVolumeAndBrightnessKeysRepeatAtTheKeyboardRate)
+{
+    filter->setKeyRepeatSettings({.enabled = true,
+                                  .delay = std::chrono::milliseconds(40),
+                                  .interval = std::chrono::milliseconds(10)});
+
+    press(KEY_BRIGHTNESSUP);
+    EXPECT_EQ(1u, delegate.levels.size());
+    QTest::qWait(100);
+    release(KEY_BRIGHTNESSUP);
+    const size_t held = delegate.levels.size();
+    EXPECT_GE(held, 3u);
+    EXPECT_EQ(std::vector<std::string>(held, "brightness-up"), delegate.levels);
+    QTest::qWait(50);
+    EXPECT_EQ(held, delegate.levels.size());
+
+    // Another key going down ends it, as it does for a client.
+    delegate.levels.clear();
+    press(KEY_VOLUMEDOWN);
+    tap(KEY_A);
+    QTest::qWait(100);
+    release(KEY_VOLUMEDOWN);
+    EXPECT_EQ(1u, delegate.levels.size());
+
+    // Mute toggles once however long it is held.
+    delegate.levels.clear();
+    press(KEY_MUTE);
+    QTest::qWait(100);
+    release(KEY_MUTE);
+    EXPECT_EQ(1u, delegate.levels.size());
+
+    filter->setKeyRepeatSettings({.enabled = false});
+    delegate.levels.clear();
+    press(KEY_VOLUMEUP);
+    QTest::qWait(100);
+    release(KEY_VOLUMEUP);
+    EXPECT_EQ(1u, delegate.levels.size());
 }
 
 TEST_F(AcceleratorTest, AltTabSwitchesApplicationsInMruOrderOnReleaseAndEscapeCancels)
@@ -1213,6 +1268,12 @@ TEST_F(AcceleratorTest, ABlockedSessionPerformsNothing)
     EXPECT_EQ(wm::WindowStateType::Normal, window->stateType());
     EXPECT_FALSE(controller->process(Accelerator(XKB_KEY_Up, MetaDown)));
     EXPECT_FALSE(controller->process(Accelerator(XKB_KEY_l, MetaDown)));
+
+    // Apart from the volume and brightness.
+    tap(KEY_VOLUMEDOWN);
+    tap(KEY_BRIGHTNESSUP);
+    const std::vector<std::string> levels = {"volume-down", "brightness-up"};
+    EXPECT_EQ(levels, delegate.levels);
 }
 
 TEST_F(AcceleratorTest, WindowActionsAreSwallowedWithoutAWindowAndWhilePrevented)
@@ -1250,6 +1311,12 @@ TEST_F(AcceleratorTest, FullscreenWindowsKeepNonReservedKeysExceptMetaOnes)
 
     chord({KEY_LEFTMETA}, KEY_F);
     EXPECT_EQ(wm::WindowStateType::Normal, window->stateType());
+
+    // The volume is the system's even over a game.
+    keyboardDelegate->keys.clear();
+    tap(KEY_VOLUMEUP);
+    EXPECT_TRUE(keyboardDelegate->keys.empty());
+    EXPECT_EQ(std::vector<std::string> {"volume-up"}, delegate.levels);
 }
 
 TEST_F(AcceleratorTest, AShortcutsInhibitorTakesEveryKeyButTheReservedOnesAndMetaEscape)
@@ -1281,6 +1348,11 @@ TEST_F(AcceleratorTest, AShortcutsInhibitorTakesEveryKeyButTheReservedOnesAndMet
     chord({KEY_LEFTALT}, KEY_TAB);
     EXPECT_FALSE(cycle->isCycling());
     EXPECT_EQ(8u, keyboardDelegate->keys.size());
+
+    // Exo's inhibitor exists for the system keys.
+    tap(KEY_VOLUMEUP);
+    EXPECT_EQ(10u, keyboardDelegate->keys.size());
+    EXPECT_TRUE(delegate.levels.empty());
 
     // Meta+Escape takes the shortcuts back, until a click on the window.
     keyboardDelegate->keys.clear();
@@ -1494,7 +1566,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     const QDBusReply<QString> reply = proxy.call(QStringLiteral("accelerators"));
     ASSERT_TRUE(reply.isValid());
     const QJsonArray actions = parse(reply.value()).value(QStringLiteral("actions")).toArray();
-    EXPECT_EQ(35, actions.size());
+    EXPECT_EQ(40, actions.size());
     bool sawMaximize = false;
     for (const QJsonValue &value : actions) {
         const QJsonObject action = value.toObject();

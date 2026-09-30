@@ -102,6 +102,10 @@ TEST(StackingTest, RolesMapToTheDocumentedLayerOrder)
               layerFor(WindowRole::Dock, PanelBehavior::StayAbove));
     EXPECT_LT(layerFor(WindowRole::Dock, PanelBehavior::StayAbove),
               layerFor(WindowRole::Notification, PanelBehavior::StayAbove));
+    EXPECT_LT(layerFor(WindowRole::Notification, PanelBehavior::StayAbove),
+              layerFor(WindowRole::Osd, PanelBehavior::StayAbove));
+    EXPECT_LT(layerFor(WindowRole::Osd, PanelBehavior::StayAbove),
+              layerFor(WindowRole::Capture, PanelBehavior::StayAbove));
 }
 
 TEST(StackingTest, WindowsCanCoverDropsAPanelIntoTheNormalLayer)

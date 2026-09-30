@@ -28,6 +28,26 @@
 
 namespace cutefish::accelerators {
 
+namespace {
+
+// ash::AcceleratorController::IsSystemKey, less the media keys, which have no
+// action here and so stay with the applications.
+bool isSystemKey(xkb_keysym_t keysym)
+{
+    switch (keysym) {
+    case XKB_KEY_XF86AudioMute:
+    case XKB_KEY_XF86AudioLowerVolume:
+    case XKB_KEY_XF86AudioRaiseVolume:
+    case XKB_KEY_XF86MonBrightnessDown:
+    case XKB_KEY_XF86MonBrightnessUp:
+        return true;
+    default:
+        return false;
+    }
+}
+
+} // namespace
+
 bool usesPositionalShortcuts(const input::XkbTracker &xkb)
 {
     std::string layout = xkb.layoutName();
@@ -51,6 +71,7 @@ AcceleratorFilter::AcceleratorFilter(AcceleratorController *controller,
     , m_windowCycle(windowCycle)
     , m_next(next)
 {
+    connect(&m_repeatTimer, &QTimer::timeout, this, &AcceleratorFilter::onRepeat);
 }
 
 AcceleratorFilter::~AcceleratorFilter() = default;
@@ -71,6 +92,33 @@ Accelerator AcceleratorFilter::acceleratorForKey(uint32_t evdevCode, bool presse
     return Accelerator(m_xkb->baseKeysym(evdevCode), evdevCode, modifiers,
                        pressed ? Accelerator::KeyState::Pressed
                                : Accelerator::KeyState::Released);
+}
+
+void AcceleratorFilter::setKeyRepeatSettings(const input::KeyRepeatSettings &settings)
+{
+    m_repeatSettings = settings;
+    if (!settings.enabled)
+        stopRepeat();
+}
+
+void AcceleratorFilter::startRepeat(const Accelerator &accelerator)
+{
+    if (!m_repeatSettings.enabled || !m_controller->isRepeatable(accelerator))
+        return;
+    m_repeatAccelerator = accelerator;
+    m_repeatTimer.start(m_repeatSettings.delay);
+}
+
+void AcceleratorFilter::stopRepeat()
+{
+    m_repeatTimer.stop();
+}
+
+void AcceleratorFilter::onRepeat()
+{
+    m_repeatTimer.start(m_repeatSettings.interval);
+    if (!processAccelerator(m_repeatAccelerator))
+        stopRepeat();
 }
 
 bool AcceleratorFilter::onPointerMotion(input::Timestamp timestamp, const QPointF &location)
@@ -127,6 +175,10 @@ bool AcceleratorFilter::onKey(input::Timestamp timestamp, uint32_t evdevCode, bo
 {
     const Accelerator accelerator = acceleratorForKey(evdevCode, pressed);
 
+    // A key going down ends the repeat, as it does for the seat's.
+    if (pressed || evdevCode == m_repeatAccelerator.evdevCode())
+        stopRepeat();
+
     // Ash registers these on aura::Env, ahead of every other pre-target
     // handler, so they see the key whatever happens to it afterwards.
     m_controller->history()->storeCurrentAccelerator(accelerator);
@@ -158,19 +210,46 @@ bool AcceleratorFilter::onKey(input::Timestamp timestamp, uint32_t evdevCode, bo
     if (processAccelerator(accelerator)) {
         if (m_windowCycle && m_windowCycle->isCycling())
             m_cycleModifiers = accelerator.modifiers() & ~ShiftDown;
+        if (pressed)
+            startRepeat(accelerator);
         return true;
     }
     return m_next && m_next->onKey(timestamp, evdevCode, pressed);
 }
 
+bool AcceleratorFilter::onSecureKey(input::Timestamp, uint32_t evdevCode, bool pressed)
+{
+    // Only the system keys: the history, the launcher and the window cycle
+    // have nothing to see behind the lock screen.
+    const Accelerator accelerator = acceleratorForKey(evdevCode, pressed);
+    if (pressed || evdevCode == m_repeatAccelerator.evdevCode())
+        stopRepeat();
+    if (!isSystemKey(accelerator.keysym()))
+        return false;
+    m_controller->process(accelerator);
+    if (pressed)
+        startRepeat(accelerator);
+    return true;
+}
+
 bool AcceleratorFilter::processAccelerator(const Accelerator &accelerator)
 {
-    // Ash also consumes the system keys (volume, brightness, media) here
-    // whatever they trigger; they stay with the clients until Cutefish has
-    // actions for them.
+    // System keys are always consumed regardless of whether they trigger an
+    // accelerator to prevent windows from seeing unexpected key up events.
+    if (isSystemKey(accelerator.keysym()) && !canConsumeSystemKeys()) {
+        m_controller->process(accelerator);
+        return true;
+    }
     if (!shouldProcessAcceleratorNow(accelerator))
         return false;
     return m_controller->process(accelerator);
+}
+
+bool AcceleratorFilter::canConsumeSystemKeys() const
+{
+    // Exo's inhibitor is what lets the window have them.
+    input::Seat *seat = m_windowManager ? m_windowManager->seat() : nullptr;
+    return seat && seat->shortcutsInhibition()->isActive();
 }
 
 bool AcceleratorFilter::shouldProcessAcceleratorNow(const Accelerator &accelerator) const

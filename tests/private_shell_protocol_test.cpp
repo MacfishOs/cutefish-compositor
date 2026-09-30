@@ -755,6 +755,7 @@ TEST_F(PrivateShellProtocolTest, RoleStackingOrdersTheShellAroundApplications)
                         {"Dock", CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK},
                         {"Notification", CUTEFISH_SHELL_SURFACE_V1_ROLE_NOTIFICATION},
                         {"Capture", CUTEFISH_SHELL_SURFACE_V1_ROLE_CAPTURE},
+                        {"Osd", CUTEFISH_SHELL_SURFACE_V1_ROLE_OSD},
                 };
                 for (const auto &[title, role] : roles) {
                     XdgWindow *window = c.makeToplevel(title, "cutefish-shell");
@@ -768,7 +769,7 @@ TEST_F(PrivateShellProtocolTest, RoleStackingOrdersTheShellAroundApplications)
                 ASSERT_TRUE(awaitRole(wm::WindowRole::Normal));
                 check([&] {
                     const std::vector<wm::Window *> &order = windowManager.windows();
-                    ASSERT_EQ(6u, order.size());
+                    ASSERT_EQ(7u, order.size());
                     std::vector<wm::WindowRole> roleOrder;
                     for (wm::Window *window : order)
                         roleOrder.push_back(window->role());
@@ -778,6 +779,7 @@ TEST_F(PrivateShellProtocolTest, RoleStackingOrdersTheShellAroundApplications)
                                       wm::WindowRole::Launcher,
                                       wm::WindowRole::Dock,
                                       wm::WindowRole::Notification,
+                                      wm::WindowRole::Osd,
                                       wm::WindowRole::Capture,
                               }),
                               roleOrder);
@@ -900,6 +902,40 @@ TEST_F(PrivateShellProtocolTest, ANoFocusDockNeverTakesTheKeyboardFromAnApplicat
                     // Even an explicit activation is refused.
                     windowManager.activation()->activate(dockWindow);
                     EXPECT_FALSE(dockWindow->isActive());
+                });
+            },
+            [&](Client &c) {
+                XdgWindow *window = c.makeToplevel("App", "app");
+                c.map(window, QSize(300, 200));
+                check([&] {
+                    wm::Window *active = windowManager.activation()->activeWindow();
+                    ASSERT_NE(nullptr, active);
+                    EXPECT_EQ(wm::WindowRole::Normal, active->role());
+                });
+            });
+}
+
+TEST_F(PrivateShellProtocolTest, AnOsdNeverTakesTheKeyboardWhateverItsFocusPolicy)
+{
+    run(
+            [&](Client &c) {
+                ASSERT_TRUE(c.bindShell());
+                XdgWindow *osd = c.makeToplevel("Osd", "cutefish-shell");
+                osd->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, osd->surface);
+                cutefish_shell_surface_v1_set_role(osd->shellSurface,
+                                                   CUTEFISH_SHELL_SURFACE_V1_ROLE_OSD);
+                cutefish_shell_surface_v1_set_position(osd->shellSurface, 300, 480);
+                c.map(osd, QSize(200, 50));
+
+                cutefish_shell_surface_v1_activate(osd->shellSurface);
+                c.sync();
+                check([&] {
+                    wm::Window *osdWindow = windowWithRole(wm::WindowRole::Osd);
+                    ASSERT_NE(nullptr, osdWindow);
+                    EXPECT_FALSE(osdWindow->isActive());
+                    EXPECT_NE(osdWindow->rootSurface(), seat.focusedSurface());
+                    windowManager.activation()->activate(osdWindow);
+                    EXPECT_FALSE(osdWindow->isActive());
                 });
             },
             [&](Client &c) {

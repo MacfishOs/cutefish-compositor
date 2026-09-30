@@ -529,8 +529,11 @@ void InputManager::onKey(Timestamp timestamp, uint32_t physicalCode, bool presse
     if (!m_seat->updateKeyState(evdevCode, pressed))
         return;
     if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput()) {
-        if ((!suppressed || m_secureKeys.contains(evdevCode)) && gate->secureInput())
+        if ((!suppressed || m_secureKeys.contains(evdevCode))
+            && !(m_eventSink && m_eventSink->onSecureKey(timestamp, evdevCode, pressed))
+            && gate->secureInput()) {
             gate->secureInput()->onKey(timestamp, evdevCode, pressed);
+        }
         if (pressed) {
             m_secureKeys.insert(evdevCode);
             m_seat->suppressKey(evdevCode);
