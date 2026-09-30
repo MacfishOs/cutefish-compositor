@@ -45,6 +45,7 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
         const auto *surface = window.rootSurface();
         const QPoint origin = window.frameInsets().topLeft() + window.surfaceOrigin();
         const QPainterPath path = surface ? surface->backgroundBlurShape() : QPainterPath();
+        state.outlineSurfaceOrigin = origin;
         if (!path.isEmpty()) {
             state.outlinePath = path.translated(origin);
             state.outlineShape = {state.outlinePath.boundingRect(), 0};

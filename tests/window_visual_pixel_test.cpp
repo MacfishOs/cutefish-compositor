@@ -929,4 +929,48 @@ TEST_F(WindowVisualPixelTest, ConfigureAcknowledgementAndOldBufferKeepPresentedS
     EXPECT_EQ(window->contentBounds().size(), QSize(200, 140));
 }
 
+TEST_F(WindowVisualPixelTest, ShapedGlassPopupOutlineMeetsSnappedBodyAtFractionalScale)
+{
+    const double scale = 1.5;
+    renderer->setRasterScale(scale);
+    // An odd logical position lands the popup on half a physical pixel.
+    for (int x : {20, 21}) {
+        WindowScene model;
+        ASSERT_NE(model.window(Mode::ServerExterior, {0.5f, 0.5f, 0.5f, 1}), nullptr);
+        auto *popupSurface = model.surface();
+        wm::ShellSurface popup(&model.manager, popupSurface);
+        ASSERT_TRUE(popup.setPopup(model.shells.front().get(), {x, 21, 120, 70}));
+        QPainterPath shape;
+        shape.addRoundedRect(QRectF(0, 0, 120, 60), 8, 8);
+        popupSurface->setBackgroundBlur({0, 0, 120, 60}, 8);
+        popupSurface->setBackgroundBlurShape(shape);
+        render::GlassParams glass;
+        glass.enabled = true;
+        glass.displacement = 0;
+        glass.tintRed = glass.tintGreen = glass.tintBlue = 1;
+        glass.tintAlpha = 0.6f;
+        popupSurface->setGlass(glass);
+        model.attach(popupSurface, {120, 70}, {0, 0, 0, 0});
+        auto *window = popup.window();
+        ASSERT_NE(window, nullptr);
+        static_cast<scene::WindowAnimation *>(window->node())->finish();
+        model.compositor.updateTextures(*renderer);
+        const QPoint origin = window->node()->absolutePosition();
+        renderer->clear({1, 1, 1, 1});
+        window->node()->render(*renderer);
+        const auto image = pixels();
+
+        // The body starts where the surface is snapped; the hairline is the
+        // one pixel outside it, darker than the shadow beyond.
+        const int left = qRound(origin.x() * scale);
+        const int top = qRound(origin.y() * scale);
+        const int row = int((origin.y() + 30) * scale);
+        const int column = int((origin.x() + 60) * scale);
+        EXPECT_GE(pixel(image, left, row), 245) << x;
+        EXPECT_LT(pixel(image, left - 1, row), pixel(image, left - 2, row)) << x;
+        EXPECT_GE(pixel(image, column, top), 245) << x;
+        EXPECT_LT(pixel(image, column, top - 1), pixel(image, column, top - 2)) << x;
+    }
+}
+
 } // namespace

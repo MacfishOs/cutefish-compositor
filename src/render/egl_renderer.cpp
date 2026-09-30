@@ -678,12 +678,7 @@ void EglRenderer::drawTextureMapped(Texture *texture, const QRect &target, float
                                                      deviceSize.height() / sourceSize.height())
                         * mapping;
             // Like Exo's host origin adjustment, keep native-density texels on physical pixels.
-            const QPointF outputOrigin = outputContext().logicalViewport.topLeft();
-            const QPointF origin = (QPointF(target.topLeft()) - outputOrigin) * rasterScale();
-            aligned = QRectF(outputOrigin
-                                     + QPointF(std::round(origin.x()), std::round(origin.y()))
-                                             / rasterScale(),
-                             QSizeF(deviceSize) / rasterScale());
+            aligned = QRectF(pixelAligned(target.topLeft()), QSizeF(deviceSize) / rasterScale());
         }
     }
     drawTextureMappedF(texture, aligned, alpha, texelMapping);
@@ -777,6 +772,8 @@ void EglRenderer::drawBackgroundBlur(const QRect &bounds, int radius, const QRec
     }
     const auto sources = m_pass.backdropSources(scale, outputContext().transform);
     const QPointF offset = m_pass.offset();
+    // `clip` is the surface; its texture lands on physical pixels, so the body does too.
+    const QPointF snap = pixelAligned(clip.topLeft()) - QPointF(clip.topLeft());
 
     struct RestoreGeometry {
         EglRenderer &renderer;
@@ -794,8 +791,8 @@ void EglRenderer::drawBackgroundBlur(const QRect &bounds, int radius, const QRec
     m_pass.setGeometry(m_pass.viewport(), offset * scale);
     setRasterScale(1);
     m_backdrop->draw(
-            *this, QRectF(QPointF(bounds.topLeft()) * scale, QSizeF(bounds.size()) * scale),
-            qRound(radius * scale), coverage(clip), glass, scale, shape,
+            *this, QRectF((bounds.topLeft() + snap) * scale, QSizeF(bounds.size()) * scale),
+            qRound(radius * scale), coverage(clip), glass, scale, shape.translated(snap),
             sources, m_roundedClips,
             [this](const QRectF &rect, float *vertices) {
                 quadFor(rect.translated(-m_pass.offset()), vertices);

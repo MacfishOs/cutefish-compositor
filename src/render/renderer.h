@@ -5,6 +5,7 @@
 #ifndef CUTEFISH_RENDER_RENDERER_H_
 #define CUTEFISH_RENDER_RENDERER_H_
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <list>
@@ -94,6 +95,14 @@ public:
     }
 
     const OutputRenderContext &outputContext() const { return m_outputContext; }
+
+    // The logical point nearest `logical` that lies on a physical pixel of the output.
+    QPointF pixelAligned(const QPointF &logical) const
+    {
+        const QPointF outputOrigin = m_outputContext.logicalViewport.topLeft();
+        const QPointF origin = (logical - outputOrigin) * m_rasterScale;
+        return outputOrigin + QPointF(std::round(origin.x()), std::round(origin.y())) / m_rasterScale;
+    }
 
     // Binds `target` and sets up the viewport. Every draw call must sit between
     // beginFrame() and endFrame().

@@ -602,15 +602,27 @@ void WindowAnimation::outline(render::Renderer &renderer, const WindowVisualStat
 {
     if (!visual.drawOutline || renderer.suppressWindowOutlines)
         return;
+    // The snapshot holds the surface where it was snapped to physical pixels.
+    const QPointF snap = clientBodySnap(renderer, visual, original.topLeft());
     if (!visual.outlinePath.isEmpty() && !original.isEmpty()) {
+        if (sample.bounds.size() == QSizeF(original.size())) {
+            // Rasterized where it lands, so it stays on physical pixels.
+            auto placed = visual;
+            placed.outlinePath.translate(sample.bounds.topLeft() + snap);
+            paintShapeOutline(renderer, placed, QTransform(), sample.opacity);
+            return;
+        }
         QTransform transform;
         transform.translate(sample.bounds.x(), sample.bounds.y());
         transform.scale(sample.bounds.width() / original.width(),
                         sample.bounds.height() / original.height());
+        transform.translate(snap.x(), snap.y());
         paintShapeOutline(renderer, visual, transform, sample.opacity);
         return;
     }
-    paintWindowOutline(renderer, transformedShape(visual.outlined(), original, sample), visual,
+    auto outlined = visual.outlined();
+    outlined.bounds.translate(snap);
+    paintWindowOutline(renderer, transformedShape(outlined, original, sample), visual,
                        sample.opacity);
 }
 

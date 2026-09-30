@@ -25,6 +25,9 @@ struct WindowVisualState {
     render::RoundedShape outlineShape;
     // A body of any outline; outlineShape then only bounds it.
     QPainterPath outlinePath;
+    // Where the client surface drawing that body sits; the surface is snapped
+    // to physical pixels, so its outline has to move with it.
+    QPoint outlineSurfaceOrigin;
     render::Color outlineColor;
     render::Color highlightColor {0, 0, 0, 0};
     qreal outlineWidthPx = 0;
@@ -47,6 +50,11 @@ void paintWindowOutline(render::Renderer &renderer, const render::RoundedShape &
 // `transform`, so an animation stretches it instead of rasterizing every frame.
 void paintShapeOutline(render::Renderer &renderer, const WindowVisualState &state,
                        const QTransform &transform, float opacity = 1);
+
+// How far a client-described outline moves with its surface onto physical
+// pixels, for a window whose node sits at `position`; zero for other outlines.
+QPointF clientBodySnap(const render::Renderer &renderer, const WindowVisualState &state,
+                       const QPointF &position);
 
 // Presentation values only; closing snapshots never retain a Window pointer.
 class WindowVisualNode : public Node

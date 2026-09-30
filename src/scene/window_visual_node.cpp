@@ -62,6 +62,15 @@ void paintShapeOutline(render::Renderer &renderer, const WindowVisualState &stat
         renderer.drawTextureF(textures.front().get(), transform.mapRect(raster.target()), opacity);
 }
 
+QPointF clientBodySnap(const render::Renderer &renderer, const WindowVisualState &state,
+                       const QPointF &position)
+{
+    if (state.outlineShape.bounds.isEmpty())
+        return {};
+    const QPointF surface = position + state.outlineSurfaceOrigin;
+    return renderer.pixelAligned(surface) - surface;
+}
+
 float WindowVisualNode::presentedDim(const render::Renderer &renderer) const
 {
     if (!m_dimFading)
@@ -106,11 +115,13 @@ void WindowVisualNode::render(render::Renderer &renderer) const
     if (m_state.drawOutline && !renderer.suppressWindowOutlines && !m_state.outlinePath.isEmpty()) {
         // Rasterized where it lands, so it stays on physical pixels at any scale.
         auto state = m_state;
-        state.outlinePath.translate(absolutePosition());
+        const QPointF position = absolutePosition();
+        state.outlinePath.translate(position + clientBodySnap(renderer, m_state, position));
         paintShapeOutline(renderer, state, QTransform());
     } else if (m_state.drawOutline && !renderer.suppressWindowOutlines) {
+        const QPointF position = absolutePosition();
         auto outline = m_state.outlined();
-        outline.bounds.translate(absolutePosition());
+        outline.bounds.translate(position + clientBodySnap(renderer, m_state, position));
         paintWindowOutline(renderer, outline, m_state);
     }
 }
