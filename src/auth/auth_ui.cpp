@@ -73,14 +73,13 @@ protected:
         }
         // The lock transition draws every frame; the panel changes far less often.
         if (!m_texture || m_uploaded != m_ui->imageGeneration()) {
-            const QImage image = source.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
             // The renderer uploads the texture's own size and cannot see the
             // image's, so a panel redrawn for another output needs a new one.
-            if (!m_texture || m_texture->size() != image.size()
-                || !renderer.updateTexture(m_texture.get(), image.constBits(),
-                                           image.bytesPerLine(), render::PixelFormat::Rgba8888))
-                m_texture = renderer.createTexture(image.size(), image.constBits(),
-                                                   image.bytesPerLine(),
+            if (!m_texture || m_texture->size() != source.size()
+                || !renderer.updateTexture(m_texture.get(), source.constBits(),
+                                           source.bytesPerLine(), render::PixelFormat::Rgba8888))
+                m_texture = renderer.createTexture(source.size(), source.constBits(),
+                                                   source.bytesPerLine(),
                                                    render::PixelFormat::Rgba8888);
             m_uploaded = m_ui->imageGeneration();
         }
@@ -377,7 +376,8 @@ void AuthUi::refresh()
     if (m_image.size() != pixels || m_image.devicePixelRatio() != scale) {
         if (m_window)
             m_window->setRenderTarget({});
-        m_image = QImage(pixels, QImage::Format_ARGB32_Premultiplied);
+        // The texture's own byte order, so the panel uploads without a conversion.
+        m_image = QImage(pixels, QImage::Format_RGBA8888_Premultiplied);
         m_image.setDevicePixelRatio(scale);
         m_image.fill(Qt::transparent);
         if (m_root) {
