@@ -151,18 +151,33 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     if (visibleBounds.isEmpty())
         return;
     // Rounded outward, the lens is a pixel wider or taller depending on where
-    // its fractional origin falls. The capture is sized for the widest it can
-    // round out to, so a lens moving at a fractional scale keeps one set of
-    // scratch textures instead of cycling through four and reallocating.
+    // its fractional origin falls, and so is a shape's outline. The capture is
+    // sized for the widest they can round out to, so a lens moving at a
+    // fractional scale keeps one set of scratch textures instead of cycling
+    // through four and reallocating, however the clip or the output cut it.
+    // cc's ResourcePool hands out its unused resources by exact size the same way.
     QSize captured = visibleBounds.size();
-    if (visibleBounds == lens && scale != std::floor(scale)) {
-        captured = captured.expandedTo(QSize(int(std::ceil(exactLens.width())) + 1,
-                                             int(std::ceil(exactLens.height())) + 1));
+    if (scale != std::floor(scale)) {
+        QRectF exact = exactLens;
+        if (bounds != lens)
+            exact = exact.united(QRectF(shape.boundingRect().topLeft() * scale,
+                                        shape.boundingRect().size() * scale));
+        captured = captured.expandedTo(
+                QSize(int(std::ceil(exact.width())) + 1, int(std::ceil(exact.height())) + 1));
     }
     const int halo = qCeil(kBackdropBlurSupport * scale);
-    const QRect coverage = QRect(visibleBounds.topLeft() - QPoint(halo, halo),
-                                 captured + QSize(2 * halo, 2 * halo))
-                                   .intersected(output);
+    // Moved inside the output rather than cut by its edge, so the size stays
+    // the same as the lens nears the edge: cut, it keyed a new set of scratch
+    // textures on every frame of a move along it. Only a lens the output
+    // cannot hold with its halo is cut. Skia sizes such scratch textures
+    // loosely for the same reason (SkBackingFit::kApprox).
+    QRect coverage(visibleBounds.topLeft() - QPoint(halo, halo),
+                   captured + QSize(2 * halo, 2 * halo));
+    coverage.moveLeft(std::clamp(coverage.left(), output.left(),
+                                 std::max(output.left(), output.right() - coverage.width() + 1)));
+    coverage.moveTop(std::clamp(coverage.top(), output.top(),
+                                std::max(output.top(), output.bottom() - coverage.height() + 1)));
+    coverage = coverage.intersected(output);
     const QSize reduced(std::max(1, int(std::ceil(coverage.width() * quality))),
                         std::max(1, int(std::ceil(coverage.height() * quality))));
     const QRect reducedBounds(QPoint(), reduced);

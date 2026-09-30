@@ -32,8 +32,8 @@ public:
               const std::function<void(const GlProgram &)> &applyRoundedClip);
 
 private:
-    // One per blur size, so a dock and a panel drawn in the same frame do not
-    // reallocate each other's textures.
+    // One per blur size, so the dock, the panel and the windows drawn in one
+    // frame do not reallocate each other's textures.
     struct Scratch {
         QSize coverage;
         QSize reduced;
@@ -57,7 +57,7 @@ private:
     void applyGlassMaterial(const GlProgram &program, const GlassParams &glass,
                             const QSize &coverage, double scale);
 
-    static constexpr size_t kCachedSizes = 4;
+    static constexpr size_t kCachedSizes = 8;
     static constexpr uint64_t kUnusedFrames = 60;
     std::shared_ptr<EglContext> m_context;
     GlProgram m_blurProgram;
