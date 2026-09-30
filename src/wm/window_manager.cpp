@@ -25,6 +25,7 @@
 #include "scene/window_animation.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/mru_window_tracker.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/shell_surface.h"
 #include "wm/stacking.h"
 #include "wm/toplevel_event_handler.h"
@@ -57,11 +58,13 @@ WindowManager::WindowManager(compositor::Compositor *compositor, input::Seat *se
     m_activation.addObserver(this);
     m_mruTracker = std::make_unique<MruWindowTracker>(this);
     m_desks = std::make_unique<DesksController>(this);
+    m_overview = std::make_unique<OverviewController>(this);
 }
 
 WindowManager::~WindowManager()
 {
     m_activation.removeObserver(this);
+    m_overview.reset();
     // Tear down through destroyWindow so activation and drags unwind cleanly.
     while (!m_stackingOrder.empty())
         destroyWindow(m_stackingOrder.back());
@@ -242,6 +245,24 @@ QRect WindowManager::workAreaForOutput(const QRect &outputBounds) const
         }
     }
     return outputBounds == m_outputBounds ? m_workArea : QRect();
+}
+
+std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
+{
+    std::vector<OutputArea> areas;
+    if (m_displayManager && m_displayManager->applied()) {
+        for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
+            if (!logical.bounds.isEmpty())
+                areas.push_back({logical.bounds, workAreaForOutput(logical.bounds),
+                                 logical.scale.value()});
+        }
+    }
+    if (areas.empty() && !m_outputBounds.isEmpty()) {
+        const double scale = m_compositor ? m_compositor->outputScale().value() : 1;
+        areas.push_back({m_outputBounds, m_workArea.isEmpty() ? m_outputBounds : m_workArea,
+                         scale});
+    }
+    return areas;
 }
 
 void WindowManager::setWorkArea(const QRect &bounds)

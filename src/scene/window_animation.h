@@ -140,6 +140,27 @@ public:
 
     void render(render::Renderer &renderer) const override;
 
+    // How the overview shows a window: its geometry mapped onto `bounds`, at
+    // `opacity` of its own. Towards `uniform` 1 the body's corners go from the
+    // window's own, scaled with it, to `radius` logical pixels, and the
+    // window's own shadow and outline fade out for the ones the overview
+    // gives every window alike.
+    struct Presentation {
+        QRectF bounds;
+        float opacity = 1;
+        double uniform = 0;
+        qreal radius = 0;
+    };
+
+    // Draws the window as render() does, but as `presentation` has it, its
+    // body clipped to presentedBody() and its background blurs read where it
+    // is drawn. A hidden window, minimized or on another desk, is drawn from
+    // its live content.
+    void renderPresented(render::Renderer &renderer, const Presentation &presentation) const;
+    // The body - the window without its shadow, outline or client margins -
+    // as renderPresented() clips it.
+    render::RoundedShape presentedBody(const Presentation &presentation) const;
+
     bool isRetired() const override { return m_closing && !m_running; }
 
     // A close that would animate on a display nobody sees is over at once.
@@ -230,8 +251,22 @@ private:
     // Advances the texture's damage history either way.
     bool textureIsCurrent(render::Renderer &renderer, const QRect &coverage,
                           QRect *repaint) const;
+    // Whether any surface in it blurs what is behind it.
+    bool hasBackgroundBlurs() const;
+
+    // What renderPresented() draws during its render().
+    mutable std::optional<Presentation> m_presentedAt;
+    render::RoundedShape presentedBody(const Presentation &presentation,
+                                       const QRectF &bounds) const;
+    void drawPresented(render::Renderer &renderer, const Sample &value) const;
+    // The background blurs of the surfaces in it, drawn at `value`.
+    void drawPresentedBlurs(render::Renderer &renderer, const Sample &value) const;
+    bool isPresentedHidden() const { return m_presentedAt && !isVisible(); }
 
     mutable std::unique_ptr<render::Texture> m_texture;
+    // Whether m_texture was drawn without its blurs, and has mipmaps.
+    mutable bool m_textureBlurSuppressed = false;
+    mutable bool m_textureMipmapped = false;
     // What m_texture was drawn from: the subtree's damage since, whether it may
     // be reused at all, its raster scale, the output's viewport and the scene
     // root's revision, which session-wide appearance changes bump.

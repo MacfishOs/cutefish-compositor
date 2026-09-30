@@ -54,6 +54,15 @@ void SurfaceNode::setBackgroundBlur(const QRect &rect, int radius, const render:
     notifyChanged();
 }
 
+void SurfaceNode::render(render::Renderer &renderer) const
+{
+    if (!isVisible() && m_hiddenWithWindow && renderer.revealHiddenSurfaces) {
+        renderSubtree(renderer);
+        return;
+    }
+    Node::render(renderer);
+}
+
 void SurfaceNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
 {
     // Content the display controller put on a hardware plane must not also be

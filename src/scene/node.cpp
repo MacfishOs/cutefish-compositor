@@ -228,9 +228,12 @@ bool Node::subtreeOccludesOutput(const render::Renderer &renderer) const
 
 void Node::render(render::Renderer &renderer) const
 {
-    if (!m_visible)
-        return;
+    if (m_visible)
+        renderSubtree(renderer);
+}
 
+void Node::renderSubtree(render::Renderer &renderer) const
+{
     const size_t split = std::min(m_childrenBelowParent, m_childOrder.size());
     const size_t first = firstUnoccludedChild(renderer);
     for (size_t i = first; i < split; ++i)

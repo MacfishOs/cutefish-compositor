@@ -10,7 +10,6 @@
 #ifndef CUTEFISH_SCENE_DESK_SWITCH_NODE_H_
 #define CUTEFISH_SCENE_DESK_SWITCH_NODE_H_
 
-#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -19,6 +18,7 @@
 
 #include <QString>
 
+#include "scene/finger_track.h"
 #include "scene/motion.h"
 #include "scene/node.h"
 
@@ -76,17 +76,9 @@ public:
     // UIScrollView's rubber band: how much of the fingers' pull past an end the
     // strip follows at first, never going further than the edge padding.
     static constexpr double kRubberBandCoefficient = 0.55;
-    // ui::LinearResampling: the fingers are shown where they were this long
-    // before the frame, and never guessed further ahead of the newest event
-    // than the prediction limit or half the last event interval.
-    static constexpr double kResampleLatencyMs = 5;
-    static constexpr double kResampleMaxPredictionMs = 8;
-    static constexpr double kResampleMinDeltaMs = 2;
-    // ui::VelocityTracker: the fit's horizon, and the gaps after which the
-    // fingers count as having stopped.
-    static constexpr double kVelocityHorizonMs = 100;
-    static constexpr double kAssumeMoveStoppedMs = 40;
-    static constexpr double kAssumeReleaseStoppedMs = 80;
+    static constexpr double kResampleLatencyMs = motion::FingerTrack::kResampleLatencyMs;
+    static constexpr double kResampleMaxPredictionMs =
+            motion::FingerTrack::kResampleMaxPredictionMs;
     static constexpr double kQuickAnimationTranslationDistanceRatio = 0.25;
     static constexpr int kHitTheWallDurationMs = 150;
 
@@ -169,7 +161,7 @@ private:
     enum class Motion {
         Still,
         // With the fingers: m_position is where they have pulled the strip,
-        // past its ends too, and m_samples where it was at each event.
+        // past its ends too, and m_fingers where it was at each event.
         Tracking,
         Tween,
         Spring,
@@ -181,11 +173,6 @@ private:
         int durationMs = 0;
     };
 
-    struct Sample {
-        double timeMs = 0;
-        double position = 0;
-    };
-
     int slotOf(int desk) const;
     void addDesk(int desk);
     // Moves every position the strip keeps by `by` slots, as a frame comes in
@@ -195,7 +182,6 @@ private:
     double rubberBand(double pulled) const;
     double pulledPosition(double shown) const;
     double fingerPosition(double timeMs) const;
-    double fingerVelocity(double releaseTimeMs) const;
     // The slot a strip let go at `position` and `velocity` settles on.
     int flickTarget(double position, double velocity) const;
     void updateCoast();
@@ -220,7 +206,7 @@ private:
     mutable int m_captureDesk = -1;
     Motion m_motion = Motion::Still;
     double m_position = 0;
-    std::deque<Sample> m_samples;
+    motion::FingerTrack m_fingers;
     // Fingers moving at a flick's speed that stop reporting have lifted, tens
     // of milliseconds before libinput ends the gesture: from m_coastStart the
     // strip settles on this spring rather than standing still meanwhile.

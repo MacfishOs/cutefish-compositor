@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "wm/desks/desks_controller.h"
+#include "wm/overview/overview_controller.h"
 
 namespace cutefish::wm {
 
@@ -24,9 +25,11 @@ double milliseconds(input::Timestamp timestamp)
 
 } // namespace
 
-WmGestureHandler::WmGestureHandler(DesksController *desks, std::function<bool()> dragging)
+WmGestureHandler::WmGestureHandler(DesksController *desks, std::function<bool()> dragging,
+                                   OverviewController *overview)
     : m_desks(desks)
     , m_dragging(std::move(dragging))
+    , m_overview(overview)
 {
 }
 
@@ -49,20 +52,39 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
     m_scroll.scrollX += delta.x();
     m_scroll.scrollY += delta.y();
 
-    // Update the continuous desk animation if it has already been started,
+    // Update the continuous animation if it has already been started,
     // otherwise start it once it passes the threshold.
     if (m_scroll.horizontalContinuousGestureStarted) {
         m_desks->updateSwipeAnimation(delta.x() / kSwipeLengthPerDeskMm, milliseconds(timestamp));
+        return;
+    }
+    // Fingers moving up bring the overview in.
+    if (m_scroll.verticalContinuousGestureStarted) {
+        m_overview->updateSwipe(-delta.y() / kOverviewSwipeLengthMm, milliseconds(timestamp));
         return;
     }
     const double x = std::abs(m_scroll.scrollX);
     const double y = std::abs(m_scroll.scrollY);
     if (std::max(x, y) <= kContinuousGestureMoveThresholdMm)
         return;
-    if (y > x || (m_dragging && m_dragging())) {
+    if (m_dragging && m_dragging()) {
         m_scroll.ignored = true;
         return;
     }
+    if (y > x) {
+        if (!m_overview || !m_overview->startSwipe(/*upward=*/m_scroll.scrollY < 0)) {
+            m_scroll.ignored = true;
+            return;
+        }
+        m_scroll.verticalContinuousGestureStarted = true;
+        m_overview->updateSwipe(-m_scroll.scrollY / kOverviewSwipeLengthMm,
+                                milliseconds(timestamp));
+        return;
+    }
+    // The overview on its way in or out lands where it was heading, and the
+    // desks switch from there.
+    if (m_overview && m_overview->isTransitioning())
+        m_overview->completeTransition();
     // Fingers moving right bring the desk on the left in.
     if (!m_desks->startSwipeAnimation(/*moveLeft=*/m_scroll.scrollX > 0)) {
         // On the lock screen, or while an animation from another source runs.
@@ -78,10 +100,13 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
 
 void WmGestureHandler::onGestureEnd(input::Timestamp timestamp, bool)
 {
-    const bool started = m_scroll.horizontalContinuousGestureStarted;
+    const bool horizontal = m_scroll.horizontalContinuousGestureStarted;
+    const bool vertical = m_scroll.verticalContinuousGestureStarted;
     m_scroll = {};
-    if (started)
+    if (horizontal)
         m_desks->endSwipeAnimation(milliseconds(timestamp));
+    if (vertical)
+        m_overview->endSwipe(milliseconds(timestamp));
 }
 
 } // namespace cutefish::wm

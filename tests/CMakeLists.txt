@@ -158,6 +158,9 @@ cutefish_add_test(window_animation_test cutefish-scene)
 cutefish_add_test(screen_transition_node_test cutefish-scene)
 cutefish_add_test(desk_switch_node_test cutefish-scene)
 cutefish_add_test(desks_test cutefish-wm Qt6::Test)
+cutefish_add_test(overview_layout_test cutefish-wm)
+cutefish_add_test(overview_node_test cutefish-scene)
+cutefish_add_test(overview_test cutefish-wm)
 
 cutefish_add_test(cursor_test cutefish-cursor)
 cutefish_add_test(output_cursor_router_test cutefish-cursor)
@@ -281,6 +284,8 @@ set_tests_properties(render_internals_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_
 set_tests_properties(capture_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 cutefish_add_test(desk_switch_pixel_test cutefish-scene cutefish-render)
 set_tests_properties(desk_switch_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
+cutefish_add_test(overview_pixel_test cutefish-scene cutefish-render)
+set_tests_properties(overview_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 set_tests_properties(image_capture_test PROPERTIES TIMEOUT 15)
 
 add_dependencies(image_capture_test cutefish-screenshot)

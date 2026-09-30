@@ -50,6 +50,7 @@ namespace cutefish::wm {
 
 class DesksController;
 class MruWindowTracker;
+class OverviewController;
 class ShellSurface;
 class ToplevelEventHandler;
 class TransientManager;
@@ -150,6 +151,8 @@ public:
     MruWindowTracker *mruWindowTracker() const { return m_mruTracker.get(); }
 
     DesksController *desks() const { return m_desks.get(); }
+
+    OverviewController *overview() const { return m_overview.get(); }
 
     ToplevelEventHandler *eventHandler() { return m_eventHandler.get(); }
 
@@ -345,6 +348,14 @@ public:
     // there is no such output any more.
     QRect workAreaForOutput(const QRect &outputBounds) const;
 
+    struct OutputArea {
+        QRect bounds;
+        QRect workArea;
+        double scale = 1;
+    };
+    // Every output, or the single output bounds without a display manager.
+    std::vector<OutputArea> outputAreas() const;
+
     // --- input::EventSink ---
 
     bool onPointerMotion(input::Timestamp timestamp, const QPointF &location) override;
@@ -422,6 +433,7 @@ private:
     std::unique_ptr<TransientManager> m_transientManager;
     std::unique_ptr<MruWindowTracker> m_mruTracker;
     std::unique_ptr<DesksController> m_desks;
+    std::unique_ptr<OverviewController> m_overview;
     std::vector<scene::Node *> m_deskOverlays;
     std::unique_ptr<ToplevelEventHandler> m_eventHandler;
     Placement m_placement;

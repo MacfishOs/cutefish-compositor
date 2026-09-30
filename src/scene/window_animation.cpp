@@ -13,9 +13,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <utility>
 
+#include <QPainterPath>
+#include <QTransform>
+
 #include "scene/motion.h"
+#include "scene/surface_node.h"
 
 namespace cutefish::scene {
 
@@ -421,7 +426,7 @@ void WindowAnimation::releaseHold()
 
 float WindowAnimation::exteriorOpacity(const Sample &sample) const
 {
-    if (!isDockTransition())
+    if (!isDockTransition() || isPresentedHidden())
         return 1;
     const qreal range = m_dockWindow.width() - m_dockSlot.width();
     if (range <= 0)
@@ -698,12 +703,113 @@ bool WindowAnimation::textureIsCurrent(render::Renderer &renderer, const QRect &
             textureReusable(coverage, outputViewport(renderer, *this), renderer.rasterScale());
     *repaint = valid ? render::coverSamples(damage.boundingRect(), m_textureDamage.samples())
                      : QRect();
-    return valid && damage.isEmpty();
+    // A texture drawn without its blurs, or with them, is only kept for a draw
+    // that wants the same.
+    const bool blurSuppressed =
+            renderer.suppressBackgroundBlur || presentedScaled() || m_presentedAt;
+    // Without blurs the two are the same texture: entering the overview does
+    // not draw every window again.
+    return valid && damage.isEmpty()
+            && (m_textureBlurSuppressed == blurSuppressed || !hasBackgroundBlurs());
+}
+
+bool WindowAnimation::hasBackgroundBlurs() const
+{
+    const std::function<bool(const Node &)> visit = [&](const Node &node) {
+        for (const Node *child : node.children()) {
+            const auto *surface = dynamic_cast<const SurfaceNode *>(child);
+            if ((surface && surface->hasBackgroundBlur()) || visit(*child))
+                return true;
+        }
+        return false;
+    };
+    return visit(*this);
+}
+
+void WindowAnimation::renderPresented(render::Renderer &renderer,
+                                      const Presentation &presentation) const
+{
+    m_presentedAt = presentation;
+    render(renderer);
+    m_presentedAt.reset();
+}
+
+render::RoundedShape WindowAnimation::presentedBody(const Presentation &presentation) const
+{
+    return presentedBody(presentation, presentation.bounds);
+}
+
+render::RoundedShape WindowAnimation::presentedBody(const Presentation &presentation,
+                                                    const QRectF &bounds) const
+{
+    const QRect original = m_textureBounds.isEmpty() ? absoluteGeometry() : m_textureBounds;
+    render::RoundedShape body = bodyShape(original, bounds);
+    const qreal own = body.radius * std::min(body.radiusScale.width(), body.radiusScale.height());
+    const qreal uniform = std::clamp(presentation.radius, qreal(0),
+                                     std::min(body.bounds.width(), body.bounds.height()) / 2);
+    body.radius = own + (uniform - own) * std::clamp(presentation.uniform, 0.0, 1.0);
+    body.radiusScale = QSizeF(1, 1);
+    return body;
+}
+
+void WindowAnimation::drawPresented(render::Renderer &renderer, const Sample &value) const
+{
+    renderer.pushRoundedClip(presentedBody(*m_presentedAt, value.bounds));
+    drawPresentedBlurs(renderer, value);
+    draw(renderer, m_texture.get(), m_coverage, m_textureBounds, value);
+    renderer.popRoundedClip();
+    Sample outlined = value;
+    outlined.opacity *= float(1 - std::clamp(m_presentedAt->uniform, 0.0, 1.0));
+    if (outlined.opacity > 0)
+        outline(renderer, m_visual, m_textureBounds, outlined);
+}
+
+void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sample &value) const
+{
+    if (renderer.suppressBackgroundBlur || m_textureBounds.isEmpty())
+        return;
+    const double sx = value.bounds.width() / m_textureBounds.width();
+    const double sy = value.bounds.height() / m_textureBounds.height();
+    const double scale = std::min(sx, sy);
+    QTransform transform;
+    transform.translate(value.bounds.x(), value.bounds.y());
+    transform.scale(sx, sy);
+    transform.translate(-m_textureBounds.x(), -m_textureBounds.y());
+    const bool reveal = isPresentedHidden();
+    const std::function<void(const Node &)> visit = [&](const Node &node) {
+        for (const Node *child : node.children()) {
+            const auto *surface = dynamic_cast<const SurfaceNode *>(child);
+            if (!child->isVisible() && !(reveal && surface && surface->isHiddenWithWindow()))
+                continue;
+            if (surface && surface->hasBackgroundBlur() && surface->texture()) {
+                const QRect geometry = surface->absoluteGeometry();
+                render::GlassParams glass = surface->glass();
+                // Its lengths shrink with the window, or the lip would swallow it.
+                glass.blurSigma *= float(scale);
+                glass.bevel *= float(scale);
+                glass.depth *= float(scale);
+                glass.displacement *= float(scale);
+                glass.ambientOcclusionRadius *= float(scale);
+                glass.opacity *= value.opacity;
+                const QPainterPath &shape = surface->backgroundBlurShape();
+                renderer.drawBackgroundBlur(
+                        transform.mapRect(QRectF(surface->backgroundBlurRect().translated(
+                                                  geometry.topLeft())))
+                                .toAlignedRect(),
+                        qRound(surface->backgroundBlurRadius() * scale),
+                        transform.mapRect(QRectF(geometry)).toAlignedRect(), glass,
+                        shape.isEmpty() ? QPainterPath()
+                                        : transform.map(shape.translated(geometry.topLeft())));
+            }
+            visit(*child);
+        }
+    };
+    visit(*this);
 }
 
 void WindowAnimation::render(render::Renderer &renderer) const
 {
-    if ((!isVisible() && m_type != Type::Minimize && !m_closing) || isRetired())
+    if ((!isVisible() && m_type != Type::Minimize && !m_closing && !m_presentedAt) || isRetired())
         return;
     // Sampled per frame, not per draw: every output frame advances the
     // animation by what the display showed since the last one, however late
@@ -748,7 +854,8 @@ void WindowAnimation::render(render::Renderer &renderer) const
         m_started += now() - m_firstStepAt - renderer.framePeriod;
     }
 
-    const bool frozen = m_closing || m_type == Type::Minimize;
+    // A minimized window's snapshot goes to the dock; presented, it is drawn live.
+    const bool frozen = (m_closing || m_type == Type::Minimize) && !isPresentedHidden();
     if (frozen && !m_texture) {
         m_snapshot = nullptr;
         m_landingSnapshot = nullptr;
@@ -766,7 +873,7 @@ void WindowAnimation::render(render::Renderer &renderer) const
         // An idle window on another output is not drawn here, so its snapshot
         // keeps the scale of an output that shows it.
         const QRect viewport = renderer.outputContext().logicalViewport;
-        if (!animating() && !viewport.isEmpty() && !coverage.intersects(viewport))
+        if (!animating() && !m_presentedAt && !viewport.isEmpty() && !coverage.intersects(viewport))
             return;
         // Corners in texture space that the draw below scales to morphedRadius().
         std::optional<render::Renderer::WindowCorners> corners;
@@ -794,16 +901,22 @@ void WindowAnimation::render(render::Renderer &renderer) const
             // does, so the two share the snapshot; one at another scale or
             // viewport fails textureReusable() anyway.
             const bool reusable = !animating() && !hasPromotedSurface(*this);
+            // The overview draws a window's blurs where it shows it.
+            const bool blurSuppressed =
+                    renderer.suppressBackgroundBlur || presentedScaled() || m_presentedAt;
             if (!renderer.renderToTexture(m_texture, coverage, repaint, [&] {
                     const bool suppressed = renderer.suppressWindowOutlines;
-                    const bool blurSuppressed = renderer.suppressBackgroundBlur;
+                    const bool wasBlurSuppressed = renderer.suppressBackgroundBlur;
+                    const bool revealed = renderer.revealHiddenSurfaces;
                     renderer.suppressWindowOutlines = true;
-                    renderer.suppressBackgroundBlur = blurSuppressed || presentedScaled();
+                    renderer.suppressBackgroundBlur = blurSuppressed;
+                    renderer.revealHiddenSurfaces = isPresentedHidden();
                     renderer.presentationSubmission = submission;
                     renderer.windowCorners = corners;
-                    Node::render(renderer);
+                    renderSubtree(renderer);
                     renderer.windowCorners.reset();
-                    renderer.suppressBackgroundBlur = blurSuppressed;
+                    renderer.revealHiddenSurfaces = revealed;
+                    renderer.suppressBackgroundBlur = wasBlurSuppressed;
                     renderer.suppressWindowOutlines = suppressed;
                 })) {
                 m_textureReusable = false;
@@ -823,6 +936,8 @@ void WindowAnimation::render(render::Renderer &renderer) const
                                 || renderer.repaints(sampled);
                     });
             m_textureReusable = reusable && backdropCurrent;
+            m_textureBlurSuppressed = blurSuppressed;
+            m_textureMipmapped = false;
             m_textureScale = renderer.rasterScale();
             m_textureViewport = output;
             m_textureRootRevision = sceneRoot(*this).revision();
@@ -840,12 +955,14 @@ void WindowAnimation::render(render::Renderer &renderer) const
     // are read through the same filtering, so the landing still matches.
     if (m_running && m_type == Type::Minimize)
         renderer.enableTrilinearFiltering(m_texture.get());
-    if (m_snapshot && m_type == Type::Minimize)
+    if (m_snapshot && m_type == Type::Minimize && !m_presentedAt)
         readSnapshot(renderer);
 
-    Sample value = m_running || m_holding ? current() : Sample {absoluteGeometry(), 1, 1};
+    Sample value = (m_running || m_holding) && !isPresentedHidden() ? current()
+                                                                    : Sample {absoluteGeometry(), 1, 1};
     // What was presented stays the animation's own; each draw adds the client's.
-    m_presented = value;
+    if (!m_presentedAt)
+        m_presented = value;
     value.opacity *= m_opacity;
     if (m_scaleFrom != m_scaleTo && m_scaleStarted < 0)
         m_scaleStarted = now();
@@ -857,11 +974,28 @@ void WindowAnimation::render(render::Renderer &renderer) const
         value.bounds = QRectF(anchor + (value.bounds.topLeft() - anchor) * scale,
                               value.bounds.size() * scale);
     }
+    if (m_presentedAt) {
+        const QRect geometry = absoluteGeometry();
+        if (!geometry.isEmpty()) {
+            const QRectF &to = m_presentedAt->bounds;
+            const double sx = to.width() / geometry.width();
+            const double sy = to.height() / geometry.height();
+            const QPointF from = value.bounds.topLeft() - QPointF(geometry.topLeft());
+            value.bounds = QRectF(to.topLeft() + QPointF(from.x() * sx, from.y() * sy),
+                                  QSizeF(value.bounds.width() * sx, value.bounds.height() * sy));
+            // Far below its size, a bilinear texture shimmers as it moves.
+            if (m_texture && !m_textureMipmapped && std::min(sx, sy) < 0.75) {
+                renderer.enableTrilinearFiltering(m_texture.get());
+                m_textureMipmapped = true;
+            }
+        }
+        value.opacity *= m_presentedAt->opacity;
+    }
     if (m_running && m_type == Type::Minimize && value.progress >= 1 && m_landingSnapshot)
         readSnapshot(renderer, true);
 
     if ((m_running || m_holding) && m_type == Type::Minimize && value.progress >= 1
-        && m_landingTexture) {
+        && m_landingTexture && !isPresentedHidden()) {
         // The clip and resampling are already baked into the image sent to the dock.
         renderer.drawTextureF(m_landingTexture.get(), value.bounds, value.opacity);
     } else if (!frozen || m_running || m_holding) {
@@ -870,7 +1004,9 @@ void WindowAnimation::render(render::Renderer &renderer) const
         // The current snapshot supplies the exterior once. Old content fades
         // only inside its silhouette, so a square old buffer cannot leak out.
         const float exterior = exteriorOpacity(value);
-        if (morphsExterior()) {
+        if (m_presentedAt) {
+            drawPresented(renderer, value);
+        } else if (morphsExterior()) {
             drawExteriorMorph(renderer, value, blend);
         } else {
             if (exterior < 1) {

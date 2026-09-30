@@ -289,6 +289,10 @@ add_library(cutefish-scene STATIC
     src/scene/screen_transition_node.h
     src/scene/desk_switch_node.cpp
     src/scene/desk_switch_node.h
+    src/scene/finger_track.cpp
+    src/scene/finger_track.h
+    src/scene/overview_node.cpp
+    src/scene/overview_node.h
     src/scene/slide_out_node.cpp
     src/scene/slide_out_node.h
     src/scene/window_animation.cpp
@@ -500,6 +504,10 @@ add_library(cutefish-wm STATIC
     src/wm/desks/desk_preferences.h
     src/wm/gestures/wm_gesture_handler.cpp
     src/wm/gestures/wm_gesture_handler.h
+    src/wm/overview/overview_controller.cpp
+    src/wm/overview/overview_controller.h
+    src/wm/overview/overview_layout.cpp
+    src/wm/overview/overview_layout.h
     # Development shortcuts for exercising the window manager.
     src/wm/demo_controller.cpp
     src/wm/demo_controller.h

@@ -13,7 +13,6 @@
 #include <chrono>
 #include <cmath>
 #include <iterator>
-#include <numbers>
 #include <utility>
 #include <vector>
 
@@ -45,21 +44,6 @@ double accel20Decel100(double t)
 int scaled(int durationMs)
 {
     return std::max(1, int(std::lround(durationMs * motion::durationScale())));
-}
-
-// Heading for the target faster than the spring would bring it in, the strip
-// would shoot past and show the gap beyond. It comes in as fast as it can
-// without, so even a hard flick leaves the rest of the way to a visible slide.
-motion::Spring settlingSpring(double now, double from, double target, double velocity,
-                              double response)
-{
-    const double omega = 2 * std::numbers::pi / (response * motion::durationScale());
-    const double towards = target - from;
-    if (velocity * towards > 0 && std::abs(velocity) > omega * std::abs(towards))
-        velocity = omega * towards;
-    motion::Spring spring({response, 1});
-    spring.reset(now, from, target, velocity);
-    return spring;
 }
 
 // Frames land on whole device pixels, so they stay as sharp as the desk
@@ -153,8 +137,7 @@ void DeskSwitchNode::addDesk(int desk)
 void DeskSwitchNode::shiftStrip(double by, double now)
 {
     m_position += by;
-    for (Sample &sample : m_samples)
-        sample.position += by;
+    m_fingers.shift(by);
     m_animation.from += by;
     m_animation.to += by;
     if (m_motion == Motion::Spring)
@@ -211,73 +194,15 @@ double DeskSwitchNode::pulledPosition(double shown) const
 
 double DeskSwitchNode::fingerPosition(double timeMs) const
 {
-    if (m_samples.empty())
-        return m_position;
-    const auto after = std::upper_bound(m_samples.begin(), m_samples.end(), timeMs,
-                                        [](double time, const Sample &sample) {
-                                            return time < sample.timeMs;
-                                        });
-    if (after == m_samples.begin())
-        return after->position;
-    const auto lerp = [](const Sample &a, const Sample &b, double time) {
-        const double dt = b.timeMs - a.timeMs;
-        return dt > 0 ? a.position + (b.position - a.position) * (time - a.timeMs) / dt
-                      : b.position;
-    };
-    if (after != m_samples.end())
-        return lerp(*std::prev(after), *after, timeMs);
-
-    // Ahead of the newest event: along the last two, not far.
-    const Sample &newest = m_samples.back();
-    if (m_samples.size() < 2)
-        return newest.position;
-    const Sample &previous = m_samples[m_samples.size() - 2];
-    const double dt = newest.timeMs - previous.timeMs;
-    if (dt < kResampleMinDeltaMs)
-        return newest.position;
-    return lerp(previous, newest,
-                std::min(timeMs, newest.timeMs + std::min(kResampleMaxPredictionMs, dt / 2)));
-}
-
-double DeskSwitchNode::fingerVelocity(double releaseTimeMs) const
-{
-    if (m_samples.size() < 2 || releaseTimeMs - m_samples.back().timeMs > kAssumeReleaseStoppedMs)
-        return 0;
-    // A first-degree least-squares fit over the recent samples, back to where
-    // the fingers last paused.
-    const double newest = m_samples.back().timeMs;
-    auto first = std::prev(m_samples.end());
-    while (first != m_samples.begin()) {
-        const auto previous = std::prev(first);
-        if (newest - previous->timeMs > kVelocityHorizonMs
-            || first->timeMs - previous->timeMs > kAssumeMoveStoppedMs)
-            break;
-        first = previous;
-    }
-    const double count = double(std::distance(first, m_samples.end()));
-    if (count < 2)
-        return 0;
-    double meanTime = 0;
-    double meanPosition = 0;
-    for (auto it = first; it != m_samples.end(); ++it) {
-        meanTime += it->timeMs / count;
-        meanPosition += it->position / count;
-    }
-    double covariance = 0;
-    double variance = 0;
-    for (auto it = first; it != m_samples.end(); ++it) {
-        covariance += (it->timeMs - meanTime) * (it->position - meanPosition);
-        variance += (it->timeMs - meanTime) * (it->timeMs - meanTime);
-    }
-    return variance > 1e-6 ? covariance / variance * 1000 : 0;
+    return m_fingers.empty() ? m_position : m_fingers.position(timeMs);
 }
 
 void DeskSwitchNode::settle(double now, double from, double target, double velocity,
                             double response)
 {
-    m_spring = settlingSpring(now, from, target, velocity, response);
+    m_spring = motion::settlingSpring(now, from, target, velocity, response);
     m_motion = Motion::Spring;
-    m_samples.clear();
+    m_fingers.clear();
     m_coast.reset();
     m_animationStart = now;
     m_finishNotified = false;
@@ -354,17 +279,13 @@ std::optional<int> DeskSwitchNode::updateSwipeAnimation(double deskDelta, double
     if (m_motion != Motion::Tracking || coasted) {
         m_position = pulledPosition(position(m_now()));
         m_motion = Motion::Tracking;
-        m_samples.clear();
+        m_fingers.clear();
         m_coast.reset();
         m_animationStart = -1;
         m_finishNotified = false;
     }
-    if (!m_samples.empty())
-        timeMs = std::max(timeMs, m_samples.back().timeMs);
     m_position -= deskDelta;
-    m_samples.push_back({timeMs, m_position});
-    while (m_samples.size() > 2 && timeMs - m_samples.front().timeMs > kVelocityHorizonMs * 2)
-        m_samples.pop_front();
+    m_fingers.add(timeMs, m_position);
     updateCoast();
 
     const int last = int(m_strip.size()) - 1;
@@ -402,30 +323,20 @@ int DeskSwitchNode::flickTarget(double position, double velocity) const
 void DeskSwitchNode::updateCoast()
 {
     m_coast.reset();
-    if (m_samples.size() < 2)
-        return;
     // Fingers that lift leave the pad at speed; ones that stop to hold slow
     // down first. The fit over 100 ms lags a stop, so the last events decide.
-    const Sample &newest = m_samples.back();
-    const Sample &recent = m_samples[m_samples.size() - std::min<size_t>(m_samples.size(), 3)];
-    if (newest.timeMs - recent.timeMs < kResampleMinDeltaMs)
-        return;
-    const double velocity =
-            (newest.position - recent.position) / (newest.timeMs - recent.timeMs) * 1000;
-    if (std::abs(velocity) < kFlickVelocity)
+    const std::optional<double> velocity = m_fingers.recentVelocity();
+    if (!velocity || std::abs(*velocity) < kFlickVelocity)
         return;
     // It takes over where the resampled fingers stop, past the newest event.
-    const double dt = newest.timeMs - m_samples[m_samples.size() - 2].timeMs;
-    const double from = dt < kResampleMinDeltaMs
-            ? newest.timeMs
-            : newest.timeMs + std::min(kResampleMaxPredictionMs, dt / 2);
+    const double from = m_fingers.predictionEnd();
     const double position = fingerPosition(from);
     // Pulled past an end, the fingers hold it until they let go.
     if (position < 0 || position > double(m_strip.size()) - 1)
         return;
     m_coastStart = from + kResampleLatencyMs;
-    m_coast = settlingSpring(m_coastStart, position, flickTarget(position, velocity), velocity,
-                             kSettleResponse);
+    m_coast = motion::settlingSpring(m_coastStart, position, flickTarget(position, *velocity),
+                                     *velocity, kSettleResponse);
 }
 
 int DeskSwitchNode::endSwipeAnimation(double timeMs)
@@ -437,13 +348,13 @@ int DeskSwitchNode::endSwipeAnimation(double timeMs)
         // Already on its way since the fingers stopped reporting.
         m_spring = *m_coast;
         m_motion = Motion::Spring;
-        m_samples.clear();
+        m_fingers.clear();
         m_coast.reset();
         m_animationStart = m_coastStart;
         m_finishNotified = false;
         notifyChanged();
     } else {
-        double velocity = m_motion == Motion::Tracking ? fingerVelocity(timeMs) : 0;
+        double velocity = m_motion == Motion::Tracking ? m_fingers.releaseVelocity(timeMs) : 0;
         const double current = position(now);
         const int last = int(m_strip.size()) - 1;
         // Flung from beyond an end, it comes straight back.
@@ -508,7 +419,7 @@ void DeskSwitchNode::stop()
     m_captureDesk = -1;
     m_motion = Motion::Still;
     m_position = 0;
-    m_samples.clear();
+    m_fingers.clear();
     m_coast.reset();
     m_animation = {};
     m_animationStart = -1;
@@ -524,11 +435,17 @@ void DeskSwitchNode::paintCoveredContent(render::Renderer &renderer) const
     renderer.clear(kBlack);
     if (!parent())
         return;
-    for (Node *sibling : parent()->children()) {
-        if (sibling == this)
-            break;
-        sibling->render(renderer);
+    const auto &siblings = parent()->children();
+    const auto end = std::find(siblings.begin(), siblings.end(), this);
+    // Nothing under a sibling that covers the whole output shows, so the
+    // frame starts there: at the overview, while it is up.
+    auto first = siblings.begin();
+    for (auto it = siblings.begin(); it != end; ++it) {
+        if ((*it)->isVisible() && (*it)->occludesOutput(renderer))
+            first = it;
     }
+    for (auto it = first; it != end; ++it)
+        (*it)->render(renderer);
 }
 
 void DeskSwitchNode::takeFrame(render::Renderer &renderer, const QRect &viewport) const
@@ -700,9 +617,7 @@ void DeskSwitchNode::render(render::Renderer &renderer) const
         const bool coasting = m_coast
                 && (std::abs(m_coast->value(now) - m_coast->target()) * pixels >= 0.5
                     || std::abs(m_coast->velocity(now)) * pixels >= 60);
-        if (coasting
-            || (!m_samples.empty()
-                && now - kResampleLatencyMs < m_samples.back().timeMs + kResampleMaxPredictionMs))
+        if (coasting || m_fingers.isCatchingUp(now))
             notifyChanged();
         return;
     }

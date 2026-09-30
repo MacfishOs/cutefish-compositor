@@ -159,6 +159,10 @@ public:
 protected:
     virtual void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const;
 
+    // render() whether or not this node itself is visible, for a subtree drawn
+    // somewhere of its own while hidden, as a desk preview draws another desk.
+    void renderSubtree(render::Renderer &renderer) const;
+
 private:
     // The topmost child that occludes the output, or 0 when none does.
     size_t firstUnoccludedChild(const render::Renderer &renderer) const;

@@ -5,13 +5,13 @@
 // Upstream: chromium/src/ash/wm/gestures/wm_gesture_handler.h
 // Revision: 8abbac30b9cf2fe976422c58c000c94685648b65
 //
-// Adapted for Cutefish: the desk half. Upstream switches desks with four
-// fingers and keeps three for its overview; here three fingers sideways switch
-// desks, and three fingers up and down are claimed but left for an overview.
-// libinput swipes stand in for ui::ScrollEvent. The desk content follows the
-// fingers whatever the scrolling direction is set to, and by the distance they
-// travel on the pad rather than by accelerated pointer motion, which would
-// run ahead of a quick swipe and lag a slow one. A swipe that starts while
+// Adapted for Cutefish: upstream switches desks with four fingers and keeps
+// three for its overview; here three fingers sideways switch desks and three
+// fingers up and down bring the overview in and take it away, both following
+// the fingers. libinput swipes stand in for ui::ScrollEvent. The desk content
+// follows the fingers whatever the scrolling direction is set to, and by the
+// distance they travel on the pad rather than by accelerated pointer motion,
+// which would run ahead of a quick swipe and lag a slow one. A swipe that starts while
 // something is being dragged, a window or data, switches nothing: the drag
 // would carry across desks mid-flight.
 
@@ -25,6 +25,7 @@
 namespace cutefish::wm {
 
 class DesksController;
+class OverviewController;
 
 class WmGestureHandler : public input::GestureFilter
 {
@@ -38,13 +39,18 @@ public:
     // Finger travel that moves the desk content by one desk.
     static constexpr double kSwipeLengthPerDeskMm = 50;
 
+    // Finger travel that brings the overview all the way in or out.
+    static constexpr double kOverviewSwipeLengthMm = 50;
+
     // libinput's unaccelerated touchpad motion is a thousandth of an inch
     // scaled by the adaptive filter's constant 0.9 * 0.2968 (filter-touchpad.c,
     // touchpad_constant_filter); touchpads keep that profile here.
     static constexpr double kMmPerUnacceleratedUnit = 25.4 / 1000 / (0.9 * 0.2968);
 
-    // `dragging` tells whether a drag is running; empty means never.
-    explicit WmGestureHandler(DesksController *desks, std::function<bool()> dragging = {});
+    // `dragging` tells whether a drag is running; empty means never. Without
+    // `overview`, three fingers up and down do nothing.
+    explicit WmGestureHandler(DesksController *desks, std::function<bool()> dragging = {},
+                              OverviewController *overview = nullptr);
 
     bool claimGesture(input::Timestamp timestamp, input::GestureType type,
                       uint32_t fingers) override;
@@ -57,13 +63,15 @@ private:
         double scrollX = 0;
         double scrollY = 0;
         bool horizontalContinuousGestureStarted = false;
-        // Went up or down, or a desk switch could not start: the rest of the
-        // gesture does nothing.
+        bool verticalContinuousGestureStarted = false;
+        // The overview could not start, or a desk switch could not: the rest
+        // of the gesture does nothing.
         bool ignored = false;
     };
 
     DesksController *m_desks = nullptr;
     std::function<bool()> m_dragging;
+    OverviewController *m_overview = nullptr;
     ScrollData m_scroll;
 };
 

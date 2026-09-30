@@ -63,6 +63,12 @@ private:
     double m_target = 0;
 };
 
+// A critically damped spring from `from` to `target` at `time`, keeping
+// `velocity` up to the speed the spring would bring it in at: faster, it
+// would shoot past the target and show what lies beyond, so even a hard
+// flick leaves the rest of the way to a visible slide.
+Spring settlingSpring(double time, double from, double target, double velocity, double response);
+
 } // namespace cutefish::scene::motion
 
 #endif // CUTEFISH_SCENE_MOTION_H_

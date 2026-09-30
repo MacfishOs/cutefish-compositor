@@ -42,6 +42,8 @@ enum class DesksCreationRemovalSource {
     // The shell, over cutefish_window_management_v1.
     Api,
     DesksRestore,
+    // The overview's new-desk button, or a window dropped on it.
+    Button,
 };
 
 enum class DesksSwitchSource {
@@ -53,12 +55,16 @@ enum class DesksSwitchSource {
     IndexedDeskSwitchShortcut,
     ApiSwitch,
     DeskRestored,
+    // A desk clicked in the overview's desk bar.
+    MiniViewButton,
 };
 
 enum class DesksMoveWindowFromActiveDeskSource {
     Shortcut,
     SendToDesk,
     VisibleOnAllDesks,
+    // Dropped on a desk in the overview's desk bar.
+    DragAndDrop,
 };
 
 class DesksObserver

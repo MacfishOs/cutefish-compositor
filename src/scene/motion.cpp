@@ -139,4 +139,15 @@ double Spring::velocity(double time) const
     return displacementVelocity(elapsed(time));
 }
 
+Spring settlingSpring(double time, double from, double target, double velocity, double response)
+{
+    const double omega = 2 * std::numbers::pi / (response * durationScale());
+    const double towards = target - from;
+    if (velocity * towards > 0 && std::abs(velocity) > omega * std::abs(towards))
+        velocity = omega * towards;
+    Spring spring({response, 1});
+    spring.reset(time, from, target, velocity);
+    return spring;
+}
+
 } // namespace cutefish::scene::motion

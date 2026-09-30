@@ -87,7 +87,7 @@ private:
 };
 
 void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry,
-                 const QPoint &position);
+                 const QPoint &position, float opacity = 1);
 
 } // namespace cutefish::decoration
 

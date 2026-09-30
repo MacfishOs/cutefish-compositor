@@ -279,9 +279,10 @@ std::unique_ptr<render::Texture> ShadowGeometry::render(render::Renderer &render
     });
 }
 
-void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, const QPoint &position)
+void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, const QPoint &position,
+                 float opacity)
 {
-    if (geometry.paintBounds().isEmpty())
+    if (geometry.paintBounds().isEmpty() || opacity <= 0)
         return;
     const auto &textures = renderer.cachedTextureSet(geometry.key(), [&] {
         render::Renderer::TextureSet set;
@@ -303,7 +304,7 @@ void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, con
         const QTransform mapping(source.width() / size.width(), 0, 0,
                                  source.height() / size.height(), source.x() / size.width(),
                                  source.y() / size.height());
-        renderer.drawTextureMapped(image, target.translated(position), 1, mapping);
+        renderer.drawTextureMapped(image, target.translated(position), opacity, mapping);
     }
 }
 

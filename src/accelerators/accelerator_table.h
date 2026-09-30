@@ -67,6 +67,8 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_Right, MetaDown, AcceleratorAction::WindowCycleSnapRight},
         {true, XKB_KEY_F4, AltDown, AcceleratorAction::CloseWindow},
         {true, XKB_KEY_m, MetaDown | AltDown, AcceleratorAction::MoveActiveWindowBetweenDisplays},
+        {true, XKB_KEY_Tab, MetaDown, AcceleratorAction::ToggleOverview},
+        {true, XKB_KEY_XF86LaunchA, NoModifier, AcceleratorAction::ToggleOverview},
 
         // Desks, with Meta where upstream has Search.
         {true, XKB_KEY_bracketleft, MetaDown, AcceleratorAction::DesksActivateDeskLeft},
@@ -179,10 +181,12 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_XF86KbdBrightnessUp, NoModifier, AcceleratorAction::KeyboardBrightnessUp},
 });
 
-// Switching applications always switches, over a fullscreen game too.
+// Switching applications always switches, over a fullscreen game too, and
+// the overview comes up over one.
 inline constexpr std::array kPreferredActions = {
         AcceleratorAction::CycleBackwardMru,
         AcceleratorAction::CycleForwardMru,
+        AcceleratorAction::ToggleOverview,
 };
 
 // Actions that are always handled.

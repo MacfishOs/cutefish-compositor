@@ -1,0 +1,1011 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "wm/overview/overview_controller.h"
+
+#include <linux/input-event-codes.h>
+
+#include <algorithm>
+#include <cmath>
+#include <map>
+#include <utility>
+
+#include <QCoreApplication>
+#include <QTimer>
+
+#include "input/cursor_shape.h"
+#include "input/seat.h"
+#include "scene/window_animation.h"
+#include "wm/desks/desk.h"
+#include "wm/desks/desk_animation.h"
+#include "wm/mru_window_tracker.h"
+#include "wm/overview/overview_layout.h"
+#include "wm/stacking.h"
+#include "wm/window.h"
+#include "wm/window_manager.h"
+#include "wm/window_state.h"
+
+namespace cutefish::wm {
+
+namespace {
+
+const scene::WindowAnimation *animationOf(const Window *window)
+{
+    return window ? dynamic_cast<const scene::WindowAnimation *>(window->node()) : nullptr;
+}
+
+Window *transientRoot(Window *window)
+{
+    while (window && window->transientParent())
+        window = window->transientParent();
+    return window;
+}
+
+double distance(const QPointF &a, const QPointF &b)
+{
+    return std::hypot(a.x() - b.x(), a.y() - b.y());
+}
+
+} // namespace
+
+OverviewController::OverviewController(WindowManager *manager)
+    : m_manager(manager)
+{
+    m_manager->activation()->addObserver(this);
+    m_manager->desks()->addObserver(this);
+    m_addedConnection = QObject::connect(m_manager, &WindowManager::windowAdded, m_manager,
+                                         [this](Window *) {
+                                             if (isActive())
+                                                 rebuild(true);
+                                         });
+    // The window is out of the window manager's lists by now.
+    m_removedConnection = QObject::connect(m_manager, &WindowManager::windowRemoved, m_manager,
+                                           [this](Window *window) {
+                                               if (!isActive())
+                                                   return;
+                                               const bool shown = std::any_of(
+                                                       m_items.begin(), m_items.end(),
+                                                       [window](const Item &item) {
+                                                           return item.window == window;
+                                                       });
+                                               if (shown && m_dragged >= 0
+                                                   && m_items[m_dragged].window == window)
+                                                   cancelPress();
+                                               if (window == m_swipeTarget)
+                                                   m_swipeTarget = nullptr;
+                                               rebuild(true);
+                                           });
+}
+
+OverviewController::~OverviewController()
+{
+    QObject::disconnect(m_addedConnection);
+    QObject::disconnect(m_removedConnection);
+    m_manager->desks()->removeObserver(this);
+    m_manager->activation()->removeObserver(this);
+}
+
+void OverviewController::setNodes(scene::OverviewNode *node, scene::OverviewDeskBarNode *bar)
+{
+    m_node = node;
+    m_bar = bar;
+    if (m_node) {
+        m_node->setFinishedCallback([this](double target) {
+            // From inside a frame, which is no place to change the scene.
+            QTimer::singleShot(0, m_manager, [this, target] {
+                onNodeFinished(target);
+            });
+        });
+    }
+}
+
+bool OverviewController::isOverviewWindow(const Window *window) const
+{
+    if (!window || window->isShellWindow() || layerFor(window) != StackingLayer::Normal
+        || !canIncludeWindowInMruList(window) || window->isHidden() || window->isDragPreview()
+        || !animationOf(window) || window->bounds().isEmpty())
+        return false;
+    return m_manager->desks()->belongsToActiveDesk(window);
+}
+
+QString OverviewController::deskName(int index) const
+{
+    const Desk *desk = m_manager->desks()->deskAt(index);
+    if (desk && !desk->name().isEmpty())
+        return desk->name();
+    return QCoreApplication::translate("cutefish::wm::OverviewController", "Desk %1")
+            .arg(index + 1);
+}
+
+bool OverviewController::canCloseDesks() const
+{
+    DesksController *desks = m_manager->desks();
+    return desks->desks().size() > 1 && desks->canRemoveDesks();
+}
+
+void OverviewController::buildBars()
+{
+    DesksController *desks = m_manager->desks();
+    const int count = int(desks->desks().size());
+    const bool canAdd = desks->canCreateDesks();
+    m_bars.clear();
+    m_barDesks.clear();
+    for (const auto &output : m_manager->outputAreas()) {
+        const QRect work = output.workArea.isEmpty() ? output.bounds : output.workArea;
+        const int top = work.top();
+        scene::OverviewDeskBarNode::Bar bar;
+        bar.output = output.bounds;
+        std::vector<Desk *> barDesks;
+        double height = std::clamp(std::round(work.height() * 0.1), 56.0, 96.0);
+        const double aspect = output.bounds.width() / double(std::max(1, output.bounds.height()));
+        double width = std::round(height * aspect);
+        double newDesk = canAdd ? std::round(width / 2) : 0;
+        const auto total = [&] {
+            return count * width + (count - 1) * kBarSpacing
+                    + (canAdd ? kBarSpacing + newDesk : 0);
+        };
+        // Eight desks side by side still fit a narrow output.
+        const double room = work.width() - 2 * kMargin;
+        if (total() > room && total() > 0) {
+            const double shrink = room / total();
+            height = std::floor(height * shrink);
+            width = std::floor(width * shrink);
+            newDesk = canAdd ? std::floor(width / 2) : 0;
+        }
+        double x = std::round(work.center().x() + 0.5 - total() / 2);
+        const double y = top + kBarPadding;
+        for (int index = 0; index < count; ++index) {
+            bar.desks.push_back({QRectF(x, y, width, height), deskName(index),
+                                 desks->deskAt(index) == desks->activeDesk()});
+            barDesks.push_back(desks->deskAt(index));
+            x += width + kBarSpacing;
+        }
+        if (canAdd) {
+            bar.newDesk = QRectF(x, y, newDesk, height);
+            bar.newDeskLabel =
+                    QCoreApplication::translate("cutefish::wm::OverviewController", "New");
+        }
+        bar.bounds = QRectF(work.left(), top, work.width(),
+                            kBarPadding + height + kLabelHeight + kBarPadding / 2);
+        m_bars.push_back(std::move(bar));
+        m_barDesks.push_back(std::move(barDesks));
+    }
+}
+
+void OverviewController::rebuild(bool animate)
+{
+    if (!m_node)
+        return;
+    const std::vector<Window *> &windows = m_manager->windows();
+    std::vector<Window *> roots;
+    for (Window *window : windows) {
+        if (isOverviewWindow(window))
+            roots.push_back(window);
+    }
+
+    buildBars();
+    const auto outputs = m_manager->outputAreas();
+    std::map<Window *, QRectF> places;
+    for (size_t index = 0; index < outputs.size(); ++index) {
+        const auto &output = outputs[index];
+        std::vector<Window *> onOutput;
+        std::vector<QRect> rects;
+        for (Window *window : roots) {
+            // Each window is laid out on the output that has its centre, or
+            // the nearest one.
+            const QPoint centre = window->bounds().center();
+            const bool here = output.bounds.contains(centre)
+                    || (std::none_of(outputs.begin(), outputs.end(),
+                                     [centre](const auto &other) {
+                                         return other.bounds.contains(centre);
+                                     })
+                        && m_manager->outputBoundsFor(window) == output.bounds);
+            if (!here)
+                continue;
+            onOutput.push_back(window);
+            rects.push_back(window->bounds());
+        }
+        const QRect work = output.workArea.isEmpty() ? output.bounds : output.workArea;
+        const int top = index < m_bars.size() ? int(std::ceil(m_bars[index].bounds.bottom()))
+                                              : work.top();
+        const QRect area(QPoint(work.left() + kMargin, top + kMargin / 2),
+                         QPoint(work.right() - kMargin, work.bottom() - kMargin));
+        const auto spread = overview::spreadLayout(rects, area, kWindowGap, output.scale);
+        for (size_t i = 0; i < onOutput.size() && i < spread.size(); ++i)
+            places[onOutput[i]] = spread[i];
+    }
+
+    Window *hovered = m_hovered >= 0 && m_hovered < int(m_items.size())
+            ? m_items[m_hovered].window
+            : nullptr;
+    Window *selected = m_selected >= 0 && m_selected < int(m_items.size())
+            ? m_items[m_selected].window
+            : nullptr;
+    Window *dragged = m_dragged >= 0 && m_dragged < int(m_items.size())
+            ? m_items[m_dragged].window
+            : nullptr;
+    m_items.clear();
+    m_hovered = m_selected = m_dragged = -1;
+    for (Window *window : roots) {
+        const auto place = places.find(window);
+        if (place == places.end())
+            continue;
+        if (window == hovered)
+            m_hovered = int(m_items.size());
+        if (window == selected)
+            m_selected = int(m_items.size());
+        if (window == dragged)
+            m_dragged = int(m_items.size());
+        m_items.push_back({window, place->second, window->state()->isMinimized()});
+    }
+    updateNodes(animate);
+}
+
+void OverviewController::updateNodes(bool animate)
+{
+    const std::vector<Window *> &windows = m_manager->windows();
+    std::vector<const scene::Node *> backdrop;
+    for (Window *window : windows) {
+        if (layerFor(window) == StackingLayer::Desktop && window->isVisible() && window->node())
+            backdrop.push_back(window->node());
+    }
+
+    std::vector<scene::OverviewNode::Item> items;
+    for (const Item &item : m_items) {
+        scene::OverviewNode::Item node;
+        node.windows.push_back(animationOf(item.window));
+        // Its dialogs and other transient windows come along, above it.
+        for (Window *window : windows) {
+            if (window != item.window && window->isVisible() && transientRoot(window) == item.window
+                && animationOf(window))
+                node.windows.push_back(animationOf(window));
+        }
+        node.to = item.bounds;
+        node.fades = item.minimized;
+        node.title = item.window->title();
+        items.push_back(std::move(node));
+    }
+    m_node->setBackdrop(backdrop);
+    m_node->setItems(std::move(items), animate);
+    int raised = -1;
+    for (size_t index = 0; index < m_items.size(); ++index) {
+        if (m_swipeTarget && m_items[index].window == m_swipeTarget)
+            raised = int(index);
+    }
+    m_node->setRaised(raised);
+    if (m_dragged >= 0)
+        m_node->setDragged(m_dragged, draggedBounds(m_pointer));
+
+    if (m_bar) {
+        DesksController *desks = m_manager->desks();
+        std::vector<scene::OverviewDeskBarNode::DeskContent> contents(desks->desks().size());
+        for (Window *window : windows) {
+            if (window->isShellWindow() || layerFor(window) != StackingLayer::Normal
+                || window->state()->isMinimized() || window->isHidden() || !animationOf(window)
+                || !window->targetVisibility())
+                continue;
+            const Desk *desk = desks->deskOf(transientRoot(window));
+            for (size_t index = 0; index < contents.size(); ++index) {
+                if (!desk || desks->deskAt(int(index)) == desk)
+                    contents[index].windows.push_back(animationOf(window));
+            }
+        }
+        m_bar->setContent(backdrop, std::move(contents));
+    }
+    updateChrome();
+}
+
+void OverviewController::updateChrome()
+{
+    if (!m_node)
+        return;
+    const int count = int(m_items.size());
+    if (m_hovered >= count)
+        m_hovered = -1;
+    if (m_selected >= count)
+        m_selected = -1;
+    m_node->setChrome({m_hovered, m_selected, m_closeHovered && m_hovered >= 0});
+    if (!m_bar)
+        return;
+    // A window dragged over the bar shows where it would drop.
+    const Hit target = m_dragged >= 0 ? hitTest(m_pointer) : m_barHover;
+    const bool closable = m_dragged < 0 && canCloseDesks();
+    for (size_t index = 0; index < m_bars.size(); ++index) {
+        auto &bar = m_bars[index];
+        for (size_t desk = 0; desk < bar.desks.size(); ++desk) {
+            const bool on = (target.type == Hit::Type::Desk || target.type == Hit::Type::DeskClose)
+                    && target.bar == int(index) && target.index == int(desk);
+            bar.desks[desk].highlighted = on;
+            bar.desks[desk].closeShown = on && closable;
+            bar.desks[desk].closeHovered =
+                    bar.desks[desk].closeShown && target.type == Hit::Type::DeskClose;
+        }
+        bar.newDeskHighlighted = target.type == Hit::Type::NewDesk && target.bar == int(index);
+    }
+    m_bar->setBars(m_bars);
+}
+
+bool OverviewController::capturesInput() const
+{
+    return m_state == State::Entering || m_state == State::Shown;
+}
+
+void OverviewController::takePointer()
+{
+    if (std::exchange(m_pointerTaken, true))
+        return;
+    if (input::Seat *seat = m_manager->seat()) {
+        seat->clearPointerFocus();
+        seat->setCompositorCursorShape(input::CursorShape::Default);
+    }
+}
+
+void OverviewController::releasePointer()
+{
+    m_pointerTaken = false;
+}
+
+void OverviewController::completeTransition()
+{
+    if (!m_node || m_node->isTracking())
+        return;
+    if (m_state == State::Entering) {
+        m_node->jumpTo(1);
+        m_state = State::Shown;
+        setHover(hitTest(m_pointer));
+    } else if (m_state == State::Exiting) {
+        finish();
+    }
+}
+
+bool OverviewController::acceptsPresses() const
+{
+    return m_node
+            && (m_state == State::Shown || (m_state == State::Entering && !m_node->isTracking()));
+}
+
+void OverviewController::landDeskSwitch()
+{
+    // A desk switch still sliding, whose frames would cover the overview,
+    // lands at once: the overview starts from the desk it was heading to.
+    if (DeskAnimationBase *animation = m_manager->desks()->animation())
+        animation->finishNow();
+}
+
+void OverviewController::activateForExit(Window *window)
+{
+    if (!window || !m_manager->hasWindow(window))
+        return;
+    m_activating = true;
+    if (window->isHidden())
+        m_manager->unhideApplication(window);
+    if (m_manager->hasWindow(window) && window->state()->isMinimized()) {
+        window->restore();
+        // It comes back from where the overview shows it, not from the dock.
+        if (auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node()))
+            animation->finish();
+    }
+    if (m_manager->hasWindow(window))
+        m_manager->activation()->activate(window);
+    m_activating = false;
+    rebuild(true);
+}
+
+void OverviewController::begin()
+{
+    m_hovered = m_selected = m_dragged = -1;
+    m_closeHovered = false;
+    m_barHover = {};
+    m_press.reset();
+    m_node->setGeometry(m_manager->outputBounds());
+    if (m_bar)
+        m_bar->setGeometry(m_manager->outputBounds());
+    rebuild(false);
+    m_node->jumpTo(0);
+    if (m_bar)
+        m_bar->invalidatePreviews();
+    // What the pointer was over gets a leave, as the overview takes it.
+    takePointer();
+    if (input::Seat *seat = m_manager->seat()) {
+        seat->setCursorOverride(input::CursorShape::Default);
+        m_cursorOverridden = true;
+    }
+}
+
+void OverviewController::finish()
+{
+    m_state = State::Hidden;
+    m_items.clear();
+    m_bars.clear();
+    m_barDesks.clear();
+    m_hovered = m_selected = m_dragged = -1;
+    m_swipeTarget = nullptr;
+    m_press.reset();
+    m_buttons.clear();
+    m_touches.clear();
+    if (std::exchange(m_cursorOverridden, false)) {
+        if (input::Seat *seat = m_manager->seat())
+            seat->setCursorOverride(std::nullopt);
+    }
+    if (m_node) {
+        m_node->jumpTo(0);
+        m_node->setItems({}, false);
+        m_node->setBackdrop({});
+    }
+    if (m_bar) {
+        m_bar->setBars({});
+        m_bar->setContent({}, {});
+    }
+    releasePointer();
+    // The windows are where they were: whatever is under the pointer enters.
+    Q_EMIT m_manager->pointerTargetsChanged();
+}
+
+void OverviewController::onNodeFinished(double target)
+{
+    if (!m_node || !m_node->isSettled() || m_node->target() != target)
+        return;
+    if (target >= 1 && m_state == State::Entering) {
+        m_state = State::Shown;
+        setHover(hitTest(m_pointer));
+    } else if (target <= 0 && m_state == State::Exiting) {
+        finish();
+    }
+}
+
+void OverviewController::toggle()
+{
+    if (m_state == State::Entering || m_state == State::Shown)
+        exit();
+    else
+        enter();
+}
+
+bool OverviewController::enter()
+{
+    if (!m_node || !m_manager->allowsActivation())
+        return false;
+    if (m_state == State::Entering || m_state == State::Shown)
+        return true;
+    landDeskSwitch();
+    if (m_state == State::Hidden)
+        begin();
+    takePointer();
+    m_state = State::Entering;
+    m_node->animateTo(1);
+    return true;
+}
+
+void OverviewController::exit(Window *window)
+{
+    if (m_state == State::Hidden || (m_state == State::Exiting && !window))
+        return;
+    landDeskSwitch();
+    cancelPress();
+    m_swipeTarget = nullptr;
+    activateForExit(window);
+    m_hovered = m_selected = -1;
+    m_closeHovered = false;
+    m_barHover = {};
+    updateChrome();
+    m_state = State::Exiting;
+    m_node->animateTo(0);
+    releasePointer();
+}
+
+void OverviewController::exitImmediately()
+{
+    if (m_state == State::Hidden)
+        return;
+    finish();
+}
+
+bool OverviewController::startSwipe(bool upward)
+{
+    if (!m_node || !m_manager->allowsActivation())
+        return false;
+    if (m_state == State::Hidden && !upward)
+        return false;
+    landDeskSwitch();
+    if (m_state == State::Hidden)
+        begin();
+    cancelPress();
+    // Fingers down over a window take the overview away to it; it rides on
+    // top of the rest meanwhile.
+    const int target = m_hovered >= 0 ? m_hovered : m_selected;
+    m_swipeTarget = !upward && m_state == State::Shown && target >= 0
+            ? m_items[target].window
+            : nullptr;
+    m_node->setRaised(m_swipeTarget ? target : -1);
+    m_hovered = m_selected = -1;
+    m_closeHovered = false;
+    updateChrome();
+    takePointer();
+    m_state = State::Entering;
+    m_node->startTracking();
+    return true;
+}
+
+void OverviewController::updateSwipe(double delta, double timeMs)
+{
+    if (m_node && m_node->isTracking())
+        m_node->updateTracking(delta, timeMs);
+}
+
+void OverviewController::endSwipe(double timeMs)
+{
+    if (!m_node || !m_node->isTracking())
+        return;
+    const double target = m_node->endTracking(timeMs);
+    Window *window = std::exchange(m_swipeTarget, nullptr);
+    if (target >= 1) {
+        m_state = State::Entering;
+        m_node->setRaised(-1);
+    } else {
+        m_state = State::Exiting;
+        activateForExit(window);
+        releasePointer();
+    }
+}
+
+OverviewController::Hit OverviewController::hitTest(const QPointF &location) const
+{
+    Hit hit;
+    if (!isActive())
+        return hit;
+    // The panels, the dock and whatever else is above the desk stay usable,
+    // server-side frames too, which windowAt() does not see.
+    const auto aboveDesk = [](const Window *window) {
+        return window && layerFor(window) > StackingLayer::Normal;
+    };
+    if (aboveDesk(m_manager->windowAt(location)) || aboveDesk(m_manager->frameAt(location))) {
+        hit.type = Hit::Type::Panel;
+        return hit;
+    }
+    // On the way in, what is under the pointer is where it is drawn now.
+    const bool moving = m_state != State::Shown && m_node;
+    const double progress = moving ? std::clamp(m_node->progress(), 0.0, 1.0) : 1;
+    for (size_t bar = 0; bar < m_bars.size(); ++bar) {
+        const auto &candidate = m_bars[bar];
+        const QPointF onBar =
+                location - QPointF(0, scene::OverviewDeskBarNode::slideOffset(candidate, progress));
+        if (!candidate.bounds.contains(onBar))
+            continue;
+        hit.bar = int(bar);
+        for (size_t desk = 0; desk < candidate.desks.size(); ++desk) {
+            const QRectF &bounds = candidate.desks[desk].bounds;
+            if (bounds.contains(onBar)) {
+                const bool close = m_dragged < 0 && canCloseDesks()
+                        && scene::OverviewDeskBarNode::closeButtonRect(bounds).contains(onBar);
+                hit.type = close ? Hit::Type::DeskClose : Hit::Type::Desk;
+                hit.index = int(desk);
+                return hit;
+            }
+        }
+        hit.type = candidate.newDesk.contains(onBar) ? Hit::Type::NewDesk : Hit::Type::Bar;
+        return hit;
+    }
+    for (int index = int(m_items.size()) - 1; index >= 0; --index) {
+        const Item &item = m_items[index];
+        if (index == m_dragged)
+            continue;
+        // The close button only shows at rest.
+        if (!moving && !item.minimized
+            && scene::OverviewNode::closeButtonRect(item.bounds).contains(location)
+            && item.window->canClose()) {
+            hit.type = Hit::Type::Close;
+            hit.index = index;
+            return hit;
+        }
+        const QRectF bounds = moving
+                ? m_node->presentedRect(index, progress, m_node->clockTime(), nullptr)
+                : item.bounds;
+        if (bounds.contains(location)) {
+            hit.type = Hit::Type::Item;
+            hit.index = index;
+            return hit;
+        }
+    }
+    return hit;
+}
+
+void OverviewController::setHover(const Hit &hit)
+{
+    const bool onItem = hit.type == Hit::Type::Item || hit.type == Hit::Type::Close;
+    m_hovered = onItem && m_state == State::Shown ? hit.index : -1;
+    m_closeHovered = hit.type == Hit::Type::Close;
+    const bool onBar = hit.type == Hit::Type::Desk || hit.type == Hit::Type::DeskClose
+            || hit.type == Hit::Type::NewDesk;
+    m_barHover = onBar ? hit : Hit();
+    // The pointer takes over from the keyboard.
+    if (m_hovered >= 0)
+        m_selected = -1;
+    updateChrome();
+}
+
+void OverviewController::press(const Hit &hit, const QPointF &location,
+                               std::optional<int32_t> touch)
+{
+    m_press = Press {hit, location, touch};
+}
+
+void OverviewController::move(const QPointF &location)
+{
+    m_pointer = location;
+    if (m_press && m_dragged < 0 && m_press->hit.type == Hit::Type::Item
+        && m_state == State::Shown && distance(location, m_press->location) >= kDragThreshold) {
+        m_dragged = m_press->hit.index;
+        // Pressed while the window was still on its way, the grab point may
+        // lie off it now.
+        const QRectF &bounds = m_items[m_dragged].bounds;
+        const QPointF grab = m_press->location - bounds.topLeft();
+        m_dragOffset = QPointF(std::clamp(grab.x(), 0.0, bounds.width()),
+                               std::clamp(grab.y(), 0.0, bounds.height()));
+        m_hovered = -1;
+    }
+    if (m_dragged < 0) {
+        setHover(hitTest(location));
+        return;
+    }
+    m_node->setDragged(m_dragged, draggedBounds(location));
+    updateChrome();
+}
+
+QRectF OverviewController::draggedBounds(const QPointF &location) const
+{
+    const Item &item = m_items[m_dragged];
+    const QSizeF full = item.bounds.size();
+    QSizeF size = full;
+    for (size_t index = 0; index < m_bars.size(); ++index) {
+        const auto &bar = m_bars[index];
+        if (!bar.output.contains(location.toPoint()) || full.isEmpty())
+            continue;
+        // It shrinks over the last half of its own height before the bar.
+        const double barHeight = bar.bounds.height();
+        const double reach = full.height() / 2;
+        const double distance = std::max(0.0, location.y() - bar.bounds.bottom());
+        if (distance >= reach)
+            break;
+        // On the bar, the window at the bar's share of the output's height.
+        const QSizeF window = item.window->bounds().size();
+        QSizeF onBar = window * (barHeight / std::max(1, bar.output.height()));
+        const double minimum = barHeight * kMinimumSideOnBar;
+        const double shorter = std::min(onBar.width(), onBar.height());
+        if (shorter > 0 && shorter < minimum)
+            onBar *= minimum / shorter;
+        if (onBar.width() > full.width())
+            onBar = full;
+        const double t = 1 - distance / reach;
+        size = full + (onBar - full) * t;
+        break;
+    }
+    // Held at the same share of its size as where it was grabbed.
+    const QPointF grab(m_dragOffset.x() / full.width(), m_dragOffset.y() / full.height());
+    return QRectF(location - QPointF(grab.x() * size.width(), grab.y() * size.height()), size);
+}
+
+void OverviewController::release(const QPointF &location)
+{
+    if (!m_press)
+        return;
+    const Press press = *m_press;
+    m_press.reset();
+    if (m_dragged >= 0) {
+        drop(location);
+        return;
+    }
+    DesksController *desks = m_manager->desks();
+    switch (press.hit.type) {
+    case Hit::Type::Item:
+        activateItem(press.hit.index);
+        break;
+    case Hit::Type::Close:
+        if (press.hit.index < int(m_items.size()))
+            m_items[press.hit.index].window->requestClose();
+        break;
+    case Hit::Type::Desk:
+        if (press.hit.bar < int(m_barDesks.size())
+            && press.hit.index < int(m_barDesks[press.hit.bar].size())) {
+            Desk *desk = m_barDesks[press.hit.bar][press.hit.index];
+            if (desk && desk != desks->activeDesk())
+                desks->activateDesk(desk, DesksSwitchSource::MiniViewButton);
+        }
+        break;
+    case Hit::Type::DeskClose:
+        // Its windows go to the desk beside it.
+        if (canCloseDesks() && press.hit.bar < int(m_barDesks.size())
+            && press.hit.index < int(m_barDesks[press.hit.bar].size())) {
+            if (Desk *desk = m_barDesks[press.hit.bar][press.hit.index])
+                desks->removeDesk(desk, DesksCreationRemovalSource::Button);
+        }
+        setHover(hitTest(location));
+        break;
+    case Hit::Type::NewDesk:
+        if (desks->canCreateDesks())
+            desks->newDesk(DesksCreationRemovalSource::Button);
+        break;
+    case Hit::Type::Bar:
+    case Hit::Type::Panel:
+        break;
+    case Hit::Type::None:
+        exit();
+        break;
+    }
+}
+
+void OverviewController::cancelPress()
+{
+    m_press.reset();
+    if (m_dragged < 0)
+        return;
+    m_dragged = -1;
+    if (m_node)
+        rebuild(true);
+}
+
+void OverviewController::drop(const QPointF &location)
+{
+    Window *window = m_items[m_dragged].window;
+    // The node keeps drawing it where it was let go, which is where it
+    // heads home from.
+    m_dragged = -1;
+    const Hit target = hitTest(location);
+    DesksController *desks = m_manager->desks();
+    Desk *desk = nullptr;
+    if ((target.type == Hit::Type::Desk || target.type == Hit::Type::DeskClose)
+        && target.bar < int(m_barDesks.size())
+        && target.index < int(m_barDesks[target.bar].size()))
+        desk = m_barDesks[target.bar][target.index];
+    else if (target.type == Hit::Type::NewDesk && desks->canCreateDesks())
+        desk = desks->newDesk(DesksCreationRemovalSource::Button);
+    // Back to its place, unless it goes to another desk, which lays the rest
+    // out without it.
+    if (!desk || desk == desks->activeDesk()
+        || !desks->moveWindowFromActiveDeskTo(window, desk,
+                                              DesksMoveWindowFromActiveDeskSource::DragAndDrop)) {
+        rebuild(true);
+    }
+    setHover(hitTest(location));
+}
+
+void OverviewController::activateItem(int index)
+{
+    if (index < 0 || index >= int(m_items.size()))
+        return;
+    exit(m_items[index].window);
+}
+
+void OverviewController::moveSelection(int dx, int dy)
+{
+    if (m_items.empty())
+        return;
+    const int from = m_selected >= 0 ? m_selected : m_hovered;
+    if (from < 0) {
+        // The window used last comes first.
+        Window *active = m_manager->activation()->activeWindow();
+        m_selected = int(m_items.size()) - 1;
+        for (size_t index = 0; index < m_items.size(); ++index) {
+            if (m_items[index].window == active)
+                m_selected = int(index);
+        }
+        m_hovered = -1;
+        updateChrome();
+        return;
+    }
+    const QPointF centre = m_items[from].bounds.center();
+    int best = -1;
+    double bestScore = 0;
+    for (int index = 0; index < int(m_items.size()); ++index) {
+        if (index == from)
+            continue;
+        const QPointF d = m_items[index].bounds.center() - centre;
+        const double along = d.x() * dx + d.y() * dy;
+        if (along <= 1)
+            continue;
+        const double across = std::abs(d.x() * dy - d.y() * dx);
+        const double score = along + 2 * across;
+        if (best < 0 || score < bestScore) {
+            best = index;
+            bestScore = score;
+        }
+    }
+    if (best >= 0) {
+        m_selected = best;
+        m_hovered = -1;
+        updateChrome();
+    }
+}
+
+bool OverviewController::onPointerMotion(input::Timestamp timestamp, const QPointF &location)
+{
+    m_pointer = location;
+    if (!capturesInput())
+        return m_next && m_next->onPointerMotion(timestamp, location);
+    const Hit hit = hitTest(location);
+    if (hit.type == Hit::Type::Panel && !m_press) {
+        if (m_pointerTaken) {
+            releasePointer();
+            setHover({});
+        }
+        return m_next && m_next->onPointerMotion(timestamp, location);
+    }
+    // The dock's auto-hide watches every motion.
+    Q_EMIT m_manager->pointerMoved(location);
+    takePointer();
+    if (!m_press || !m_press->touch)
+        move(location);
+    return true;
+}
+
+bool OverviewController::onPointerButton(input::Timestamp timestamp, const QPointF &location,
+                                         uint32_t evdevButton, bool pressed)
+{
+    if (!pressed) {
+        if (!m_buttons.erase(evdevButton))
+            return m_next && m_next->onPointerButton(timestamp, location, evdevButton, pressed);
+        if (evdevButton == BTN_LEFT && m_press && !m_press->touch)
+            release(location);
+        return true;
+    }
+    if (!capturesInput())
+        return m_next && m_next->onPointerButton(timestamp, location, evdevButton, pressed);
+    const Hit hit = hitTest(location);
+    if (hit.type == Hit::Type::Panel && !m_press)
+        return m_next && m_next->onPointerButton(timestamp, location, evdevButton, pressed);
+    m_buttons.insert(evdevButton);
+    takePointer();
+    if (evdevButton == BTN_LEFT && !m_press && acceptsPresses())
+        press(hit, location, std::nullopt);
+    return true;
+}
+
+bool OverviewController::onPointerAxis(input::Timestamp timestamp, const QPointF &location,
+                                       const QPointF &offset, bool discrete)
+{
+    if (!capturesInput() || hitTest(location).type == Hit::Type::Panel)
+        return m_next && m_next->onPointerAxis(timestamp, location, offset, discrete);
+    return true;
+}
+
+bool OverviewController::onPointerAxisStop(input::Timestamp timestamp, const QPointF &location)
+{
+    if (!capturesInput() || hitTest(location).type == Hit::Type::Panel)
+        return m_next && m_next->onPointerAxisStop(timestamp, location);
+    return true;
+}
+
+bool OverviewController::onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed)
+{
+    if (!capturesInput())
+        return m_next && m_next->onKey(timestamp, evdevCode, pressed);
+    if (!pressed)
+        return true;
+    switch (evdevCode) {
+    case KEY_ESC:
+        exit();
+        break;
+    case KEY_ENTER:
+    case KEY_KPENTER:
+    case KEY_SPACE:
+        if (acceptsPresses())
+            activateItem(m_selected >= 0 ? m_selected : m_hovered);
+        break;
+    case KEY_LEFT:
+        moveSelection(-1, 0);
+        break;
+    case KEY_RIGHT:
+        moveSelection(1, 0);
+        break;
+    case KEY_UP:
+        moveSelection(0, -1);
+        break;
+    case KEY_DOWN:
+        moveSelection(0, 1);
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+
+bool OverviewController::onSecureKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed)
+{
+    return m_next && m_next->onSecureKey(timestamp, evdevCode, pressed);
+}
+
+bool OverviewController::onTouchDown(input::Timestamp timestamp, int32_t id,
+                                     const QPointF &location)
+{
+    if (!capturesInput())
+        return m_next && m_next->onTouchDown(timestamp, id, location);
+    const Hit hit = hitTest(location);
+    if (hit.type == Hit::Type::Panel)
+        return m_next && m_next->onTouchDown(timestamp, id, location);
+    m_touches.insert(id);
+    if (!m_press && acceptsPresses()) {
+        m_touchLocation = location;
+        press(hit, location, id);
+    }
+    return true;
+}
+
+bool OverviewController::onTouchMotion(input::Timestamp timestamp, int32_t id,
+                                       const QPointF &location)
+{
+    if (!m_touches.count(id))
+        return m_next && m_next->onTouchMotion(timestamp, id, location);
+    if (m_press && m_press->touch == id) {
+        m_touchLocation = location;
+        move(location);
+    }
+    return true;
+}
+
+bool OverviewController::onTouchUp(input::Timestamp timestamp, int32_t id)
+{
+    if (!m_touches.erase(id))
+        return m_next && m_next->onTouchUp(timestamp, id);
+    if (m_press && m_press->touch == id)
+        release(m_touchLocation);
+    return true;
+}
+
+void OverviewController::onTouchCancel(input::Timestamp timestamp)
+{
+    m_touches.clear();
+    if (m_press && m_press->touch)
+        cancelPress();
+    if (m_next)
+        m_next->onTouchCancel(timestamp);
+}
+
+void OverviewController::onWindowActivated(Window *gainedActive, Window *lostActive)
+{
+    if (m_state == State::Hidden || m_activating || !gainedActive)
+        return;
+    // Activation moving on from a window that closed, or to a window of the
+    // desk switched to, leaves the overview up; anything else the user
+    // brought up - a dock task, the launcher, a dialog - ends it.
+    if (lostActive && !m_manager->hasWindow(lostActive))
+        return;
+    if (m_manager->desks()->areDesksBeingModified())
+        return;
+    exit();
+}
+
+void OverviewController::onDeskAdded(const Desk *)
+{
+    if (isActive())
+        rebuild(true);
+}
+
+void OverviewController::onDeskRemoved(const Desk *)
+{
+    if (isActive())
+        rebuild(true);
+}
+
+void OverviewController::onDeskActivationChanged(const Desk *, const Desk *)
+{
+    // The desk switch slides frames of the overview; the ending one has to
+    // show the new desk's windows already in place.
+    if (isActive())
+        rebuild(false);
+}
+
+void OverviewController::onDeskNameChanged(const Desk *)
+{
+    if (!isActive())
+        return;
+    buildBars();
+    updateChrome();
+}
+
+void OverviewController::onWindowDeskChanged(Window *)
+{
+    if (isActive())
+        rebuild(true);
+}
+
+} // namespace cutefish::wm

@@ -103,6 +103,8 @@ class WmGestureHandler;
 
 namespace scene {
 class DeskSwitchNode;
+class OverviewDeskBarNode;
+class OverviewNode;
 class SlideOutNode;
 } // namespace scene
 
@@ -268,6 +270,8 @@ private:
     // Drawn inside the surface container, above the desks' windows.
     scene::DeskSwitchNode *m_deskSwitchNode = nullptr;
     scene::SlideOutNode *m_windowMoveNode = nullptr;
+    scene::OverviewNode *m_overviewNode = nullptr;
+    scene::OverviewDeskBarNode *m_overviewBarNode = nullptr;
     std::unique_ptr<wm::DeskPreferences> m_deskPreferences;
     std::unique_ptr<wm::WmGestureHandler> m_gestureHandler;
     // Keyboard shortcuts sit in front of the window manager in the event sink

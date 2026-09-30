@@ -43,6 +43,7 @@ enum class AcceleratorAction : uint32_t {
     WindowCycleSnapRight,
     CloseWindow,
     MoveActiveWindowBetweenDisplays,
+    ToggleOverview,
     // Desks.
     DesksActivateDeskLeft,
     DesksActivateDeskRight,

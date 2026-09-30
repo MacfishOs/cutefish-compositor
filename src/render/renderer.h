@@ -129,6 +129,10 @@ public:
     // read the screen, so it goes without them.
     bool suppressBackgroundBlur = false;
 
+    // A window drawn by the overview while it is minimized or on another desk:
+    // its surfaces hidden along with it are drawn too.
+    bool revealHiddenSurfaces = false;
+
     // Set by an animation morphing a window's corners into its snapshot: the
     // window's visual node clips its content with these instead of its own.
     struct WindowCorners {

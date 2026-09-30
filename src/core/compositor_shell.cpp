@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <QCoreApplication>
@@ -37,6 +38,8 @@
 #include "computer_control/controller.h"
 #include "computer_control/permission_consent.h"
 #include "core/logging.h"
+#include "decoration/shadow.h"
+#include "decoration/window_visual_style.h"
 #include "display/callback_native_display_delegate.h"
 #include "display/display_configuration_controller.h"
 #include "display/display_preferences.h"
@@ -47,7 +50,10 @@
 #include "render/egl_renderer.h"
 #include "render/renderer.h"
 #include "scene/desk_switch_node.h"
+#include "scene/overview_node.h"
 #include "scene/slide_out_node.h"
+#include "scene/window_animation.h"
+#include "scene/window_visual_node.h"
 #include "session/session_state.h"
 #include "switcher/switcher_view.h"
 #include "wayland/idle_inhibition.h"
@@ -71,6 +77,7 @@
 #include "wm/desks/desks_controller.h"
 #include "wm/gestures/wm_gesture_handler.h"
 #include "wm/mru_window_tracker.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/quit_all.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
@@ -87,6 +94,60 @@ namespace cutefish::core {
 namespace {
 // After the login transition and the shell's own startup.
 constexpr int kSwitcherPreloadDelayMs = 3000;
+
+// Every overview window has the corners, the shadow and the outline of a
+// window in its normal state, the shadow of the active one.
+scene::OverviewWindowFrame overviewWindowFrame(const decoration::Theme *theme)
+{
+    scene::OverviewWindowFrame frame;
+    frame.radius = theme->visualStyle().radius;
+    frame.shadow = [theme](render::Renderer &renderer, const scene::WindowAnimation &window,
+                           const render::RoundedShape &body, double uniform, float opacity) {
+        // Inside the body's edges on whole logical pixels: a sliver of shadow
+        // under the window rather than a gap beside it.
+        const int left = int(std::ceil(body.bounds.left()));
+        const int top = int(std::ceil(body.bounds.top()));
+        const QRect content(left, top, int(std::floor(body.bounds.right())) - left,
+                            int(std::floor(body.bounds.bottom())) - top);
+        if (content.isEmpty())
+            return;
+        // Each shadow keeps the corners of its window at full size, not the
+        // body's as it shrinks: a new radius is a new shadow texture every
+        // frame, and the few pixels more it curves lie under the body.
+        const auto paint = [&](wm::ShadowElevation elevation, int radius, float alpha) {
+            if (elevation == wm::ShadowElevation::None || alpha <= 0)
+                return;
+            const decoration::ShadowGeometry geometry(
+                    content.size(), std::min(radius, decoration::ShadowGeometry::kMaxRadius),
+                    theme->metrics().shadowFor(elevation),
+                    int(std::ceil(renderer.rasterScale())));
+            decoration::paintShadow(renderer, geometry, content.topLeft(), alpha);
+        };
+        auto own = wm::ShadowElevation::None;
+        int ownRadius = 0;
+        for (const scene::Node *child : window.children()) {
+            const auto *shadow = dynamic_cast<const decoration::ShadowNode *>(child);
+            if (shadow && shadow->isVisible()) {
+                own = shadow->elevation();
+                ownRadius = shadow->radius();
+            }
+        }
+        paint(own, ownRadius, opacity * float(1 - uniform));
+        paint(wm::ShadowElevation::Active, theme->visualStyle().radius, opacity * float(uniform));
+    };
+    frame.outline = [theme](render::Renderer &renderer, const render::RoundedShape &body,
+                            float opacity) {
+        const decoration::WindowVisualStyle style = theme->visualStyle();
+        scene::WindowVisualState state;
+        state.shape = body;
+        state.drawOutline = true;
+        state.outlineWidthPx = style.outlineWidthPx;
+        state.outlineColor = style.activeOutline;
+        state.highlightColor = style.highlight;
+        scene::paintWindowOutline(renderer, body, state, opacity);
+    };
+    return frame;
+}
 } // namespace
 
 void CompositorShell::SecureScanoutPolicy::setRuntime(display::DisplayRuntime *runtime)
@@ -189,11 +250,31 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
                      &wm::DockLayoutManager::advance);
     m_outputModel.scale = m_options.scale;
 
+    // The overview's windows slide with a desk switch, its desk bar stays.
+    m_overviewNode = static_cast<scene::OverviewNode *>(
+            m_surfaceContainer->addChild(std::make_unique<scene::OverviewNode>()));
     m_deskSwitchNode = static_cast<scene::DeskSwitchNode *>(
             m_surfaceContainer->addChild(std::make_unique<scene::DeskSwitchNode>()));
     m_windowMoveNode = static_cast<scene::SlideOutNode *>(
             m_surfaceContainer->addChild(std::make_unique<scene::SlideOutNode>()));
-    m_windowManager.setDeskOverlays({m_deskSwitchNode, m_windowMoveNode});
+    m_overviewBarNode = static_cast<scene::OverviewDeskBarNode *>(m_surfaceContainer->addChild(
+            std::make_unique<scene::OverviewDeskBarNode>(m_overviewNode)));
+    m_windowManager.setDeskOverlays(
+            {m_overviewNode, m_deskSwitchNode, m_windowMoveNode, m_overviewBarNode});
+    const auto paintText = [this](const QString &text, int pixelSize, const render::Color &color,
+                                  double density, int maxWidth) {
+        decoration::TextRenderer &renderer = m_decorationTheme.textRenderer();
+        const decoration::Image image = renderer.renderText(
+                renderer.elideText(text, pixelSize, maxWidth), pixelSize, color, density);
+        if (image.size().isEmpty())
+            return QImage();
+        return QImage(image.bits(), image.size().width(), image.size().height(), image.stride(),
+                      QImage::Format_RGBA8888_Premultiplied)
+                .copy();
+    };
+    m_overviewNode->setTextPainter(paintText);
+    m_overviewBarNode->setTextPainter(paintText);
+    m_overviewNode->setWindowFrame(overviewWindowFrame(&m_decorationTheme));
     wm::DesksController *desks = m_windowManager.desks();
     desks->setSwitchNode(m_deskSwitchNode);
     desks->setWindowMoveNode(m_windowMoveNode);
@@ -430,6 +511,15 @@ void CompositorShell::initAccelerators()
     m_acceleratorController->setUsePositionalLookup(
             accelerators::usesPositionalShortcuts(*m_seat.xkbTracker()));
 
+    // The greeter has no overview. It takes the pointer and the keys from
+    // the windows while it is up, after the accelerators had them.
+    if (!m_options.login) {
+        wm::OverviewController *overview = m_windowManager.overview();
+        overview->setNodes(m_overviewNode, m_overviewBarNode);
+        overview->setNext(m_inputManager.eventSink());
+        m_inputManager.setEventSink(overview);
+    }
+
     // In front of whatever the window manager chain is: the demo controller
     // when enabled, the window manager otherwise.
     m_acceleratorFilter = std::make_unique<accelerators::AcceleratorFilter>(
@@ -532,9 +622,12 @@ bool CompositorShell::init()
     // The greeter has no desks, and development instances must not take over
     // the user's.
     if (!m_options.login) {
-        m_gestureHandler = std::make_unique<wm::WmGestureHandler>(m_windowManager.desks(), [this] {
-            return m_seat.drag()->busy() || m_windowManager.eventHandler()->isDragging();
-        });
+        m_gestureHandler = std::make_unique<wm::WmGestureHandler>(
+                m_windowManager.desks(),
+                [this] {
+                    return m_seat.drag()->busy() || m_windowManager.eventHandler()->isDragging();
+                },
+                m_windowManager.overview());
         m_inputManager.setGestureFilter(m_gestureHandler.get());
     }
     if (!m_options.noDrm && !m_options.login)

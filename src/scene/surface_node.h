@@ -59,6 +59,15 @@ public:
                            const QPainterPath &shape = {});
 
     bool hasBackgroundBlur() const { return !m_blurRect.isEmpty(); }
+    QRect backgroundBlurRect() const { return m_blurRect; }
+    int backgroundBlurRadius() const { return m_blurRadius; }
+    const render::GlassParams &glass() const { return m_glass; }
+    const QPainterPath &backgroundBlurShape() const { return m_blurShape; }
+
+    // Mapped, but hidden with its window: drawn anyway where the renderer
+    // reveals hidden surfaces.
+    void setHiddenWithWindow(bool hidden) { m_hiddenWithWindow = hidden; }
+    bool isHiddenWithWindow() const { return m_hiddenWithWindow; }
 
     float alpha() const { return m_alpha; }
 
@@ -107,6 +116,8 @@ public:
                                                                      : Content::Translucent;
     }
 
+    void render(render::Renderer &renderer) const override;
+
 protected:
     void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const override;
 
@@ -118,6 +129,7 @@ private:
     render::SyncFence m_acquireFence;
     QRect m_blurRect;
     int m_blurRadius = 0;
+    bool m_hiddenWithWindow = false;
     QPainterPath m_blurShape;
     render::GlassParams m_glass;
     float m_alpha = 1.0f;

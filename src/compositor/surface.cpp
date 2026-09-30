@@ -518,6 +518,7 @@ void Surface::updateMapping()
     auto replaced = m_node ? m_node->presentationContent() : nullptr;
     if (m_node) {
         m_node->setVisible(isMapped() && !m_hidden);
+        m_node->setHiddenWithWindow(isMapped() && m_hidden);
         if (!m_node->isEffectivelyVisible())
             m_node->setPresentationContent(nullptr);
     }

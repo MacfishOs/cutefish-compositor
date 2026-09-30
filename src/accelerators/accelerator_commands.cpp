@@ -23,6 +23,7 @@
 #include "wm/activation.h"
 #include "wm/desks/desk.h"
 #include "wm/desks/desks_controller.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
@@ -69,6 +70,12 @@ bool canCloseWindow(const CommandContext &context)
 {
     wm::Window *window = targetWindow(context);
     return window && window->canClose();
+}
+
+bool canToggleOverview(const CommandContext &context)
+{
+    return context.windowManager && context.windowManager->overview()
+            && context.windowManager->overview()->node();
 }
 
 void cycleForwardMru(const CommandContext &context)
@@ -154,6 +161,11 @@ void closeWindow(const CommandContext &context)
 {
     if (wm::Window *window = targetWindow(context))
         window->requestClose();
+}
+
+void toggleOverview(const CommandContext &context)
+{
+    context.windowManager->overview()->toggle();
 }
 
 void moveActiveWindowBetweenDisplays(const CommandContext &context)

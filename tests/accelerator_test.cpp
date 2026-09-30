@@ -1587,10 +1587,23 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     const QDBusReply<QString> reply = proxy.call(QStringLiteral("accelerators"));
     ASSERT_TRUE(reply.isValid());
     const QJsonArray actions = parse(reply.value()).value(QStringLiteral("actions")).toArray();
-    EXPECT_EQ(43, actions.size());
+    EXPECT_EQ(44, actions.size());
     bool sawMaximize = false;
+    bool sawOverview = false;
     for (const QJsonValue &value : actions) {
         const QJsonObject action = value.toObject();
+        if (action.value(QStringLiteral("name")) == QStringLiteral("toggle-overview")) {
+            // Meta+Tab and the dedicated key.
+            sawOverview = true;
+            const QJsonArray defaults = action.value(QStringLiteral("defaults")).toArray();
+            ASSERT_EQ(2, defaults.size());
+            EXPECT_EQ(QStringLiteral("Tab"), defaults.at(0).toObject().value(QStringLiteral("keyName")));
+            EXPECT_EQ(static_cast<int>(MetaDown),
+                      defaults.at(0).toObject().value(QStringLiteral("modifiers")).toInt());
+            EXPECT_EQ(XKB_KEY_XF86LaunchA,
+                      defaults.at(1).toObject().value(QStringLiteral("keysym")).toInt());
+            continue;
+        }
         if (action.value(QStringLiteral("name")) == QStringLiteral("toggle-app-list")) {
             // The lone Meta tap, which triggers on release.
             const QJsonArray defaults = action.value(QStringLiteral("defaults")).toArray();
@@ -1612,6 +1625,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
         EXPECT_EQ(accelerators, action.value(QStringLiteral("defaults")).toArray());
     }
     EXPECT_TRUE(sawMaximize);
+    EXPECT_TRUE(sawOverview);
 
     const QDBusReply<QString> added =
             proxy.call(QStringLiteral("addAccelerator"), QStringLiteral("lock-screen"),
