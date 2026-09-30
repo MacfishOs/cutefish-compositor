@@ -95,6 +95,8 @@ public:
         QRectF to;
         // A minimized window fades in at its place instead of moving there.
         bool fades = false;
+        // It has a close button.
+        bool closable = true;
         QString title;
     };
 

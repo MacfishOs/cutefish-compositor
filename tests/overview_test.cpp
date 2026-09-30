@@ -369,6 +369,70 @@ TEST_F(OverviewTest, TheCloseButtonClosesAndTheRestMoveUp)
     EXPECT_NE(before, placeOf(kept));
 }
 
+TEST_F(OverviewTest, OnlyAWindowThatCanCloseHasACloseButton)
+{
+    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    show();
+    const QPointF button = scene::OverviewNode::closeButtonRect(placeOf(window)).center();
+    EXPECT_EQ(OverviewController::Hit::Type::Item, overview->hitTest(button).type);
+    ASSERT_EQ(1u, node->items().size());
+    EXPECT_FALSE(node->items()[0].closable);
+}
+
+TEST_F(OverviewTest, ACloseButtonLetGoOfElsewhereDoesNothing)
+{
+    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    bool closed = false;
+    window->setCloseCallback([&closed] {
+        closed = true;
+    });
+    show();
+    const QRectF button = scene::OverviewNode::closeButtonRect(placeOf(window));
+    moveTo(button.center());
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    moveTo(button.center() - QPointF(button.width(), 0));
+    input.onPointerButton(at(now), BTN_LEFT, false);
+    EXPECT_FALSE(closed);
+    EXPECT_EQ(State::Shown, overview->state());
+}
+
+TEST_F(OverviewTest, APressStaysWithItsWindowWhenTheOthersChange)
+{
+    Window *bottom = makeWindow(QRect(0, 100, 300, 300));
+    Window *middle = makeWindow(QRect(350, 100, 300, 300));
+    Window *top = makeWindow(QRect(700, 100, 300, 300));
+    show();
+    ASSERT_EQ(3u, overview->items().size());
+
+    // The window under the press closes: letting go picks nothing.
+    moveTo(placeOf(middle).center());
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    manager.destroyWindow(middle);
+    input.onPointerButton(at(now), BTN_LEFT, false);
+    EXPECT_EQ(State::Shown, overview->state());
+    EXPECT_EQ(top, active());
+
+    // One below it closes: letting go still picks it.
+    moveTo(placeOf(top).center());
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    manager.destroyWindow(bottom);
+    input.onPointerButton(at(now), BTN_LEFT, false);
+    EXPECT_EQ(State::Exiting, overview->state());
+    EXPECT_EQ(top, active());
+}
+
+TEST_F(OverviewTest, AKeyHeldSinceBeforeGoesUpAtTheWindow)
+{
+    makeWindow(QRect(100, 100, 500, 400));
+    EXPECT_FALSE(overview->onKey(at(now), KEY_LEFTMETA, true));
+    show();
+    EXPECT_TRUE(overview->onKey(at(now), KEY_A, true));
+    // The window saw it go down, so it sees it go up; the overview's own key
+    // stays the overview's.
+    EXPECT_FALSE(overview->onKey(at(now), KEY_LEFTMETA, false));
+    EXPECT_TRUE(overview->onKey(at(now), KEY_A, false));
+}
+
 TEST_F(OverviewTest, ActivationFromElsewhereEndsIt)
 {
     Window *first = makeWindow(QRect(100, 100, 500, 400));
@@ -411,6 +475,16 @@ TEST_F(OverviewTest, ClickingADeskShowsItsWindowsAndStaysUp)
     ASSERT_EQ(1u, overview->items().size());
     EXPECT_EQ(second, overview->items()[0].window);
     EXPECT_TRUE(overview->bars()[0].desks[1].active);
+}
+
+TEST_F(OverviewTest, ClickingTheDeskItIsOnTakesItAway)
+{
+    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    show();
+    click(overview->bars()[0].desks[0].bounds.center());
+    EXPECT_EQ(State::Exiting, overview->state());
+    EXPECT_EQ(desk(0), desks->activeDesk());
+    EXPECT_EQ(window, active());
 }
 
 TEST_F(OverviewTest, AWindowDraggedOntoADeskMovesThere)

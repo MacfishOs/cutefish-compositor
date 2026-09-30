@@ -17,6 +17,7 @@
 #include "core/logging.h"
 #include "session/session_controller.h"
 #include "wm/mru_window_tracker.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 
@@ -61,6 +62,8 @@ void AcceleratorController::init()
     m_preferredActions.insert(kPreferredActions.begin(), kPreferredActions.end());
     m_reservedActions.insert(kReservedActions.begin(), kReservedActions.end());
     m_actionsNeedingWindow.insert(kActionsNeedingWindow.begin(), kActionsNeedingWindow.end());
+    m_actionsBlockedInOverview.insert(kActionsBlockedInOverview.begin(),
+                                      kActionsBlockedInOverview.end());
     m_repeatableActions.insert(kRepeatableActions.begin(), kRepeatableActions.end());
     registerAccelerators(m_configuration->allAccelerators());
 }
@@ -350,6 +353,11 @@ AcceleratorController::acceleratorProcessingRestriction(AcceleratorAction action
         // Propagation is stopped too, so that Alt+Tab does not end up cycling
         // through the dialog's own widgets.
         return Restriction::PreventProcessingAndPropagation;
+    }
+    // The overview takes the key instead: it has no active window.
+    if (m_actionsBlockedInOverview.contains(action) && m_context.windowManager
+        && m_context.windowManager->overview()->capturesInput()) {
+        return Restriction::PreventProcessing;
     }
     if (m_actionsNeedingWindow.contains(action) && m_context.windowManager) {
         bool anyWindow = false;

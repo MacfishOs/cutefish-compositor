@@ -670,7 +670,7 @@ void OverviewNode::renderChrome(render::Renderer &renderer, const QRect &viewpor
         }
     }
 
-    if (hovered >= 0 && !m_items[hovered].fades) {
+    if (hovered >= 0 && !m_items[hovered].fades && m_items[hovered].closable) {
         const QRectF button = snapped(closeButtonRect(rectOf(hovered)), scale);
         const render::Color cross = m_chrome.closeHovered ? kWhite : faded(kWhite, 0.8f);
         if (render::Texture *glyph = m_chromeCache.glyph(

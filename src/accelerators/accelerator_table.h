@@ -246,6 +246,24 @@ inline constexpr std::array kActionsNeedingWindow = {
         AcceleratorAction::HideApplication,
 };
 
+// Actions on the active window or its application, which do nothing while
+// the overview has the keys.
+inline constexpr std::array kActionsBlockedInOverview = {
+        AcceleratorAction::DesksMoveActiveItemLeft,
+        AcceleratorAction::DesksMoveActiveItemRight,
+        AcceleratorAction::DesksToggleAssignToAllDesks,
+        AcceleratorAction::CloseWindow,
+        AcceleratorAction::MoveActiveWindowBetweenDisplays,
+        AcceleratorAction::ToggleFullscreen,
+        AcceleratorAction::ToggleMaximized,
+        AcceleratorAction::WindowCycleSnapLeft,
+        AcceleratorAction::WindowCycleSnapRight,
+        AcceleratorAction::WindowMinimize,
+        AcceleratorAction::QuitApplication,
+        AcceleratorAction::HideApplication,
+        AcceleratorAction::HideOtherApplications,
+};
+
 } // namespace cutefish::accelerators
 
 #endif // CUTEFISH_ACCELERATORS_ACCELERATOR_TABLE_H_

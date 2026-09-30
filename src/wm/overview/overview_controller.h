@@ -80,6 +80,9 @@ public:
 
     State state() const { return m_state; }
     bool isActive() const { return m_state != State::Hidden; }
+    // Coming in or shown: the pointer and the keys are the overview's, and
+    // there is no active window for the shortcuts to act on.
+    bool capturesInput() const;
     // Moving between shown and hidden, rather than standing at either.
     bool isTransitioning() const
     {
@@ -183,8 +186,6 @@ private:
     // Whether the desks in the bar can be removed with their close buttons.
     bool canCloseDesks() const;
 
-    // Whether pointer and key events are the overview's now.
-    bool capturesInput() const;
     void takePointer();
     void releasePointer();
 
@@ -234,8 +235,10 @@ private:
     bool m_cursorOverridden = false;
     // Activation the overview does itself, which does not end it.
     bool m_activating = false;
-    // Buttons and touch points the overview took, whose release it takes too.
+    // Buttons, keys and touch points the overview took, whose release it
+    // takes too.
     std::set<uint32_t> m_buttons;
+    std::set<uint32_t> m_keys;
     std::set<int32_t> m_touches;
     QPointF m_touchLocation;
 

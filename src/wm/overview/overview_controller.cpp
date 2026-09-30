@@ -64,14 +64,6 @@ OverviewController::OverviewController(WindowManager *manager)
                                            [this](Window *window) {
                                                if (!isActive())
                                                    return;
-                                               const bool shown = std::any_of(
-                                                       m_items.begin(), m_items.end(),
-                                                       [window](const Item &item) {
-                                                           return item.window == window;
-                                                       });
-                                               if (shown && m_dragged >= 0
-                                                   && m_items[m_dragged].window == window)
-                                                   cancelPress();
                                                if (window == m_swipeTarget)
                                                    m_swipeTarget = nullptr;
                                                rebuild(true);
@@ -177,6 +169,22 @@ void OverviewController::rebuild(bool animate)
 {
     if (!m_node)
         return;
+    // A press stays with the window or the desk it went down on, wherever
+    // that is now; with it gone, the press is too.
+    Window *pressedWindow = nullptr;
+    Desk *pressedDesk = nullptr;
+    if (m_press) {
+        const Hit &hit = m_press->hit;
+        if ((hit.type == Hit::Type::Item || hit.type == Hit::Type::Close) && hit.index >= 0
+            && hit.index < int(m_items.size())) {
+            pressedWindow = m_items[hit.index].window;
+        } else if ((hit.type == Hit::Type::Desk || hit.type == Hit::Type::DeskClose)
+                   && hit.bar >= 0 && hit.bar < int(m_barDesks.size()) && hit.index >= 0
+                   && hit.index < int(m_barDesks[hit.bar].size())) {
+            pressedDesk = m_barDesks[hit.bar][hit.index];
+        }
+    }
+
     const std::vector<Window *> &windows = m_manager->windows();
     std::vector<Window *> roots;
     for (Window *window : windows) {
@@ -185,6 +193,19 @@ void OverviewController::rebuild(bool animate)
     }
 
     buildBars();
+    if (pressedDesk) {
+        int index = -1;
+        if (m_press->hit.bar < int(m_barDesks.size())) {
+            const std::vector<Desk *> &desks = m_barDesks[m_press->hit.bar];
+            const auto it = std::find(desks.begin(), desks.end(), pressedDesk);
+            if (it != desks.end())
+                index = int(it - desks.begin());
+        }
+        if (index < 0)
+            m_press.reset();
+        else
+            m_press->hit.index = index;
+    }
     const auto outputs = m_manager->outputAreas();
     std::map<Window *, QRectF> places;
     for (size_t index = 0; index < outputs.size(); ++index) {
@@ -227,10 +248,13 @@ void OverviewController::rebuild(bool animate)
             : nullptr;
     m_items.clear();
     m_hovered = m_selected = m_dragged = -1;
+    int pressedIndex = -1;
     for (Window *window : roots) {
         const auto place = places.find(window);
         if (place == places.end())
             continue;
+        if (window == pressedWindow)
+            pressedIndex = int(m_items.size());
         if (window == hovered)
             m_hovered = int(m_items.size());
         if (window == selected)
@@ -239,6 +263,10 @@ void OverviewController::rebuild(bool animate)
             m_dragged = int(m_items.size());
         m_items.push_back({window, place->second, window->state()->isMinimized()});
     }
+    if (pressedWindow && pressedIndex < 0)
+        m_press.reset();
+    else if (pressedWindow)
+        m_press->hit.index = pressedIndex;
     updateNodes(animate);
 }
 
@@ -263,6 +291,7 @@ void OverviewController::updateNodes(bool animate)
         }
         node.to = item.bounds;
         node.fades = item.minimized;
+        node.closable = item.window->canClose();
         node.title = item.window->title();
         items.push_back(std::move(node));
     }
@@ -423,6 +452,7 @@ void OverviewController::finish()
     m_swipeTarget = nullptr;
     m_press.reset();
     m_buttons.clear();
+    m_keys.clear();
     m_touches.clear();
     if (std::exchange(m_cursorOverridden, false)) {
         if (input::Seat *seat = m_manager->seat())
@@ -695,6 +725,12 @@ void OverviewController::release(const QPointF &location)
         drop(location);
         return;
     }
+    // A button acts when let go of over itself; moved off, the press is dropped.
+    const Hit over = hitTest(location);
+    if (press.hit.type != Hit::Type::Item
+        && (over.type != press.hit.type || over.index != press.hit.index
+            || over.bar != press.hit.bar))
+        return;
     DesksController *desks = m_manager->desks();
     switch (press.hit.type) {
     case Hit::Type::Item:
@@ -707,8 +743,11 @@ void OverviewController::release(const QPointF &location)
     case Hit::Type::Desk:
         if (press.hit.bar < int(m_barDesks.size())
             && press.hit.index < int(m_barDesks[press.hit.bar].size())) {
+            // The desk it is on takes the overview away, as Escape does.
             Desk *desk = m_barDesks[press.hit.bar][press.hit.index];
-            if (desk && desk != desks->activeDesk())
+            if (desk == desks->activeDesk())
+                exit();
+            else if (desk)
                 desks->activateDesk(desk, DesksSwitchSource::MiniViewButton);
         }
         break;
@@ -877,10 +916,16 @@ bool OverviewController::onPointerAxisStop(input::Timestamp timestamp, const QPo
 
 bool OverviewController::onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed)
 {
+    // A key held since before the overview, such as the shortcut's modifier,
+    // goes up where it went down.
+    if (!pressed) {
+        if (!m_keys.erase(evdevCode))
+            return m_next && m_next->onKey(timestamp, evdevCode, pressed);
+        return true;
+    }
     if (!capturesInput())
         return m_next && m_next->onKey(timestamp, evdevCode, pressed);
-    if (!pressed)
-        return true;
+    m_keys.insert(evdevCode);
     switch (evdevCode) {
     case KEY_ESC:
         exit();

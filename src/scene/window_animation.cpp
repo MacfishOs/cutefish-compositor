@@ -958,8 +958,9 @@ void WindowAnimation::render(render::Renderer &renderer) const
     if (m_snapshot && m_type == Type::Minimize && !m_presentedAt)
         readSnapshot(renderer);
 
-    Sample value = (m_running || m_holding) && !isPresentedHidden() ? current()
-                                                                    : Sample {absoluteGeometry(), 1, 1};
+    Sample value = (m_running || m_holding) && !isPresentedHidden()
+            ? current()
+            : Sample {absoluteGeometry(), 1, 1};
     // What was presented stays the animation's own; each draw adds the client's.
     if (!m_presentedAt)
         m_presented = value;

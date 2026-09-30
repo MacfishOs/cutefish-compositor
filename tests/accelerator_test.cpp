@@ -47,6 +47,7 @@
 #include "input/seat.h"
 #include "input/xkb_tracker.h"
 #include "scene/node.h"
+#include "scene/overview_node.h"
 #include "scene/scene.h"
 #include "session/secure_container.h"
 #include "session/session_controller.h"
@@ -55,6 +56,7 @@
 #include "wm/activation.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/mru_window_tracker.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
@@ -1310,6 +1312,36 @@ TEST_F(AcceleratorTest, WindowActionsAreSwallowedWithoutAWindowAndWhilePrevented
     chord({KEY_LEFTMETA}, KEY_L);
     EXPECT_FALSE(session.isBlocked());
     controller->setPreventProcessingAccelerators(false);
+}
+
+TEST_F(AcceleratorTest, WindowActionsDoNothingInTheOverview)
+{
+    scene::OverviewNode node([] {
+        return qint64(0);
+    });
+    wm::OverviewController *overview = manager.overview();
+    overview->setNodes(&node, nullptr);
+    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    manager.activation()->activate(window);
+    int closes = 0;
+    window->setCloseCallback([&closes] {
+        ++closes;
+    });
+
+    ASSERT_TRUE(overview->enter());
+    chord({KEY_LEFTMETA}, KEY_UP);
+    chord({KEY_LEFTALT}, KEY_F4);
+    EXPECT_EQ(wm::WindowStateType::Normal, window->stateType());
+    EXPECT_EQ(0, closes);
+    // The overview's own shortcut still works.
+    chord({KEY_LEFTMETA}, KEY_TAB);
+    EXPECT_EQ(wm::OverviewController::State::Exiting, overview->state());
+
+    // On its way out the window has the shortcuts again.
+    chord({KEY_LEFTMETA}, KEY_UP);
+    EXPECT_EQ(wm::WindowStateType::Maximized, window->stateType());
+    overview->exitImmediately();
+    overview->setNodes(nullptr, nullptr);
 }
 
 TEST_F(AcceleratorTest, FullscreenWindowsKeepNonReservedKeysExceptMetaOnes)

@@ -11,9 +11,9 @@
 // the fingers. libinput swipes stand in for ui::ScrollEvent. The desk content
 // follows the fingers whatever the scrolling direction is set to, and by the
 // distance they travel on the pad rather than by accelerated pointer motion,
-// which would run ahead of a quick swipe and lag a slow one. A swipe that starts while
-// something is being dragged, a window or data, switches nothing: the drag
-// would carry across desks mid-flight.
+// which would run ahead of a quick swipe and lag a slow one. A swipe that
+// starts while something is being dragged, a window or data, switches
+// nothing: the drag would carry across desks mid-flight.
 
 #ifndef CUTEFISH_WM_GESTURES_WM_GESTURE_HANDLER_H_
 #define CUTEFISH_WM_GESTURES_WM_GESTURE_HANDLER_H_

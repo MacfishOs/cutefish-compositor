@@ -120,6 +120,7 @@ private:
     std::set<AcceleratorAction> m_preferredActions;
     std::set<AcceleratorAction> m_reservedActions;
     std::set<AcceleratorAction> m_actionsNeedingWindow;
+    std::set<AcceleratorAction> m_actionsBlockedInOverview;
     std::set<AcceleratorAction> m_repeatableActions;
 
     bool m_preventProcessing = false;
