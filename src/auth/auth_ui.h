@@ -79,6 +79,9 @@ public:
         m_keyRepeat = settings;
     }
 
+    // The password field in panel coordinates, for the backdrop blur behind it.
+    QRectF fieldBounds() const;
+
     QImage renderImage();
     void refresh();
 signals:

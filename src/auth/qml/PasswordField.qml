@@ -24,6 +24,9 @@ FocusScope {
     RoundedRectangle {
         id: pill
 
+        // The compositor blurs the wallpaper behind it.
+        objectName: "passwordPill"
+
         anchors.fill: parent
         radius: height / 2
         color: Qt.rgba(1, 1, 1, !root.enabled ? 0.12 : input.activeFocus ? 0.26 : 0.20)

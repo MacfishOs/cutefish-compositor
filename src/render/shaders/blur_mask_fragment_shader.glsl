@@ -3,6 +3,7 @@ uniform sampler2D uTexture;
 uniform vec4 uSampleRect;
 uniform vec2 uSize;
 uniform float uRadius;
+uniform float uOpacity;
 // A client shape rasterized over the quad replaces the rounded rectangle.
 uniform sampler2D uShape;
 uniform float uHasShape;
@@ -14,5 +15,5 @@ void shade() {
                    + min(max(delta.x, delta.y), 0.0) - uRadius;
     float mask = mix(clamp(0.5 - distance, 0.0, 1.0), texture2D(uShape, vTexCoord).a, uHasShape);
     vec2 uv = uSampleRect.xy + vTexCoord * uSampleRect.zw;
-    gl_FragColor = texture2D(uTexture, vec2(uv.x, 1.0 - uv.y)) * mask;
+    gl_FragColor = texture2D(uTexture, vec2(uv.x, 1.0 - uv.y)) * mask * uOpacity;
 }

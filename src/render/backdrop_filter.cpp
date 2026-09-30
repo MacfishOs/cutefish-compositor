@@ -328,6 +328,8 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     glUniform2f(program.uniform("uSize"), bounds.width(), bounds.height());
     glUniform1f(program.uniform("uRadius"),
                 std::clamp(radius, 0, std::min(lens.width(), lens.height()) / 2));
+    if (!glass.enabled)
+        glUniform1f(program.uniform("uOpacity"), std::clamp(glass.opacity, 0.0f, 1.0f));
     if (glass.enabled) {
         applyGlassMaterial(program, glass, coverage.size(), scale);
         glUniform4f(program.uniform("uLens"), lens.x() - bounds.x(), lens.y() - bounds.y(),

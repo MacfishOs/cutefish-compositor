@@ -31,7 +31,7 @@ class AuthUiTest : public QObject
     Q_OBJECT
 private slots:
 
-    void wallpaperIsBlurredPerOutputAndFailureKeepsShield()
+    void wallpaperIsSharpPerOutputAndFailureKeepsShield()
     {
         QTemporaryDir files;
         QVERIFY(files.isValid());
@@ -61,13 +61,13 @@ private slots:
         QCOMPARE(renderer.calls.at(0).kind, QStringLiteral("fill"));
         QCOMPARE(renderer.calls.at(0).color.a, 1.0f);
         const auto *texture = static_cast<testsupport::FakeTexture *>(renderer.calls.at(1).texture);
-        QCOMPARE(texture->size(), QSize(80, 40));
-        QImage image(texture->pixels().data(), 80, 40, QImage::Format_RGBA8888_Premultiplied);
-        const QColor middle = image.pixelColor(40, 20);
-        QVERIFY(middle.red() > 0 && middle.blue() > 0);
-        QVERIFY(middle.red() + middle.blue() >= 245);
-        QCOMPARE(image.pixelColor(0, 20), QColor(Qt::red));
-        QCOMPARE(renderer.calls.at(3).texture->size(), QSize(40, 80));
+        QCOMPARE(texture->size(), QSize(640, 320));
+        QImage image(texture->pixels().data(), 640, 320, QImage::Format_RGBA8888_Premultiplied);
+        // Only the scaling softens the edge; a blur would carry red far into the blue.
+        QCOMPARE(image.pixelColor(0, 160), QColor(Qt::red));
+        QCOMPARE(image.pixelColor(300, 160), QColor(Qt::red));
+        QCOMPARE(image.pixelColor(340, 160), QColor(Qt::blue));
+        QCOMPARE(renderer.calls.at(3).texture->size(), QSize(320, 640));
         secure.setBlocked(false);
         settings.setValue(QStringLiteral("Wallpaper"), files.filePath(QStringLiteral("missing")));
         settings.sync();

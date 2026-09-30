@@ -89,16 +89,24 @@ protected:
         const session::CoverSample sample = m_secure->sample(renderer);
         if (sample.panelOpacity <= 0)
             return;
-        // Mapped at rest, so its device-density texels land on device pixels.
-        if (sample.panelScale == 1) {
-            renderer.drawTextureMapped(m_texture.get(), bounds, sample.panelOpacity, QTransform());
-            return;
-        }
         const QPointF center = QRectF(bounds).center();
         QTransform transform;
         transform.translate(center.x(), center.y());
         transform.scale(sample.panelScale, sample.panelScale);
         transform.translate(-center.x(), -center.y());
+        // The blur behind the password field fades and scales with the panel.
+        if (const QRectF field = m_ui->fieldBounds(); !field.isEmpty()) {
+            render::GlassParams fade;
+            fade.opacity = sample.panelOpacity;
+            const QRectF blurred = transform.mapRect(field.translated(bounds.topLeft()));
+            renderer.drawBackgroundBlur(blurred.toAlignedRect(), qRound(blurred.height() / 2),
+                                        bounds, fade);
+        }
+        // Mapped at rest, so its device-density texels land on device pixels.
+        if (sample.panelScale == 1) {
+            renderer.drawTextureMapped(m_texture.get(), bounds, sample.panelOpacity, QTransform());
+            return;
+        }
         renderer.drawTextureTransformed(m_texture.get(), bounds, transform, sample.panelOpacity);
     }
 
@@ -409,6 +417,16 @@ AuthUi::panelOutput(const QList<session::SecureOutput> &outputs) const
             return output;
     }
     return outputs.front();
+}
+
+QRectF AuthUi::fieldBounds() const
+{
+    if (!m_root || !m_root->isVisible())
+        return {};
+    const auto *pill = m_root->findChild<QQuickItem *>(QStringLiteral("passwordPill"));
+    if (!pill || !pill->isVisible())
+        return {};
+    return pill->mapRectToItem(m_root, QRectF(0, 0, pill->width(), pill->height()));
 }
 
 QImage AuthUi::renderImage()

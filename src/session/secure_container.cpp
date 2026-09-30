@@ -55,46 +55,14 @@ double easeOut(double t)
     return 1 - (1 - t) * (1 - t);
 }
 
-QImage blurPass(const QImage &source, int radius, bool horizontal)
-{
-    QImage result(source.size(), source.format());
-    const int length = horizontal ? source.width() : source.height();
-    const int lines = horizontal ? source.height() : source.width();
-    const int samples = radius * 2 + 1;
-    for (int line = 0; line < lines; ++line) {
-        const auto pixel = [&](int position) {
-            position = qBound(0, position, length - 1);
-            return horizontal ? source.pixel(position, line) : source.pixel(line, position);
-        };
-        int red = 0, green = 0, blue = 0, alpha = 0;
-        const auto accumulate = [&](QRgb value, int sign) {
-            red += qRed(value) * sign;
-            green += qGreen(value) * sign;
-            blue += qBlue(value) * sign;
-            alpha += qAlpha(value) * sign;
-        };
-        for (int offset = -radius; offset <= radius; ++offset)
-            accumulate(pixel(offset), 1);
-        for (int position = 0; position < length; ++position) {
-            const QRgb value =
-                    qRgba(red / samples, green / samples, blue / samples, alpha / samples);
-            if (horizontal)
-                result.setPixel(position, line, value);
-            else
-                result.setPixel(line, position, value);
-            accumulate(pixel(position - radius), -1);
-            accumulate(pixel(position + radius + 1), 1);
-        }
-    }
-    return result;
-}
-
-QImage loadWallpaper(const QSize &size)
+QImage loadWallpaper(const QSize &size, double scale)
 {
     QImage image;
     QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
     settings.beginGroup(QStringLiteral("Appearance"));
-    const QSize target(qMax(1, size.width() / 8), qMax(1, size.height() / 8));
+    // Device pixels: the wallpaper is shown sharp, as the desktop shows it.
+    const QSize target(qMax(1, qRound(size.width() * scale)),
+                       qMax(1, qRound(size.height() * scale)));
     if (settings.value(QStringLiteral("BackgroundType"), 0).toInt() == 0) {
         QString path =
                 settings.value(QStringLiteral("Wallpaper"),
@@ -113,10 +81,6 @@ QImage loadWallpaper(const QSize &size)
         image = image.copy((image.width() - target.width()) / 2,
                            (image.height() - target.height()) / 2, target.width(), target.height());
         image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-        for (int pass = 0; pass < 3; ++pass) {
-            image = blurPass(image, 3, true);
-            image = blurPass(image, 3, false);
-        }
     } else {
         image = QImage(target, QImage::Format_ARGB32_Premultiplied);
         image.fill(
@@ -130,7 +94,7 @@ QImage loadWallpaper(const QSize &size)
 class WallpaperNode final : public scene::Node
 {
 public:
-    WallpaperNode(const SecureContainer *container, const QSize &size)
+    WallpaperNode(const SecureContainer *container, const QSize &size, double scale)
         : Node(QStringLiteral("lock-wallpaper"))
         , m_container(container)
     {
@@ -139,7 +103,7 @@ public:
             m_loaded = true;
             notifyChanged();
         });
-        m_loader.setFuture(QtConcurrent::run(loadWallpaper, size));
+        m_loader.setFuture(QtConcurrent::run(loadWallpaper, size, scale));
         setGeometry(QRect(QPoint(), size));
     }
 
@@ -378,7 +342,8 @@ void SecureContainer::rebuildShield()
             shield->removeChild(shield->children().back());
         if (QCoreApplication::instance())
             shield->addChild(
-                    std::make_unique<WallpaperNode>(this, m_outputs.at(i).bounds.size()));
+                    std::make_unique<WallpaperNode>(this, m_outputs.at(i).bounds.size(),
+                                                    m_outputs.at(i).scale));
     }
 }
 
