@@ -590,7 +590,7 @@ TEST_F(WindowVisualPixelTest, BlurredShellSurfacesAndPopupsOutlineTheirRoundedBo
     EXPECT_TRUE(state.drawOutline);
     EXPECT_EQ(state.outlineShape.bounds, QRectF(0, 0, 30, 30));
     EXPECT_EQ(state.outlineShape.radius, 15);
-    EXPECT_FLOAT_EQ(state.outlineColor.a, decoration::WindowVisualStyle().activeOutline.a);
+    EXPECT_FLOAT_EQ(state.outlineColor.a, decoration::WindowVisualStyle().shellOutline.a);
 }
 
 TEST_F(WindowVisualPixelTest, FillMappedTextureBlurNestedClipsAndOffscreenOffsets)

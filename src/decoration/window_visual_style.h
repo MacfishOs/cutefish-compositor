@@ -25,6 +25,8 @@ struct WindowVisualStyle {
     render::Color activeOutline;
     render::Color inactiveOutline;
     render::Color highlight;
+    // Popups, menus and panels have no titlebar to set them apart.
+    render::Color shellOutline;
     render::Color dockOutline;
     render::Color dockHighlight;
     // Black laid over a window while a modal transient blocks it.

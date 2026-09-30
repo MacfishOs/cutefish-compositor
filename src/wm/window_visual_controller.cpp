@@ -28,7 +28,7 @@ void setShellOutlineColors(scene::WindowVisualState &state, const Window &window
         return;
     }
     const bool dock = window.role() == WindowRole::Dock;
-    state.outlineColor = dock ? style.dockOutline : style.activeOutline;
+    state.outlineColor = dock ? style.dockOutline : style.shellOutline;
     state.highlightColor = dock ? style.dockHighlight : style.highlight;
 }
 

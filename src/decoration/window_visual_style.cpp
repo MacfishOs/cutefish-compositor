@@ -21,6 +21,7 @@ constexpr render::Color kHighlightColor {1, 1, 1, 0.15f};
 // brighter rim inside it so the window still reads as raised.
 constexpr render::Color kDarkOutlineColor {0, 0, 0, 0.7f};
 constexpr render::Color kDarkHighlightColor {1, 1, 1, 0.2f};
+constexpr render::Color kShellOutlineColor {0, 0, 0, 0.14f};
 // The dock floats over the wallpaper, so it leans on the highlight instead.
 constexpr render::Color kDockOutlineColor {0, 0, 0, 0.1f};
 constexpr render::Color kDockHighlightColor {1, 1, 1, 0.2f};
@@ -65,6 +66,7 @@ WindowVisualStyle::WindowVisualStyle(bool dark, int accentIndex)
     , activeOutline(dark ? kDarkOutlineColor : kOutlineColor)
     , inactiveOutline(dark ? kDarkOutlineColor : kOutlineColor)
     , highlight(dark ? kDarkHighlightColor : kHighlightColor)
+    , shellOutline(dark ? kDarkOutlineColor : kShellOutlineColor)
     , dockOutline(dark ? kDarkDockOutlineColor : kDockOutlineColor)
     , dockHighlight(dark ? kDarkDockHighlightColor : kDockHighlightColor)
     , dimOpacity(dark ? kDarkDimOpacity : kDimOpacity)
