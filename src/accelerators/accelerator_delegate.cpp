@@ -74,6 +74,11 @@ void DBusAcceleratorDelegate::toggleMute()
     callOsd(QStringLiteral("toggleMute"));
 }
 
+void DBusAcceleratorDelegate::toggleMicrophoneMute()
+{
+    callOsd(QStringLiteral("toggleMicrophoneMute"));
+}
+
 void DBusAcceleratorDelegate::brightnessDown()
 {
     callOsd(QStringLiteral("brightnessDown"));
@@ -82,6 +87,16 @@ void DBusAcceleratorDelegate::brightnessDown()
 void DBusAcceleratorDelegate::brightnessUp()
 {
     callOsd(QStringLiteral("brightnessUp"));
+}
+
+void DBusAcceleratorDelegate::keyboardBrightnessDown()
+{
+    callOsd(QStringLiteral("keyboardBrightnessDown"));
+}
+
+void DBusAcceleratorDelegate::keyboardBrightnessUp()
+{
+    callOsd(QStringLiteral("keyboardBrightnessUp"));
 }
 
 } // namespace cutefish::accelerators

@@ -97,8 +97,12 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_XF86AudioMute, NoModifier, AcceleratorAction::VolumeMuteToggle},
         {true, XKB_KEY_XF86AudioLowerVolume, NoModifier, AcceleratorAction::VolumeDown},
         {true, XKB_KEY_XF86AudioRaiseVolume, NoModifier, AcceleratorAction::VolumeUp},
+        {true, XKB_KEY_XF86AudioMicMute, NoModifier, AcceleratorAction::MicrophoneMuteToggle},
         {true, XKB_KEY_XF86MonBrightnessDown, NoModifier, AcceleratorAction::BrightnessDown},
         {true, XKB_KEY_XF86MonBrightnessUp, NoModifier, AcceleratorAction::BrightnessUp},
+        {true, XKB_KEY_XF86KbdBrightnessDown, NoModifier,
+         AcceleratorAction::KeyboardBrightnessDown},
+        {true, XKB_KEY_XF86KbdBrightnessUp, NoModifier, AcceleratorAction::KeyboardBrightnessUp},
 });
 
 // The defaults under input::ShortcutConvention::Command. Command reaches the
@@ -167,8 +171,12 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_XF86AudioMute, NoModifier, AcceleratorAction::VolumeMuteToggle},
         {true, XKB_KEY_XF86AudioLowerVolume, NoModifier, AcceleratorAction::VolumeDown},
         {true, XKB_KEY_XF86AudioRaiseVolume, NoModifier, AcceleratorAction::VolumeUp},
+        {true, XKB_KEY_XF86AudioMicMute, NoModifier, AcceleratorAction::MicrophoneMuteToggle},
         {true, XKB_KEY_XF86MonBrightnessDown, NoModifier, AcceleratorAction::BrightnessDown},
         {true, XKB_KEY_XF86MonBrightnessUp, NoModifier, AcceleratorAction::BrightnessUp},
+        {true, XKB_KEY_XF86KbdBrightnessDown, NoModifier,
+         AcceleratorAction::KeyboardBrightnessDown},
+        {true, XKB_KEY_XF86KbdBrightnessUp, NoModifier, AcceleratorAction::KeyboardBrightnessUp},
 });
 
 // Switching applications always switches, over a fullscreen game too.
@@ -187,6 +195,9 @@ inline constexpr std::array kReservedActions = {
 inline constexpr std::array kActionsAllowedAtLockScreen = {
         AcceleratorAction::BrightnessDown,
         AcceleratorAction::BrightnessUp,
+        AcceleratorAction::KeyboardBrightnessDown,
+        AcceleratorAction::KeyboardBrightnessUp,
+        AcceleratorAction::MicrophoneMuteToggle,
         AcceleratorAction::VolumeDown,
         AcceleratorAction::VolumeMuteToggle,
         AcceleratorAction::VolumeUp,
@@ -196,7 +207,10 @@ inline constexpr std::array kActionsAllowedAtLockScreen = {
 inline constexpr std::array kActionsAllowedAtModalWindow = {
         AcceleratorAction::BrightnessDown,
         AcceleratorAction::BrightnessUp,
+        AcceleratorAction::KeyboardBrightnessDown,
+        AcceleratorAction::KeyboardBrightnessUp,
         AcceleratorAction::LockScreen,
+        AcceleratorAction::MicrophoneMuteToggle,
         AcceleratorAction::VolumeDown,
         AcceleratorAction::VolumeMuteToggle,
         AcceleratorAction::VolumeUp,
@@ -206,6 +220,8 @@ inline constexpr std::array kActionsAllowedAtModalWindow = {
 inline constexpr std::array kRepeatableActions = {
         AcceleratorAction::BrightnessDown,
         AcceleratorAction::BrightnessUp,
+        AcceleratorAction::KeyboardBrightnessDown,
+        AcceleratorAction::KeyboardBrightnessUp,
         AcceleratorAction::VolumeDown,
         AcceleratorAction::VolumeUp,
 };

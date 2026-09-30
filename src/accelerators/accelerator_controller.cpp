@@ -203,8 +203,11 @@ bool AcceleratorController::canPerformAction(AcceleratorAction action,
     case AcceleratorAction::VolumeMuteToggle:
     case AcceleratorAction::VolumeDown:
     case AcceleratorAction::VolumeUp:
+    case AcceleratorAction::MicrophoneMuteToggle:
     case AcceleratorAction::BrightnessDown:
     case AcceleratorAction::BrightnessUp:
+    case AcceleratorAction::KeyboardBrightnessDown:
+    case AcceleratorAction::KeyboardBrightnessUp:
         return true;
     }
     return false;
@@ -311,11 +314,20 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
     case AcceleratorAction::VolumeUp:
         commands::volumeUp(m_context);
         break;
+    case AcceleratorAction::MicrophoneMuteToggle:
+        commands::microphoneMuteToggle(m_context);
+        break;
     case AcceleratorAction::BrightnessDown:
         commands::brightnessDown(m_context);
         break;
     case AcceleratorAction::BrightnessUp:
         commands::brightnessUp(m_context);
+        break;
+    case AcceleratorAction::KeyboardBrightnessDown:
+        commands::keyboardBrightnessDown(m_context);
+        break;
+    case AcceleratorAction::KeyboardBrightnessUp:
+        commands::keyboardBrightnessUp(m_context);
         break;
     }
 }

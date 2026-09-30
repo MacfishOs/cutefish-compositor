@@ -78,12 +78,15 @@ void takeScreenshot(const CommandContext &context, bool toClipboard);
 void takePartialScreenshot(const CommandContext &context, bool toClipboard);
 void startCaptureMode(const CommandContext &context);
 void stopScreenRecording(const CommandContext &context);
-// The volume and brightness belong to the shell too, which shows the change.
+// The levels belong to the shell too, which shows the change.
 void volumeDown(const CommandContext &context);
 void volumeUp(const CommandContext &context);
 void volumeMuteToggle(const CommandContext &context);
+void microphoneMuteToggle(const CommandContext &context);
 void brightnessDown(const CommandContext &context);
 void brightnessUp(const CommandContext &context);
+void keyboardBrightnessDown(const CommandContext &context);
+void keyboardBrightnessUp(const CommandContext &context);
 
 } // namespace commands
 } // namespace cutefish::accelerators

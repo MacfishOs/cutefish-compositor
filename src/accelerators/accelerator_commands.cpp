@@ -248,6 +248,11 @@ void volumeMuteToggle(const CommandContext &context)
     context.delegate->toggleMute();
 }
 
+void microphoneMuteToggle(const CommandContext &context)
+{
+    context.delegate->toggleMicrophoneMute();
+}
+
 void brightnessDown(const CommandContext &context)
 {
     context.delegate->brightnessDown();
@@ -256,6 +261,16 @@ void brightnessDown(const CommandContext &context)
 void brightnessUp(const CommandContext &context)
 {
     context.delegate->brightnessUp();
+}
+
+void keyboardBrightnessDown(const CommandContext &context)
+{
+    context.delegate->keyboardBrightnessDown();
+}
+
+void keyboardBrightnessUp(const CommandContext &context)
+{
+    context.delegate->keyboardBrightnessUp();
 }
 
 void activateDesk(const CommandContext &context, bool activateLeft)

@@ -38,8 +38,11 @@ bool isSystemKey(xkb_keysym_t keysym)
     case XKB_KEY_XF86AudioMute:
     case XKB_KEY_XF86AudioLowerVolume:
     case XKB_KEY_XF86AudioRaiseVolume:
+    case XKB_KEY_XF86AudioMicMute:
     case XKB_KEY_XF86MonBrightnessDown:
     case XKB_KEY_XF86MonBrightnessUp:
+    case XKB_KEY_XF86KbdBrightnessDown:
+    case XKB_KEY_XF86KbdBrightnessUp:
         return true;
     default:
         return false;

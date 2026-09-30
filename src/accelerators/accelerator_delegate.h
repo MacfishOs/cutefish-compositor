@@ -31,8 +31,11 @@ public:
     virtual void volumeDown() = 0;
     virtual void volumeUp() = 0;
     virtual void toggleMute() = 0;
+    virtual void toggleMicrophoneMute() = 0;
     virtual void brightnessDown() = 0;
     virtual void brightnessUp() = 0;
+    virtual void keyboardBrightnessDown() = 0;
+    virtual void keyboardBrightnessUp() = 0;
 };
 
 // The production delegate.
@@ -47,8 +50,11 @@ public:
     void volumeDown() override;
     void volumeUp() override;
     void toggleMute() override;
+    void toggleMicrophoneMute() override;
     void brightnessDown() override;
     void brightnessUp() override;
+    void keyboardBrightnessDown() override;
+    void keyboardBrightnessUp() override;
 };
 
 } // namespace cutefish::accelerators

@@ -7,8 +7,9 @@
 //
 // Adapted for Cutefish: the launcher, the lock screen, the window actions,
 // the application menu's Quit, Hide and Hide Others, desks, screen capture and
-// the volume and brightness keys. Media keys stay with the applications;
-// browser, IME, accessibility, tablet and debug actions have nothing to act on.
+// the volume, microphone, brightness and keyboard backlight keys. Media keys
+// stay with the applications; browser, IME, accessibility, tablet and debug
+// actions have nothing to act on.
 
 #ifndef CUTEFISH_ACCELERATORS_ACCELERATOR_ACTIONS_H_
 #define CUTEFISH_ACCELERATORS_ACCELERATOR_ACTIONS_H_
@@ -71,8 +72,11 @@ enum class AcceleratorAction : uint32_t {
     VolumeMuteToggle,
     VolumeDown,
     VolumeUp,
+    MicrophoneMuteToggle,
     BrightnessDown,
     BrightnessUp,
+    KeyboardBrightnessDown,
+    KeyboardBrightnessUp,
 };
 
 using AcceleratorActionId = uint32_t;

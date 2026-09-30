@@ -90,8 +90,11 @@ public:
     void volumeDown() override { levels.push_back("volume-down"); }
     void volumeUp() override { levels.push_back("volume-up"); }
     void toggleMute() override { levels.push_back("mute"); }
+    void toggleMicrophoneMute() override { levels.push_back("microphone-mute"); }
     void brightnessDown() override { levels.push_back("brightness-down"); }
     void brightnessUp() override { levels.push_back("brightness-up"); }
+    void keyboardBrightnessDown() override { levels.push_back("keyboard-brightness-down"); }
+    void keyboardBrightnessUp() override { levels.push_back("keyboard-brightness-up"); }
 
     int appListToggles = 0;
     std::vector<std::string> captures;
@@ -698,9 +701,12 @@ TEST_F(AcceleratorTest, ConsumedKeysNeverReachTheClientAndOthersDo)
     tap(KEY_VOLUMEUP);
     chord({KEY_LEFTSHIFT}, KEY_BRIGHTNESSDOWN);
     tap(KEY_MUTE);
+    tap(KEY_MICMUTE);
+    tap(KEY_KBDILLUMUP);
     expected = {{KEY_LEFTSHIFT, true}, {KEY_LEFTSHIFT, false}};
     EXPECT_EQ(expected, keyboardDelegate->keys);
-    const std::vector<std::string> levels = {"volume-up", "mute"};
+    const std::vector<std::string> levels = {"volume-up", "mute", "microphone-mute",
+                                             "keyboard-brightness-up"};
     EXPECT_EQ(levels, delegate.levels);
 
     // Media keys have no action, so they belong to the client.
@@ -739,6 +745,18 @@ TEST_F(AcceleratorTest, HeldVolumeAndBrightnessKeysRepeatAtTheKeyboardRate)
     QTest::qWait(100);
     release(KEY_MUTE);
     EXPECT_EQ(1u, delegate.levels.size());
+
+    delegate.levels.clear();
+    press(KEY_MICMUTE);
+    QTest::qWait(100);
+    release(KEY_MICMUTE);
+    EXPECT_EQ(1u, delegate.levels.size());
+
+    delegate.levels.clear();
+    press(KEY_KBDILLUMDOWN);
+    QTest::qWait(100);
+    release(KEY_KBDILLUMDOWN);
+    EXPECT_GE(delegate.levels.size(), 3u);
 
     filter->setKeyRepeatSettings({.enabled = false});
     delegate.levels.clear();
@@ -1269,10 +1287,13 @@ TEST_F(AcceleratorTest, ABlockedSessionPerformsNothing)
     EXPECT_FALSE(controller->process(Accelerator(XKB_KEY_Up, MetaDown)));
     EXPECT_FALSE(controller->process(Accelerator(XKB_KEY_l, MetaDown)));
 
-    // Apart from the volume and brightness.
+    // Apart from the volume, the microphone and the brightness.
     tap(KEY_VOLUMEDOWN);
+    tap(KEY_MICMUTE);
     tap(KEY_BRIGHTNESSUP);
-    const std::vector<std::string> levels = {"volume-down", "brightness-up"};
+    tap(KEY_KBDILLUMDOWN);
+    const std::vector<std::string> levels = {"volume-down", "microphone-mute", "brightness-up",
+                                             "keyboard-brightness-down"};
     EXPECT_EQ(levels, delegate.levels);
 }
 
@@ -1566,7 +1587,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     const QDBusReply<QString> reply = proxy.call(QStringLiteral("accelerators"));
     ASSERT_TRUE(reply.isValid());
     const QJsonArray actions = parse(reply.value()).value(QStringLiteral("actions")).toArray();
-    EXPECT_EQ(40, actions.size());
+    EXPECT_EQ(43, actions.size());
     bool sawMaximize = false;
     for (const QJsonValue &value : actions) {
         const QJsonObject action = value.toObject();
