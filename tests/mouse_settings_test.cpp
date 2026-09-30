@@ -26,13 +26,13 @@ TEST(MouseSettings, RestoresLegacyPreferencesAndAccelerationMeaning)
         QSettings legacy(file, QSettings::IniFormat);
         legacy.beginGroup(QStringLiteral("Mouse"));
         legacy.setValue(QStringLiteral("leftHanded"), true);
-        legacy.setValue(QStringLiteral("naturalScroll"), true);
+        legacy.setValue(QStringLiteral("naturalScroll"), false);
         legacy.setValue(QStringLiteral("accelerationProfile"), true);
         legacy.setValue(QStringLiteral("pointerAcceleration"), 0.6);
     }
     MouseSettings settings(nullptr, file);
     EXPECT_TRUE(settings.leftHanded());
-    EXPECT_TRUE(settings.naturalScroll());
+    EXPECT_FALSE(settings.naturalScroll());
     EXPECT_FALSE(settings.acceleration());
     EXPECT_DOUBLE_EQ(settings.pointerAcceleration(), 0.6);
     EXPECT_FALSE(settings.available());
@@ -46,10 +46,11 @@ TEST(MouseSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
     {
         MouseSettings settings(nullptr, file);
         EXPECT_TRUE(settings.acceleration());
+        EXPECT_TRUE(settings.naturalScroll());
         QSignalSpy changes(&settings, &MouseSettings::settingsChanged);
         settings.setLeftHanded(true);
         settings.setLeftHanded(true);
-        settings.setNaturalScroll(true);
+        settings.setNaturalScroll(false);
         settings.setAcceleration(false);
         settings.setPointerAcceleration(-0.8);
         EXPECT_EQ(changes.count(), 4);
@@ -62,7 +63,7 @@ TEST(MouseSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
     }
     MouseSettings restored(nullptr, file);
     EXPECT_TRUE(restored.leftHanded());
-    EXPECT_TRUE(restored.naturalScroll());
+    EXPECT_FALSE(restored.naturalScroll());
     EXPECT_FALSE(restored.acceleration());
     EXPECT_DOUBLE_EQ(restored.pointerAcceleration(), -0.8);
     EXPECT_FALSE(restored.available());
@@ -138,11 +139,11 @@ TEST(MouseSettings, DBusPropertiesMethodsAndServiceRestart)
             EXPECT_FALSE(reply.isError()) << reply.error().message().toStdString();
         };
         invoke(QStringLiteral("setLeftHanded"), true);
-        invoke(QStringLiteral("setNaturalScroll"), true);
+        invoke(QStringLiteral("setNaturalScroll"), false);
         invoke(QStringLiteral("setAcceleration"), false);
         invoke(QStringLiteral("setPointerAcceleration"), 0.4);
         EXPECT_TRUE(proxy.property("leftHanded").toBool());
-        EXPECT_TRUE(proxy.property("naturalScroll").toBool());
+        EXPECT_FALSE(proxy.property("naturalScroll").toBool());
         EXPECT_FALSE(proxy.property("acceleration").toBool());
         EXPECT_DOUBLE_EQ(proxy.property("pointerAcceleration").toDouble(), 0.4);
         settings.setAvailable(true);

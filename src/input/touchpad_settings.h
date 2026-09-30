@@ -105,7 +105,7 @@ private:
     bool m_disableWhileTyping = true;
     bool m_tapToClick = false;
     bool m_tapDragging = false;
-    bool m_naturalScroll = false;
+    bool m_naturalScroll = true;
     double m_pointerAcceleration = 0;
     double m_scrollSpeed = kDefaultScrollSpeed;
     bool m_secondaryClickConfigurable = false;

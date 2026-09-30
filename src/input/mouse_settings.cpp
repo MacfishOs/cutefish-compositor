@@ -24,7 +24,7 @@ MouseSettings::MouseSettings(QObject *parent, const QString &settingsFile)
 {
     m_settings.beginGroup(QStringLiteral("Mouse"));
     m_leftHanded = m_settings.value(QStringLiteral("leftHanded"), false).toBool();
-    m_naturalScroll = m_settings.value(QStringLiteral("naturalScroll"), false).toBool();
+    m_naturalScroll = m_settings.value(QStringLiteral("naturalScroll"), m_naturalScroll).toBool();
     // The legacy accelerationProfile preference means flat (acceleration disabled).
     m_acceleration = !m_settings.value(QStringLiteral("accelerationProfile"), false).toBool();
     bool valid = false;

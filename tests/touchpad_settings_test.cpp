@@ -28,7 +28,7 @@ TEST(TouchpadSettings, DefaultsFollowChromiumAndLibinput)
     EXPECT_TRUE(settings.disableWhileTyping());
     EXPECT_FALSE(settings.tapToClick());
     EXPECT_FALSE(settings.tapDragging());
-    EXPECT_FALSE(settings.naturalScroll());
+    EXPECT_TRUE(settings.naturalScroll());
     EXPECT_DOUBLE_EQ(settings.pointerAcceleration(), 0);
     EXPECT_DOUBLE_EQ(settings.scrollSpeed(), TouchpadSettings::kDefaultScrollSpeed);
     EXPECT_TRUE(settings.twoFingerSecondaryClick());
@@ -49,7 +49,7 @@ TEST(TouchpadSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
         settings.setDisableWhileTyping(false);
         settings.setTapToClick(true);
         settings.setTapDragging(true);
-        settings.setNaturalScroll(true);
+        settings.setNaturalScroll(false);
         settings.setPointerAcceleration(0.4);
         settings.setScrollSpeed(0.75);
         settings.setTwoFingerSecondaryClick(false);
@@ -73,7 +73,7 @@ TEST(TouchpadSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
     EXPECT_FALSE(restored.disableWhileTyping());
     EXPECT_TRUE(restored.tapToClick());
     EXPECT_TRUE(restored.tapDragging());
-    EXPECT_TRUE(restored.naturalScroll());
+    EXPECT_FALSE(restored.naturalScroll());
     EXPECT_DOUBLE_EQ(restored.pointerAcceleration(), 0.4);
     EXPECT_DOUBLE_EQ(restored.scrollSpeed(), 0.75);
     EXPECT_FALSE(restored.twoFingerSecondaryClick());
@@ -142,7 +142,7 @@ TEST(TouchpadSettings, DBusPropertiesMethodsAndServiceRestart)
         invoke(QStringLiteral("setDisableWhileTyping"), false);
         invoke(QStringLiteral("setTapToClick"), true);
         invoke(QStringLiteral("setTapDragging"), true);
-        invoke(QStringLiteral("setNaturalScroll"), true);
+        invoke(QStringLiteral("setNaturalScroll"), false);
         invoke(QStringLiteral("setPointerAcceleration"), -0.6);
         invoke(QStringLiteral("setScrollSpeed"), 1.25);
         invoke(QStringLiteral("setTwoFingerSecondaryClick"), false);
@@ -151,7 +151,7 @@ TEST(TouchpadSettings, DBusPropertiesMethodsAndServiceRestart)
         EXPECT_FALSE(proxy.property("disableWhileTyping").toBool());
         EXPECT_TRUE(proxy.property("tapToClick").toBool());
         EXPECT_TRUE(proxy.property("tapDragging").toBool());
-        EXPECT_TRUE(proxy.property("naturalScroll").toBool());
+        EXPECT_FALSE(proxy.property("naturalScroll").toBool());
         EXPECT_DOUBLE_EQ(proxy.property("pointerAcceleration").toDouble(), -0.6);
         EXPECT_DOUBLE_EQ(proxy.property("scrollSpeed").toDouble(), 1.25);
         EXPECT_FALSE(proxy.property("twoFingerSecondaryClick").toBool());

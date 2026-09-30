@@ -57,7 +57,7 @@ private:
     QSettings m_settings;
     bool m_available = false;
     bool m_leftHanded = false;
-    bool m_naturalScroll = false;
+    bool m_naturalScroll = true;
     bool m_acceleration = true;
     double m_pointerAcceleration = 0;
     bool m_registered = false;
