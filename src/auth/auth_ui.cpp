@@ -345,12 +345,14 @@ void AuthUi::refresh()
                           Qt::ActiveWindowFocusReason);
         QCoreApplication::sendEvent(m_window.get(), &focus);
     }
+    if (m_root)
+        m_root->setProperty("blocked", m_session->isBlocked());
     const session::SecureOutput &target = panelOutput(secure->outputs());
     m_panelOutput = target.name;
     const QRect output = target.bounds;
     const double scale = target.scale;
-    // Room below the panel's own column for a list of accounts or sessions.
-    const QSize size(std::min(480, output.width()), std::min(560, output.height()));
+    // The output's full height: the clock at the top, the login column at the bottom.
+    const QSize size(std::min(480, output.width()), output.height());
     // QRect::center() rounds down a pixel, which a panel as tall as the output
     // would overhang.
     const QRect bounds(output.topLeft()

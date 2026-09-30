@@ -7,18 +7,72 @@ Item {
 
     property bool primary: true
 
+    // Set by the compositor while the session is blocked; the clock only
+    // ticks then, so a prepared, unseen panel never wakes it.
+    property bool blocked: false
+
+    property date now: new Date()
+
     readonly property bool failed: authController.failed
 
     function focusPassword() { passwordField.forceActiveFocus() }
 
+    function tick() {
+        now = new Date()
+        // Just past the next minute, so the time never trails the real one.
+        clockTimer.interval = 60000 - now.getSeconds() * 1000 - now.getMilliseconds() + 20
+    }
+
     focus: true
+
+    onBlockedChanged: tick()
+
+    Timer {
+        id: clockTimer
+
+        running: root.blocked
+        repeat: true
+        onTriggered: root.tick()
+    }
+
+    Column {
+        id: clock
+
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        anchors.topMargin: 56
+        spacing: -4
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: root.now.toLocaleDateString(Qt.locale(), "ddd MMM d")
+            color: "white"
+            font.pixelSize: 20
+            font.weight: Font.DemiBold
+            style: Text.Raised
+            styleColor: Qt.rgba(0, 0, 0, 0.3)
+            renderType: Text.NativeRendering
+        }
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: root.now.toLocaleTimeString(Qt.locale(), "hh:mm")
+            color: "white"
+            font.pixelSize: 84
+            font.weight: Font.DemiBold
+            style: Text.Raised
+            styleColor: Qt.rgba(0, 0, 0, 0.3)
+            renderType: Text.NativeRendering
+        }
+    }
 
     ColumnLayout {
         id: pod
 
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.verticalCenter: parent.verticalCenter
-        width: Math.min(parent.width - 48, 288)
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 64
+        width: Math.min(parent.width - 48, 240)
         spacing: 18
 
         visible: root.primary

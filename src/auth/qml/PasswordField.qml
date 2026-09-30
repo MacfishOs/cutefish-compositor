@@ -11,7 +11,7 @@ FocusScope {
     signal accepted(string password)
     signal edited()
 
-    implicitHeight: 38
+    implicitHeight: 32
 
     function clear() {
         input.clear()
@@ -46,11 +46,11 @@ FocusScope {
             id: prompt
 
             anchors.left: parent.left
-            anchors.leftMargin: 16
+            anchors.leftMargin: 14
             anchors.verticalCenter: parent.verticalCenter
             visible: input.text.length === 0
             color: Qt.rgba(1, 1, 1, 0.72)
-            font.pixelSize: 14
+            font.pixelSize: 13
             renderType: Text.NativeRendering
         }
 
@@ -58,8 +58,8 @@ FocusScope {
             id: input
 
             anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 48
+            anchors.leftMargin: 14
+            anchors.rightMargin: 40
             verticalAlignment: TextInput.AlignVCenter
             horizontalAlignment: TextInput.AlignLeft
 
@@ -67,7 +67,7 @@ FocusScope {
             enabled: root.enabled
             color: root.enabled ? "white" : Qt.rgba(1, 1, 1, 0.45)
             font.family: "monospace"
-            font.pixelSize: 14
+            font.pixelSize: 13
             echoMode: TextInput.Password
             passwordCharacter: "•"
             // No reveal delay: the last character is not echoed even briefly.
@@ -123,8 +123,8 @@ FocusScope {
             anchors.right: parent.right
             anchors.rightMargin: 4
             anchors.verticalCenter: parent.verticalCenter
-            width: 30
-            height: 30
+            width: 24
+            height: 24
             radius: width / 2
             color: goArea.containsMouse && goArea.enabled ? Qt.rgba(1, 1, 1, 0.32)
                                                           : Qt.rgba(1, 1, 1, 0.22)
@@ -158,11 +158,11 @@ FocusScope {
 
                     ctx.lineWidth = 1.5
                     ctx.beginPath()
-                    ctx.moveTo(cx - 5, cy)
-                    ctx.lineTo(cx + 5, cy)
-                    ctx.moveTo(cx + 1, cy - 4)
-                    ctx.lineTo(cx + 5, cy)
-                    ctx.lineTo(cx + 1, cy + 4)
+                    ctx.moveTo(cx - 4, cy)
+                    ctx.lineTo(cx + 4, cy)
+                    ctx.moveTo(cx + 1, cy - 3)
+                    ctx.lineTo(cx + 4, cy)
+                    ctx.lineTo(cx + 1, cy + 3)
                     ctx.stroke()
                 }
             }

@@ -346,11 +346,11 @@ private slots:
         };
         const auto [plainSize, plainRatio, plain] = paintedArea(1);
         const auto [denseSize, denseRatio, dense] = paintedArea(1.5);
-        QCOMPARE(plainSize, QSize(480, 560));
+        QCOMPARE(plainSize, QSize(480, 600));
         QCOMPARE(plainRatio, 1.0);
         // One texel per device pixel, and the content itself drawn larger, not
         // a logical-size drawing in the corner of a larger image.
-        QCOMPARE(denseSize, QSize(720, 840));
+        QCOMPARE(denseSize, QSize(720, 900));
         QCOMPARE(denseRatio, 1.5);
         QVERIFY(!plain.isEmpty());
         QVERIFY(std::abs(dense.width() - plain.width() * 1.5) <= 2);
@@ -515,15 +515,15 @@ private slots:
         };
         const render::Texture *texture = panelTexture();
         QVERIFY(texture);
-        QCOMPARE(texture->size(), QSize(480, 560));
+        QCOMPARE(texture->size(), QSize(480, 600));
         // A denser output redraws the panel larger. The renderer takes the
         // texture's own size for an update, so the texture has to be replaced.
         controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600), 2}});
         ui.refresh();
         texture = panelTexture();
         QVERIFY(texture);
-        QCOMPARE(ui.renderImage().size(), QSize(960, 1120));
-        QCOMPARE(texture->size(), QSize(960, 1120));
+        QCOMPARE(ui.renderImage().size(), QSize(960, 1200));
+        QCOMPARE(texture->size(), QSize(960, 1200));
     }
 
     void textureFailureKeepsCompositorShield()
