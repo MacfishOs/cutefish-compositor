@@ -7,6 +7,7 @@
 #include <QRegion>
 #include <functional>
 #include <map>
+#include <optional>
 #include <vector>
 
 #include "render/damage.h"
@@ -35,7 +36,12 @@ public:
                    uint32_t transform = 0,
                    const std::function<bool(const QRect &)> &backdropChanged = {})
     {
-        Frame frame = collect(root, viewport, scale, transform, backdropChanged);
+        Frame frame;
+        if (m_cached && !backdropChanged && m_cached->matches(root, viewport, scale, transform))
+            frame = std::move(m_cached->frame);
+        else
+            frame = collect(root, viewport, scale, transform, backdropChanged);
+        m_cached.reset();
         m_history = std::move(frame.history);
         m_viewport = viewport;
         m_samples = std::move(frame.samples);
@@ -43,10 +49,14 @@ public:
     }
 
     // Whether update() would find anything to repaint, leaving the history be.
+    // An output asks this before it draws; the collection is kept for the
+    // update() that follows, unless a node changes in between.
     bool hasDamage(const Node &root, const QRect &viewport, double scale = 1,
                    uint32_t transform = 0) const
     {
-        return !collect(root, viewport, scale, transform, {}).damage.isEmpty();
+        m_cached.emplace(Cached {Node::mutations(), &root, viewport, scale, transform,
+                                 collect(root, viewport, scale, transform, {})});
+        return !m_cached->frame.damage.isEmpty();
     }
 
     // What each blur found in the last update() reads, for the repaint to
@@ -64,6 +74,21 @@ private:
         QRegion damage;
         std::map<uint64_t, Entry> history;
         std::vector<QRect> samples;
+    };
+
+    struct Cached {
+        uint64_t mutations;
+        const Node *root;
+        QRect viewport;
+        double scale;
+        uint32_t transform;
+        Frame frame;
+
+        bool matches(const Node &node, const QRect &rect, double s, uint32_t t) const
+        {
+            return mutations == Node::mutations() && root == &node && viewport == rect
+                    && scale == s && transform == t;
+        }
     };
 
     // Bounds are kept relative to the viewport's origin: an output's viewport
@@ -180,6 +205,7 @@ private:
     std::map<uint64_t, Entry> m_history;
     QRect m_viewport;
     std::vector<QRect> m_samples;
+    mutable std::optional<Cached> m_cached;
 };
 
 } // namespace cutefish::scene

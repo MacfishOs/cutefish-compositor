@@ -83,6 +83,10 @@ public:
 
     uint64_t revision() const { return m_revision; }
 
+    // Counts every change any node reported, so a damage collection can be
+    // told apart from one over the same tree.
+    static uint64_t mutations() { return s_mutations; }
+
     uint64_t contentRevision() const { return m_contentRevision; }
 
     QRegion damageSince(uint64_t revision) const;
@@ -138,7 +142,12 @@ public:
     // plane, so composition leaves the same pixels out.
     bool isPromotedToOverlay() const { return m_promotedToOverlay; }
 
-    void setPromotedToOverlay(bool promoted) { m_promotedToOverlay = promoted; }
+    void setPromotedToOverlay(bool promoted)
+    {
+        if (m_promotedToOverlay != promoted)
+            ++s_mutations;
+        m_promotedToOverlay = promoted;
+    }
 
     // On screen, but never in an image or a video the compositor captures.
     bool isExcludedFromCapture() const { return m_excludedFromCapture; }
@@ -167,6 +176,7 @@ private:
     // The topmost child that occludes the output, or 0 when none does.
     size_t firstUnoccludedChild(const render::Renderer &renderer) const;
 
+    static uint64_t s_mutations;
     const uint64_t m_damageId;
     mutable uint64_t m_revision = 0;
     uint64_t m_contentRevision = 0;

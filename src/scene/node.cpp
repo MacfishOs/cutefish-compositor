@@ -10,6 +10,8 @@
 
 namespace cutefish::scene {
 
+uint64_t Node::s_mutations = 0;
+
 Node::Node(const QString &name)
     : m_damageId([] {
         static std::atomic<uint64_t> next {0};
@@ -115,6 +117,7 @@ void Node::reorderChildren(const std::vector<Node *> &order)
 void Node::notifyChanged() const
 {
     ++m_revision;
+    ++s_mutations;
     if (!isEffectivelyVisible())
         return;
     // Callback only queues work; it must not mutate or render the scene here.
@@ -136,6 +139,7 @@ void Node::notifyDamage(const QRegion &damage)
 {
     if (damage.isEmpty())
         return;
+    ++s_mutations;
     m_damageHistory.emplace_back(++m_contentRevision, damage);
     if (m_damageHistory.size() > 32)
         m_damageHistory.pop_front();
