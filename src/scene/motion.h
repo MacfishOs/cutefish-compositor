@@ -16,7 +16,7 @@ struct SpringParameters {
     double dampingRatio = 1;
 };
 
-// CUTEFISH_ANIMATION_DURATION_SCALE stretches every spring, the way
+// CUTEFISH_ANIMATION_DURATION_SCALE stretches every spring and tween, the way
 // ui::ScopedAnimationDurationScaleMode stretches Chromium's animations, so
 // motion can be judged in slow motion. 1 when unset or not a positive number.
 double durationScale();
@@ -61,6 +61,34 @@ private:
     double m_displacement = 0;
     double m_velocity = 0;
     double m_target = 0;
+};
+
+// A timed move on gfx::Tween::ACCEL_20_DECEL_100 whose start is bent to leave
+// at a given speed, so a release or a turn carries on without a kink. It never
+// overshoots: a start away from the target is not kept, and one faster than
+// the curve can begin at shortens the move instead.
+class Tween
+{
+public:
+    Tween() = default;
+    // From `from` at `time` to `target` within `durationMs`, leaving at
+    // `velocity` units per second.
+    Tween(double time, double from, double target, double durationMs, double velocity = 0);
+
+    double value(double time) const;
+    double velocity(double time) const;
+
+    double target() const { return m_target; }
+    bool isFinished(double time) const { return time >= m_start + m_duration; }
+
+private:
+    double m_start = 0;
+    double m_from = 0;
+    double m_target = 0;
+    double m_duration = 0;
+    // The first control point; the second is ACCEL_20_DECEL_100's (0, 1).
+    double m_x1 = 0.2;
+    double m_y1 = 0;
 };
 
 // A critically damped spring from `from` to `target` at `time`, keeping

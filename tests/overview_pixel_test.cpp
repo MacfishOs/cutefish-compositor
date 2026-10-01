@@ -128,7 +128,7 @@ TEST_F(OverviewPixels, TheWindowIsAtItsPlaceOverTheDimmedDesktop)
 TEST_F(OverviewPixels, HalfwayTheWindowIsHalfwayThere)
 {
     node->animateTo(1);
-    // Halfway along the spring, whenever that is.
+    // Halfway along the tween, whenever that is.
     while (node->progress(double(now)) < 0.5)
         ++now;
     const double progress = node->progress(double(now));

@@ -81,10 +81,10 @@ private:
 //
 // The progress follows the fingers of a touchpad swipe, resampled at frame
 // time as the desk swipe is, pulls against 0 and 1 like a rubber band and
-// lets go into a critically damped spring keeping the fingers' speed; the
-// shortcut rides the same spring. Upstream Ash interpolates cached transforms
-// by the scroll ratio (OverviewGrid::PositionWindowsContinuously) and decides
-// the release by distance alone.
+// lets go into a timed tween leaving at the fingers' speed; the shortcut rides
+// the same tween. Upstream Ash interpolates cached transforms by the scroll
+// ratio (OverviewGrid::PositionWindowsContinuously) and decides the release by
+// distance alone.
 class OverviewNode : public Node
 {
 public:
@@ -102,11 +102,10 @@ public:
         int selected = -1;
     };
 
-    // Critically damped springs, response in seconds: from a shortcut or a
-    // click, once the fingers let go, and a window moving to a new place.
-    static constexpr double kShowResponse = 0.45;
-    static constexpr double kSettleResponse = 0.4;
-    static constexpr double kLayoutResponse = 0.35;
+    // Ash's kTransition: the whole way in or out, shorter for less of it, and
+    // a window moving to a new place.
+    static constexpr double kShowDurationMs = 300;
+    static constexpr double kLayoutDurationMs = 300;
     // Released faster than this, in progress per second, the overview goes on
     // the way the fingers went; slower, to the nearer end.
     static constexpr double kFlickVelocity = 0.5;
@@ -125,7 +124,7 @@ public:
     // The desktop, drawn under the dim.
     void setBackdrop(std::vector<const Node *> nodes);
 
-    // `animate` moves windows already shown to their new places on a spring;
+    // `animate` moves windows already shown to their new places on a tween;
     // otherwise they are there at once.
     void setItems(std::vector<Item> items, bool animate);
     const std::vector<Item> &items() const { return m_items; }
@@ -189,12 +188,13 @@ private:
     enum class Motion {
         Still,
         Tracking,
-        Spring,
+        Tween,
     };
 
     double rubberBand(double pulled) const;
     double pulledPosition(double shown) const;
-    void settle(double now, double from, double target, double velocity, double response);
+    motion::Tween tweenTo(double now, double from, double target, double velocity) const;
+    void settle(double now, double from, double target, double velocity);
     void updateCoast();
     double layoutProgress(double timeMs) const;
     // Whether the chrome shows, and how much, at `timeMs`.
@@ -212,7 +212,7 @@ private:
     std::vector<Item> m_items;
     // Where each item was headed when the layout last changed.
     std::vector<QRectF> m_layoutFrom;
-    std::optional<motion::Spring> m_layout;
+    std::optional<motion::Tween> m_layout;
     int m_dragged = -1;
     QRectF m_dragRect;
     int m_raised = -1;
@@ -221,9 +221,9 @@ private:
     mutable Motion m_motion = Motion::Still;
     mutable double m_position = 0;
     motion::FingerTrack m_fingers;
-    std::optional<motion::Spring> m_coast;
+    std::optional<motion::Tween> m_coast;
     double m_coastStart = 0;
-    motion::Spring m_spring;
+    motion::Tween m_tween;
     // When the progress came to rest at 1, for the chrome to fade in from.
     mutable double m_shownAt = -1;
     std::function<void(double)> m_finished;

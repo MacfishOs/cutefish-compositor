@@ -264,7 +264,7 @@ void OverviewNode::setItems(std::vector<Item> items, bool animate)
                                                  : current.find(item.windows.front());
             from.push_back(it == current.end() ? item.to : it->second);
         }
-        m_layout = motion::settlingSpring(now, 0, 1, 0, kLayoutResponse);
+        m_layout = motion::Tween(now, 0, 1, kLayoutDurationMs);
     } else {
         for (const Item &item : items)
             from.push_back(item.to);
@@ -330,8 +330,8 @@ double OverviewNode::progress(double timeMs) const
                                   ? m_position
                                   : m_fingers.position(timeMs
                                                        - motion::FingerTrack::kResampleLatencyMs));
-    case Motion::Spring:
-        return m_spring.value(timeMs);
+    case Motion::Tween:
+        return m_tween.value(timeMs);
     }
     return m_position;
 }
@@ -343,17 +343,25 @@ double OverviewNode::target() const
         return m_position;
     case Motion::Tracking:
         return m_position >= 0.5 ? 1 : 0;
-    case Motion::Spring:
-        return m_spring.target();
+    case Motion::Tween:
+        return m_tween.target();
     }
     return m_position;
 }
 
-void OverviewNode::settle(double now, double from, double target, double velocity,
-                          double response)
+motion::Tween OverviewNode::tweenTo(double now, double from, double target,
+                                    double velocity) const
 {
-    m_spring = motion::settlingSpring(now, from, target, velocity, response);
-    m_motion = Motion::Spring;
+    // Less of the way takes less time, though more than its share, so a short
+    // way back is not a snap.
+    const double duration = kShowDurationMs * std::sqrt(std::min(std::abs(target - from), 1.0));
+    return motion::Tween(now, from, target, duration, velocity);
+}
+
+void OverviewNode::settle(double now, double from, double target, double velocity)
+{
+    m_tween = tweenTo(now, from, target, velocity);
+    m_motion = Motion::Tween;
     m_fingers.clear();
     m_coast.reset();
     m_shownAt = -1;
@@ -365,8 +373,8 @@ void OverviewNode::animateTo(double target)
     const double now = double(m_now());
     if (m_motion == Motion::Still && m_position == target)
         return;
-    const double velocity = m_motion == Motion::Spring ? m_spring.velocity(now) : 0;
-    settle(now, progress(now), target, velocity, kShowResponse);
+    const double velocity = m_motion == Motion::Tween ? m_tween.velocity(now) : 0;
+    settle(now, progress(now), target, velocity);
 }
 
 void OverviewNode::jumpTo(double value)
@@ -418,8 +426,7 @@ void OverviewNode::updateCoast()
     if (position < 0 || position > 1)
         return;
     m_coastStart = from + motion::FingerTrack::kResampleLatencyMs;
-    m_coast = motion::settlingSpring(m_coastStart, position, *velocity > 0 ? 1 : 0, *velocity,
-                                     kSettleResponse);
+    m_coast = tweenTo(m_coastStart, position, *velocity > 0 ? 1 : 0, *velocity);
 }
 
 double OverviewNode::endTracking(double timeMs)
@@ -429,12 +436,12 @@ double OverviewNode::endTracking(double timeMs)
     const double now = double(m_now());
     if (m_coast) {
         // Already on its way since the fingers stopped reporting.
-        m_spring = *m_coast;
-        m_motion = Motion::Spring;
+        m_tween = *m_coast;
+        m_motion = Motion::Tween;
         m_fingers.clear();
         m_coast.reset();
         notifyChanged();
-        return m_spring.target();
+        return m_tween.target();
     }
     double velocity = m_fingers.releaseVelocity(timeMs);
     const double current = progress(now);
@@ -446,18 +453,13 @@ double OverviewNode::endTracking(double timeMs)
         target = 1;
     else if (velocity <= -kFlickVelocity)
         target = 0;
-    settle(now, current, target, velocity, kSettleResponse);
+    settle(now, current, target, velocity);
     return target;
 }
 
 double OverviewNode::layoutProgress(double timeMs) const
 {
-    if (!m_layout)
-        return 1;
-    // A spring at rest is a hair short of its end, which would leave every
-    // window a fraction of a pixel off its place.
-    const double value = m_layout->value(timeMs);
-    return value >= 1 - 1e-6 ? 1 : std::clamp(value, 0.0, 1.0);
+    return m_layout ? m_layout->value(timeMs) : 1;
 }
 
 QRectF OverviewNode::presentedRect(int index, double progress, double timeMs) const
@@ -482,7 +484,7 @@ float OverviewNode::chromeOpacity(double timeMs) const
 void OverviewNode::landed(double now) const
 {
     m_motion = Motion::Still;
-    m_position = m_spring.target();
+    m_position = m_tween.target();
     m_shownAt = m_position >= 1 ? now : -1;
     if (m_finished)
         m_finished(m_position);
@@ -494,7 +496,6 @@ void OverviewNode::render(render::Renderer &renderer) const
         return;
     const double now = frameNow(renderer, m_now);
     const QRect viewport = viewportOf(renderer, *this);
-    const double scale = renderer.rasterScale();
     const double progress = this->progress(now);
 
     renderer.fillRect(viewport, kBlack);
@@ -514,31 +515,25 @@ void OverviewNode::render(render::Renderer &renderer) const
 
     if (renderer.capturing)
         return;
-    const double pixels = viewport.height() * std::max(scale, 1.0);
     switch (m_motion) {
     case Motion::Still:
         break;
     case Motion::Tracking: {
         // Until the resampled position catches up with the newest event, or
         // for as long as it coasts.
-        const bool coasting = m_coast
-                && (std::abs(m_coast->value(now) - m_coast->target()) * pixels >= 0.5
-                    || std::abs(m_coast->velocity(now)) * pixels >= 60);
+        const bool coasting = m_coast && !m_coast->isFinished(now);
         if (coasting || m_fingers.isCatchingUp(now))
             notifyChanged();
         break;
     }
-    case Motion::Spring:
-        // Within half a device pixel, and slower than a pixel a frame: the
-        // next frame would be this one.
-        if (std::abs(m_spring.value(now) - m_spring.target()) * pixels < 0.5
-            && std::abs(m_spring.velocity(now)) * pixels < 60)
+    case Motion::Tween:
+        if (m_tween.isFinished(now))
             landed(now);
         // The landing frame, or the next one of the motion.
         notifyChanged();
         break;
     }
-    if (m_layout && std::abs(m_layout->value(now) - 1) * pixels >= 0.5)
+    if (m_layout && !m_layout->isFinished(now))
         notifyChanged();
     if (const float chrome = chromeOpacity(now); chrome > 0 && chrome < 1)
         notifyChanged();

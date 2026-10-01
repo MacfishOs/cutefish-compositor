@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// The overview node's progress - the spring, the fingers, the rubber band and
+// The overview node's progress - the tween, the fingers, the rubber band and
 // the hand-offs between them - on a fake frame clock, and where it draws the
 // windows it moves.
 
@@ -149,23 +149,24 @@ TEST(OverviewNode, AtZeroItCoversNothingAndDrawsNothing)
     EXPECT_EQ(2, kinds.count(QStringLiteral("fill")));
 }
 
-TEST(OverviewNode, TheShortcutSpringsInAndLandsOnce)
+TEST(OverviewNode, TheShortcutGlidesInAndLandsOnTime)
 {
     Fixture f;
+    const qint64 start = f.now;
     f.node->animateTo(1);
     EXPECT_TRUE(f.node->isActive());
     EXPECT_TRUE(f.node->occludesOutput(f.renderer));
     double last = 0;
-    for (int frame = 0; frame < 30; ++frame) {
-        f.now += 16;
+    while (f.now - start < qint64(Node::kShowDurationMs)) {
+        f.now += 4;
         f.paint();
         const double progress = f.node->progress(double(f.now));
         EXPECT_GE(progress, last);
         EXPECT_LE(progress, 1);
         last = progress;
     }
-    f.now += kSettleMs;
-    f.paint();
+    // No tail creeping in after its time.
+    EXPECT_EQ(1, last);
     f.paint();
     EXPECT_EQ(QList<double>({1}), f.finished);
     EXPECT_TRUE(f.node->isSettled());
@@ -263,7 +264,24 @@ TEST(OverviewNode, AHeldReleaseGoesToTheNearerEndAndAFlickGoesOn)
     }
 }
 
-TEST(OverviewNode, TheFingersCatchTheSpringWhereItIsShown)
+TEST(OverviewNode, ReleasedItCarriesOnAtTheFingersSpeed)
+{
+    Fixture f;
+    f.node->startTracking();
+    // Past half way slower than a flick: 0.4 a second towards the nearer end.
+    for (int step = 0; step < 150; ++step) {
+        f.now += 10;
+        f.node->updateTracking(0.004, double(f.now));
+    }
+    EXPECT_EQ(1, f.node->endTracking(double(f.now)));
+    const double now = double(f.now);
+    const double speed = (f.node->progress(now + 0.1) - f.node->progress(now)) * 10000;
+    EXPECT_NEAR(0.4, speed, 0.02);
+    f.settle();
+    EXPECT_EQ(QList<double>({1}), f.finished);
+}
+
+TEST(OverviewNode, TheFingersCatchTheTweenWhereItIsShown)
 {
     Fixture f;
     f.node->animateTo(1);
@@ -281,7 +299,7 @@ TEST(OverviewNode, TheFingersCatchTheSpringWhereItIsShown)
     EXPECT_NEAR(tracked, f.node->progress(double(f.now)), 1e-9);
 }
 
-TEST(OverviewNode, ANewLayoutMovesWindowsThereOnASpring)
+TEST(OverviewNode, ANewLayoutMovesWindowsThereOnATween)
 {
     Fixture f;
     f.node->jumpTo(1);

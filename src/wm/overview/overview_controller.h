@@ -170,7 +170,7 @@ private:
     // Whether `window` is one of the overview's items.
     bool isOverviewWindow(const Window *window) const;
     // Lays the windows out again; `animate` moves the ones already shown to
-    // their new places on a spring.
+    // their new places on a tween.
     void rebuild(bool animate);
     void buildBars();
     // Where the dragged item is drawn with the pointer at `location`: shrunk

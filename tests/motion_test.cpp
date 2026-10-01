@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -102,4 +103,46 @@ TEST(MotionTest, ZeroResponseJumpsToTheTarget)
     spring.reset(0, 3, 9, 100);
     EXPECT_DOUBLE_EQ(spring.value(0), 9);
     EXPECT_DOUBLE_EQ(spring.velocity(0), 0);
+}
+
+TEST(MotionTest, TweenLandsOnTimeWithoutOvershoot)
+{
+    const Tween tween(100, 2, 6, 300);
+    EXPECT_DOUBLE_EQ(2, tween.value(100));
+    EXPECT_NEAR(0, tween.velocity(100), 1e-6);
+    double last = 2;
+    for (double time = 100; time < 400; time += 5) {
+        const double value = tween.value(time);
+        EXPECT_GE(value, last);
+        EXPECT_LE(value, 6);
+        last = value;
+    }
+    EXPECT_FALSE(tween.isFinished(399));
+    EXPECT_TRUE(tween.isFinished(400));
+    EXPECT_DOUBLE_EQ(6, tween.value(400));
+}
+
+TEST(MotionTest, TweenLeavesAtItsStartVelocity)
+{
+    // 10 a second over 4 in 0.3 s: three quarters of the average speed.
+    const Tween tween(0, 2, 6, 300, 10);
+    EXPECT_NEAR(10, tween.velocity(0), 1e-6);
+    for (const double time : {20.0, 150.0, 280.0}) {
+        const double numeric = (tween.value(time + 0.01) - tween.value(time - 0.01)) / 0.02 * 1000;
+        EXPECT_NEAR(numeric, tween.velocity(time), 1e-3 * std::max(1.0, std::abs(numeric)));
+    }
+    EXPECT_TRUE(tween.isFinished(300));
+}
+
+TEST(MotionTest, AFastStartShortensTheTweenAndABackwardOneIsDropped)
+{
+    // 200 a second would need a start five times the average over 300 ms.
+    const Tween fast(0, 0, 4, 300, 200);
+    EXPECT_NEAR(200, fast.velocity(0), 1e-6);
+    EXPECT_TRUE(fast.isFinished(100));
+    EXPECT_LE(fast.value(50), 4);
+
+    const Tween backward(0, 0, 4, 300, -20);
+    EXPECT_NEAR(0, backward.velocity(0), 1e-6);
+    EXPECT_FALSE(backward.isFinished(299));
 }

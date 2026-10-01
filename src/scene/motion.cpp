@@ -17,6 +17,29 @@ namespace {
 // precision; the critically damped one is exact there.
 constexpr double kCriticalTolerance = 1e-4;
 
+double bezierAt(double a, double b, double s)
+{
+    return 3 * a * (1 - s) * (1 - s) * s + 3 * b * (1 - s) * s * s + s * s * s;
+}
+
+double bezierSlope(double a, double b, double s)
+{
+    return 3 * a * (1 - s) * (1 - s) + 6 * (b - a) * (1 - s) * s + 3 * (1 - b) * s * s;
+}
+
+// The curve parameter where its x is `x`.
+double bezierParameter(double x1, double x2, double x)
+{
+    x = std::clamp(x, 0.0, 1.0);
+    double low = 0;
+    double high = 1;
+    for (int i = 0; i < 32; ++i) {
+        const double middle = (low + high) / 2;
+        (bezierAt(x1, x2, middle) < x ? low : high) = middle;
+    }
+    return (low + high) / 2;
+}
+
 } // namespace
 
 double durationScale()
@@ -34,17 +57,48 @@ double durationScale()
 
 double cubicBezier(double x1, double y1, double x2, double y2, double x)
 {
-    const auto at = [](double a, double b, double s) {
-        return 3 * a * (1 - s) * (1 - s) * s + 3 * b * (1 - s) * s * s + s * s * s;
-    };
-    x = std::clamp(x, 0.0, 1.0);
-    double low = 0;
-    double high = 1;
-    for (int i = 0; i < 32; ++i) {
-        const double middle = (low + high) / 2;
-        (at(x1, x2, middle) < x ? low : high) = middle;
+    return bezierAt(y1, y2, bezierParameter(x1, x2, x));
+}
+
+Tween::Tween(double time, double from, double target, double durationMs, double velocity)
+    : m_start(time)
+    , m_from(from)
+    , m_target(target)
+    , m_duration(std::max(0.0, durationMs * durationScale()))
+{
+    const double distance = target - from;
+    if (distance == 0 || m_duration <= 0 || velocity * distance <= 0)
+        return;
+    // The curve leaves at y1 / x1 times its average speed; y1 above 1 would
+    // overshoot, so a faster start takes less time.
+    const double maxSlope = 1 / m_x1;
+    double slope = velocity * m_duration / 1000 / distance;
+    if (slope > maxSlope) {
+        m_duration *= maxSlope / slope;
+        slope = maxSlope;
     }
-    return at(y1, y2, (low + high) / 2);
+    m_y1 = m_x1 * slope;
+}
+
+double Tween::value(double time) const
+{
+    if (isFinished(time))
+        return m_target;
+    if (time <= m_start)
+        return m_from;
+    const double y = cubicBezier(m_x1, m_y1, 0, 1, (time - m_start) / m_duration);
+    return m_from + (m_target - m_from) * y;
+}
+
+double Tween::velocity(double time) const
+{
+    if (isFinished(time) || time < m_start)
+        return 0;
+    const double s = bezierParameter(m_x1, 0, (time - m_start) / m_duration);
+    const double dx = bezierSlope(m_x1, 0, s);
+    if (dx <= 0)
+        return 0;
+    return (m_target - m_from) * bezierSlope(m_y1, 1, s) / dx / (m_duration / 1000);
 }
 
 Spring::Spring()
