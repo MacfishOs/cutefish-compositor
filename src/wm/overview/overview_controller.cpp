@@ -95,7 +95,8 @@ void OverviewController::setNodes(scene::OverviewNode *node, scene::OverviewDesk
 bool OverviewController::isOverviewWindow(const Window *window) const
 {
     if (!window || window->isShellWindow() || layerFor(window) != StackingLayer::Normal
-        || !canIncludeWindowInMruList(window) || window->isHidden() || window->isDragPreview()
+        || !canIncludeWindowInMruList(window) || window->state()->isMinimized()
+        || window->isHidden() || window->isDragPreview()
         || !animationOf(window) || window->bounds().isEmpty())
         return false;
     return m_manager->desks()->belongsToActiveDesk(window);
@@ -260,7 +261,7 @@ void OverviewController::rebuild(bool animate)
             m_selected = int(m_items.size());
         if (window == dragged)
             m_dragged = int(m_items.size());
-        m_items.push_back({window, place->second, window->state()->isMinimized()});
+        m_items.push_back({window, place->second});
     }
     if (pressedWindow && pressedIndex < 0)
         m_press.reset();
@@ -289,7 +290,6 @@ void OverviewController::updateNodes(bool animate)
                 node.windows.push_back(animationOf(window));
         }
         node.to = item.bounds;
-        node.fades = item.minimized;
         node.title = item.window->title();
         items.push_back(std::move(node));
     }
@@ -407,12 +407,6 @@ void OverviewController::activateForExit(Window *window)
     m_activating = true;
     if (window->isHidden())
         m_manager->unhideApplication(window);
-    if (m_manager->hasWindow(window) && window->state()->isMinimized()) {
-        window->restore();
-        // It comes back from where the overview shows it, not from the dock.
-        if (auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node()))
-            animation->finish();
-    }
     if (m_manager->hasWindow(window))
         m_manager->activation()->activate(window);
     m_activating = false;
@@ -616,7 +610,7 @@ OverviewController::Hit OverviewController::hitTest(const QPointF &location) con
         if (index == m_dragged)
             continue;
         const QRectF bounds = moving
-                ? m_node->presentedRect(index, progress, m_node->clockTime(), nullptr)
+                ? m_node->presentedRect(index, progress, m_node->clockTime())
                 : item.bounds;
         if (bounds.contains(location)) {
             hit.type = Hit::Type::Item;

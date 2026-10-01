@@ -129,7 +129,6 @@ public:
     struct Item {
         Window *window = nullptr;
         QRectF bounds;
-        bool minimized = false;
     };
     const std::vector<Item> &items() const { return m_items; }
     const std::vector<scene::OverviewDeskBarNode::Bar> &bars() const { return m_bars; }

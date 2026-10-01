@@ -124,7 +124,7 @@ struct Fixture {
 
     QRectF rect(double progress) const
     {
-        return node->presentedRect(0, progress, double(now), nullptr);
+        return node->presentedRect(0, progress, double(now));
     }
 };
 
@@ -184,14 +184,6 @@ TEST(OverviewNode, AWindowMovesFromWhereItIsToItsPlace)
     EXPECT_EQ(QRectF(kWindow), f.rect(0));
     EXPECT_EQ(kPlace, f.rect(1));
     EXPECT_EQ(lerp(kWindow, kPlace, 0.5), f.rect(0.5));
-
-    // A minimized window stays at its place and fades in.
-    Node::Item minimized = f.item();
-    minimized.fades = true;
-    f.node->setItems({minimized}, false);
-    float opacity = 0;
-    EXPECT_EQ(kPlace, f.node->presentedRect(0, 0.25, double(f.now), &opacity));
-    EXPECT_FLOAT_EQ(0.25f, opacity);
 }
 
 TEST(OverviewNode, TheWindowIsDrawnScaledOntoItsPlace)

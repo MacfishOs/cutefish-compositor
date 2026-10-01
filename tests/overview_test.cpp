@@ -23,6 +23,7 @@
 #include "input/seat.h"
 #include "scene/overview_node.h"
 #include "scene/scene.h"
+#include "scene/window_animation.h"
 #include "shm_test_util.h"
 #include "wm/activation.h"
 #include "wm/desks/desk.h"
@@ -396,20 +397,21 @@ TEST_F(OverviewTest, ActivationFromElsewhereEndsIt)
     EXPECT_EQ(State::Exiting, overview->state());
 }
 
-TEST_F(OverviewTest, MinimizedWindowsFadeInAndComeBackWhenPicked)
+TEST_F(OverviewTest, MinimizedWindowsAreLeftOut)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
-    window->minimize();
-    ASSERT_TRUE(window->state()->isMinimized());
+    Window *shown = makeWindow(QRect(100, 100, 500, 400));
+    Window *minimized = makeWindow(QRect(300, 200, 500, 400));
+    // Minimized from the click on, its animation still running.
+    minimized->minimize();
+    ASSERT_TRUE(minimized->state()->isMinimized());
+    const auto *animation = dynamic_cast<const scene::WindowAnimation *>(minimized->node());
+    ASSERT_TRUE(animation && animation->type() == scene::WindowAnimation::Type::Minimize
+                && animation->isRunning());
     show();
     ASSERT_EQ(1u, overview->items().size());
-    EXPECT_TRUE(overview->items()[0].minimized);
-    // Drawn from its live content, which is hidden with it.
+    EXPECT_EQ(shown, overview->items()[0].window);
     paint();
-    EXPECT_TRUE(drewContentOf(window));
-    click(placeOf(window).center());
-    EXPECT_FALSE(window->state()->isMinimized());
-    EXPECT_EQ(window, active());
+    EXPECT_FALSE(drewContentOf(minimized));
 }
 
 TEST_F(OverviewTest, ClickingADeskShowsItsWindowsAndStaysUp)
@@ -510,7 +512,7 @@ TEST_F(OverviewTest, ThreeFingersUpFollowAndDownLeave)
     EXPECT_EQ(State::Entering, overview->state());
     const double progress = node->progress(double(now) + 5);
     EXPECT_NEAR(0.6, progress, 0.05);
-    const QRectF halfway = node->presentedRect(0, progress, double(now), nullptr);
+    const QRectF halfway = node->presentedRect(0, progress, double(now));
     EXPECT_LT(halfway.width(), window->bounds().width());
     EXPECT_GT(halfway.width(), placeOf(window).width());
     now += 200;
@@ -567,7 +569,7 @@ TEST_F(OverviewTest, ADraggedWindowShrinksOnItsWayToTheBar)
     const QRectF place = placeOf(window);
     const int index = indexOf(window);
     const auto dragged = [&] {
-        return node->presentedRect(index, 1, double(now), nullptr);
+        return node->presentedRect(index, 1, double(now));
     };
     moveTo(place.center());
     input.onPointerButton(at(now), BTN_LEFT, true);
@@ -754,7 +756,7 @@ TEST_F(OverviewTest, AClickWhileItComesInTakesTheWindowUnderThePointer)
     ASSERT_LT(progress, 0.9);
     ASSERT_EQ(State::Entering, overview->state());
     // Where it is drawn now, not where it is going.
-    const QRectF drawn = node->presentedRect(indexOf(first), progress, double(now), nullptr);
+    const QRectF drawn = node->presentedRect(indexOf(first), progress, double(now));
     click(drawn.center());
     EXPECT_EQ(State::Exiting, overview->state());
     EXPECT_EQ(first, active());

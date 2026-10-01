@@ -460,16 +460,13 @@ double OverviewNode::layoutProgress(double timeMs) const
     return value >= 1 - 1e-6 ? 1 : std::clamp(value, 0.0, 1.0);
 }
 
-QRectF OverviewNode::presentedRect(int index, double progress, double timeMs,
-                                   float *opacity) const
+QRectF OverviewNode::presentedRect(int index, double progress, double timeMs) const
 {
     const Item &item = m_items[index];
     const QRectF to = index == m_dragged
             ? m_dragRect
             : lerp(m_layoutFrom[index], item.to, layoutProgress(timeMs));
-    if (opacity)
-        *opacity = item.fades ? float(std::clamp(progress, 0.0, 1.0)) : 1;
-    if (item.fades || item.windows.empty() || index == m_dragged)
+    if (item.windows.empty() || index == m_dragged)
         return to;
     return lerp(item.windows.front()->absoluteGeometry(), to, progress);
 }
@@ -553,14 +550,13 @@ void OverviewNode::renderItem(render::Renderer &renderer, int index, double prog
     const Item &item = m_items[index];
     if (item.windows.empty())
         return;
-    float opacity = 1;
-    QRectF rect = presentedRect(index, progress, now, &opacity);
+    QRectF rect = presentedRect(index, progress, now);
     if (progress > 0)
         rect = snapped(rect, renderer.rasterScale());
     const QRect reach = viewportOf(renderer, *this)
                                 .adjusted(-kShadowMargin, -kShadowMargin, kShadowMargin,
                                           kShadowMargin);
-    if (opacity <= 0 || !rect.intersects(reach))
+    if (!rect.intersects(reach))
         return;
     const double uniform = std::clamp(progress, 0.0, 1.0);
     const QRectF from = item.windows.front()->absoluteGeometry();
@@ -569,14 +565,14 @@ void OverviewNode::renderItem(render::Renderer &renderer, int index, double prog
         const double scale = window->absoluteGeometry().isEmpty()
                 ? 1
                 : bounds.width() / window->absoluteGeometry().width();
-        const WindowAnimation::Presentation presentation {bounds, opacity, uniform,
+        const WindowAnimation::Presentation presentation {bounds, 1, uniform,
                                                           m_frame.radius * scale};
         const render::RoundedShape body = window->presentedBody(presentation);
         if (m_frame.shadow)
-            m_frame.shadow(renderer, *window, body, uniform, opacity);
+            m_frame.shadow(renderer, *window, body, uniform, 1);
         window->renderPresented(renderer, presentation);
         if (m_frame.outline && uniform > 0)
-            m_frame.outline(renderer, body, opacity * float(uniform));
+            m_frame.outline(renderer, body, float(uniform));
     }
 }
 
@@ -616,7 +612,7 @@ void OverviewNode::renderChrome(render::Renderer &renderer, const QRect &viewpor
         return;
     const double scale = renderer.rasterScale();
     const auto rectOf = [&](int index) {
-        return snapped(presentedRect(index, 1, now, nullptr), scale);
+        return snapped(presentedRect(index, 1, now), scale);
     };
     // Around the body, its corners the body's grown by the gap between them.
     const auto ring = [&](int index, const render::Color &color) {

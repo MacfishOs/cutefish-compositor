@@ -132,7 +132,7 @@ TEST_F(OverviewPixels, HalfwayTheWindowIsHalfwayThere)
     while (node->progress(double(now)) < 0.5)
         ++now;
     const double progress = node->progress(double(now));
-    const QRectF rect = node->presentedRect(0, progress, double(now), nullptr);
+    const QRectF rect = node->presentedRect(0, progress, double(now));
     const QImage image = paint();
     EXPECT_EQ(QColor(Qt::red), image.pixelColor(pixel(rect.center().x(), rect.center().y())));
     EXPECT_NE(QColor(Qt::red), image.pixelColor(pixel(rect.right() + 1, rect.center().y())));

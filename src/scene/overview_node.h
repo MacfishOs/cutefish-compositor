@@ -93,8 +93,6 @@ public:
         // The first one's geometry is what `to` places.
         std::vector<const WindowAnimation *> windows;
         QRectF to;
-        // A minimized window fades in at its place instead of moving there.
-        bool fades = false;
         QString title;
     };
 
@@ -176,8 +174,8 @@ public:
         m_finished = std::move(callback);
     }
 
-    // Where item `index` is drawn at `progress`, and at what opacity.
-    QRectF presentedRect(int index, double progress, double timeMs, float *opacity) const;
+    // Where item `index` is drawn at `progress`.
+    QRectF presentedRect(int index, double progress, double timeMs) const;
 
     void render(render::Renderer &renderer) const override;
     Content content() const override { return isActive() ? Content::Opaque : Content::None; }

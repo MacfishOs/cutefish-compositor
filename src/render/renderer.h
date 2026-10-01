@@ -129,7 +129,7 @@ public:
     // read the screen, so it goes without them.
     bool suppressBackgroundBlur = false;
 
-    // A window drawn by the overview while it is minimized or on another desk:
+    // A window drawn by the desk bar while it is on another desk:
     // its surfaces hidden along with it are drawn too.
     bool revealHiddenSurfaces = false;
 
