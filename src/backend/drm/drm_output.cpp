@@ -883,7 +883,7 @@ void DrmOutput::wakeup()
     const bool drawn = frame
             && (!m_beginFrameCallback
                 || m_beginFrameCallback(std::chrono::duration<double, std::milli>(
-                                                m_scheduler.frameTime().time_since_epoch())
+                                                m_scheduler.sampleTime().time_since_epoch())
                                                 .count())
                 || m_forceFrame);
     if (frame && !drawn) {
@@ -946,7 +946,7 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
 
     m_renderer->presentationSubmission = &presentation;
     m_renderer->frameTime = std::chrono::duration<double, std::milli>(
-                                    m_scheduler.frameTime().time_since_epoch())
+                                    m_scheduler.sampleTime().time_since_epoch())
                                     .count();
     m_renderer->framePeriod =
             std::chrono::duration_cast<std::chrono::milliseconds>(m_scheduler.period()).count();

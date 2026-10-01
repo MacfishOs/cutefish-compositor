@@ -95,12 +95,17 @@ public:
 
     unsigned pendingFrames() const { return unsigned(m_pending.size()); }
 
-    // The refresh slot the frame begun last was rendered in, what viz hands
-    // out as BeginFrameArgs::frame_time: the nominal slot start, never the
-    // moment the wakeup happened to run. Animations step on it rather than on
-    // the wall clock, so a late wakeup or a slow upload before the draw cannot
-    // move them off the display's cadence.
+    // The refresh slot the frame begun last was rendered in: the nominal slot
+    // start, never the moment the wakeup happened to run.
     Time frameTime() const { return m_frameTime; }
+
+    // The time the frame begun last shows, what viz hands out as
+    // BeginFrameArgs::frame_time: the slot's draw point, since the draw begins
+    // there as viz's begins at its BeginFrame. Animations and resampled fingers
+    // step on it rather than on the wall clock, so a late wakeup or a slow
+    // upload cannot move them off the display's cadence; on the slot start
+    // they would reach the screen most of a refresh behind.
+    Time sampleTime() const { return m_sampleTime; }
 
     State state() const { return m_state; }
 
@@ -152,7 +157,7 @@ private:
     Duration m_period;
     std::function<Time()> m_now;
     State m_state = State::Suspended;
-    Time m_next {}, m_deadline {}, m_frameTime {}, m_began {};
+    Time m_next {}, m_deadline {}, m_frameTime {}, m_sampleTime {}, m_began {};
     // The display's last flip, which the slots are laid on; unset without
     // timestamps, and then slots only keep their own cadence.
     std::optional<Time> m_vblank;

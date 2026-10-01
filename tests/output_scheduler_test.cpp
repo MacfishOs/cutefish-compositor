@@ -328,6 +328,48 @@ TEST_F(SchedulerTest, AWakeupJustShortOfTheDeadlineDrawsInItsSlot)
     EXPECT_EQ(scheduler.frameTime(), at(20ms));
 }
 
+TEST_F(SchedulerTest, FramesShowTheirDrawPoint)
+{
+    const auto at = [](auto offset) {
+        return OutputScheduler::Time {} + offset;
+    };
+    start();
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline();
+    submit();
+    now = at(10ms);
+    ASSERT_TRUE(scheduler.complete(pending, at(10ms)));
+    pending = 0;
+    const auto budget = scheduler.drawBudget();
+
+    // A run of frames shows each at its draw point, a period apart, however
+    // late or early its wakeup ran.
+    for (const auto late : {0ms, 3ms, 0ms}) {
+        scheduler.request(Reason::Scene);
+        const auto deadline = *scheduler.deadline();
+        now = deadline + late;
+        submit();
+        EXPECT_EQ(scheduler.sampleTime(), deadline);
+        EXPECT_EQ(scheduler.sampleTime(), scheduler.frameTime() + 10ms - budget);
+        now = scheduler.frameTime() + 10ms;
+        ASSERT_TRUE(scheduler.complete(pending, now));
+        pending = 0;
+    }
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline() - OutputScheduler::kWakeupSlack / 2;
+    submit();
+    EXPECT_EQ(scheduler.sampleTime(), scheduler.frameTime() + 10ms - budget);
+    now = scheduler.frameTime() + 10ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+
+    // Demand early in an idle slot is drawn at once, and shows that moment.
+    now += 1s + 1ms;
+    scheduler.request(Reason::Scene);
+    submit();
+    EXPECT_EQ(scheduler.sampleTime(), now);
+}
+
 TEST_F(SchedulerTest, FramesSlowerThanAThirdOfARefreshAreBegunInTime)
 {
     // Each frame lands on the vblank it was aimed at, `gpu` after its wakeup.

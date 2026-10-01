@@ -113,6 +113,8 @@ uint64_t OutputScheduler::begin()
         // Preserve the nominal phase for ordinary jitter; skip all missed slots.
         m_frameTime = m_deadline + ((now - m_deadline) / m_period) * m_period;
     }
+    // Demand drawn at once, early in a slot, shows the moment it was drawn.
+    m_sampleTime = std::min(drawPoint(m_frameTime), std::max(now, m_deadline));
     m_next = m_frameTime + m_period;
     return m_frame;
 }
