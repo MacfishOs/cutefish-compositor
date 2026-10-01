@@ -875,41 +875,35 @@ TEST_F(DrmOutputTest, AnOutputWithoutVblankIsPacedAtSixtyHertz)
     EXPECT_NEAR(drm->refreshRate(), 75.0, 0.01);
 }
 
-TEST_F(DrmOutputTest, AFrameRenderedBehindAPendingFlipIsCommittedWhenThatFlipLands)
+// A frame drawn behind a flip that missed its vblank would land a refresh
+// late, and so would every frame begun before the queue drains.
+TEST_F(DrmOutputTest, NoFrameIsDrawnBehindALateFlip)
 {
     auto &a = update();
     ASSERT_TRUE(drm->enable());
     flip(0);
     EXPECT_EQ(a.events, std::vector<char> {'p'});
-    // One flip on its way to the screen.
+    // One flip on its way to the screen, and it misses its vblank.
     auto &b = update();
     drm->scheduleFrame();
     ASSERT_TRUE(waitEvents(2));
-    // The next slot's frame is drawn behind it, but KMS holds one flip per
-    // CRTC: nothing more reaches the device until the first lands.
     auto &c = update();
     drm->scheduleFrame();
     QDeadlineTimer deadline(60);
     while (!deadline.hasExpired())
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     EXPECT_EQ(events.size(), 2u);
-    EXPECT_EQ(prepared, 3);
-    EXPECT_EQ(acquired, 3);
+    EXPECT_EQ(prepared, 2);
     EXPECT_TRUE(c.events.empty());
-    // A third one is not drawn while two are outstanding.
-    drm->scheduleFrame();
-    deadline.setRemainingTime(60);
-    while (!deadline.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    EXPECT_EQ(prepared, 3);
-    // The landing flip commits the queued frame at once, before the
-    // completion is announced.
+    // Once it lands, the next frame is drawn in its own slot and lands on the
+    // following vblank.
     flip(1, 43);
-    EXPECT_EQ(events.size(), 3u);
     EXPECT_EQ(b.events, std::vector<char> {'p'});
     EXPECT_EQ(b.seqLo, 43u);
-    EXPECT_TRUE(c.events.empty());
     EXPECT_EQ(released, 1);
+    ASSERT_TRUE(waitEvents(3));
+    EXPECT_EQ(prepared, 3);
+    EXPECT_TRUE(c.events.empty());
     flip(2, 44);
     EXPECT_EQ(c.events, std::vector<char> {'p'});
     EXPECT_EQ(c.seqLo, 44u);
@@ -940,18 +934,16 @@ TEST_F(DrmOutputTest, FrameCallbacksCompleteWhenTheFrameIsDrawnNotWhenItLands)
     drm->scheduleFrame();
     ASSERT_TRUE(waitEvents(2));
     EXPECT_EQ(first, 1);
-    // The next frame is drawn behind the flip still on its way.
+    // The next frame, drawn once that flip lands, completes it before its own
+    // flip does.
     int second = 0;
     requestFrame(second);
     update();
     drm->scheduleFrame();
-    QDeadlineTimer deadline(3000);
-    while (prepared < 3 && !deadline.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    ASSERT_EQ(prepared, 3);
-    ASSERT_EQ(events.size(), 2u);
-    EXPECT_EQ(second, 1);
     flip(1, 43);
+    ASSERT_TRUE(waitEvents(3));
+    EXPECT_EQ(prepared, 3);
+    EXPECT_EQ(second, 1);
     flip(2, 44);
     EXPECT_EQ(first, 1);
     EXPECT_EQ(second, 1);
@@ -1025,18 +1017,23 @@ TEST_F(DrmOutputTest, AFrameWithNothingToDrawBeginsButIsNeitherDrawnNorFlipped)
 
 TEST_F(DrmOutputTest, DisablingDiscardsTheQueuedFrameAndReleasesItsBuffer)
 {
+    // Only flips without a vblank stamp leave a frame queued behind another.
     update();
     ASSERT_TRUE(drm->enable());
-    flip(0);
+    flip(0, 0);
     update();
     drm->scheduleFrame();
     ASSERT_TRUE(waitEvents(2));
+    flip(1, 0);
+    update();
+    drm->scheduleFrame();
+    ASSERT_TRUE(waitEvents(3));
     auto &c = update();
     drm->scheduleFrame();
     QDeadlineTimer deadline(60);
     while (!deadline.hasExpired())
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    ASSERT_EQ(acquired, 3);
+    ASSERT_EQ(acquired, 4);
     std::vector<quint64> discarded;
     const auto connection =
             QObject::connect(drm.get(), &Output::frameDiscarded, drm.get(), [&](quint64 frame) {
@@ -1044,16 +1041,16 @@ TEST_F(DrmOutputTest, DisablingDiscardsTheQueuedFrameAndReleasesItsBuffer)
             });
     active = false;
     drm->disable();
-    EXPECT_EQ(discarded, (std::vector<quint64> {events[1].frame, events[1].frame + 1}));
+    EXPECT_EQ(discarded, (std::vector<quint64> {events[2].frame, events[2].frame + 1}));
     // Once discarded, a frame owes nothing more.
     drm->disable();
     EXPECT_EQ(discarded.size(), 2u);
     QObject::disconnect(connection);
-    EXPECT_EQ(events.size(), 2u);
+    EXPECT_EQ(events.size(), 3u);
     // Only the queued frame's buffer is free; the flipped ones are retained
     // until a modeset replaces them. Its content never reached the device, so
     // its feedback stays pending for a later frame rather than being discarded.
-    EXPECT_EQ(released, 1);
+    EXPECT_EQ(released, 2);
     ASSERT_GE(roundtrip(), 0);
     EXPECT_TRUE(c.events.empty());
 }

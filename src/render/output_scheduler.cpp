@@ -102,6 +102,10 @@ uint64_t OutputScheduler::begin()
     const auto now = m_now();
     if (m_state != State::Scheduled || now + kWakeupSlack <= m_deadline)
         return 0;
+    if (behindPendingFrame(now)) {
+        m_state = State::FlipPending;
+        return 0;
+    }
     m_snapshot = m_requested;
     m_began = now;
     m_frame = ++m_serial;
@@ -115,6 +119,7 @@ uint64_t OutputScheduler::begin()
     }
     // Demand drawn at once, early in a slot, shows the moment it was drawn.
     m_sampleTime = std::min(drawPoint(m_frameTime), std::max(now, m_deadline));
+    m_punctual = !m_vblank || now <= drawPoint(m_frameTime) + kWakeupSlack;
     m_next = m_frameTime + m_period;
     return m_frame;
 }
@@ -124,7 +129,7 @@ bool OutputScheduler::submitted(uint64_t frame)
     if (!frame || frame != m_frame || m_state != State::Rendering)
         return false;
     m_consumed = m_snapshot; // Re-entrant requests after begin remain outstanding.
-    m_pending.push_back({frame, m_frameTime + m_period, !m_pending.empty(), m_began});
+    m_pending.push_back({frame, m_frameTime + m_period, !m_pending.empty(), m_began, m_punctual});
     m_frame = 0;
     m_failures = 0;
     ++m_stats.submissions;
@@ -158,8 +163,9 @@ bool OutputScheduler::complete(uint64_t frame, std::optional<Time> presented)
     if (presented && *presented <= now) {
         // Frames drawn to a stamped flip are begun a budget before the vblank;
         // a late one moves them earlier, down to the vblank itself, and on-time
-        // ones win the time back slowly so a steady load does not stutter.
-        if (missed)
+        // ones win the time back slowly so a steady load does not stutter. One
+        // begun past its draw point, as late demand is, says nothing about it.
+        if (missed && m_pending.front().punctual)
             m_budget = std::min(m_period, m_budget * 2);
         else if (m_budget > m_minBudget)
             m_budget = std::max(m_minBudget, m_budget - m_period / 300);
@@ -167,12 +173,25 @@ bool OutputScheduler::complete(uint64_t frame, std::optional<Time> presented)
         // feedback back into its DelayBasedTimeSource timebase.
         m_vblank = *presented;
         m_next = slotAt(m_next + m_period / 2);
+        // A frame that waited for a late one is drawn for the slot it landed in.
+        m_next = std::max(m_next, slotAt(now));
         if (m_state == State::Scheduled)
             m_deadline = std::max(now, drawPoint(m_next));
     }
     m_pending.pop_front();
     settle(); // Only outstanding demand; never creates demand itself.
     return true;
+}
+
+bool OutputScheduler::behindPendingFrame(Time now) const
+{
+    if (!m_vblank || m_pending.empty())
+        return false;
+    // A frame begun now aims at the vblank ending its slot. One still pending
+    // past its own vblank, or aimed at that one, takes it first; this frame
+    // would land a refresh late, and every frame begun before it lands too.
+    const Time aimed = m_pending.back().aimed;
+    return aimed <= now || aimed > slotAt(now) + m_period / 2;
 }
 
 void OutputScheduler::drawn(uint64_t frame, Time done)

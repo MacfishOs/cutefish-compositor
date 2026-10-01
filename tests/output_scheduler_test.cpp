@@ -370,6 +370,54 @@ TEST_F(SchedulerTest, FramesShowTheirDrawPoint)
     EXPECT_EQ(scheduler.sampleTime(), now);
 }
 
+TEST_F(SchedulerTest, ALateFrameDoesNotQueueTheFramesAfterIt)
+{
+    const auto at = [](auto offset) {
+        return OutputScheduler::Time {} + offset;
+    };
+    scheduler.setMaxPendingFrames(2);
+    start();
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline();
+    submit();
+    now = at(10ms);
+    ASSERT_TRUE(scheduler.complete(pending, at(10ms)));
+    pending = 0;
+    const auto budget = scheduler.drawBudget();
+
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline();
+    submit();
+    now = at(30ms);
+    ASSERT_TRUE(scheduler.complete(pending, at(30ms)));
+    pending = 0;
+    ASSERT_EQ(scheduler.stats().missed, 0u);
+
+    // Demand past the draw point is drawn at once and lands a refresh late.
+    now = at(39ms);
+    scheduler.request(Reason::Scene);
+    submit();
+    const uint64_t late = std::exchange(pending, 0);
+    // The next frame would land behind it; it waits for it instead.
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline();
+    EXPECT_EQ(scheduler.begin(), 0u);
+    EXPECT_EQ(scheduler.state(), State::FlipPending);
+    now = at(50ms);
+    ASSERT_TRUE(scheduler.complete(late, at(50ms)));
+    EXPECT_EQ(scheduler.stats().missed, 1u);
+    // Begun late, it leaves the budget alone, and the next frame is drawn
+    // for the slot it landed in.
+    EXPECT_EQ(scheduler.drawBudget(), budget);
+    EXPECT_EQ(*scheduler.deadline(), at(60ms) - budget);
+    now = *scheduler.deadline();
+    submit();
+    now = at(60ms);
+    ASSERT_TRUE(scheduler.complete(pending, at(60ms)));
+    pending = 0;
+    EXPECT_EQ(scheduler.stats().missed, 1u);
+}
+
 TEST_F(SchedulerTest, FramesSlowerThanAThirdOfARefreshAreBegunInTime)
 {
     // Each frame lands on the vblank it was aimed at, `gpu` after its wakeup.
@@ -459,7 +507,7 @@ TEST_F(SchedulerTest, LateStampedFlipsBeginFramesEarlierThenWinTheTimeBack)
 // refresh after its own slot. That is the queue, not a slow draw: counting it
 // as a miss kept the budget at the period for good, and a client committing
 // just after the vblank waited three refreshes for every frame.
-TEST_F(SchedulerTest, AFrameQueuedBehindAPendingOneIsNotAMiss)
+TEST_F(SchedulerTest, FramesAfterALateFlipLandOnTheirOwnVblanks)
 {
     const auto at = [](auto offset) {
         return OutputScheduler::Time {} + offset;
@@ -483,34 +531,31 @@ TEST_F(SchedulerTest, AFrameQueuedBehindAPendingOneIsNotAMiss)
     ASSERT_EQ(scheduler.stats().missed, 2u);
     ASSERT_EQ(scheduler.drawBudget(), 10ms);
 
-    // A late flip leaves the next frame begun behind it, and from then on
-    // each flip that lands one frame commits the one queued behind it, with
-    // the next begun right after.
-    std::deque<uint64_t> inFlight;
+    // A late flip holds the next frame back until it lands, so the ones
+    // after it land on their own vblanks instead of queueing behind it.
     scheduler.request(Reason::Scene);
     now = *scheduler.deadline();
-    inFlight.push_back(scheduler.begin());
-    ASSERT_TRUE(scheduler.submitted(inFlight.back()));
+    const uint64_t late = scheduler.begin();
+    ASSERT_TRUE(scheduler.submitted(late));
     OutputScheduler::Time vblank = scheduler.frameTime() + 20ms;
     scheduler.request(Reason::Scene);
     now = *scheduler.deadline() + 1ms;
-    inFlight.push_back(scheduler.begin());
-    ASSERT_TRUE(scheduler.submitted(inFlight.back()));
+    EXPECT_EQ(scheduler.begin(), 0u);
+    now = vblank;
+    ASSERT_TRUE(scheduler.complete(late, vblank));
     for (int i = 0; i < 50; ++i) {
-        now = vblank;
-        ASSERT_TRUE(scheduler.complete(inFlight.front(), vblank));
-        inFlight.pop_front();
-        scheduler.request(Reason::Scene);
         ASSERT_TRUE(scheduler.deadline());
-        now = std::max(*scheduler.deadline(), vblank + 1ms);
+        now = *scheduler.deadline();
         ASSERT_LT(now, vblank + 10ms);
-        inFlight.push_back(scheduler.begin());
-        ASSERT_NE(inFlight.back(), 0u);
-        ASSERT_TRUE(scheduler.submitted(inFlight.back()));
-        vblank += 10ms;
+        submit();
+        vblank = scheduler.frameTime() + 10ms;
+        now = vblank;
+        ASSERT_TRUE(scheduler.complete(pending, vblank));
+        pending = 0;
+        scheduler.request(Reason::Scene);
     }
-    // Only the late flip itself was a miss; the frames queued behind it were
-    // not, so the budget is winning the time back.
+    // Only the late flip itself was a miss, so the budget is winning the time
+    // back.
     EXPECT_EQ(scheduler.stats().missed, 3u);
     EXPECT_LT(scheduler.drawBudget(), 10ms);
 }

@@ -39,8 +39,8 @@ public:
         Idle,
         Scheduled,
         Rendering,
-        // As many frames await presentation as the display can hold; the next
-        // one is rendered once the oldest lands.
+        // As many frames await presentation as the display can hold, or the
+        // newest is late; the next one is rendered once the oldest lands.
         FlipPending,
         Suspended
     };
@@ -145,6 +145,8 @@ private:
         bool queued = false;
         // When its wakeup began it.
         Time began {};
+        // Begun by its draw point, so landing late means the budget is short.
+        bool punctual = true;
     };
 
     void schedule();
@@ -153,6 +155,7 @@ private:
     Time drawPoint(Time slot) const;
     // The latest slot start at or before `time` on the vblank grid.
     Time slotAt(Time time) const;
+    bool behindPendingFrame(Time now) const;
     bool throttled() const { return m_pending.size() >= m_maxPending; }
     Duration m_period;
     std::function<Time()> m_now;
@@ -161,6 +164,7 @@ private:
     // The display's last flip, which the slots are laid on; unset without
     // timestamps, and then slots only keep their own cadence.
     std::optional<Time> m_vblank;
+    bool m_punctual = true;
     Duration m_budget;
     // What the budget returns to between frames that land late.
     Duration m_minBudget;
