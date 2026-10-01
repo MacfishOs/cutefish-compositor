@@ -15,6 +15,7 @@
 #include "render/rounded_shape.h"
 #include "scene/node.h"
 #include "wm/resize_cursor.h"
+#include "wm/resize_handles.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -37,26 +38,6 @@ constexpr int kDoubleClickSlop = 4;
 // max_distance_between_taps_for_double_tap.
 constexpr int kDoubleTapSlop = 20;
 
-ResizeEdge edgeFor(bool left, bool right, bool top, bool bottom)
-{
-    if (top && left)
-        return ResizeEdge::TopLeft;
-    if (top && right)
-        return ResizeEdge::TopRight;
-    if (bottom && left)
-        return ResizeEdge::BottomLeft;
-    if (bottom && right)
-        return ResizeEdge::BottomRight;
-    if (top)
-        return ResizeEdge::Top;
-    if (bottom)
-        return ResizeEdge::Bottom;
-    if (left)
-        return ResizeEdge::Left;
-    if (right)
-        return ResizeEdge::Right;
-    return ResizeEdge::None;
-}
 
 } // namespace
 
@@ -250,42 +231,12 @@ ResizeEdge Decoration::resizeEdgeAt(const QPoint &framePoint) const
         return ResizeEdge::None;
 
     const Metrics &metrics = m_theme->metrics();
-    const QRect frame = frameRect();
-    const int margin = metrics.resizeMargin;
-
-    // The border reaches `margin` into the window from the outline it is
-    // clipped to, so along a rounded corner it follows the arc; everything
-    // outside the outline, the corners' empty pixels included, is border.
     const auto visual = wm::WindowVisualController::evaluate(*m_window, m_theme->visualStyle());
     const render::RoundedShape shape {
             visual.shape.bounds.translated(-QPointF(m_window->presentedBounds().topLeft())),
             visual.shape.radius, visual.shape.radiusScale};
-    if (shape.distance(QPointF(framePoint) + QPointF(0.5, 0.5)) <= -margin)
-        return ResizeEdge::None;
-
-    // A corner reaches along each edge past its arc, and never less than the
-    // theme's corner, which is what a square one gets.
-    const auto corner = [&](qreal radius, qreal halfSize) {
-        const qreal arc = render::cornerExtent(radius, halfSize);
-        return std::max(metrics.resizeCorner, int(std::ceil(arc)) + margin);
-    };
-    const int cornerX =
-            corner(shape.radius * shape.radiusScale.width(), shape.bounds.width() / 2);
-    const int cornerY =
-            corner(shape.radius * shape.radiusScale.height(), shape.bounds.height() / 2);
-    const bool nearLeft = framePoint.x() < frame.left() + cornerX;
-    const bool nearRight = framePoint.x() > frame.right() - cornerX;
-    const bool nearTop = framePoint.y() < frame.top() + cornerY;
-    const bool nearBottom = framePoint.y() > frame.bottom() - cornerY;
-    if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
-        const QPoint center = frame.center();
-        const bool left = framePoint.x() <= center.x();
-        const bool top = framePoint.y() <= center.y();
-        return edgeFor(left, !left, top, !top);
-    }
-
-    return edgeFor(framePoint.x() < frame.left() + margin, framePoint.x() > frame.right() - margin,
-                   framePoint.y() < frame.top() + margin, framePoint.y() > frame.bottom() - margin);
+    return wm::resizeEdgeFor(shape, frameRect(), framePoint, metrics.resizeMargin,
+                             metrics.resizeCorner);
 }
 
 FrameArea Decoration::areaAt(const QPointF &location) const

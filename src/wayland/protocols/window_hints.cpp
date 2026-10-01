@@ -4,6 +4,9 @@
 
 #include "wayland/protocols/window_hints.h"
 
+#include <algorithm>
+#include <vector>
+
 #include <cutefish-window-hints-v1-server-protocol.h>
 
 #include "compositor/surface.h"
@@ -11,6 +14,13 @@
 
 namespace cutefish::wayland {
 namespace {
+
+// Every bound manager, for the events about a client's surfaces.
+std::vector<wl_resource *> &managers()
+{
+    static std::vector<wl_resource *> resources;
+    return resources;
+}
 
 void destroy(wl_client *, wl_resource *resource)
 {
@@ -50,8 +60,24 @@ void setResizeAnchor(wl_client *, wl_resource *resource, wl_resource *surface, u
                     : compositor::ResizeAnchor::TopLeft);
 }
 
-const struct cutefish_window_hints_v1_interface implementation = {destroy, setSkipTaskbar,
-                                                                  setAlwaysOnTop, setResizeAnchor};
+void setServerResize(wl_client *, wl_resource *resource, wl_resource *surface, uint32_t enabled)
+{
+    if (enabled > 1) {
+        wl_resource_post_error(resource, CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE,
+                               "server_resize must be zero or one");
+        return;
+    }
+    getUserDataAs<compositor::Surface>(surface)->setServerResize(enabled != 0);
+}
+
+const struct cutefish_window_hints_v1_interface implementation = {
+        destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor, setServerResize};
+
+void unbind(wl_resource *resource)
+{
+    auto &resources = managers();
+    resources.erase(std::remove(resources.begin(), resources.end(), resource), resources.end());
+}
 
 void bind(wl_client *client, void *, uint32_t, uint32_t id)
 {
@@ -60,10 +86,20 @@ void bind(wl_client *client, void *, uint32_t, uint32_t id)
         wl_client_post_no_memory(client);
         return;
     }
-    wl_resource_set_implementation(resource, &implementation, nullptr, nullptr);
+    wl_resource_set_implementation(resource, &implementation, nullptr, unbind);
+    managers().push_back(resource);
 }
 
 } // namespace
+
+void sendInteractiveResize(wl_resource *surface, bool active)
+{
+    wl_client *client = wl_resource_get_client(surface);
+    for (wl_resource *resource : managers()) {
+        if (wl_resource_get_client(resource) == client)
+            cutefish_window_hints_v1_send_interactive_resize(resource, surface, active ? 1 : 0);
+    }
+}
 
 wl_global *createWindowHintsGlobal(wl_display *display)
 {

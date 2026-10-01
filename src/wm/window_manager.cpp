@@ -26,6 +26,8 @@
 #include "wm/desks/desks_controller.h"
 #include "wm/mru_window_tracker.h"
 #include "wm/overview/overview_controller.h"
+#include "wm/resize_cursor.h"
+#include "wm/resize_handles.h"
 #include "wm/shell_surface.h"
 #include "wm/stacking.h"
 #include "wm/toplevel_event_handler.h"
@@ -1010,12 +1012,8 @@ Window *WindowManager::frameAt(const QPointF &location, FrameArea *area) const
         return nullptr;
 
     // A popup covering a frame receives client input instead of frame actions.
-    QPointF surfaceLocation;
-    if (isPopupSurface(m_seat ? m_seat->pointerTargetAt(inputRoot(), location, &surfaceLocation)
-                              : input::findTargetSurfaceIn(m_compositor, inputRoot(), location,
-                                                           &surfaceLocation))) {
+    if (isPopupAt(location))
         return nullptr;
-    }
 
     for (auto it = m_stackingOrder.rbegin(); it != m_stackingOrder.rend(); ++it) {
         Window *window = *it;
@@ -1033,6 +1031,41 @@ Window *WindowManager::frameAt(const QPointF &location, FrameArea *area) const
             // Inside this window, but in the part the client owns.
             return nullptr;
         }
+        if (window->bounds().contains(location.toPoint())
+            && (!window->visualNode() || window->visualNode()->acceptsInput(location)))
+            return nullptr;
+    }
+    return nullptr;
+}
+
+bool WindowManager::isPopupAt(const QPointF &location) const
+{
+    QPointF surfaceLocation;
+    return isPopupSurface(m_seat ? m_seat->pointerTargetAt(inputRoot(), location, &surfaceLocation)
+                                 : input::findTargetSurfaceIn(m_compositor, inputRoot(), location,
+                                                              &surfaceLocation));
+}
+
+Window *WindowManager::resizeHandleAt(const QPointF &location, bool touch, ResizeEdge *edge) const
+{
+    *edge = ResizeEdge::None;
+    if (!allowsActivation() || isPopupAt(location))
+        return nullptr;
+
+    for (auto it = m_stackingOrder.rbegin(); it != m_stackingOrder.rend(); ++it) {
+        Window *window = *it;
+        if (!window->isVisible())
+            continue;
+
+        // Checked before the window's own area: the handles reach a pixel in.
+        const ResizeEdge hit = serverResizeEdgeAt(*window, m_visualStyle, location, touch);
+        if (hit != ResizeEdge::None) {
+            *edge = hit;
+            return window;
+        }
+        if (WindowFrame *frame = window->frame();
+            frame && frame->inputBounds().contains(location.toPoint()))
+            return nullptr;
         if (window->bounds().contains(location.toPoint())
             && (!window->visualNode() || window->visualNode()->acceptsInput(location)))
             return nullptr;
@@ -1089,6 +1122,17 @@ bool WindowManager::onPointerMotion(input::Timestamp timestamp, const QPointF &l
     if (Window *blocked = modalBlockedWindowAt(location)) {
         m_modality.processLocatedEvent(blocked, false);
         setFrameHover(nullptr);
+        return true;
+    }
+
+    ResizeEdge edge = ResizeEdge::None;
+    if (resizeHandleAt(location, false, &edge)) {
+        // Compositor-owned pixels, as a frame's are: the client loses the pointer.
+        setFrameHover(nullptr);
+        if (m_seat) {
+            m_seat->setCompositorCursorShape(resizeCursor(edge));
+            m_seat->clearPointerFocus();
+        }
         return true;
     }
 
@@ -1162,6 +1206,16 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const QPoint
         return true;
     }
 
+    ResizeEdge edge = ResizeEdge::None;
+    if (Window *window = resizeHandleAt(location, false, &edge)) {
+        activateForPress(window);
+        if (!hasWindow(window))
+            return true;
+        window->ping();
+        m_eventHandler->beginResize(window, edge, location, std::nullopt);
+        return true;
+    }
+
     if (Window *window = frameAt(location)) {
         // Activation first: a press on a frame raises its window, whatever the
         // press then does.
@@ -1209,6 +1263,16 @@ bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const QP
 
     if (Window *blocked = modalBlockedWindowAt(location)) {
         m_modality.processLocatedEvent(blocked, true);
+        return true;
+    }
+
+    ResizeEdge edge = ResizeEdge::None;
+    if (Window *window = resizeHandleAt(location, true, &edge)) {
+        activateForPress(window);
+        if (!hasWindow(window))
+            return true;
+        window->ping();
+        m_eventHandler->beginResize(window, edge, location, id);
         return true;
     }
 

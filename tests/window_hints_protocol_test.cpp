@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <sys/socket.h>
 #include <thread>
+#include <vector>
 #include <wayland-client.h>
 #include <wayland-server-core.h>
 
@@ -17,6 +18,7 @@
 #include "scene/scene.h"
 #include "wayland/protocols/window_hints.h"
 #include "wayland/protocols/wl_compositor.h"
+#include "wayland/server_util.h"
 
 using namespace cutefish;
 
@@ -188,6 +190,57 @@ TEST_F(WindowHintsProtocolTest, UnknownResizeAnchorIsAProtocolError)
     EXPECT_LT(roundtrip(), 0);
     EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
               CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, ServerResizeIsImmediateAndRejectsOtherValues)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_FALSE(model->serverResize());
+    cutefish_window_hints_v1_set_server_resize(hints, surface, 1);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->serverResize());
+    cutefish_window_hints_v1_set_server_resize(hints, surface, 2);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, InteractiveResizeReachesTheSurfacesClient)
+{
+    struct Event {
+        wl_surface *surface;
+        uint32_t active;
+    };
+    std::vector<Event> events;
+    static const cutefish_window_hints_v1_listener listener = {
+            [](void *data, cutefish_window_hints_v1 *, wl_surface *surface, uint32_t active) {
+                static_cast<std::vector<Event> *>(data)->push_back({surface, active});
+            }};
+    cutefish_window_hints_v1_add_listener(hints, &listener, &events);
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    wl_resource *resource = wayland::getSurfaceResource(compositor.surfaces().front());
+    ASSERT_TRUE(resource);
+
+    wayland::sendInteractiveResize(resource, true);
+    wayland::sendInteractiveResize(resource, false);
+    ASSERT_GE(roundtrip(), 0);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].surface, surface);
+    EXPECT_EQ(events[0].active, 1u);
+    EXPECT_EQ(events[1].active, 0u);
+
+    // A destroyed manager hears nothing more.
+    cutefish_window_hints_v1_destroy(hints);
+    hints = nullptr;
+    ASSERT_GE(roundtrip(), 0);
+    wayland::sendInteractiveResize(resource, true);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(events.size(), 2u);
     wl_surface_destroy(surface);
 }
 

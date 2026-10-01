@@ -472,6 +472,8 @@ add_library(cutefish-wm STATIC
     src/wm/window_positioner.h
     src/wm/window_snap.cpp
     src/wm/window_snap.h
+    src/wm/resize_handles.cpp
+    src/wm/resize_handles.h
     src/wm/window_resizer.cpp
     src/wm/window_resizer.h
     src/wm/snap_drag_controller.cpp

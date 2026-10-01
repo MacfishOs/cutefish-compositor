@@ -24,6 +24,7 @@
 #include "compositor/surface.h"
 #include "core/logging.h"
 #include "input/seat.h"
+#include "wayland/protocols/window_hints.h"
 #include "wayland/protocols/xdg_positioner.h"
 #include "wayland/protocols/wl_output.h"
 #include "wayland/serial_tracker.h"
@@ -346,9 +347,10 @@ public:
 
         // What wm_capabilities last told the client; -1 before the first one.
         auto sentCapabilities = std::make_shared<int>(-1);
+        auto sentResizing = std::make_shared<bool>(false);
         surfaceData->shellSurface->setConfigureCallback(
-            [toplevel, xdgSurface, serialTracker,
-             sentCapabilities](const ShellSurface::ConfigureState& state) {
+            [toplevel, xdgSurface, serialTracker, sentCapabilities, sentResizing,
+             token = m_token](const ShellSurface::ConfigureState& state) {
                 const int version = wl_resource_get_version(toplevel);
                 if (version >= XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION) {
                     // No window menu: show_window_menu does nothing yet.
@@ -356,6 +358,16 @@ public:
                     if (capabilities != *sentCapabilities) {
                         *sentCapabilities = capabilities;
                         sendWmCapabilities(toplevel, state.maximizable);
+                    }
+                }
+                // Qt drops the xdg resizing state; window hints carry it too.
+                if (state.resizing != *sentResizing) {
+                    *sentResizing = state.resizing;
+                    WaylandXdgSurface* surfaceData = *token;
+                    if (wl_resource* surface = surfaceData
+                                ? getSurfaceResource(surfaceData->shellSurface->rootSurface())
+                                : nullptr) {
+                        sendInteractiveResize(surface, state.resizing);
                     }
                 }
                 if (version >= XDG_TOPLEVEL_CONFIGURE_BOUNDS_SINCE_VERSION) {

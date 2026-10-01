@@ -38,6 +38,7 @@
 #include "scene/window_animation.h"
 #include "shm_test_util.h"
 #include "wm/activation.h"
+#include "wm/resize_handles.h"
 #include "wm/shadow_controller.h"
 #include "wm/shell_surface.h"
 #include "wm/toplevel_event_handler.h"
@@ -841,6 +842,133 @@ TEST_F(DecorationTest, AFingerOnAResizeBorderResizes)
     EXPECT_EQ(bounds.adjusted(-30, 0, 0, 0), window->bounds());
     touchUp(3, 1);
     EXPECT_FALSE(manager.eventHandler()->isDragging());
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Server resize handles on client-decorated windows
+
+class ServerResizeTest : public DecorationTest
+{
+protected:
+    Window *makeWindow(bool serverResize = true)
+    {
+        ShellSurface *shell = makeToplevel(QSize(400, 300), /*serverSide=*/false);
+        shell->rootSurface()->setServerResize(serverResize);
+        Window *window = shell->window();
+        window->setBounds(QRect(100, 100, 400, 300));
+        return window;
+    }
+
+    ResizeEdge edgeAt(const QPointF &location, bool touch = false)
+    {
+        ResizeEdge edge = ResizeEdge::None;
+        manager.resizeHandleAt(location, touch, &edge);
+        return edge;
+    }
+};
+
+TEST_F(ServerResizeTest, OnlyAWindowThatAsksGetsHandles)
+{
+    Window *window = makeWindow(/*serverResize=*/false);
+    const QPointF right(window->bounds().right() + 3, window->bounds().center().y());
+
+    press(right);
+    EXPECT_FALSE(manager.eventHandler()->isDragging());
+    release(right);
+
+    window->rootSurface()->setServerResize(true);
+    press(right);
+    ASSERT_TRUE(manager.eventHandler()->isDragging());
+    EXPECT_EQ(window, manager.eventHandler()->draggedWindow());
+    EXPECT_EQ(ResizeEdge::Right, manager.eventHandler()->draggedEdge());
+    manager.eventHandler()->completeDrag(ToplevelEventHandler::DragResult::Revert);
+}
+
+TEST_F(ServerResizeTest, TheHandlesReachOutsideAndOnePixelIn)
+{
+    Window *window = makeWindow();
+    const QRect bounds = window->bounds();
+    const int y = bounds.center().y();
+
+    EXPECT_EQ(ResizeEdge::Right, edgeAt(QPointF(bounds.right() + kResizeOutsideBoundsSize, y)));
+    EXPECT_EQ(ResizeEdge::None, edgeAt(QPointF(bounds.right() + kResizeOutsideBoundsSize + 1, y)));
+    EXPECT_EQ(ResizeEdge::Right, edgeAt(QPointF(bounds.right(), y)));
+    EXPECT_EQ(ResizeEdge::None, edgeAt(QPointF(bounds.right() - 1, y)));
+    EXPECT_EQ(ResizeEdge::Left, edgeAt(QPointF(bounds.left() - 1, y)));
+    EXPECT_EQ(ResizeEdge::Top, edgeAt(QPointF(bounds.center().x(), bounds.top() - 1)));
+    EXPECT_EQ(ResizeEdge::Bottom, edgeAt(QPointF(bounds.center().x(), bounds.bottom() + 1)));
+    // A finger gets five times the reach outside.
+    EXPECT_EQ(ResizeEdge::Left, edgeAt(QPointF(bounds.left() - 20, y), /*touch=*/true));
+}
+
+TEST_F(ServerResizeTest, TheCornersFollowTheRoundedOutline)
+{
+    Window *window = makeWindow();
+    const QRect bounds = window->bounds();
+
+    // Inside the square but outside the arc.
+    EXPECT_EQ(ResizeEdge::TopLeft, edgeAt(QPointF(bounds.topLeft() + QPoint(1, 1))));
+    EXPECT_EQ(ResizeEdge::TopLeft, edgeAt(QPointF(bounds.topLeft() - QPoint(3, 3))));
+    EXPECT_EQ(ResizeEdge::BottomRight, edgeAt(QPointF(bounds.bottomRight() + QPoint(3, 3))));
+    EXPECT_EQ(ResizeEdge::TopRight,
+              edgeAt(QPointF(bounds.right() - kResizeAreaCornerSize + 1, bounds.top() - 1)));
+    EXPECT_EQ(ResizeEdge::None, edgeAt(QPointF(bounds.center())));
+}
+
+TEST_F(ServerResizeTest, TheClientLosesThePointerOverAHandle)
+{
+    Window *window = makeWindow();
+
+    RecordingPointerDelegate delegate;
+    input::Pointer pointer(&delegate, &seat);
+
+    input.warpPointer(QPointF(window->bounds().center()));
+    input.onPointerMotion(at(1), QPointF(0, 0));
+    ASSERT_EQ(1u, delegate.enters.size());
+
+    input.warpPointer(QPointF(window->bounds().right(), window->bounds().center().y()));
+    input.onPointerMotion(at(2), QPointF(0, 0));
+    EXPECT_EQ(1u, delegate.leaves.size());
+
+    input.onPointerButton(at(3), BTN_LEFT, true);
+    EXPECT_EQ(0, delegate.buttons);
+    EXPECT_EQ(ResizeEdge::Right, manager.eventHandler()->draggedEdge());
+    manager.eventHandler()->completeDrag(ToplevelEventHandler::DragResult::Revert);
+}
+
+TEST_F(ServerResizeTest, AFingerOnAHandleResizes)
+{
+    Window *window = makeWindow();
+    const QRect bounds = window->bounds();
+    const QPointF left(bounds.left() - 20, bounds.center().y());
+
+    touchDown(1, 1, left);
+    ASSERT_TRUE(manager.eventHandler()->isTouchDrag());
+    EXPECT_EQ(ResizeEdge::Left, manager.eventHandler()->draggedEdge());
+    touchMotion(2, 1, left - QPointF(30, 0));
+    EXPECT_EQ(bounds.adjusted(-30, 0, 0, 0), window->bounds());
+    touchUp(3, 1);
+    EXPECT_FALSE(manager.eventHandler()->isDragging());
+}
+
+TEST_F(ServerResizeTest, AWindowAboveCoversTheHandles)
+{
+    Window *lower = makeWindow();
+    ShellSurface *upper = makeToplevel(QSize(100, 100), /*serverSide=*/false);
+    upper->window()->setBounds(QRect(lower->bounds().right() - 50, 300, 100, 100));
+    manager.raise(upper->window());
+
+    EXPECT_EQ(ResizeEdge::None, edgeAt(QPointF(lower->bounds().right() + 3, 350)));
+    EXPECT_EQ(ResizeEdge::Right, edgeAt(QPointF(lower->bounds().right() + 3, 150)));
+}
+
+TEST_F(ServerResizeTest, AMaximizedWindowHasNoHandles)
+{
+    Window *window = makeWindow();
+    window->maximize();
+
+    EXPECT_EQ(ResizeEdge::None, edgeAt(QPointF(window->bounds().topLeft())));
+    EXPECT_EQ(ResizeEdge::None, edgeAt(QPointF(window->bounds().center().x(), 0)));
 }
 
 TEST_F(DecorationTest, TappingTheCloseButtonAsksTheClientToClose)

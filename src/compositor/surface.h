@@ -95,6 +95,9 @@ public:
     // Read when the client resizes its window; no observer needs to know.
     ResizeAnchor resizeAnchor() const { return m_resizeAnchor; }
     void setResizeAnchor(ResizeAnchor anchor) { m_resizeAnchor = anchor; }
+    // Read when the pointer or a touch reaches the window's edges.
+    bool serverResize() const { return m_serverResize; }
+    void setServerResize(bool enabled) { m_serverResize = enabled; }
 
     struct MenuAddress {
         QString service;
@@ -466,6 +469,7 @@ private:
     bool m_skipTaskbar = false;
     bool m_alwaysOnTop = false;
     ResizeAnchor m_resizeAnchor = ResizeAnchor::TopLeft;
+    bool m_serverResize = false;
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 

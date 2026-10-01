@@ -316,6 +316,11 @@ public:
     // window under one that already covers the point.
     Window *frameAt(const QPointF &location, FrameArea *area = nullptr) const;
 
+    // The topmost window whose server resize handles own `location`, and the
+    // edge they grab; see cutefish_window_hints_v1.set_server_resize. A touch
+    // gets wider handles.
+    Window *resizeHandleAt(const QPointF &location, bool touch, ResizeEdge *edge) const;
+
     // Whether this window is still managed. Callbacks are re-entrant, so a
     // pointer held across one has to be re-checked before it is used again.
     bool hasWindow(const Window *window) const;
@@ -403,6 +408,8 @@ private:
     bool handlePointerButton(input::Timestamp timestamp, const QPointF &location, uint32_t code,
                              bool pressed);
     bool isPopupSurface(compositor::Surface *surface) const;
+    // A popup under `location` takes client input over any window handle.
+    bool isPopupAt(const QPointF &location) const;
     // The frame currently holding a pressed caption button, if any.
     Window *windowTrackingFramePress() const;
     void setFrameHover(Window *window);

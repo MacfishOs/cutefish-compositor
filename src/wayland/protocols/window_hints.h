@@ -11,6 +11,10 @@ namespace cutefish::wayland {
 
 wl_global *createWindowHintsGlobal(wl_display *display);
 
+// cutefish_window_hints_v1.interactive_resize, to every manager the surface's
+// client has bound.
+void sendInteractiveResize(wl_resource *surface, bool active);
+
 } // namespace cutefish::wayland
 
 #endif

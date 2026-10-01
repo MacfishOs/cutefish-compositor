@@ -48,5 +48,27 @@
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="anchor" type="uint" enum="resize_anchor"/>
     </request>
+    <request name="set_server_resize">
+      <description summary="let the compositor resize a client-decorated window">
+        A value of 1 makes the compositor own resize handles along the edges
+        of a resizable normal window that draws its own frame: they reach a
+        few pixels outside the window, follow its rounded outline, set the
+        cursor and start an interactive resize when pressed. Use it instead
+        of drawing edge handles and calling xdg_toplevel.resize. A value of 0
+        is the default.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="enabled" type="uint"/>
+    </request>
+    <event name="interactive_resize">
+      <description summary="an interactive resize started or ended">
+        Sent with active 1 when the user starts resizing one of the client's
+        windows by an edge or corner, and with active 0 when the resize ends,
+        before the xdg_toplevel.configure that drops the resizing state. A
+        client can tell a size the user chose from one it was given this way.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="active" type="uint"/>
+    </event>
   </interface>
 </protocol>
