@@ -695,8 +695,28 @@ TEST_F(DeskAnimationTest, ASwipeStartedDuringADragSwitchesNothing)
     input.setGestureFilter(nullptr);
 }
 
-TEST_F(DeskAnimationTest, AtTheLastDeskTheFingersPullAgainstTheEdge)
+TEST_F(DeskAnimationTest, ASingleDeskIgnoresTheSwipe)
 {
+    WmGestureHandler gestures(desks);
+    input.setGestureFilter(&gestures);
+    input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
+    for (const double mm : {10.0, -30.0}) {
+        now += 8;
+        const QPointF travel(mm / WmGestureHandler::kMmPerUnacceleratedUnit, 0);
+        input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel, travel, 1, 0);
+        EXPECT_EQ(nullptr, desks->animation());
+    }
+    now += 8;
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    EXPECT_EQ(nullptr, desks->animation());
+    EXPECT_FALSE(node->isActive());
+    EXPECT_EQ(desk(0), desks->activeDesk());
+    input.setGestureFilter(nullptr);
+}
+
+TEST_F(DeskAnimationTest, AtTheFirstDeskTheFingersPullAgainstTheEdge)
+{
+    addDesks(1);
     WmGestureHandler gestures(desks);
     input.setGestureFilter(&gestures);
     input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);

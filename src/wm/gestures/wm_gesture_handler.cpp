@@ -87,7 +87,8 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
         m_overview->completeTransition();
     // Fingers moving right bring the desk on the left in.
     if (!m_desks->startSwipeAnimation(/*moveLeft=*/m_scroll.scrollX > 0)) {
-        // On the lock screen, or while an animation from another source runs.
+        // On the lock screen, with a single desk, or while an animation from
+        // another source runs.
         m_scroll.ignored = true;
         return;
     }

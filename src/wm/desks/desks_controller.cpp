@@ -197,7 +197,8 @@ bool DesksController::activateAdjacentDesk(bool goingLeft, DesksSwitchSource sou
 
 bool DesksController::startSwipeAnimation(bool moveLeft)
 {
-    if (!m_manager->allowsActivation())
+    // A lone desk has nowhere to go, so the swipe does not even pull at it.
+    if (!m_manager->allowsActivation() || m_desks.size() < 2)
         return false;
 
     constexpr auto source = DesksSwitchSource::DeskSwitchTouchpad;
