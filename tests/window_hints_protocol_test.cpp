@@ -159,6 +159,38 @@ TEST_F(WindowHintsProtocolTest, InvalidAlwaysOnTopIsAProtocolError)
     wl_surface_destroy(surface);
 }
 
+TEST_F(WindowHintsProtocolTest, ResizeAnchorIsImmediateAndPersistsUntilTheSurfaceDies)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_EQ(model->resizeAnchor(), compositor::ResizeAnchor::TopLeft);
+    cutefish_window_hints_v1_set_resize_anchor(hints, surface,
+                                               CUTEFISH_WINDOW_HINTS_V1_RESIZE_ANCHOR_CENTER);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(model->resizeAnchor(), compositor::ResizeAnchor::Center);
+    cutefish_window_hints_v1_destroy(hints);
+    hints = nullptr;
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(model->resizeAnchor(), compositor::ResizeAnchor::Center);
+    wl_surface_destroy(surface);
+    surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    ASSERT_EQ(compositor.surfaces().size(), 1u);
+    EXPECT_EQ(compositor.surfaces().front()->resizeAnchor(), compositor::ResizeAnchor::TopLeft);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, UnknownResizeAnchorIsAProtocolError)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    cutefish_window_hints_v1_set_resize_anchor(hints, surface, 2);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
 TEST_F(WindowHintsProtocolTest, InvalidBooleanIsAProtocolError)
 {
     auto *surface = wl_compositor_create_surface(clientCompositor);

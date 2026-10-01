@@ -1062,7 +1062,21 @@ void ShellSurface::updateWindowBoundsFromClient()
         return;
 
     QRect bounds = m_window->bounds();
+    const QSize oldSize = bounds.size();
     bounds.setSize(m_window->frameInsets().outset(size));
+    if (m_surface->resizeAnchor() == compositor::ResizeAnchor::Center) {
+        // Halves of the difference rather than moveCenter(): QRect's integer
+        // centre would drift a pixel on every odd-sized step.
+        bounds.translate((oldSize.width() - bounds.width()) / 2,
+                         (oldSize.height() - bounds.height()) / 2);
+        const QRect workArea = m_manager->workAreaFor(m_window);
+        if (!workArea.isEmpty()) {
+            bounds.moveLeft(std::max(workArea.left(),
+                                     std::min(bounds.left(), workArea.right() + 1 - bounds.width())));
+            bounds.moveTop(std::max(workArea.top(),
+                                    std::min(bounds.top(), workArea.bottom() + 1 - bounds.height())));
+        }
+    }
     m_applyingClientBounds = true;
     m_window->setBounds(bounds);
     m_applyingClientBounds = false;

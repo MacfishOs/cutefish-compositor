@@ -542,6 +542,41 @@ TEST_F(ShellSurfaceTest, AClientResizeMovesTheWindowSizeWithIt)
     EXPECT_EQ(QRect(origin, QSize(400, 260)), shell->window()->bounds());
 }
 
+TEST_F(ShellSurfaceTest, ACentreAnchoredClientResizeKeepsTheWindowCentre)
+{
+    Recorder *recorder = nullptr;
+    ShellSurface *shell = makeMappedToplevel(QSize(300, 200), &recorder);
+    ASSERT_TRUE(shell->acknowledgeConfigure(recorder->serials.back()));
+    shell->rootSurface()->setResizeAnchor(compositor::ResizeAnchor::Center);
+    shell->window()->setBounds(QRect(300, 200, 300, 200));
+
+    attach(shell->rootSurface(), QSize(401, 261));
+    shell->rootSurface()->commit();
+    EXPECT_EQ(QRect(250, 170, 401, 261), shell->window()->bounds());
+    EXPECT_EQ(QPoint(250, 170), surfacePosition(shell));
+
+    // Back to the old size lands exactly where it started.
+    attach(shell->rootSurface(), QSize(300, 200));
+    shell->rootSurface()->commit();
+    EXPECT_EQ(QRect(300, 200, 300, 200), shell->window()->bounds());
+}
+
+TEST_F(ShellSurfaceTest, ACentreAnchoredClientResizeStaysInsideTheWorkArea)
+{
+    Recorder *recorder = nullptr;
+    ShellSurface *shell = makeMappedToplevel(QSize(300, 200), &recorder);
+    ASSERT_TRUE(shell->acknowledgeConfigure(recorder->serials.back()));
+    shell->rootSurface()->setResizeAnchor(compositor::ResizeAnchor::Center);
+    shell->window()->setBounds(QRect(650, 20, 300, 200));
+
+    attach(shell->rootSurface(), QSize(500, 300));
+    shell->rootSurface()->commit();
+
+    const QRect workArea = manager.workAreaFor(shell->window());
+    EXPECT_EQ(QRect(workArea.right() + 1 - 500, workArea.top(), 500, 300),
+              shell->window()->bounds());
+}
+
 TEST_F(ShellSurfaceTest, AResizeFromTheLeftKeepsTheContentsInPlaceUntilTheClientCatchesUp)
 {
     Recorder *recorder = nullptr;

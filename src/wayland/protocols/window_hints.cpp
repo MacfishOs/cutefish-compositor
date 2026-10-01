@@ -37,8 +37,21 @@ void setAlwaysOnTop(wl_client *, wl_resource *resource, wl_resource *surface, ui
     getUserDataAs<compositor::Surface>(surface)->setAlwaysOnTop(onTop != 0);
 }
 
+void setResizeAnchor(wl_client *, wl_resource *resource, wl_resource *surface, uint32_t anchor)
+{
+    if (anchor > CUTEFISH_WINDOW_HINTS_V1_RESIZE_ANCHOR_CENTER) {
+        wl_resource_post_error(resource, CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE,
+                               "unknown resize anchor");
+        return;
+    }
+    getUserDataAs<compositor::Surface>(surface)->setResizeAnchor(
+            anchor == CUTEFISH_WINDOW_HINTS_V1_RESIZE_ANCHOR_CENTER
+                    ? compositor::ResizeAnchor::Center
+                    : compositor::ResizeAnchor::TopLeft);
+}
+
 const struct cutefish_window_hints_v1_interface implementation = {destroy, setSkipTaskbar,
-                                                                  setAlwaysOnTop};
+                                                                  setAlwaysOnTop, setResizeAnchor};
 
 void bind(wl_client *client, void *, uint32_t, uint32_t id)
 {

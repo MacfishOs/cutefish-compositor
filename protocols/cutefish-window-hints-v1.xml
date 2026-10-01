@@ -9,7 +9,11 @@
       These hints grant no focus or privileged shell role.
     </description>
     <enum name="error">
-      <entry name="invalid_value" value="0" summary="expected a boolean"/>
+      <entry name="invalid_value" value="0" summary="a value is out of range"/>
+    </enum>
+    <enum name="resize_anchor">
+      <entry name="top_left" value="0" summary="the top-left corner stays put"/>
+      <entry name="center" value="1" summary="the centre stays put"/>
     </enum>
     <request name="destroy" type="destructor"/>
     <request name="set_skip_taskbar">
@@ -31,6 +35,18 @@
       </description>
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="on_top" type="uint"/>
+    </request>
+    <request name="set_resize_anchor">
+      <description summary="choose the point a client resize keeps in place">
+        When the client changes the size of a normal window on its own, with a
+        new buffer or window geometry rather than in answer to a configure, the
+        compositor keeps this point of the window where it was and then keeps
+        the window inside the work area. Resizes the compositor initiates,
+        interactive resizes and maximized, fullscreen or tiled windows are
+        unaffected. top_left is the default.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="anchor" type="uint" enum="resize_anchor"/>
     </request>
   </interface>
 </protocol>

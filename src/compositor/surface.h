@@ -60,6 +60,12 @@ enum class Transform {
     FlippedRotate270,
 };
 
+// The point of a window that a client-initiated resize keeps in place.
+enum class ResizeAnchor {
+    TopLeft,
+    Center,
+};
+
 // Client pacing notification, independent of measured presentation feedback.
 // A missing time destroys the wl_callback silently.
 using FrameCallback = std::function<void(std::optional<uint32_t> presentationTimeMs)>;
@@ -86,6 +92,9 @@ public:
     void setSkipTaskbar(bool skip);
     bool alwaysOnTop() const { return m_alwaysOnTop; }
     void setAlwaysOnTop(bool alwaysOnTop);
+    // Read when the client resizes its window; no observer needs to know.
+    ResizeAnchor resizeAnchor() const { return m_resizeAnchor; }
+    void setResizeAnchor(ResizeAnchor anchor) { m_resizeAnchor = anchor; }
 
     struct MenuAddress {
         QString service;
@@ -456,6 +465,7 @@ private:
     MenuAddress m_menuAddress;
     bool m_skipTaskbar = false;
     bool m_alwaysOnTop = false;
+    ResizeAnchor m_resizeAnchor = ResizeAnchor::TopLeft;
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 
