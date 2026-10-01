@@ -349,53 +349,6 @@ TEST_F(OverviewTest, TheKeyboardPicksAWindow)
     EXPECT_EQ(left, active());
 }
 
-TEST_F(OverviewTest, TheCloseButtonClosesAndTheRestMoveUp)
-{
-    Window *kept = makeWindow(QRect(100, 100, 500, 400));
-    Window *closed = makeWindow(QRect(300, 200, 500, 400));
-    closed->setCloseCallback([this, closed] {
-        manager.destroyWindow(closed);
-    });
-    show();
-    const QRectF before = placeOf(kept);
-    const QPointF button = scene::OverviewNode::closeButtonRect(placeOf(closed)).center();
-    moveTo(button);
-    EXPECT_EQ(OverviewController::Hit::Type::Close, overview->hitTest(button).type);
-    click(button);
-    // Closing moves activation on, which leaves the overview up.
-    EXPECT_EQ(State::Shown, overview->state());
-    ASSERT_EQ(1u, overview->items().size());
-    EXPECT_EQ(kept, overview->items()[0].window);
-    EXPECT_NE(before, placeOf(kept));
-}
-
-TEST_F(OverviewTest, OnlyAWindowThatCanCloseHasACloseButton)
-{
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
-    show();
-    const QPointF button = scene::OverviewNode::closeButtonRect(placeOf(window)).center();
-    EXPECT_EQ(OverviewController::Hit::Type::Item, overview->hitTest(button).type);
-    ASSERT_EQ(1u, node->items().size());
-    EXPECT_FALSE(node->items()[0].closable);
-}
-
-TEST_F(OverviewTest, ACloseButtonLetGoOfElsewhereDoesNothing)
-{
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
-    bool closed = false;
-    window->setCloseCallback([&closed] {
-        closed = true;
-    });
-    show();
-    const QRectF button = scene::OverviewNode::closeButtonRect(placeOf(window));
-    moveTo(button.center());
-    input.onPointerButton(at(now), BTN_LEFT, true);
-    moveTo(button.center() - QPointF(button.width(), 0));
-    input.onPointerButton(at(now), BTN_LEFT, false);
-    EXPECT_FALSE(closed);
-    EXPECT_EQ(State::Shown, overview->state());
-}
-
 TEST_F(OverviewTest, APressStaysWithItsWindowWhenTheOthersChange)
 {
     Window *bottom = makeWindow(QRect(0, 100, 300, 300));

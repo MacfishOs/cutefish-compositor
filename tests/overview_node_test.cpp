@@ -313,7 +313,7 @@ TEST(OverviewNode, ANewLayoutMovesWindowsThereOnASpring)
     EXPECT_EQ(moved, f.rect(1));
 }
 
-TEST(OverviewNode, TheTitleAndCloseButtonShowOnceItIsIn)
+TEST(OverviewNode, TheTitleShowsOnceItIsIn)
 {
     Fixture f;
     int painted = 0;
@@ -323,7 +323,7 @@ TEST(OverviewNode, TheTitleAndCloseButtonShowOnceItIsIn)
         image.fill(Qt::white);
         return image;
     });
-    f.node->setChrome({0, -1, false});
+    f.node->setChrome({0, -1});
     f.node->animateTo(1);
     f.now += 16;
     f.paint();
@@ -333,8 +333,7 @@ TEST(OverviewNode, TheTitleAndCloseButtonShowOnceItIsIn)
     f.now += 1000;
     f.paint();
     EXPECT_EQ(1, painted);
-    // In the middle of the window, and the close button in its top right
-    // corner.
+    // In the middle of the window.
     const auto targets = [&] {
         QList<QRectF> result;
         for (const auto &call : f.renderer.calls) {
@@ -348,7 +347,6 @@ TEST(OverviewNode, TheTitleAndCloseButtonShowOnceItIsIn)
                 && std::abs(target.center().x() - kPlace.center().x()) <= 1
                 && std::abs(target.center().y() - kPlace.center().y()) <= 1;
     }));
-    EXPECT_TRUE(targets.contains(Node::closeButtonRect(kPlace)));
 }
 
 TEST(OverviewNode, EveryWindowGetsTheOverviewsCornersShadowAndOutline)

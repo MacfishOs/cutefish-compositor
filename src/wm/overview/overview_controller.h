@@ -109,9 +109,7 @@ public:
     struct Hit {
         enum class Type {
             None,
-            // An item, or the close button on one.
             Item,
-            Close,
             // A desk in the desk bar, its close button, its new-desk button,
             // or the rest of it.
             Desk,
@@ -222,7 +220,6 @@ private:
     int m_hovered = -1;
     // The window three fingers down take the overview away to.
     Window *m_swipeTarget = nullptr;
-    bool m_closeHovered = false;
     int m_selected = -1;
     Hit m_barHover;
     std::optional<Press> m_press;

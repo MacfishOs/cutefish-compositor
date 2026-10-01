@@ -95,8 +95,6 @@ public:
         QRectF to;
         // A minimized window fades in at its place instead of moving there.
         bool fades = false;
-        // It has a close button.
-        bool closable = true;
         QString title;
     };
 
@@ -104,7 +102,6 @@ public:
     struct Chrome {
         int hovered = -1;
         int selected = -1;
-        bool closeHovered = false;
     };
 
     // Critically damped springs, response in seconds: from a shortcut or a
@@ -121,11 +118,6 @@ public:
     static constexpr double kRubberBandCoefficient = 0.55;
     static constexpr double kChromeFadeMs = 150;
     static constexpr float kDimOpacity = 0.35f;
-
-    // The chrome's geometry, shared with the hit testing.
-    static constexpr double kCloseButtonSize = 26;
-    static constexpr double kCloseButtonInset = 6;
-    static QRectF closeButtonRect(const QRectF &item);
 
     explicit OverviewNode(std::function<qint64()> clock = {});
 

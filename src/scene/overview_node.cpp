@@ -231,12 +231,6 @@ render::Texture *OverviewChromeCache::glyph(render::Renderer &renderer, Glyph gl
     return insert(renderer, key, image, size);
 }
 
-QRectF OverviewNode::closeButtonRect(const QRectF &item)
-{
-    return QRectF(item.right() - kCloseButtonInset - kCloseButtonSize,
-                  item.top() + kCloseButtonInset, kCloseButtonSize, kCloseButtonSize);
-}
-
 OverviewNode::OverviewNode(std::function<qint64()> clock)
     : Node(QStringLiteral("overview"))
     , m_now(clock ? std::move(clock) : steadyClock())
@@ -292,8 +286,7 @@ void OverviewNode::setDragged(int index, const QRectF &rect)
 
 void OverviewNode::setChrome(const Chrome &chrome)
 {
-    if (chrome.hovered == m_chrome.hovered && chrome.selected == m_chrome.selected
-        && chrome.closeHovered == m_chrome.closeHovered)
+    if (chrome.hovered == m_chrome.hovered && chrome.selected == m_chrome.selected)
         return;
     m_chrome = chrome;
     notifyChanged();
@@ -668,14 +661,6 @@ void OverviewNode::renderChrome(render::Renderer &renderer, const QRect &viewpor
             text.moveCenter(plate.center());
             renderer.drawTextureF(label, snapped(text, scale), opacity);
         }
-    }
-
-    if (hovered >= 0 && !m_items[hovered].fades && m_items[hovered].closable) {
-        const QRectF button = snapped(closeButtonRect(rectOf(hovered)), scale);
-        const render::Color cross = m_chrome.closeHovered ? kWhite : faded(kWhite, 0.8f);
-        if (render::Texture *glyph = m_chromeCache.glyph(
-                    renderer, OverviewChromeCache::Glyph::Close, button.size(), cross))
-            renderer.drawTextureF(glyph, button, opacity);
     }
 }
 

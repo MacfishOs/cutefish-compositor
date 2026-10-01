@@ -175,8 +175,7 @@ void OverviewController::rebuild(bool animate)
     Desk *pressedDesk = nullptr;
     if (m_press) {
         const Hit &hit = m_press->hit;
-        if ((hit.type == Hit::Type::Item || hit.type == Hit::Type::Close) && hit.index >= 0
-            && hit.index < int(m_items.size())) {
+        if (hit.type == Hit::Type::Item && hit.index >= 0 && hit.index < int(m_items.size())) {
             pressedWindow = m_items[hit.index].window;
         } else if ((hit.type == Hit::Type::Desk || hit.type == Hit::Type::DeskClose)
                    && hit.bar >= 0 && hit.bar < int(m_barDesks.size()) && hit.index >= 0
@@ -291,7 +290,6 @@ void OverviewController::updateNodes(bool animate)
         }
         node.to = item.bounds;
         node.fades = item.minimized;
-        node.closable = item.window->canClose();
         node.title = item.window->title();
         items.push_back(std::move(node));
     }
@@ -334,7 +332,7 @@ void OverviewController::updateChrome()
         m_hovered = -1;
     if (m_selected >= count)
         m_selected = -1;
-    m_node->setChrome({m_hovered, m_selected, m_closeHovered && m_hovered >= 0});
+    m_node->setChrome({m_hovered, m_selected});
     if (!m_bar)
         return;
     // A window dragged over the bar shows where it would drop.
@@ -424,7 +422,6 @@ void OverviewController::activateForExit(Window *window)
 void OverviewController::begin()
 {
     m_hovered = m_selected = m_dragged = -1;
-    m_closeHovered = false;
     m_barHover = {};
     m_press.reset();
     m_node->setGeometry(m_manager->outputBounds());
@@ -516,7 +513,6 @@ void OverviewController::exit(Window *window)
     m_swipeTarget = nullptr;
     activateForExit(window);
     m_hovered = m_selected = -1;
-    m_closeHovered = false;
     m_barHover = {};
     updateChrome();
     m_state = State::Exiting;
@@ -549,7 +545,6 @@ bool OverviewController::startSwipe(bool upward)
             : nullptr;
     m_node->setRaised(m_swipeTarget ? target : -1);
     m_hovered = m_selected = -1;
-    m_closeHovered = false;
     updateChrome();
     takePointer();
     m_state = State::Entering;
@@ -620,14 +615,6 @@ OverviewController::Hit OverviewController::hitTest(const QPointF &location) con
         const Item &item = m_items[index];
         if (index == m_dragged)
             continue;
-        // The close button only shows at rest.
-        if (!moving && !item.minimized
-            && scene::OverviewNode::closeButtonRect(item.bounds).contains(location)
-            && item.window->canClose()) {
-            hit.type = Hit::Type::Close;
-            hit.index = index;
-            return hit;
-        }
         const QRectF bounds = moving
                 ? m_node->presentedRect(index, progress, m_node->clockTime(), nullptr)
                 : item.bounds;
@@ -642,9 +629,7 @@ OverviewController::Hit OverviewController::hitTest(const QPointF &location) con
 
 void OverviewController::setHover(const Hit &hit)
 {
-    const bool onItem = hit.type == Hit::Type::Item || hit.type == Hit::Type::Close;
-    m_hovered = onItem && m_state == State::Shown ? hit.index : -1;
-    m_closeHovered = hit.type == Hit::Type::Close;
+    m_hovered = hit.type == Hit::Type::Item && m_state == State::Shown ? hit.index : -1;
     const bool onBar = hit.type == Hit::Type::Desk || hit.type == Hit::Type::DeskClose
             || hit.type == Hit::Type::NewDesk;
     m_barHover = onBar ? hit : Hit();
@@ -735,10 +720,6 @@ void OverviewController::release(const QPointF &location)
     switch (press.hit.type) {
     case Hit::Type::Item:
         activateItem(press.hit.index);
-        break;
-    case Hit::Type::Close:
-        if (press.hit.index < int(m_items.size()))
-            m_items[press.hit.index].window->requestClose();
         break;
     case Hit::Type::Desk:
         if (press.hit.bar < int(m_barDesks.size())
