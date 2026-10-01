@@ -6,6 +6,7 @@
 
 #include "display/display_identity.h"
 #include "display/native_display_delegate.h"
+#include "render/color_transform.h"
 #include <QHash>
 #include <QMetaObject>
 #include <QSet>
@@ -105,6 +106,9 @@ public:
     void setSecureScanout(bool secure);
     void withdrawSecurePresentation();
 
+    // The night light's tint, for every output and the ones that appear later.
+    void setColorTransform(const render::ColorTransform &transform);
+
     bool isSecureScanout() const { return secureScanout; }
 
     // `layers` are what `transition` covers, painted in order.
@@ -158,6 +162,7 @@ private:
     std::vector<std::unique_ptr<compositor::Output>> ownedModels;
     uint64_t nextFrameToken = 0;
     QSet<backend::DrmOutput *> boundOutputs;
+    render::ColorTransform colorTransform;
 
     DisplayManager &displayManager;
     backend::DrmBackend *backend;

@@ -25,6 +25,7 @@
 #include "decoration/theme_preferences.h"
 #include "display/display_manager.h"
 #include "display/display_runtime.h"
+#include "display/night_light.h"
 #include "input/input_manager.h"
 #include "input/keyboard_settings.h"
 #include "input/seat.h"
@@ -209,6 +210,7 @@ private:
     std::unique_ptr<backend::LibinputBackend> m_inputBackend;
     std::unique_ptr<display::CallbackNativeDisplayDelegate> m_displayDelegate;
     std::unique_ptr<display::DisplayConfigurationController> m_displayController;
+    std::unique_ptr<display::NightLight> m_nightLight;
     std::unique_ptr<display::ipc::DisplayConfigService> m_displayService;
 
     scene::Scene m_scene;

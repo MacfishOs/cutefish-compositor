@@ -12,6 +12,9 @@
 
 #include <unistd.h>
 
+#include <algorithm>
+#include <cmath>
+
 #include <QDBusConnectionInterface>
 #include <QDBusReply>
 #include <QUuid>
@@ -82,6 +85,11 @@ bool DisplayConfigService::authorizeWrite()
                        QStringLiteral("The graphical session is inactive"));
         return false;
     }
+    return authorizeCaller();
+}
+
+bool DisplayConfigService::authorizeCaller()
+{
     if (!calledFromDBus())
         return true;
     const QDBusReply<uint> uid = m_connection.interface()->serviceUid(message().service());
@@ -247,6 +255,21 @@ void DisplayConfigService::IdentifyDisplays(const QStringList& displayIds)
 {
     if (authorizeWrite())
         emit IdentifyRequested(displayIds);
+}
+
+void DisplayConfigService::SetNightLight(double strength, uint durationMs)
+{
+    // A tint, not a configuration: a session that is not on screen keeps it
+    // for when it is back.
+    if (!authorizeCaller())
+        return;
+    if (!std::isfinite(strength)) {
+        if (calledFromDBus())
+            sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("The strength is not a number"));
+        return;
+    }
+    if (m_nightLight)
+        m_nightLight(std::clamp(strength, 0.0, 1.0), std::chrono::milliseconds(durationMs));
 }
 
 } // namespace cutefish::display::ipc

@@ -15,6 +15,8 @@
 // Adapted for Cutefish: exercises the corresponding behavior with native
 // compositor test doubles and APIs.
 
+#include <algorithm>
+#include <cmath>
 #include <drm_fourcc.h>
 #include <fcntl.h>
 #include <gbm.h>
@@ -603,6 +605,179 @@ TEST_F(ScanoutTest, AModesetClearsWhatAPreviousMasterLeftBehind)
             m_controller->commit({compositedContent()}, /*modeset=*/true, nullptr, 42, nullptr));
     propertyValue(m_device->commits.back().request, kCursorPlaneId, kFbId, &found);
     EXPECT_FALSE(found);
+}
+
+namespace {
+
+constexpr uint32_t kCtm = 300, kGammaLut = 301, kGammaLutSize = 302, kDegammaLut = 303;
+
+// A CRTC with a CTM, a gamma LUT of `lutSize` entries, both or neither.
+backend::ScanoutController::Config colorConfig(bool ctm, uint64_t lutSize)
+{
+    auto config = makeConfig();
+    if (ctm)
+        config.crtcProperties.insert("CTM", kCtm, 0);
+    if (lutSize) {
+        config.crtcProperties.insert("GAMMA_LUT", kGammaLut, 0);
+        config.crtcProperties.insert("GAMMA_LUT_SIZE", kGammaLutSize, lutSize);
+    }
+    config.crtcProperties.insert("DEGAMMA_LUT", kDegammaLut, 0);
+    return config;
+}
+
+constexpr render::ColorTransform kWarm {1.0f, 0.75f, 0.5f};
+
+} // namespace
+
+TEST_F(ScanoutTest, ATintRidesTheNextPageFlipAsACtm)
+{
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(true, 4096));
+    ASSERT_TRUE(m_controller->supportsColorTransform());
+    ASSERT_TRUE(m_controller->setColorTransform(kWarm));
+
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+    const backend::AtomicRequest &flip = m_device->commits.back().request;
+    EXPECT_TRUE(m_device->commits.back().flags & DRM_MODE_ATOMIC_NONBLOCK);
+    bool found = false;
+    const uint64_t blob = propertyValue(flip, kCrtcId, kCtm, &found);
+    ASSERT_TRUE(found);
+    // The gamma LUT is unset beside the CTM, not left as a previous master set it.
+    EXPECT_EQ(propertyValue(flip, kCrtcId, kGammaLut, &found), 0u);
+    EXPECT_TRUE(found);
+
+    // S31.32 on the diagonal, zero elsewhere.
+    const auto ctm = m_device->blobAs<uint64_t>(uint32_t(blob));
+    ASSERT_EQ(ctm.size(), 9u);
+    EXPECT_EQ(ctm[0], 1ull << 32);
+    EXPECT_EQ(ctm[4], 3ull << 30);
+    EXPECT_EQ(ctm[8], 1ull << 31);
+    for (const size_t i : {1, 2, 3, 5, 6, 7})
+        EXPECT_EQ(ctm[i], 0u) << i;
+
+    // Once the CRTC has it, flips leave the colour pipeline alone.
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+    propertyValue(m_device->commits.back().request, kCrtcId, kCtm, &found);
+    EXPECT_FALSE(found);
+    EXPECT_FALSE(m_controller->setColorTransform(kWarm));
+}
+
+TEST_F(ScanoutTest, AModesetKeepsTheTint)
+{
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(true, 4096));
+    ASSERT_TRUE(m_controller->setColorTransform(kWarm));
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, true, nullptr, 42, nullptr));
+
+    const backend::AtomicRequest &modeset = m_device->commits.back().request;
+    const uint64_t blob = propertyValue(modeset, kCrtcId, kCtm);
+    EXPECT_NE(blob, 0u);
+    bool found = false;
+    EXPECT_EQ(propertyValue(modeset, kCrtcId, kDegammaLut, &found), 0u);
+    EXPECT_TRUE(found);
+
+    // A display waking up modesets again, and comes back tinted.
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, true, nullptr, 42, nullptr));
+    EXPECT_EQ(propertyValue(m_device->commits.back().request, kCrtcId, kCtm), blob);
+}
+
+TEST_F(ScanoutTest, WithoutACtmTheTintGoesIntoTheGammaLut)
+{
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(false, 5));
+    ASSERT_TRUE(m_controller->supportsColorTransform());
+    ASSERT_TRUE(m_controller->setColorTransform(kWarm));
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+
+    const uint64_t blob = propertyValue(m_device->commits.back().request, kCrtcId, kGammaLut);
+    const auto lut = m_device->blobAs<drm_color_lut>(uint32_t(blob));
+    ASSERT_EQ(lut.size(), 5u);
+    for (size_t i = 0; i < lut.size(); ++i) {
+        const double x = double(i) / 4;
+        EXPECT_EQ(lut[i].red, uint16_t(std::lround(x * 65535))) << i;
+        EXPECT_EQ(lut[i].green, uint16_t(std::lround(x * 0.75 * 65535))) << i;
+        EXPECT_EQ(lut[i].blue, uint16_t(std::lround(x * 0.5 * 65535))) << i;
+    }
+}
+
+TEST_F(ScanoutTest, WithoutColourPropertiesNothingIsTinted)
+{
+    EXPECT_FALSE(m_controller->supportsColorTransform());
+    EXPECT_FALSE(m_controller->setColorTransform(kWarm));
+
+    // A gamma LUT of one entry cannot hold a line.
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(false, 1));
+    EXPECT_FALSE(m_controller->supportsColorTransform());
+}
+
+TEST_F(ScanoutTest, TheIdentityUnsetsTheCtmAndFreesTheOldBlob)
+{
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(true, 0));
+    ASSERT_TRUE(m_controller->setColorTransform(kWarm));
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+    const uint32_t blob = uint32_t(propertyValue(m_device->commits.back().request, kCrtcId, kCtm));
+
+    ASSERT_TRUE(m_controller->setColorTransform({}));
+    EXPECT_NE(std::find(m_device->destroyedBlobs.begin(), m_device->destroyedBlobs.end(), blob),
+              m_device->destroyedBlobs.end());
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+    bool found = false;
+    EXPECT_EQ(propertyValue(m_device->commits.back().request, kCrtcId, kCtm, &found), 0u);
+    EXPECT_TRUE(found);
+}
+
+TEST_F(ScanoutTest, APlaneTestCarriesThePendingTint)
+{
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(true, 0));
+    ASSERT_TRUE(m_controller->setColorTransform(kWarm));
+    auto buffer = std::make_shared<TestBuffer>(kOutputSize);
+    scene::OverlayPlan plan;
+    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+
+    ASSERT_EQ(m_controller->validate(plan, compositedContent(), 0).size(), 1u);
+    const testing::FakeDrmDevice::Commit &test = m_device->commits.back();
+    EXPECT_TRUE(test.flags & DRM_MODE_ATOMIC_TEST_ONLY);
+    EXPECT_NE(propertyValue(test.request, kCrtcId, kCtm), 0u);
+}
+
+TEST_F(ScanoutTest, AFailedFlipKeepsTheTintForTheNextOne)
+{
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(true, 0));
+    ASSERT_TRUE(m_controller->setColorTransform(kWarm));
+    m_device->commitFilter = [](const testing::FakeDrmDevice::Commit &) {
+        return false;
+    };
+    EXPECT_FALSE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+
+    m_device->commitFilter = nullptr;
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+    EXPECT_NE(propertyValue(m_device->commits.back().request, kCrtcId, kCtm), 0u);
+    EXPECT_TRUE(m_controller->supportsColorTransform());
+}
+
+TEST_F(ScanoutTest, ATintTheDriverRefusesIsDroppedRatherThanTheFrame)
+{
+    m_controller = std::make_unique<backend::ScanoutController>(m_device.get(),
+                                                                colorConfig(true, 0));
+    ASSERT_TRUE(m_controller->setColorTransform(kWarm));
+    m_device->commitFilter = [](const testing::FakeDrmDevice::Commit &commit) {
+        return std::none_of(commit.request.properties.begin(), commit.request.properties.end(),
+                            [](const backend::AtomicProperty &property) {
+                                return property.objectId == kCrtcId
+                                        && property.propertyId == kCtm && property.value != 0;
+                            });
+    };
+
+    ASSERT_TRUE(m_controller->commit({compositedContent()}, false, nullptr, 0, nullptr));
+    bool found = false;
+    EXPECT_EQ(propertyValue(m_device->commits.back().request, kCrtcId, kCtm, &found), 0u);
+    EXPECT_TRUE(found);
+    EXPECT_FALSE(m_controller->supportsColorTransform());
+    EXPECT_FALSE(m_controller->setColorTransform({1.0f, 0.5f, 0.0f}));
 }
 
 TEST_F(ScanoutTest, APageFlipCarriesItsCompletionToken)

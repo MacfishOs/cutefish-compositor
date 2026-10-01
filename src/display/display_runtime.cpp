@@ -220,6 +220,9 @@ HardwareSnapshot DisplayRuntime::discover(backend::DrmBackend *backend,
                 | cutefish::display::DisplayCapability::Rotation
                 | cutefish::display::DisplayCapability::SoftwareMirror
                 | cutefish::display::DisplayCapability::Power;
+        if (backend && index < int(backend->allOutputs().size())
+            && backend->allOutputs()[index]->supportsColorTransform())
+            physical.capabilities |= cutefish::display::DisplayCapability::ColorTransform;
         physical.modes = modes;
         physical.currentMode = mode;
         physical.nativeMode = mode;
@@ -372,6 +375,15 @@ void DisplayRuntime::withdrawSecurePresentation()
         return;
     for (const auto &output : backend->allOutputs())
         output->withdrawSecurePresentation();
+}
+
+void DisplayRuntime::setColorTransform(const render::ColorTransform &transform)
+{
+    colorTransform = transform;
+    if (!backend)
+        return;
+    for (const auto &output : backend->allOutputs())
+        output->setColorTransform(transform);
 }
 
 void DisplayRuntime::setScreenTransition(scene::ScreenTransitionNode *transition,
@@ -606,6 +618,8 @@ void DisplayRuntime::bindFrames()
         });
         output->setKeepCarriedFrame(startupCoverPending);
         output->setCarryOverWhileSecure(carryOverWhileSecure);
+        // Before its first modeset, which carries it.
+        output->setColorTransform(colorTransform);
         output->setScanoutPlanner([this, model](const QSize &size, size_t maxOverlays) {
             const auto &applied = displayManager.applied();
             if (!applied || applied->logicalDisplays.size() != 1

@@ -219,6 +219,8 @@ add_library(cutefish-display STATIC
     src/display/edid.cpp
     src/display/edid.h
     src/display/native_display_delegate.h
+    src/display/night_light.cpp
+    src/display/night_light.h
     src/display/recommended_scale.cpp
     src/display/recommended_scale.h
 )
@@ -772,6 +774,7 @@ add_library(cutefish-render STATIC
     src/render/drop_shadow.h
     src/render/gaussian_kernel.cpp
     src/render/gaussian_kernel.h
+    src/render/color_transform.h
     src/render/texture.h
 )
 target_include_directories(cutefish-render PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

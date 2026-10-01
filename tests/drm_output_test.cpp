@@ -132,6 +132,7 @@ protected:
         config.crtcProperties.insert("MODE_ID", 20, 0);
         config.crtcProperties.insert("ACTIVE", 21, 0);
         config.crtcProperties.insert("OUT_FENCE_PTR", 23, 0);
+        config.crtcProperties.insert("CTM", 24, 0);
         config.connectorProperties.insert("CRTC_ID", 22, 0);
         backend::DrmPlane primary;
         primary.id = 10;
@@ -1013,6 +1014,49 @@ TEST_F(DrmOutputTest, AFrameWithNothingToDrawBeginsButIsNeitherDrawnNorFlipped)
     needed = false;
     drm->setSecureScanout(true);
     ASSERT_TRUE(waitEvents(4));
+}
+
+// The night light tints through the CRTC: a flip carries the tint when nothing
+// on screen changed, and an output that wakes up modesets with it in place.
+TEST_F(DrmOutputTest, ATintFlipsWithNothingNewToDrawAndSurvivesAWake)
+{
+    drm->setBeginFrameCallback([](double) {
+        return false;
+    });
+    const auto settle = [] {
+        QDeadlineTimer deadline(60);
+        while (!deadline.hasExpired())
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    };
+    update();
+    ASSERT_TRUE(drm->enable());
+    flip(0);
+    ASSERT_TRUE(drm->supportsColorTransform());
+
+    drm->setColorTransform({1.0f, 0.75f, 0.5f});
+    ASSERT_TRUE(waitEvents(2));
+    const auto &tinted = device.commits.back();
+    EXPECT_FALSE(tinted.flags & DRM_MODE_ATOMIC_ALLOW_MODESET);
+    const uint64_t blob = propertyValue(tinted.request, 7, 24);
+    EXPECT_NE(blob, 0u);
+    flip(1);
+
+    // The same tint again asks for nothing.
+    const size_t commits = device.commits.size();
+    drm->setColorTransform({1.0f, 0.75f, 0.5f});
+    settle();
+    EXPECT_EQ(device.commits.size(), commits);
+
+    drm->disable();
+    ASSERT_TRUE(drm->enable());
+    const auto modeset = std::find_if(device.commits.rbegin(), device.commits.rend(),
+                                      [](const auto &commit) {
+                                          return (commit.flags & DRM_MODE_ATOMIC_ALLOW_MODESET)
+                                                  && !(commit.flags & DRM_MODE_ATOMIC_TEST_ONLY)
+                                                  && propertyValue(commit.request, 7, 21) == 1;
+                                      });
+    ASSERT_NE(modeset, device.commits.rend());
+    EXPECT_EQ(propertyValue(modeset->request, 7, 24), blob);
 }
 
 TEST_F(DrmOutputTest, DisablingDiscardsTheQueuedFrameAndReleasesItsBuffer)

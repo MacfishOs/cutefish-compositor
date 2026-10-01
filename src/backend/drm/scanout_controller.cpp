@@ -4,9 +4,11 @@
 //
 // Upstream: chromium/src/ui/ozone/platform/drm/gpu/
 //               hardware_display_plane_manager_atomic.cc (Commit
-//                   AddOutFencePtrProperties)
+//                   AddOutFencePtrProperties AddAllPendingCrtcProperties)
+//               hardware_display_plane_manager.cc (UpdatePendingCrtcState)
 //               hardware_display_plane_atomic.cc (AssignPlaneProps, SetPlaneProps)
 //               drm_overlay_validator.cc (TestPageFlip)
+//               drm_gpu_util.cc (CreateCTMBlob CreateLutBlob)
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 
 #include "backend/drm/scanout_controller.h"
@@ -16,6 +18,7 @@
 #include <xf86drmMode.h>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "backend/drm/drm_framebuffer.h"
@@ -31,6 +34,18 @@ namespace {
 uint64_t fixed16(int value)
 {
     return static_cast<uint64_t>(value) << 16;
+}
+
+// A CTM entry is S31.32 sign-magnitude; gains are never negative.
+uint64_t ctmValue(float gain)
+{
+    return static_cast<uint64_t>(std::max(gain, 0.0f) * static_cast<float>(1ull << 32))
+            & ~(1ull << 63);
+}
+
+uint16_t lutValue(double value)
+{
+    return static_cast<uint16_t>(std::lround(std::clamp(value, 0.0, 1.0) * 65535.0));
 }
 
 } // namespace
@@ -53,7 +68,69 @@ ScanoutController::ScanoutController(DrmDeviceApi *device, Config config)
     }
 }
 
-ScanoutController::~ScanoutController() = default;
+ScanoutController::~ScanoutController()
+{
+    destroyBlobs(m_color);
+}
+
+bool ScanoutController::supportsColorTransform() const
+{
+    const DrmPropertyMap &properties = m_config.crtcProperties;
+    return !m_colorRejected
+            && (properties.id("CTM")
+                || (properties.id("GAMMA_LUT") && properties.value("GAMMA_LUT_SIZE") > 1));
+}
+
+bool ScanoutController::setColorTransform(const render::ColorTransform &transform)
+{
+    if (transform == m_color.transform || !supportsColorTransform())
+        return false;
+
+    ColorPipeline color {transform, 0, 0};
+    if (!transform.isIdentity()) {
+        const DrmPropertyMap &properties = m_config.crtcProperties;
+        bool created = false;
+        if (properties.id("CTM")) {
+            drm_color_ctm ctm = {};
+            ctm.matrix[0] = ctmValue(transform.red);
+            ctm.matrix[4] = ctmValue(transform.green);
+            ctm.matrix[8] = ctmValue(transform.blue);
+            created = m_device->createPropertyBlob(&ctm, sizeof(ctm), &color.ctmBlob);
+        } else {
+            // The gains apply to encoded values, so each channel's curve is a
+            // straight line: exactly what the diagonal CTM would do.
+            const size_t size = properties.value("GAMMA_LUT_SIZE");
+            std::vector<drm_color_lut> lut(size);
+            for (size_t i = 0; i < size; ++i) {
+                const double x = double(i) / double(size - 1);
+                lut[i].red = lutValue(x * transform.red);
+                lut[i].green = lutValue(x * transform.green);
+                lut[i].blue = lutValue(x * transform.blue);
+            }
+            created = m_device->createPropertyBlob(lut.data(), sizeof(drm_color_lut) * size,
+                                                   &color.gammaBlob);
+        }
+        if (!created) {
+            qCWarning(cfDrm, "Failed to create the colour transform blob for CRTC %u",
+                      m_config.crtcId);
+            return false;
+        }
+    }
+
+    // The kernel holds its own reference to a blob a CRTC uses.
+    destroyBlobs(m_color);
+    m_color = color;
+    m_colorPending = true;
+    return true;
+}
+
+void ScanoutController::destroyBlobs(const ColorPipeline &color)
+{
+    for (const uint32_t blob : {color.ctmBlob, color.gammaBlob}) {
+        if (blob)
+            m_device->destroyPropertyBlob(blob);
+    }
+}
 
 const DrmPlane *ScanoutController::planeById(uint32_t id) const
 {
@@ -242,13 +319,16 @@ AtomicRequest ScanoutController::buildRequest(const std::vector<PlaneContent> &p
         request.add(m_config.crtcId, m_config.crtcProperties.id("MODE_ID"), off ? 0 : modeBlobId);
         request.add(m_config.crtcId, m_config.crtcProperties.id("ACTIVE"), off ? 0 : 1);
     }
-    // A previous DRM master's colour pipeline, a night light for instance,
-    // would tint every frame. Ozone commits all three with the CRTC, zero
-    // meaning unset (AddAllPendingCrtcProperties).
-    if (modeset && !off) {
-        for (const char *name : {"CTM", "GAMMA_LUT", "DEGAMMA_LUT"})
-            request.add(m_config.crtcId, m_config.crtcProperties.id(name), 0);
+    // A modeset replaces whatever colour pipeline a previous DRM master left,
+    // its night light for instance; a flip carries ours only when it changed.
+    // Ozone commits all three with the CRTC, zero meaning unset
+    // (AddAllPendingCrtcProperties).
+    if (!off && (modeset || m_colorPending)) {
+        request.add(m_config.crtcId, m_config.crtcProperties.id("CTM"), m_color.ctmBlob);
+        request.add(m_config.crtcId, m_config.crtcProperties.id("GAMMA_LUT"), m_color.gammaBlob);
     }
+    if (modeset && !off)
+        request.add(m_config.crtcId, m_config.crtcProperties.id("DEGAMMA_LUT"), 0);
 
     std::vector<uint32_t> used;
     for (const PlaneContent &content : planes) {
@@ -289,16 +369,8 @@ bool ScanoutController::commit(const std::vector<PlaneContent> &planes, bool mod
                                void *userData, uint32_t modeBlobId, render::SyncFence *releaseFence,
                                bool secure)
 {
-    AtomicRequest request = buildRequest(planes, modeset, modeBlobId, false, secure);
-
-    // OUT_FENCE_PTR writes the fd straight into this variable during the
-    // commit, so it has to outlive the ioctl.
-    int outFenceFd = -1;
     const uint32_t outFenceProperty =
             releaseFence ? m_config.crtcProperties.id("OUT_FENCE_PTR") : 0;
-    if (outFenceProperty) {
-        request.add(m_config.crtcId, outFenceProperty, reinterpret_cast<uint64_t>(&outFenceFd));
-    }
 
     uint32_t flags = 0;
     if (modeset) {
@@ -307,13 +379,42 @@ bool ScanoutController::commit(const std::vector<PlaneContent> &planes, bool mod
         flags = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
     }
 
-    if (!m_device->atomicCommit(request, flags, userData)) {
-        const ScopedFd failedFence(outFenceFd);
-        return false;
-    }
+    const auto attempt = [&] {
+        AtomicRequest request = buildRequest(planes, modeset, modeBlobId, false, secure);
+        // OUT_FENCE_PTR writes the fd straight into this variable during the
+        // commit, so it has to outlive the ioctl.
+        int outFenceFd = -1;
+        if (outFenceProperty) {
+            request.add(m_config.crtcId, outFenceProperty,
+                        reinterpret_cast<uint64_t>(&outFenceFd));
+        }
+        if (!m_device->atomicCommit(request, flags, userData)) {
+            const ScopedFd failedFence(outFenceFd);
+            return false;
+        }
+        if (releaseFence && outFenceFd >= 0)
+            *releaseFence = render::SyncFence(ScopedFd(outFenceFd));
+        return true;
+    };
 
-    if (releaseFence && outFenceFd >= 0)
-        *releaseFence = render::SyncFence(ScopedFd(outFenceFd));
+    if (!attempt()) {
+        // A driver that lists a colour property can still refuse a value for
+        // it. Losing the tint beats losing every frame from here on.
+        if (!(modeset || m_colorPending) || m_color.transform.isIdentity())
+            return false;
+        const ColorPipeline color = std::exchange(m_color, ColorPipeline());
+        const bool pending = std::exchange(m_colorPending, true);
+        if (!attempt()) {
+            m_color = color;
+            m_colorPending = pending;
+            return false;
+        }
+        qCWarning(cfDrm, "The driver refused the colour transform for CRTC %u; it stays untinted",
+                  m_config.crtcId);
+        destroyBlobs(color);
+        m_colorRejected = true;
+    }
+    m_colorPending = false;
 
     m_activePlanes.clear();
     for (const PlaneContent &content : planes) {

@@ -225,6 +225,13 @@ target_sources(native_display_delegate_test PRIVATE
 cutefish_add_test(display_configuration_controller_test cutefish-display Qt6::Test)
 target_sources(display_configuration_controller_test PRIVATE
     fake_native_display_delegate.cpp fake_native_display_delegate.h)
+cutefish_add_test(night_light_test cutefish-display)
+add_executable(display_config_service_test display_config_service_test.cpp
+    fake_native_display_delegate.cpp fake_native_display_delegate.h)
+target_include_directories(display_config_service_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(display_config_service_test PRIVATE cutefish-display-ipc Qt6::Test)
+add_test(NAME display_config_service_test
+    COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:display_config_service_test>)
 
 add_executable(scaling-quick-client scaling/quick_client.cpp)
 target_link_libraries(scaling-quick-client PRIVATE Qt6::Quick)

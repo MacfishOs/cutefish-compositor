@@ -255,6 +255,15 @@ public:
 
     bool isDirectScanoutEnabled() const { return m_directScanoutEnabled; }
 
+    // Whether this output's CRTC can tint what it shows; see
+    // ScanoutController::supportsColorTransform().
+    bool supportsColorTransform() const;
+
+    // Tints everything this output shows from its next frame on, through KMS,
+    // so neither composition nor direct scanout changes. A frame with nothing
+    // new to draw still flips to carry it; a dark output takes it when it wakes.
+    void setColorTransform(const render::ColorTransform &transform);
+
     // render::CursorSink: the KMS cursor plane, when the device has one.
     bool setCursorImage(const render::CursorImage &image) override;
     void hideCursor() override;
@@ -411,6 +420,8 @@ private:
     // to once that frame's bookkeeping is built.
     render::SyncFence m_lastReleaseFence;
     bool m_directScanoutEnabled = true;
+    // Kept for the scanout controller init() creates.
+    render::ColorTransform m_colorTransform;
     bool m_secureScanout = false;
     std::function<bool(double)> m_secureContentCheck;
     bool m_keepCarriedFrame = false;

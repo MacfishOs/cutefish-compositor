@@ -1202,9 +1202,17 @@ bool CompositorShell::initDisplay()
             m_displayController->apply(*restored, QStringLiteral("internal"), 0);
     }
 
+    m_nightLight = std::make_unique<display::NightLight>(
+            [this](const render::ColorTransform &transform) {
+                m_displayRuntime->setColorTransform(transform);
+            });
     m_displayService = std::make_unique<display::ipc::DisplayConfigService>(
             &m_displayManager, m_displayController.get(), QDBusConnection::sessionBus(), [this] {
                 return !m_session || m_session->isActive();
+            });
+    m_displayService->setNightLightHandler(
+            [this](double strength, std::chrono::milliseconds duration) {
+                m_nightLight->animateTo(strength, duration);
             });
     if (!m_displayService->registerService(m_options.displayConfigService))
         qCWarning(cfWayland) << "Native display configuration D-Bus service is unavailable";
@@ -1243,6 +1251,7 @@ CompositorShell::~CompositorShell()
     m_inputBackend.reset();
     m_topologyCoordinator.reset();
     m_displayService.reset();
+    m_nightLight.reset();
     m_displayController.reset();
     m_displayDelegate.reset();
     m_inputManager.setEventSink(nullptr);

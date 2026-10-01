@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <functional>
 
 #include <QDBusConnection>
@@ -40,6 +41,11 @@ public:
     uint protocolVersion() const { return 1; }
     bool registerService(const QString& serviceName);
 
+    // Receives SetNightLight's strength, 0 to 1, and how long to take to it.
+    using NightLightHandler = std::function<void(double, std::chrono::milliseconds)>;
+
+    void setNightLightHandler(NightLightHandler handler) { m_nightLight = std::move(handler); }
+
 public slots:
     QString GetState(QString& seatId, qulonglong& topologyGeneration,
                      qulonglong& appliedRevision, QList<PhysicalDisplay>& physicalDisplays,
@@ -67,6 +73,7 @@ public slots:
     QString SetDisplayPower(const QStringList& displayIds, uint state);
     QString SetDockedLidClosed(bool closed);
     void IdentifyDisplays(const QStringList& displayIds);
+    void SetNightLight(double strength, uint durationMs);
 
 signals:
     void StateChanged(qulonglong topologyGeneration, qulonglong appliedRevision);
@@ -79,6 +86,8 @@ signals:
 
 private:
     bool authorizeWrite();
+    // The caller owns this session, whether or not it is on screen.
+    bool authorizeCaller();
     QString caller() const;
     QString reject(DisplayErrorCode code, const QString& message);
     DisplayConfiguration defaultConfiguration(const QString& instanceId,
@@ -89,6 +98,7 @@ private:
     DisplayConfigurationController* m_controller = nullptr;
     QDBusConnection m_connection;
     SessionActive m_sessionActive;
+    NightLightHandler m_nightLight;
     QString m_serviceName;
 };
 

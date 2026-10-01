@@ -4,15 +4,18 @@
 //
 // Upstream: chromium/src/ui/ozone/platform/drm/gpu/
 //               hardware_display_plane_manager_atomic.cc (Commit
-//                   AddOutFencePtrProperties)
+//                   AddOutFencePtrProperties AddAllPendingCrtcProperties)
+//               hardware_display_plane_manager.cc (UpdatePendingCrtcState)
 //               hardware_display_plane_atomic.cc (AssignPlaneProps, SetPlaneProps)
 //               drm_overlay_validator.cc (TestPageFlip)
+//               drm_gpu_util.cc (CreateCTMBlob CreateLutBlob)
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
 // Adapted for Cutefish: one CRTC, no plane migration between controllers, a
-// colour pipeline only ever reset to unset, and the test buffers upstream
-// allocates are replaced by the composited framebuffer already in hand, which
-// has exactly the format and modifier the real commit will use.
+// colour pipeline holding nothing but per-channel gains, which ride the next
+// page flip instead of a blocking property commit, and the test buffers
+// upstream allocates are replaced by the composited framebuffer already in
+// hand, which has exactly the format and modifier the real commit will use.
 
 #ifndef CUTEFISH_BACKEND_DRM_SCANOUT_CONTROLLER_H_
 #define CUTEFISH_BACKEND_DRM_SCANOUT_CONTROLLER_H_
@@ -27,6 +30,7 @@
 #include "backend/drm/drm_device_api.h"
 #include "backend/drm/drm_plane.h"
 #include "backend/drm/drm_properties.h"
+#include "render/color_transform.h"
 #include "render/scanout.h"
 #include "render/sync_fence.h"
 #include "scene/overlay_candidate.h"
@@ -112,6 +116,15 @@ public:
     // cursor calls, so a modeset leaves that plane alone.
     void setHardwareCursor(bool owned) { m_hardwareCursor = owned; }
 
+    // Whether the CRTC can tint everything it shows, cursor plane included:
+    // through its CTM, or a gamma LUT where it has no CTM.
+    bool supportsColorTransform() const;
+
+    // The tint every commit from the next one on carries. Returns whether that
+    // changed what the next commit sends; a CRTC that cannot take it, or whose
+    // driver once refused it, stays untinted.
+    bool setColorTransform(const render::ColorTransform &transform);
+
     // The DRM framebuffer id for `buffer`, imported on first use and cached on
     // the buffer itself. Zero when this device cannot scan it out.
     uint32_t framebufferFor(render::ScanoutBuffer &buffer, uint32_t *format, uint64_t *modifier);
@@ -123,8 +136,18 @@ public:
 
 private:
     friend class DrmOutput;
+
+    // The blobs that program a colour transform: the CTM's, or the gamma LUT's
+    // on a CRTC without a CTM. Zero unsets a property, as the identity does.
+    struct ColorPipeline {
+        render::ColorTransform transform;
+        uint32_t ctmBlob = 0;
+        uint32_t gammaBlob = 0;
+    };
+
     AtomicRequest buildRequest(const std::vector<PlaneContent> &planes, bool modeset,
                                uint32_t modeBlobId, bool off, bool secure = false) const;
+    void destroyBlobs(const ColorPipeline &color);
     // Every plane this CRTC can drive, primary and overlays alike.
     std::vector<const DrmPlane *> allPlanes() const;
     void addPlaneProperties(AtomicRequest &request, const DrmPlane &plane,
@@ -140,6 +163,10 @@ private:
     // Planes programmed by the last commit, so ones that fall out of use are
     // explicitly disabled rather than left showing a stale buffer.
     std::vector<uint32_t> m_activePlanes;
+    ColorPipeline m_color;
+    // The transform has not reached the CRTC yet, so the next commit sends it.
+    bool m_colorPending = false;
+    bool m_colorRejected = false;
     uint64_t m_testFailures = 0;
     uint64_t m_importFailures = 0;
 };

@@ -247,6 +247,23 @@ void DrmOutput::setDirectScanoutEnabled(bool enabled)
     scheduleFrame(Reason::Scene);
 }
 
+bool DrmOutput::supportsColorTransform() const
+{
+    return m_scanout && m_scanout->supportsColorTransform();
+}
+
+void DrmOutput::setColorTransform(const render::ColorTransform &transform)
+{
+    m_colorTransform = transform;
+    if (!m_scanout || !m_scanout->setColorTransform(transform))
+        return;
+    // Nothing on screen has to change for it, but only a commit carries it.
+    if (m_enabled && m_sessionActive && m_sessionActive()) {
+        m_forceFrame = true;
+        scheduleFrame(Reason::Scene);
+    }
+}
+
 void DrmOutput::setSecureScanout(bool secure)
 {
     if (m_secureScanout == secure)
@@ -340,6 +357,8 @@ bool DrmOutput::init(render::EglRenderer *renderer, std::unique_ptr<render::EglR
     scanoutConfig.planes = m_config.planes;
     scanoutConfig.modeSize = size();
     m_scanout = std::make_unique<ScanoutController>(m_device, std::move(scanoutConfig));
+
+    m_scanout->setColorTransform(m_colorTransform);
 
     m_cursor = DrmCursor::create(m_device, m_config.crtcId);
     m_scanout->setHardwareCursor(m_cursor != nullptr);
@@ -603,6 +622,8 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
         output->m_config.mode = item->mode;
         output->m_scanout->m_config.modeSize = output->size();
         output->m_scanout->m_activePlanes = {output->m_config.planeId};
+        // The modeset carried the colour pipeline.
+        output->m_scanout->m_colorPending = false;
         output->m_scanoutFrame.planes = {item->buffer->primary};
         output->m_scanoutFrame.composited = std::move(item->buffer);
         // The modeset commits blocking, so this frame is already on screen.

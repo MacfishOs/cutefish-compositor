@@ -81,6 +81,8 @@ enum class DisplayCapability : uint32_t {
     VariableRefreshRate = 1 << 4,
     HighDynamicRange = 1 << 5,
     PrivacyScreen = 1 << 6,
+    // The night light can tint it.
+    ColorTransform = 1 << 7,
 };
 Q_DECLARE_FLAGS(DisplayCapabilities, DisplayCapability)
 

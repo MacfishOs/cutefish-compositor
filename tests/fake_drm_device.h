@@ -93,18 +93,34 @@ public:
         return true;
     }
 
-    bool createPropertyBlob(const void *, size_t, uint32_t *id) override
+    bool createPropertyBlob(const void *data, size_t size, uint32_t *id) override
     {
         if (blobFails)
             return false;
         *id = ++lastBlob;
+        const auto *bytes = static_cast<const uint8_t *>(data);
+        blobs[*id] = std::vector<uint8_t>(bytes, bytes + size);
         return true;
     }
 
-    void destroyPropertyBlob(uint32_t) override { }
+    void destroyPropertyBlob(uint32_t id) override { destroyedBlobs.push_back(id); }
+
+    // The blob's contents viewed as an array of T.
+    template<typename T>
+    std::vector<T> blobAs(uint32_t id) const
+    {
+        const auto blob = blobs.find(id);
+        if (blob == blobs.end())
+            return {};
+        std::vector<T> values(blob->second.size() / sizeof(T));
+        std::memcpy(values.data(), blob->second.data(), values.size() * sizeof(T));
+        return values;
+    }
 
     bool blobFails = false;
     uint32_t lastBlob = 0;
+    std::map<uint32_t, std::vector<uint8_t>> blobs;
+    std::vector<uint32_t> destroyedBlobs;
 
     // --- Atomic commits. ---
 
