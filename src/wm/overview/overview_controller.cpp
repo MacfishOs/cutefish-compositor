@@ -166,10 +166,15 @@ void OverviewController::buildBars()
     }
 }
 
-void OverviewController::rebuild(bool animate)
+void OverviewController::rebuild(bool animate, bool keepPlaces)
 {
     if (!m_node)
         return;
+    std::map<Window *, QRectF> kept;
+    if (keepPlaces) {
+        for (const Item &item : m_items)
+            kept[item.window] = item.bounds;
+    }
     // A press stays with the window or the desk it went down on, wherever
     // that is now; with it gone, the press is too.
     Window *pressedWindow = nullptr;
@@ -233,8 +238,10 @@ void OverviewController::rebuild(bool animate)
         const QRect area(QPoint(work.left() + kMargin, top + kMargin / 2),
                          QPoint(work.right() - kMargin, work.bottom() - kMargin));
         const auto spread = overview::spreadLayout(rects, area, kWindowGap, output.scale);
-        for (size_t i = 0; i < onOutput.size() && i < spread.size(); ++i)
-            places[onOutput[i]] = spread[i];
+        for (size_t i = 0; i < onOutput.size() && i < spread.size(); ++i) {
+            const auto it = kept.find(onOutput[i]);
+            places[onOutput[i]] = it != kept.end() ? it->second : spread[i];
+        }
     }
 
     Window *hovered = m_hovered >= 0 && m_hovered < int(m_items.size())
@@ -410,7 +417,8 @@ void OverviewController::activateForExit(Window *window)
     if (m_manager->hasWindow(window))
         m_manager->activation()->activate(window);
     m_activating = false;
-    rebuild(true);
+    // Raised to the top it draws over the rest; its place and the others' stay.
+    rebuild(true, true);
 }
 
 void OverviewController::begin()

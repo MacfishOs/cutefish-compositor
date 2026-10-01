@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 
 #include <gtest/gtest.h>
 
@@ -41,6 +42,13 @@ using State = OverviewController::State;
 
 namespace {
 
+QRectF lerp(const QRectF &a, const QRectF &b, double t)
+{
+    return QRectF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t,
+                  a.width() + (b.width() - a.width()) * t,
+                  a.height() + (b.height() - a.height()) * t);
+}
+
 constexpr QRect kOutput(0, 0, 1000, 800);
 
 class FrameTexture : public render::Texture
@@ -63,11 +71,19 @@ public:
     bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
                          const std::function<void()> &paint) override
     {
+        const qsizetype before = calls.size();
         paint();
         if (!texture || texture->size() != bounds.size())
             texture = std::make_unique<FrameTexture>(bounds.size());
+        // What the texture holds, for reading the draw order of cached windows.
+        for (qsizetype i = before; i < calls.size(); ++i) {
+            if (calls[i].texture)
+                contents[texture.get()] = calls[i].texture;
+        }
         return true;
     }
+
+    std::map<const render::Texture *, const render::Texture *> contents;
 
     void drawBackgroundBlur(const QRect &bounds, int, const QRect &, const render::GlassParams &,
                             const QPainterPath &) override
@@ -750,7 +766,7 @@ TEST_F(OverviewTest, AClickWhileItComesInTakesTheWindowUnderThePointer)
     ASSERT_EQ(second, active());
     ASSERT_TRUE(overview->enter());
     paint();
-    now += 60;
+    now += 120;
     const double progress = node->progress(double(now));
     ASSERT_GT(progress, 0.1);
     ASSERT_LT(progress, 0.9);
@@ -760,6 +776,71 @@ TEST_F(OverviewTest, AClickWhileItComesInTakesTheWindowUnderThePointer)
     click(drawn.center());
     EXPECT_EQ(State::Exiting, overview->state());
     EXPECT_EQ(first, active());
+}
+
+TEST_F(OverviewTest, AClickedWindowIsDrawnOverTheRestAllTheWayOut)
+{
+    // Behind the active one on the desk, overlapping it.
+    Window *behind = makeWindow(QRect(100, 100, 600, 400));
+    Window *front = makeWindow(QRect(300, 200, 600, 400));
+    ASSERT_EQ(front, active());
+    show();
+    click(placeOf(behind).center());
+    ASSERT_EQ(State::Exiting, overview->state());
+    EXPECT_EQ(behind, active());
+    // Topmost in the overview's own order from the first frame out.
+    ASSERT_EQ(2u, overview->items().size());
+    EXPECT_EQ(behind, overview->items().back().window);
+    for (int step = 0; step < 6; ++step) {
+        now += 40;
+        paint();
+        // The last draw of the window's content, live or from its cached texture.
+        const auto drawnAt = [this](const Window *window) {
+            const render::Texture *texture = window->rootSurface()->node()->texture();
+            int last = -1;
+            for (qsizetype i = 0; i < renderer.calls.size(); ++i) {
+                const render::Texture *drawn = renderer.calls[i].texture;
+                const auto cached = renderer.contents.find(drawn);
+                if (drawn && (drawn == texture || (cached != renderer.contents.end() && cached->second == texture)))
+                    last = int(i);
+            }
+            return last;
+        };
+        if (overview->state() != State::Exiting)
+            break;
+        ASSERT_GE(drawnAt(behind), 0);
+        ASSERT_GE(drawnAt(front), 0);
+        EXPECT_GT(drawnAt(behind), drawnAt(front)) << "step " << step;
+    }
+    settle();
+    EXPECT_EQ(State::Hidden, overview->state());
+    EXPECT_EQ(behind, active());
+    EXPECT_EQ(behind, manager.windows().back());
+}
+
+TEST_F(OverviewTest, AClickKeepsEveryWindowsPlaceOnTheWayOut)
+{
+    // The same centre: the layout orders them by stacking, which the click
+    // changes, so the places must be kept rather than laid out again.
+    Window *behind = makeWindow(QRect(300, 200, 400, 300));
+    Window *front = makeWindow(QRect(100, 100, 800, 500));
+    ASSERT_EQ(front, active());
+    show();
+    const QRectF behindPlace = placeOf(behind);
+    const QRectF frontPlace = placeOf(front);
+    ASSERT_NE(behindPlace, frontPlace);
+    click(behindPlace.center());
+    ASSERT_EQ(State::Exiting, overview->state());
+    EXPECT_EQ(behindPlace, placeOf(behind));
+    EXPECT_EQ(frontPlace, placeOf(front));
+    // And drawn from there, not from a new slot.
+    now += 40;
+    paint();
+    const double progress = node->progress(double(now));
+    const QRectF drawn = node->presentedRect(indexOf(behind), progress, double(now));
+    const QRectF straight = lerp(QRectF(behind->bounds()), behindPlace, progress);
+    EXPECT_NEAR(straight.x(), drawn.x(), 1e-6);
+    EXPECT_NEAR(straight.y(), drawn.y(), 1e-6);
 }
 
 TEST_F(OverviewTest, TheShortcutTurnsItAroundWhereverItIs)

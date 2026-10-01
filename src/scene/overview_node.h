@@ -81,8 +81,8 @@ private:
 //
 // The progress follows the fingers of a touchpad swipe, resampled at frame
 // time as the desk swipe is, pulls against 0 and 1 like a rubber band and
-// lets go into a timed tween leaving at the fingers' speed; the shortcut rides
-// the same tween. Upstream Ash interpolates cached transforms by the scroll
+// lets go into a timed tween leaving at the fingers' speed; the shortcut and
+// a click ride a tween of their own that eases in as well as out. Upstream Ash interpolates cached transforms by the scroll
 // ratio (OverviewGrid::PositionWindowsContinuously) and decides the release by
 // distance alone.
 class OverviewNode : public Node
@@ -102,9 +102,12 @@ public:
         int selected = -1;
     };
 
-    // Ash's kTransition: the whole way in or out, shorter for less of it, and
-    // a window moving to a new place.
+    // Ash's kTransition: the whole way in or out carrying the fingers' speed,
+    // shorter for less of it, and a window moving to a new place.
     static constexpr double kShowDurationMs = 300;
+    // The whole way from rest, on the shortcut, a click or Escape, as gentle
+    // to set off as to land.
+    static constexpr double kRestDurationMs = 250;
     static constexpr double kLayoutDurationMs = 300;
     // Released faster than this, in progress per second, the overview goes on
     // the way the fingers went; slower, to the nearer end.

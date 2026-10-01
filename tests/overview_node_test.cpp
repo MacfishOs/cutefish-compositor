@@ -157,13 +157,16 @@ TEST(OverviewNode, TheShortcutGlidesInAndLandsOnTime)
     EXPECT_TRUE(f.node->isActive());
     EXPECT_TRUE(f.node->occludesOutput(f.renderer));
     double last = 0;
-    while (f.now - start < qint64(Node::kShowDurationMs)) {
+    while (f.now - start < qint64(Node::kRestDurationMs)) {
         f.now += 4;
         f.paint();
         const double progress = f.node->progress(double(f.now));
         EXPECT_GE(progress, last);
         EXPECT_LE(progress, 1);
         last = progress;
+        // From rest it sets off gently: a tenth of the time covers under 3%.
+        if (f.now - start == qint64(Node::kRestDurationMs / 10))
+            EXPECT_LT(progress, 0.03);
     }
     // No tail creeping in after its time.
     EXPECT_EQ(1, last);
@@ -277,6 +280,10 @@ TEST(OverviewNode, ReleasedItCarriesOnAtTheFingersSpeed)
     const double now = double(f.now);
     const double speed = (f.node->progress(now + 0.1) - f.node->progress(now)) * 10000;
     EXPECT_NEAR(0.4, speed, 0.02);
+    // On the quick curve: the rest of the way within the shorter time.
+    f.now += qint64(Node::kShowDurationMs);
+    f.paint();
+    EXPECT_EQ(QList<double>({1}), f.finished);
     f.settle();
     EXPECT_EQ(QList<double>({1}), f.finished);
 }

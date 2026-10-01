@@ -171,7 +171,10 @@ private:
     bool isOverviewWindow(const Window *window) const;
     // Lays the windows out again; `animate` moves the ones already shown to
     // their new places on a tween.
-    void rebuild(bool animate);
+    // `keepPlaces` leaves every window already shown where it is: a layout
+    // that orders equal centres by stacking would otherwise swap slots when a
+    // window is raised on the way out.
+    void rebuild(bool animate, bool keepPlaces = false);
     void buildBars();
     // Where the dragged item is drawn with the pointer at `location`: shrunk
     // on its way to the desk bar, as Ash's OverviewWindowDragController does,

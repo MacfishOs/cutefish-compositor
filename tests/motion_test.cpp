@@ -134,6 +134,29 @@ TEST(MotionTest, TweenLeavesAtItsStartVelocity)
     EXPECT_TRUE(tween.isFinished(300));
 }
 
+TEST(MotionTest, ATweenOnEaseInOutSetsOffAsGentlyAsItLands)
+{
+    const Tween tween(0, 0, 1, 400, 0, kEaseInOut);
+    EXPECT_NEAR(0, tween.velocity(0), 1e-6);
+    // The curve is symmetric about its middle.
+    EXPECT_NEAR(0.5, tween.value(200), 1e-9);
+    EXPECT_NEAR(tween.value(100), 1 - tween.value(300), 1e-9);
+    EXPECT_LT(tween.velocity(20), tween.velocity(100));
+    EXPECT_LT(tween.velocity(380), tween.velocity(300));
+    EXPECT_TRUE(tween.isFinished(400));
+
+    // Bent to leave at a speed, it still slows into its landing.
+    const Tween moving(0, 0, 1, 400, 4, kEaseInOut);
+    EXPECT_NEAR(4, moving.velocity(0), 1e-6);
+    for (const double time : {20.0, 200.0, 380.0}) {
+        const double numeric =
+                (moving.value(time + 0.01) - moving.value(time - 0.01)) / 0.02 * 1000;
+        EXPECT_NEAR(numeric, moving.velocity(time), 1e-3 * std::max(1.0, std::abs(numeric)));
+    }
+    EXPECT_LT(moving.velocity(380), moving.velocity(200));
+    EXPECT_LT(moving.velocity(380), 0.5);
+}
+
 TEST(MotionTest, AFastStartShortensTheTweenAndABackwardOneIsDropped)
 {
     // 200 a second would need a start five times the average over 300 ms.

@@ -60,11 +60,16 @@ double cubicBezier(double x1, double y1, double x2, double y2, double x)
     return bezierAt(y1, y2, bezierParameter(x1, x2, x));
 }
 
-Tween::Tween(double time, double from, double target, double durationMs, double velocity)
+Tween::Tween(double time, double from, double target, double durationMs, double velocity,
+             const TimingCurve &curve)
     : m_start(time)
     , m_from(from)
     , m_target(target)
     , m_duration(std::max(0.0, durationMs * durationScale()))
+    , m_x1(curve.x1)
+    , m_y1(curve.y1)
+    , m_x2(curve.x2)
+    , m_y2(curve.y2)
 {
     const double distance = target - from;
     if (distance == 0 || m_duration <= 0 || velocity * distance <= 0)
@@ -86,7 +91,7 @@ double Tween::value(double time) const
         return m_target;
     if (time <= m_start)
         return m_from;
-    const double y = cubicBezier(m_x1, m_y1, 0, 1, (time - m_start) / m_duration);
+    const double y = cubicBezier(m_x1, m_y1, m_x2, m_y2, (time - m_start) / m_duration);
     return m_from + (m_target - m_from) * y;
 }
 
@@ -94,11 +99,11 @@ double Tween::velocity(double time) const
 {
     if (isFinished(time) || time < m_start)
         return 0;
-    const double s = bezierParameter(m_x1, 0, (time - m_start) / m_duration);
-    const double dx = bezierSlope(m_x1, 0, s);
+    const double s = bezierParameter(m_x1, m_x2, (time - m_start) / m_duration);
+    const double dx = bezierSlope(m_x1, m_x2, s);
     if (dx <= 0)
         return 0;
-    return (m_target - m_from) * bezierSlope(m_y1, 1, s) / dx / (m_duration / 1000);
+    return (m_target - m_from) * bezierSlope(m_y1, m_y2, s) / dx / (m_duration / 1000);
 }
 
 Spring::Spring()

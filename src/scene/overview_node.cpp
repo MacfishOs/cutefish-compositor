@@ -352,10 +352,15 @@ double OverviewNode::target() const
 motion::Tween OverviewNode::tweenTo(double now, double from, double target,
                                     double velocity) const
 {
-    // Less of the way takes less time, though more than its share, so a short
-    // way back is not a snap.
-    const double duration = kShowDurationMs * std::sqrt(std::min(std::abs(target - from), 1.0));
-    return motion::Tween(now, from, target, duration, velocity);
+    // Carrying speed towards the target it goes on and lands softly; from
+    // rest, or turned around, it sets off as gently as it lands. Less of the
+    // way takes less time, though more than its share, so a short way back is
+    // not a snap.
+    const bool fromRest = velocity * (target - from) <= 0;
+    const double whole = fromRest ? kRestDurationMs : kShowDurationMs;
+    const double duration = whole * std::sqrt(std::min(std::abs(target - from), 1.0));
+    return motion::Tween(now, from, target, duration, velocity,
+                         fromRest ? motion::kEaseInOut : motion::kAccel20Decel100);
 }
 
 void OverviewNode::settle(double now, double from, double target, double velocity)

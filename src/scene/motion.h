@@ -63,8 +63,21 @@ private:
     double m_target = 0;
 };
 
-// A timed move on gfx::Tween::ACCEL_20_DECEL_100 whose start is bent to leave
-// at a given speed, so a release or a turn carries on without a kink. It never
+// A cubic Bézier timing curve from (0, 0) to (1, 1), as CSS and gfx::Tween
+// write them.
+struct TimingCurve {
+    double x1;
+    double y1;
+    double x2;
+    double y2;
+};
+// gfx::Tween::ACCEL_20_DECEL_100: off at once, a long soft landing.
+inline constexpr TimingCurve kAccel20Decel100 {0.2, 0, 0, 1};
+// CSS ease-in-out: as gentle to set off as to land.
+inline constexpr TimingCurve kEaseInOut {0.42, 0, 0.58, 1};
+
+// A timed move on a timing curve whose start is bent to leave at a given
+// speed, so a release or a turn carries on without a kink. It never
 // overshoots: a start away from the target is not kept, and one faster than
 // the curve can begin at shortens the move instead.
 class Tween
@@ -73,7 +86,8 @@ public:
     Tween() = default;
     // From `from` at `time` to `target` within `durationMs`, leaving at
     // `velocity` units per second.
-    Tween(double time, double from, double target, double durationMs, double velocity = 0);
+    Tween(double time, double from, double target, double durationMs, double velocity = 0,
+          const TimingCurve &curve = kAccel20Decel100);
 
     double value(double time) const;
     double velocity(double time) const;
@@ -86,9 +100,11 @@ private:
     double m_from = 0;
     double m_target = 0;
     double m_duration = 0;
-    // The first control point; the second is ACCEL_20_DECEL_100's (0, 1).
-    double m_x1 = 0.2;
-    double m_y1 = 0;
+    // The curve's control points, the first one's y bent to the start speed.
+    double m_x1 = kAccel20Decel100.x1;
+    double m_y1 = kAccel20Decel100.y1;
+    double m_x2 = kAccel20Decel100.x2;
+    double m_y2 = kAccel20Decel100.y2;
 };
 
 // A critically damped spring from `from` to `target` at `time`, keeping
