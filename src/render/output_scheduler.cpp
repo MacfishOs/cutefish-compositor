@@ -63,6 +63,9 @@ void OutputScheduler::request(Reason reason, bool fullRepaint)
     if (m_requested != m_consumed)
         ++m_stats.coalesced;
     ++m_requested;
+    // Full demand joining cheaper demand moves its draw point earlier.
+    if (fullRepaint && !m_fullDemand && m_state == State::Scheduled)
+        m_state = State::Idle;
     m_fullDemand = m_fullDemand || fullRepaint;
     schedule();
 }
@@ -74,7 +77,14 @@ void OutputScheduler::schedule()
     // As viz's DisplayScheduler: demand that arrives before the draw point
     // waits for it, so what clients commit early in the refresh still makes
     // it; later demand is drawn at once.
-    m_deadline = std::max(m_now(), drawPoint(m_next));
+    const Time now = m_now();
+    m_deadline = std::max(now, drawPoint(m_next));
+    // A full repaint starting from idle past the draw point would miss the
+    // vblank anyway: begun at the next one, it shows its own slot, not a stale one.
+    if (m_vblank && m_fullDemand && m_next < slotAt(now)
+        && now > drawPoint(slotAt(now)) + kWakeupSlack) {
+        m_deadline = drawPoint(slotAt(now) + m_period);
+    }
     m_state = State::Scheduled;
 }
 
@@ -139,7 +149,9 @@ uint64_t OutputScheduler::begin()
     m_state = State::Rendering;
     ++m_stats.renders;
     if (m_vblank) {
-        m_frameTime = slotAt(now);
+        // A wakeup up to kWakeupSlack short of a draw point on the vblank
+        // itself still draws for the slot it was scheduled in, not the last one.
+        m_frameTime = slotAt(std::max(now, m_deadline));
     } else {
         // Preserve the nominal phase for ordinary jitter; skip all missed slots.
         m_frameTime = m_deadline + ((now - m_deadline) / m_period) * m_period;

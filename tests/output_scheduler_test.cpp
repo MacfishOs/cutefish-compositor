@@ -328,6 +328,25 @@ TEST_F(SchedulerTest, AWakeupJustShortOfTheDeadlineDrawsInItsSlot)
     EXPECT_EQ(scheduler.frameTime(), at(20ms));
 }
 
+TEST_F(SchedulerTest, AWakeupJustShortOfADrawPointOnTheVblankDrawsInTheNewSlot)
+{
+    start();
+    // A full repaint as slow as a refresh is begun on the vblank itself.
+    scheduler.request(Reason::Scene, true);
+    now = *scheduler.deadline();
+    submit();
+    scheduler.drawn(pending, now + 10ms);
+    now = scheduler.frameTime() + 10ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+    scheduler.request(Reason::Scene, true);
+    const auto deadline = *scheduler.deadline();
+    EXPECT_EQ(deadline, scheduler.frameTime() + 10ms);
+    now = deadline - OutputScheduler::kWakeupSlack / 2;
+    submit();
+    EXPECT_EQ(scheduler.frameTime(), deadline);
+}
+
 TEST_F(SchedulerTest, FramesShowTheirDrawPoint)
 {
     const auto at = [](auto offset) {
@@ -416,6 +435,38 @@ TEST_F(SchedulerTest, ALateFrameDoesNotQueueTheFramesAfterIt)
     ASSERT_TRUE(scheduler.complete(pending, at(60ms)));
     pending = 0;
     EXPECT_EQ(scheduler.stats().missed, 1u);
+}
+
+TEST_F(SchedulerTest, AFullRepaintFromIdlePastItsDrawPointBeginsAtTheNextOne)
+{
+    start();
+    scheduler.request(Reason::Scene, true);
+    now = *scheduler.deadline();
+    submit();
+    scheduler.drawn(pending, now + 6ms);
+    now = scheduler.frameTime() + 10ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+    const auto slot = now + 1s;
+
+    // Begun at once it would miss the vblank and show a stale slot.
+    now = slot + 5ms;
+    scheduler.request(Reason::Scene, true);
+    EXPECT_EQ(*scheduler.deadline(), slot + 13ms);
+    now = *scheduler.deadline();
+    submit();
+    EXPECT_EQ(scheduler.frameTime(), slot + 10ms);
+    EXPECT_EQ(scheduler.sampleTime(), slot + 13ms);
+    now = scheduler.frameTime() + 10ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+
+    // So does one that turns full after cheaper demand was scheduled.
+    now += 1s + 5ms;
+    scheduler.request(Reason::Scene);
+    EXPECT_EQ(*scheduler.deadline(), now);
+    scheduler.request(Reason::Scene, true);
+    EXPECT_EQ(*scheduler.deadline(), now + 8ms);
 }
 
 TEST_F(SchedulerTest, AFullRepaintAfterCheapFramesIsBegunAsEarlyAsTheLastOne)
