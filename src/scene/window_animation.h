@@ -12,6 +12,7 @@
 #define CUTEFISH_SCENE_WINDOW_ANIMATION_H_
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -195,6 +196,11 @@ public:
 
     bool redrawsSubtree(const QRect &viewport, double scale) const override;
 
+    // A launcher fading over the whole output keeps what lies under it as a
+    // texture while it animates, and draws again only what changed there.
+    bool renderSiblingsBelow(render::Renderer &renderer, size_t begin,
+                             size_t end) const override;
+
     Content content() const override { return Content::Translucent; }
 
     QRect absolutePaintBounds() const override;
@@ -291,6 +297,15 @@ private:
     };
     mutable std::unique_ptr<StashedTexture> m_stashedTexture;
     void swapStashedTexture(bool blurSuppressed) const;
+    // What lies under a launcher animation, per output.
+    struct BelowTexture {
+        std::unique_ptr<render::Texture> texture;
+        DamageTracker damage {true};
+        double scale = 0;
+        QRect viewport;
+        uint64_t rootRevision = 0;
+    };
+    mutable std::map<QString, BelowTexture> m_belowTextures;
     mutable std::unique_ptr<render::Texture> m_landingTexture;
     mutable std::unique_ptr<render::Texture> m_oldTexture;
     mutable QRect m_coverage;

@@ -5,6 +5,8 @@
 #pragma once
 
 #include <QRegion>
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -27,6 +29,14 @@ public:
     explicit DamageTracker(bool rootIsViewport = false)
         : m_rootIsViewport(rootIsViewport)
     {
+    }
+
+    // Tracks only the root's children in [begin, end), for a tree drawn up to
+    // a sibling that draws over the rest. Needs a root that is the viewport.
+    void setChildRange(size_t begin, size_t end)
+    {
+        m_childBegin = begin;
+        m_childEnd = end;
     }
 
     // A blur reads what lies behind it. `backdropChanged`, when given, says
@@ -107,8 +117,9 @@ private:
             if (!node.isVisible() && !node.paintsWhenHidden())
                 return;
             if (m_rootIsViewport && &node == &root) {
-                for (const Node *child : node.children())
-                    self(self, *child, false, false);
+                const auto &children = node.children();
+                for (size_t i = m_childBegin; i < std::min(m_childEnd, children.size()); ++i)
+                    self(self, *children[i], false, false);
                 return;
             }
             const QRect absolute = node.absolutePaintBounds();
@@ -202,6 +213,8 @@ private:
     }
 
     bool m_rootIsViewport = false;
+    size_t m_childBegin = 0;
+    size_t m_childEnd = SIZE_MAX;
     std::map<uint64_t, Entry> m_history;
     QRect m_viewport;
     std::vector<QRect> m_samples;

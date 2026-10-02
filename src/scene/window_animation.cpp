@@ -271,6 +271,7 @@ void WindowAnimation::releaseRenderResources()
     finish();
     m_texture.reset();
     m_stashedTexture.reset();
+    m_belowTextures.clear();
     m_textureReusable = false;
     Node::releaseRenderResources();
 }
@@ -691,6 +692,57 @@ bool WindowAnimation::redrawsSubtree(const QRect &viewport, double scale) const
     if (!animating() && !viewport.isEmpty() && !coverage.intersects(viewport))
         return false;
     return !textureReusable(coverage, viewport, scale);
+}
+
+bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t begin,
+                                          size_t end) const
+{
+    if (m_style != Style::Launcher || !animating() || (!isVisible() && !paintsWhenHidden())) {
+        m_belowTextures.clear();
+        return false;
+    }
+    // Captures draw everything live, and the overview draws blurs elsewhere.
+    const QRect viewport = outputViewport(renderer, *this);
+    if (renderer.capturing || renderer.suppressBackgroundBlur
+        || !absolutePaintBounds().intersects(viewport))
+        return false;
+    // A launcher this one takes over leaves on its first frame.
+    const auto &siblings = parent()->children();
+    for (size_t i = begin; i < end; ++i) {
+        const auto *animation = dynamic_cast<const WindowAnimation *>(siblings[i]);
+        if ((animation && animation->style() == Style::Launcher)
+            || hasPromotedSurface(*siblings[i]))
+            return false;
+    }
+    const double scale = renderer.rasterScale();
+    BelowTexture &below = m_belowTextures[renderer.outputContext().outputId];
+    below.damage.setChildRange(begin, end);
+    const QRegion damage = below.damage.update(*parent(), viewport, scale);
+    const bool reusable = below.texture && below.scale == scale && below.viewport == viewport
+            && below.rootRevision == sceneRoot(*this).revision();
+    if (reusable && damage.isEmpty()) {
+        for (size_t i = begin; i < end; ++i)
+            recordPresentation(renderer, *siblings[i]);
+    } else {
+        // The pass suspends presentation recording; what it draws shows this frame.
+        render::PresentationSubmission *submission = renderer.presentationSubmission;
+        const QRect repaint = reusable
+                ? render::coverSamples(damage.boundingRect(), below.damage.samples())
+                : QRect();
+        if (!renderer.renderToTexture(below.texture, viewport, repaint, [&] {
+                renderer.presentationSubmission = submission;
+                for (size_t i = begin; i < end; ++i)
+                    siblings[i]->render(renderer);
+            })) {
+            m_belowTextures.clear();
+            return false;
+        }
+        below.scale = scale;
+        below.viewport = viewport;
+        below.rootRevision = sceneRoot(*this).revision();
+    }
+    renderer.drawTexture(below.texture.get(), viewport);
+    return true;
 }
 
 bool WindowAnimation::textureIsCurrent(render::Renderer &renderer, const QRect &coverage,

@@ -244,7 +244,14 @@ void Node::renderSubtree(render::Renderer &renderer) const
         m_childOrder[i]->render(renderer);
     if (first <= split)
         paint(renderer, absoluteGeometry());
-    for (size_t i = std::max(split, first); i < m_childOrder.size(); ++i)
+    size_t next = std::max(split, first);
+    for (size_t i = m_childOrder.size(); i-- > next + 1;) {
+        if (m_childOrder[i]->renderSiblingsBelow(renderer, next, i)) {
+            next = i;
+            break;
+        }
+    }
+    for (size_t i = next; i < m_childOrder.size(); ++i)
         m_childOrder[i]->render(renderer);
 }
 

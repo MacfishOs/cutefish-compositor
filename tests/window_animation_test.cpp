@@ -93,11 +93,13 @@ public:
     }
 
     QRect lastRepaint;
+    QList<QRect> repaintRects;
 
     bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
                          const QRect &repaint, const std::function<void()> &paint) override
     {
         lastRepaint = repaint;
+        repaintRects.append(repaint);
         return renderToTexture(texture, bounds, paint);
     }
 
@@ -1691,4 +1693,53 @@ TEST(WindowAnimation, ReopeningALauncherReversesItsCloseWithoutStackingFades)
     now += 360;
     scene.render(renderer);
     EXPECT_FLOAT_EQ(renderer.calls.back().alpha, 1);
+}
+
+TEST(WindowAnimation, ALauncherKeepsWhatLiesUnderItWhileItAnimates)
+{
+    qint64 now = 0;
+    scene::Scene scene;
+    SnapshotRenderer renderer;
+    const QRect screen(0, 0, 1000, 800);
+    scene.setSize(screen.size());
+    scene::Node *surfaces =
+            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+    auto *desktop = static_cast<scene::ColorNode *>(surfaces->addChild(
+            std::make_unique<scene::ColorNode>(render::Color {.2f, .3f, .4f, 1})));
+    desktop->setGeometry(screen);
+    auto *launcher = static_cast<Animation *>(surfaces->addChild(
+            std::make_unique<Animation>([&] { return now; })));
+    launcher->setStyle(Animation::Style::Launcher);
+    launcher->setGeometry(screen);
+    const auto fills = [&] {
+        return renderer.kinds().count(QStringLiteral("fill"));
+    };
+
+    scene.render(renderer);
+    EXPECT_EQ(fills(), 1);
+    // Drawn from the texture while nothing under the launcher changes.
+    for (now = 40; now < 200; now += 40) {
+        renderer.calls.clear();
+        scene.render(renderer);
+        EXPECT_EQ(fills(), 0);
+        EXPECT_GE(renderer.kinds().count(QStringLiteral("texture")), 1);
+    }
+    // Only the part that changed is drawn again.
+    auto *window = static_cast<scene::ColorNode *>(surfaces->addChild(
+            std::make_unique<scene::ColorNode>(render::Color {1, 1, 1, 1})));
+    window->setGeometry({100, 100, 200, 100});
+    surfaces->reorderChildren({desktop, window, launcher});
+    renderer.calls.clear();
+    renderer.repaintRects.clear();
+    scene.render(renderer);
+    EXPECT_EQ(fills(), 2);
+    EXPECT_TRUE(renderer.repaintRects.contains(QRect(100, 100, 200, 100)));
+
+    // At rest the launcher leaves them to the scene again.
+    now = 1000;
+    scene.render(renderer);
+    renderer.calls.clear();
+    window->setColor({0, 0, 0, 1});
+    scene.render(renderer);
+    EXPECT_EQ(fills(), 2);
 }

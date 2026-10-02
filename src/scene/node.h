@@ -135,6 +135,15 @@ public:
     // nothing drawn before it there can show. Its parent then skips those
     // siblings, as viz drops quads an opaque one occludes.
     virtual bool occludesOutput(const render::Renderer &) const { return false; }
+
+    // Draws its siblings [begin, end), all those under it the parent would
+    // draw, itself: a full-output animation keeps them as a texture rather
+    // than repaint them all each frame. False leaves them to the parent.
+    virtual bool renderSiblingsBelow(render::Renderer &, size_t /*begin*/, size_t /*end*/) const
+    {
+        return false;
+    }
+
     // A visible node in this subtree occludes the output.
     bool subtreeOccludesOutput(const render::Renderer &renderer) const;
 
