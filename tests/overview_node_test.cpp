@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// The overview node's progress - the tween, the fingers, the rubber band and
+// The overview node's progress - the tween, the fingers, the ends and
 // the hand-offs between them - on a fake frame clock, and where it draws the
 // windows it moves.
 
@@ -235,7 +235,7 @@ TEST(OverviewNode, ADesktopShortOfTheOutputIsDrawnOverBlack)
     EXPECT_FLOAT_EQ(1 - Node::kDimOpacity, f.renderer.calls[1].color.a);
 }
 
-TEST(OverviewNode, TheFingersMoveItAndPullAgainstTheEnds)
+TEST(OverviewNode, TheFingersMoveItAndStopAtTheEnds)
 {
     Fixture f;
     f.node->startTracking();
@@ -247,14 +247,17 @@ TEST(OverviewNode, TheFingersMoveItAndPullAgainstTheEnds)
     const double shown = f.node->progress(double(f.now) + Track::kResampleLatencyMs);
     EXPECT_NEAR(0.5, shown, 1e-9);
 
-    // Far past the end, it gives only so much.
+    // Far past the end, it stays at the end, and turning back moves it at once.
     for (int step = 0; step < 20; ++step) {
         f.now += 10;
         f.node->updateTracking(0.1, double(f.now));
+        EXPECT_LE(f.node->progress(double(f.now)), 1);
     }
-    const double pulled = f.node->progress(double(f.now) + 100);
-    EXPECT_GT(pulled, 1);
-    EXPECT_LT(pulled, 1 + Node::kRubberBandEdge);
+    EXPECT_DOUBLE_EQ(1, f.node->progress(double(f.now) + 100));
+    f.now += 10;
+    f.node->updateTracking(-0.1, double(f.now));
+    f.now += 100;
+    EXPECT_LT(f.node->progress(double(f.now)), 1);
 }
 
 TEST(OverviewNode, AHeldReleaseGoesToTheNearerEndAndAFlickGoesOn)

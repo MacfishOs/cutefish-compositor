@@ -82,9 +82,9 @@ private:
 // is covered while it is active; the dock above stays.
 //
 // The progress follows the fingers of a touchpad swipe, resampled at frame
-// time as the desk swipe is, pulls against 0 and 1 like a rubber band and
-// lets go into an ease-in-out tween leaving at the fingers' speed; the
-// shortcut and a click ride the same curve from rest. Upstream Ash
+// time as the desk swipe is, stops dead at 0 and 1 and lets go into an
+// ease-in-out tween leaving at the fingers' speed; the shortcut and a click
+// ride the same curve from rest. Upstream Ash
 // interpolates cached transforms by the scroll ratio
 // (OverviewGrid::PositionWindowsContinuously) and decides the release by
 // distance alone.
@@ -114,10 +114,6 @@ public:
     // Released faster than this, in progress per second, the overview goes on
     // the way the fingers went; slower, to the nearer end.
     static constexpr double kFlickVelocity = 0.5;
-    // How far past either end the progress gives, at most, and how much of
-    // the fingers' pull it follows at first.
-    static constexpr double kRubberBandEdge = 0.1;
-    static constexpr double kRubberBandCoefficient = 0.55;
     static constexpr double kChromeFadeMs = 150;
     static constexpr float kDimOpacity = 0.35f;
 
@@ -146,8 +142,7 @@ public:
 
     // --- Progress ---
 
-    // Where the overview is at `timeMs` on the frame clock, between 0 and 1
-    // but for the rubber band.
+    // Where the overview is at `timeMs` on the frame clock, between 0 and 1.
     double progress(double timeMs) const;
     double progress() const { return progress(clockTime()); }
     // The node's clock, for times outside an output frame.
@@ -196,8 +191,6 @@ private:
         Tween,
     };
 
-    double rubberBand(double pulled) const;
-    double pulledPosition(double shown) const;
     motion::Tween tweenTo(double now, double from, double target, double velocity) const;
     void settle(double now, double from, double target, double velocity);
     void updateCoast();

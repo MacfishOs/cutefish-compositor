@@ -292,32 +292,6 @@ void OverviewNode::setChrome(const Chrome &chrome)
     notifyChanged();
 }
 
-double OverviewNode::rubberBand(double pulled) const
-{
-    const auto give = [](double beyond) {
-        return kRubberBandEdge
-                * (1 - 1 / (1 + beyond * kRubberBandCoefficient / kRubberBandEdge));
-    };
-    if (pulled < 0)
-        return -give(-pulled);
-    if (pulled > 1)
-        return 1 + give(pulled - 1);
-    return pulled;
-}
-
-double OverviewNode::pulledPosition(double shown) const
-{
-    const auto pull = [](double beyond) {
-        const double given = std::min(beyond, kRubberBandEdge * 0.999);
-        return kRubberBandEdge / kRubberBandCoefficient * (1 / (1 - given / kRubberBandEdge) - 1);
-    };
-    if (shown < 0)
-        return -pull(-shown);
-    if (shown > 1)
-        return 1 + pull(shown - 1);
-    return shown;
-}
-
 double OverviewNode::progress(double timeMs) const
 {
     switch (m_motion) {
@@ -326,10 +300,12 @@ double OverviewNode::progress(double timeMs) const
     case Motion::Tracking:
         if (m_coast && timeMs > m_coastStart)
             return m_coast->value(timeMs);
-        return rubberBand(m_fingers.empty()
+        // The resampled fingers can be predicted past an end.
+        return std::clamp(m_fingers.empty()
                                   ? m_position
                                   : m_fingers.position(timeMs
-                                                       - motion::FingerTrack::kResampleLatencyMs));
+                                                       - motion::FingerTrack::kResampleLatencyMs),
+                          0.0, 1.0);
     case Motion::Tween:
         return m_tween.value(timeMs);
     }
@@ -394,7 +370,7 @@ void OverviewNode::jumpTo(double value)
 
 void OverviewNode::startTracking()
 {
-    m_position = pulledPosition(progress(double(m_now())));
+    m_position = progress(double(m_now()));
     m_motion = Motion::Tracking;
     m_fingers.clear();
     m_coast.reset();
@@ -411,7 +387,8 @@ void OverviewNode::updateTracking(double delta, double timeMs)
                             + motion::FingerTrack::kResampleMaxPredictionMs;
     if (m_motion != Motion::Tracking || coasted)
         startTracking();
-    m_position += delta;
+    // Stops dead at either end, so the fingers turning back move it at once.
+    m_position = std::clamp(m_position + delta, 0.0, 1.0);
     m_fingers.add(timeMs, m_position);
     updateCoast();
     notifyChanged();
@@ -426,10 +403,7 @@ void OverviewNode::updateCoast()
     if (!velocity || std::abs(*velocity) < kFlickVelocity)
         return;
     const double from = m_fingers.predictionEnd();
-    const double position = m_fingers.position(from);
-    // Pulled past an end, the fingers hold it until they let go.
-    if (position < 0 || position > 1)
-        return;
+    const double position = std::clamp(m_fingers.position(from), 0.0, 1.0);
     m_coastStart = from + motion::FingerTrack::kResampleLatencyMs;
     m_coast = tweenTo(m_coastStart, position, *velocity > 0 ? 1 : 0, *velocity);
 }
@@ -450,8 +424,8 @@ double OverviewNode::endTracking(double timeMs)
     }
     double velocity = m_fingers.releaseVelocity(timeMs);
     const double current = progress(now);
-    // Flung from beyond an end, it comes straight back.
-    if ((current < 0 && velocity < 0) || (current > 1 && velocity > 0))
+    // Flung against an end it already stands at.
+    if ((current <= 0 && velocity < 0) || (current >= 1 && velocity > 0))
         velocity = 0;
     double target = current >= 0.5 ? 1 : 0;
     if (velocity >= kFlickVelocity)
