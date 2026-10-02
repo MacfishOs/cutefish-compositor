@@ -41,7 +41,7 @@ public:
     static constexpr double kCatchUpTravelRatio = 2;
 
     // Finger travel that moves the desk content by one desk.
-    static constexpr double kSwipeLengthPerDeskMm = 50;
+    static constexpr double kSwipeLengthPerDeskMm = 80;
 
     // Finger travel that brings the overview all the way in or out.
     static constexpr double kOverviewSwipeLengthMm = 50;
