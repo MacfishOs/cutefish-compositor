@@ -83,37 +83,66 @@ TEST(Damage, BlurUsesCompleteSourcePixels)
     const QRect viewport(0, 0, 100, 100);
     tracker.update(root, viewport);
     node->notifyDamage(QRect(2, 2, 1, 1));
-    EXPECT_EQ(tracker.update(root, viewport), QRegion(viewport));
+    // Its own content lies above its blur, which reads what it did.
+    const QRegion damage = tracker.update(root, viewport);
+    EXPECT_EQ(damage, QRegion(QRect(22, 22, 1, 1)));
+    const int halo = render::kBackdropBlurSupport + 2;
+    const QRect sampled = QRect(20, 20, 50, 50).adjusted(-halo, -halo, halo, halo);
+    EXPECT_EQ(render::coverSamples(damage.boundingRect(), tracker.samples()), sampled);
 }
 
-TEST(Damage, BlurRepaintsOnlyForDamageItReads)
+TEST(Damage, ABlurReadsOnlyWhatIsDrawnBeforeIt)
 {
     scene::Node root;
+    auto *below = root.addChild(std::make_unique<scene::Node>());
+    below->setGeometry({500, 400, 10, 10});
     const auto addBlur = [&](const QRect &geometry) {
         auto *node = static_cast<scene::SurfaceNode *>(
                 root.addChild(std::make_unique<scene::SurfaceNode>()));
         node->setGeometry(geometry);
         node->setBackgroundBlur({QPoint(), geometry.size()}, 12);
+        return node;
     };
-    addBlur({0, 0, 100, 40});
-    addBlur({250, 0, 100, 40});
-    auto *moving = root.addChild(std::make_unique<scene::Node>());
-    moving->setGeometry({500, 400, 10, 10});
+    const auto *first = addBlur({0, 0, 100, 40});
+    const auto *second = addBlur({150, 0, 100, 40});
+    auto *above = root.addChild(std::make_unique<scene::Node>());
+    above->setGeometry({500, 400, 10, 10});
     scene::DamageTracker tracker;
     const QRect viewport(0, 0, 800, 600);
     tracker.update(root, viewport);
     const int halo = render::kBackdropBlurSupport + 2;
-    const QRect first = QRect(0, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
-    const QRect second = QRect(250, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
-    EXPECT_EQ(tracker.samples(), (std::vector<QRect> {first, second}));
+    const QRect firstSampled = QRect(0, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
+    const QRect secondSampled = QRect(150, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
+    EXPECT_EQ(tracker.samples(), (std::vector<QRect> {firstSampled, secondSampled}));
+    const auto kept = [](uint64_t) {
+        return true;
+    };
 
-    moving->setPosition({510, 400});
-    EXPECT_EQ(tracker.update(root, viewport), QRegion(QRect(500, 400, 20, 10)));
-
-    // Only the first one reads this, but redrawing it reaches what the second reads.
-    moving->setPosition({100, 100});
+    above->setPosition({10, 50});
     EXPECT_EQ(tracker.update(root, viewport),
-              (QRegion(first) + second + QRect(510, 400, 10, 10)).intersected(viewport));
+              QRegion(QRect(500, 400, 10, 10)) + QRect(10, 50, 10, 10));
+    EXPECT_TRUE(tracker.samples(kept).empty());
+    EXPECT_EQ(tracker.freshBackdrops(kept),
+              (std::vector<uint64_t> {first->damageId(), second->damageId()}));
+    // Without a kept result, a repaint reaching a blur still takes in all it reads.
+    EXPECT_EQ(tracker.samples(), (std::vector<QRect> {firstSampled, secondSampled}));
+
+    // The first blur changes, and the second, drawn over it, reads it.
+    below->setPosition({10, 50});
+    EXPECT_EQ(tracker.update(root, viewport),
+              (QRegion(QRect(500, 400, 10, 10)) + QRect(10, 50, 10, 10)
+               + QRect(-1, -1, 102, 42) + QRect(149, -1, 102, 42))
+                      .intersected(viewport));
+    EXPECT_EQ(tracker.samples(kept), (std::vector<QRect> {firstSampled, secondSampled}));
+    EXPECT_TRUE(tracker.freshBackdrops(kept).empty());
+
+    // A kept result is only drawn again where nothing under it changed.
+    below->setPosition({600, 400});
+    tracker.update(root, viewport);
+    below->setPosition({300, 100});
+    tracker.update(root, viewport);
+    EXPECT_EQ(tracker.samples(kept), (std::vector<QRect> {secondSampled}));
+    EXPECT_EQ(tracker.freshBackdrops(kept), (std::vector<uint64_t> {first->damageId()}));
 }
 
 TEST(Damage, ABlurRepaintsWhenWhatItReadsChangesOutOfSight)
@@ -127,14 +156,20 @@ TEST(Damage, ABlurRepaintsWhenWhatItReadsChangesOutOfSight)
     const auto backdropChanged = [&](const QRect &) {
         return changed;
     };
+    const auto kept = [](uint64_t) {
+        return true;
+    };
     scene::DamageTracker tracker;
     const QRect viewport(0, 0, 400, 400);
     tracker.update(root, viewport, 1, 0, backdropChanged);
     EXPECT_TRUE(tracker.update(root, viewport, 1, 0, backdropChanged).isEmpty());
+    EXPECT_TRUE(tracker.samples(kept).empty());
     changed = true;
     const int halo = render::kBackdropBlurSupport + 2;
     EXPECT_EQ(tracker.update(root, viewport, 1, 0, backdropChanged),
-              QRegion(QRect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)));
+              QRegion(QRect(99, 99, 52, 52)));
+    EXPECT_EQ(tracker.samples(kept),
+              (std::vector<QRect> {QRect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)}));
 }
 
 TEST(Damage, ABlurDrawnAgainWholeReadsEverythingAgain)
@@ -153,6 +188,9 @@ TEST(Damage, ABlurDrawnAgainWholeReadsEverythingAgain)
             retained->addChild(std::make_unique<scene::SurfaceNode>()));
     node->setGeometry({100, 100, 50, 50});
     node->setBackgroundBlur({0, 0, 50, 50}, 12);
+    const auto kept = [](uint64_t) {
+        return true;
+    };
     scene::DamageTracker tracker, inner;
     const QRect viewport(0, 0, 400, 400);
     tracker.update(root, viewport);
@@ -160,8 +198,9 @@ TEST(Damage, ABlurDrawnAgainWholeReadsEverythingAgain)
     EXPECT_TRUE(tracker.update(root, viewport).isEmpty());
     retained->redraws = true;
     const int halo = render::kBackdropBlurSupport + 2;
-    EXPECT_EQ(tracker.update(root, viewport),
-              QRegion(QRect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)));
+    EXPECT_EQ(tracker.update(root, viewport), QRegion(QRect(99, 99, 52, 52)));
+    EXPECT_EQ(tracker.samples(kept),
+              (std::vector<QRect> {QRect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)}));
     // A tracker of the retained subtree itself is what draws it again.
     EXPECT_TRUE(inner.update(*retained, viewport).isEmpty());
 }

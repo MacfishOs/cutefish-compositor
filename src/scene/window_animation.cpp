@@ -739,11 +739,17 @@ bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t beg
     } else {
         // The pass suspends presentation recording; what it draws shows this frame.
         render::PresentationSubmission *submission = renderer.presentationSubmission;
+        const auto scope = uint64_t(reinterpret_cast<uintptr_t>(&below));
+        const auto kept = [&](uint64_t owner) {
+            return reusable && renderer.keepsBackdrop(scope, owner);
+        };
         const QRect repaint = reusable
-                ? render::coverSamples(damage.boundingRect(), below.damage.samples())
+                ? render::coverSamples(damage.boundingRect(), below.damage.samples(kept))
                 : QRect();
+        const std::vector<uint64_t> fresh = below.damage.freshBackdrops(kept);
         if (!renderer.renderToTexture(below.texture, viewport, repaint, [&] {
                 renderer.presentationSubmission = submission;
+                const render::BackdropPass backdrops(renderer, scope, fresh);
                 for (size_t i = begin; i < end; ++i)
                     siblings[i]->render(renderer);
             })) {
@@ -1003,7 +1009,10 @@ void WindowAnimation::render(render::Renderer &renderer) const
             // does, so the two share the snapshot; one at another scale or
             // viewport fails textureReusable() anyway.
             const bool reusable = !animating() && !hasPromotedSurface(*this);
+            // The blurs in it read the target this texture is drawn on.
+            const uint64_t backdropScope = renderer.backdropScope;
             if (!renderer.renderToTexture(m_texture, coverage, repaint, [&] {
+                    renderer.backdropScope = backdropScope;
                     const bool suppressed = renderer.suppressWindowOutlines;
                     const bool wasBlurSuppressed = renderer.suppressBackgroundBlur;
                     const bool revealed = renderer.revealHiddenSurfaces;

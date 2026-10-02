@@ -87,7 +87,7 @@ public:
     std::map<const render::Texture *, const render::Texture *> contents;
 
     void drawBackgroundBlur(const QRect &bounds, int, const QRect &, const render::GlassParams &,
-                            const QPainterPath &) override
+                            const QPainterPath &, uint64_t) override
     {
         blurs.append(bounds);
     }

@@ -41,6 +41,7 @@ void BackdropFilter::resetTextures()
 {
     m_scratch.clear();
     m_masks.clear();
+    m_kept.clear();
 }
 
 void BackdropFilter::frameEnded()
@@ -51,6 +52,28 @@ void BackdropFilter::frameEnded()
     };
     m_scratch.remove_if(stale);
     m_masks.remove_if(stale);
+    m_kept.remove_if(stale);
+}
+
+bool BackdropFilter::keeps(uint64_t scope, uint64_t owner) const
+{
+    return std::any_of(m_kept.begin(), m_kept.end(), [&](const Kept &entry) {
+        return entry.scope == scope && entry.owner == owner && entry.result;
+    });
+}
+
+void BackdropFilter::beginPass(uint64_t scope, const std::vector<uint64_t> &fresh)
+{
+    m_kept.remove_if([&](const Kept &entry) {
+        return entry.scope == scope
+                && std::find(fresh.begin(), fresh.end(), entry.owner) == fresh.end();
+    });
+    for (Kept &entry : m_kept) {
+        if (entry.scope != scope)
+            continue;
+        entry.drawn = false;
+        entry.used = m_frame;
+    }
 }
 
 BackdropFilter::Scratch &BackdropFilter::scratch(const QSize &coverage, const QSize &size)
@@ -165,111 +188,14 @@ bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, con
     return glGetError() == GL_NO_ERROR;
 }
 
-void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radius,
-                          const QRect &clip, const GlassParams &glass, double scale,
-                          const QPainterPath &shape, const std::vector<BackdropSource> &sources,
-                          std::vector<RoundedShape> &clips,
-                          const std::function<void(const QRectF &, float *)> &quadFor,
-                          const std::function<void(const GlProgram &)> &applyRoundedClip)
+bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
+                                     const std::vector<BackdropSource> &sources,
+                                     const QRect &coverage, const QSize &reduced,
+                                     const QRect &allocatedBounds)
 {
-    Q_ASSERT(!sources.empty());
-    const BackdropSource &target = sources.back();
-    const QRect lens = exactLens.toAlignedRect();
-    const bool shaped = !shape.isEmpty();
-    // A shaped glass draws over its whole outline, with the lens inside it.
-    const QRect bounds = glass.enabled && shaped
-            ? lens.united(QRectF(shape.boundingRect().topLeft() * scale,
-                                 shape.boundingRect().size() * scale)
-                                  .toAlignedRect())
-            : lens;
-    if (bounds.isEmpty() || !bounds.intersects(clip))
-        return;
-
-    // Sample beyond the mask; the sigma floor keeps the one-tap case finite.
-    const float sigma =
-            (glass.enabled ? std::max(glass.blurSigma, 0.05f) : std::max(glass.plainSigma, 0.05f))
-            * scale;
-    // Glass samples the backdrop per output pixel, so it wants device
-    // resolution; the plain blur is specified in logical pixels.
-    const float quality = glass.enabled ? 1.0f : 0.33f / scale;
-    const QRect output(sources.front().offset.toPoint(), sources.front().oriented());
-    const QRect visibleBounds = bounds.intersected(clip).intersected(output);
-    if (visibleBounds.isEmpty())
-        return;
-    // Rounded outward, the lens is a pixel wider or taller depending on where
-    // its fractional origin falls, and so is a shape's outline. The capture is
-    // sized for the widest they can round out to, so a lens moving at a
-    // fractional scale keeps one set of scratch textures instead of cycling
-    // through four and reallocating, however the clip or the output cut it.
-    // cc's ResourcePool hands out its unused resources by exact size the same way.
-    QSize captured = visibleBounds.size();
-    if (scale != std::floor(scale)) {
-        QRectF exact = exactLens;
-        if (bounds != lens)
-            exact = exact.united(QRectF(shape.boundingRect().topLeft() * scale,
-                                        shape.boundingRect().size() * scale));
-        captured = captured.expandedTo(
-                QSize(int(std::ceil(exact.width())) + 1, int(std::ceil(exact.height())) + 1));
-    }
-    // Three sigmas, kBackdropBlurSupport at the plain blur's full size.
-    const float support = glass.enabled
-            ? float(kBackdropBlurSupport)
-            : std::min(3 * glass.plainSigma, float(kBackdropBlurSupport));
-    const int halo = qCeil(support * scale);
-    // Moved inside the output rather than cut by its edge, so the size stays
-    // the same as the lens nears the edge: cut, it keyed a new set of scratch
-    // textures on every frame of a move along it. Only a lens the output
-    // cannot hold with its halo is cut. Skia sizes such scratch textures
-    // loosely for the same reason (SkBackingFit::kApprox).
-    QRect coverage(visibleBounds.topLeft() - QPoint(halo, halo),
-                   captured + QSize(2 * halo, 2 * halo));
-    coverage.moveLeft(std::clamp(coverage.left(), output.left(),
-                                 std::max(output.left(), output.right() - coverage.width() + 1)));
-    coverage.moveTop(std::clamp(coverage.top(), output.top(),
-                                std::max(output.top(), output.bottom() - coverage.height() + 1)));
-    coverage = coverage.intersected(output);
-    const QSize reduced(std::max(1, int(std::ceil(coverage.width() * quality))),
-                        std::max(1, int(std::ceil(coverage.height() * quality))));
     const QRect reducedBounds(QPoint(), reduced);
-    // A plain blur shrinks with its window on every frame of the overview.
-    // Sized up to a step, or in a larger set, its textures last the whole
-    // move; the passes use their top left and clamp their samples to it.
-    // Glass keeps exact sizes.
-    const auto stepUp = [](int value) {
-        return (value + kScratchStep - 1) / kScratchStep * kScratchStep;
-    };
-    Scratch &textures = glass.enabled
-            ? scratch(coverage.size(), reduced)
-            : scratch(QSize(), QSize(stepUp(reduced.width()), stepUp(reduced.height())));
-    const QSize allocated = textures.size;
-    const QRect allocatedBounds(QPoint(), allocated);
-    // The used texels, rows bottom-up, and their share of the texture.
-    const QRect texels(0, allocated.height() - reduced.height(), reduced.width(),
-                       reduced.height());
-    const QSizeF used(double(reduced.width()) / allocated.width(),
-                      double(reduced.height()) / allocated.height());
-
-    GLint oldScissor[4];
-    glGetIntegerv(GL_SCISSOR_BOX, oldScissor);
-    const bool wasScissored = glIsEnabled(GL_SCISSOR_TEST);
-    QRect scissor = target.framebufferRect(
-            clip.intersected(QRect(target.offset.toPoint(), target.oriented())));
-    if (wasScissored)
-        scissor = scissor.intersected(
-                QRect(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]));
-    // Outside a partial repaint the blur would only be scissored away.
-    if (scissor.intersected(target.framebufferRect(bounds)).isEmpty())
-        return;
-
-    struct RestoreClips {
-        std::vector<RoundedShape> &slot;
-        std::vector<RoundedShape> saved;
-
-        ~RestoreClips() { slot = std::move(saved); }
-    } restoreClips {clips, std::exchange(clips, {})};
-
     bool copied = true;
-    if (!renderer.renderToTexture(
+    return renderer.renderToTexture(
                 textures.source, allocatedBounds,
                 [&] {
                     GLint destination = 0;
@@ -352,7 +278,137 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
                         renderer.drawTextureTransformed(capture, lying, turn, 1);
                     }
                 })
-        || !copied)
+            && copied;
+}
+
+void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radius,
+                          const QRect &clip, const GlassParams &glass, double scale,
+                          const QPainterPath &shape, const std::vector<BackdropSource> &sources,
+                          std::vector<RoundedShape> &clips,
+                          const std::function<void(const QRectF &, float *)> &quadFor,
+                          const std::function<void(const GlProgram &)> &applyRoundedClip,
+                          uint64_t scope, uint64_t owner)
+{
+    Q_ASSERT(!sources.empty());
+    const BackdropSource &target = sources.back();
+    const QRect lens = exactLens.toAlignedRect();
+    const bool shaped = !shape.isEmpty();
+    // A shaped glass draws over its whole outline, with the lens inside it.
+    const QRect bounds = glass.enabled && shaped
+            ? lens.united(QRectF(shape.boundingRect().topLeft() * scale,
+                                 shape.boundingRect().size() * scale)
+                                  .toAlignedRect())
+            : lens;
+    if (bounds.isEmpty() || !bounds.intersects(clip))
+        return;
+
+    // Sample beyond the mask; the sigma floor keeps the one-tap case finite.
+    const float sigma =
+            (glass.enabled ? std::max(glass.blurSigma, 0.05f) : std::max(glass.plainSigma, 0.05f))
+            * scale;
+    // Glass samples the backdrop per output pixel, so it wants device
+    // resolution; the plain blur is specified in logical pixels.
+    const float quality = glass.enabled ? 1.0f : 0.33f / scale;
+    const QRect output(sources.front().offset.toPoint(), sources.front().oriented());
+    const QRect visibleBounds = bounds.intersected(clip).intersected(output);
+    if (visibleBounds.isEmpty())
+        return;
+    // Rounded outward, the lens is a pixel wider or taller depending on where
+    // its fractional origin falls, and so is a shape's outline. The capture is
+    // sized for the widest they can round out to, so a lens moving at a
+    // fractional scale keeps one set of scratch textures instead of cycling
+    // through four and reallocating, however the clip or the output cut it.
+    // cc's ResourcePool hands out its unused resources by exact size the same way.
+    QSize captured = visibleBounds.size();
+    if (scale != std::floor(scale)) {
+        QRectF exact = exactLens;
+        if (bounds != lens)
+            exact = exact.united(QRectF(shape.boundingRect().topLeft() * scale,
+                                        shape.boundingRect().size() * scale));
+        captured = captured.expandedTo(
+                QSize(int(std::ceil(exact.width())) + 1, int(std::ceil(exact.height())) + 1));
+    }
+    // Three sigmas, kBackdropBlurSupport at the plain blur's full size.
+    const float support = glass.enabled
+            ? float(kBackdropBlurSupport)
+            : std::min(3 * glass.plainSigma, float(kBackdropBlurSupport));
+    const int halo = qCeil(support * scale);
+    // Moved inside the output rather than cut by its edge, so the size stays
+    // the same as the lens nears the edge: cut, it keyed a new set of scratch
+    // textures on every frame of a move along it. Only a lens the output
+    // cannot hold with its halo is cut. Skia sizes such scratch textures
+    // loosely for the same reason (SkBackingFit::kApprox).
+    QRect coverage(visibleBounds.topLeft() - QPoint(halo, halo),
+                   captured + QSize(2 * halo, 2 * halo));
+    coverage.moveLeft(std::clamp(coverage.left(), output.left(),
+                                 std::max(output.left(), output.right() - coverage.width() + 1)));
+    coverage.moveTop(std::clamp(coverage.top(), output.top(),
+                                std::max(output.top(), output.bottom() - coverage.height() + 1)));
+    coverage = coverage.intersected(output);
+    const QSize reduced(std::max(1, int(std::ceil(coverage.width() * quality))),
+                        std::max(1, int(std::ceil(coverage.height() * quality))));
+    const QRect reducedBounds(QPoint(), reduced);
+
+    GLint oldScissor[4];
+    glGetIntegerv(GL_SCISSOR_BOX, oldScissor);
+    const bool wasScissored = glIsEnabled(GL_SCISSOR_TEST);
+    QRect scissor = target.framebufferRect(
+            clip.intersected(QRect(target.offset.toPoint(), target.oriented())));
+    if (wasScissored)
+        scissor = scissor.intersected(
+                QRect(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]));
+    // Outside a partial repaint the blur would only be scissored away.
+    if (scissor.intersected(target.framebufferRect(bounds)).isEmpty())
+        return;
+
+    Kept *kept = nullptr;
+    if (scope && owner) {
+        const auto found = std::find_if(m_kept.begin(), m_kept.end(), [&](const Kept &entry) {
+            return entry.scope == scope && entry.owner == owner;
+        });
+        if (found == m_kept.end()) {
+            m_kept.push_front({scope, owner});
+            kept = &m_kept.front();
+        } else if (!found->drawn) {
+            kept = &*found;
+        }
+        if (kept) {
+            kept->drawn = true;
+            kept->used = m_frame;
+        }
+    }
+    const bool reused = kept && kept->result && kept->coverage == coverage
+            && kept->reduced == reduced && kept->sigma == sigma;
+    // A plain blur shrinks with its window on every frame of the overview.
+    // Sized up to a step, or in a larger set, its textures last the whole
+    // move; the passes use their top left and clamp their samples to it.
+    // Glass keeps exact sizes.
+    const auto stepUp = [](int value) {
+        return (value + kScratchStep - 1) / kScratchStep * kScratchStep;
+    };
+    Scratch *textures = nullptr;
+    if (!reused)
+        textures = glass.enabled
+                ? &scratch(coverage.size(), reduced)
+                : &scratch(QSize(), QSize(stepUp(reduced.width()), stepUp(reduced.height())));
+    const QSize allocated = reused ? kept->allocated : textures->size;
+    const QRect allocatedBounds(QPoint(), allocated);
+    // The used texels, rows bottom-up, and their share of the texture.
+    const QRect texels(0, allocated.height() - reduced.height(), reduced.width(),
+                       reduced.height());
+    const QSizeF used(double(reduced.width()) / allocated.width(),
+                      double(reduced.height()) / allocated.height());
+
+    struct RestoreClips {
+        std::vector<RoundedShape> &slot;
+        std::vector<RoundedShape> saved;
+
+        ~RestoreClips() { slot = std::move(saved); }
+    } restoreClips {clips, std::exchange(clips, {})};
+
+    std::unique_ptr<Texture> &result = kept ? kept->result : textures->result;
+    if (!reused
+        && !captureBackdrop(renderer, *textures, sources, coverage, reduced, allocatedBounds))
         return;
 
     const auto drawQuad = [&](const GlProgram &program, Texture *input, const QRect &target,
@@ -392,9 +448,19 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
             drawQuad(m_blurProgram, input, reducedBounds, true, used);
         });
     };
-    if (!filter(textures.source.get(), textures.temp, true)
-        || !filter(textures.temp.get(), textures.result, false))
-        return;
+    if (!reused) {
+        if (kept)
+            kept->coverage = QRect();
+        if (!filter(textures->source.get(), textures->temp, true)
+            || !filter(textures->temp.get(), result, false))
+            return;
+        if (kept) {
+            kept->coverage = coverage;
+            kept->reduced = reduced;
+            kept->allocated = allocated;
+            kept->sigma = sigma;
+        }
+    }
 
     glEnable(GL_SCISSOR_TEST);
     glScissor(scissor.x(), scissor.y(), std::max(0, scissor.width()),
@@ -439,7 +505,7 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     }
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    drawQuad(program, textures.result.get(), bounds, false);
+    drawQuad(program, result.get(), bounds, false);
     glDisable(GL_BLEND);
     if (shaped) {
         glActiveTexture(GL_TEXTURE1);

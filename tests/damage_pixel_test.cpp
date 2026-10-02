@@ -215,7 +215,9 @@ TEST(DamagePixels, BlurInputHaloMatchesCompleteFrame)
         for (int frame = 0; frame < 4; ++frame) {
             moving->setGeometry({120 + frame * 10, 130, 20, 90});
             const auto damage = tracker.update(*scene.root(), context.logicalViewport, scale);
-            const auto physical = render::physicalDamage(damage, context, {400, 400});
+            const auto physical = render::coverSamples(
+                    render::physicalDamage(damage, context, {400, 400}), tracker.samples(),
+                    context, {400, 400});
             if (frame)
                 EXPECT_LT(physical.width() * physical.height(), 400 * 400);
             render::EglRendererTestAccess::applyRepaint(*renderer, physical);
@@ -290,6 +292,90 @@ TEST(DamagePixels, ARepaintReachingABlurRedrawsItFromAllItReads)
         EXPECT_EQ(partial, complete) << "frame=" << frame;
     }
     renderer->cancelFrame();
+    renderer->releaseTarget(target.get());
+}
+
+// A blur whose backdrop has not changed draws the result it kept, so a repaint
+// over it need not take in all it reads.
+TEST(DamagePixels, AKeptBlurMatchesTheCompleteFrame)
+{
+    auto renderer = render::EglRendererTestAccess::create();
+    ASSERT_TRUE(renderer);
+    const QSize size(400, 400);
+    const EGLint attributes[] = {EGL_WIDTH, 400, EGL_HEIGHT, 400, EGL_NONE};
+    const auto surface =
+            eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
+    ASSERT_NE(surface, EGL_NO_SURFACE);
+    auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
+                                                            nullptr, size);
+    for (double scale : {1.0, 1.5}) {
+        for (bool glassy : {false, true}) {
+            scene::Scene scene;
+            scene.setSize(size);
+            auto *strip = scene.root()->addChild(
+                    std::make_unique<scene::ColorNode>(render::Color {1, 1, 1, 1}));
+            auto *blur = static_cast<scene::SurfaceNode *>(
+                    scene.root()->addChild(std::make_unique<scene::SurfaceNode>()));
+            blur->setGeometry({150, 150, 64, 48});
+            render::GlassParams glass;
+            glass.enabled = glassy;
+            blur->setBackgroundBlur({0, 0, 64, 48}, 12, glass);
+            auto *above = scene.root()->addChild(
+                    std::make_unique<scene::ColorNode>(render::Color {1, 0, 0, 1}));
+            const render::OutputRenderContext context {"test", QRect(QPoint(), size), size,
+                                                       scale};
+            renderer->setOutputContext(context);
+            ASSERT_TRUE(renderer->beginFrame(target.get()));
+            std::vector<uint8_t> pixels(64 * 48 * 4, 0);
+            blur->setTexture(renderer->createTexture({64, 48}, pixels.data()));
+            scene::DamageTracker tracker;
+            const auto scope = uint64_t(reinterpret_cast<uintptr_t>(&tracker));
+            const auto kept = [&](uint64_t owner) {
+                return renderer->keepsBackdrop(scope, owner);
+            };
+            for (int frame = 0; frame < 6; ++frame) {
+                // The backdrop moves on the fourth frame only.
+                strip->setGeometry({frame == 3 ? 170 : 160, 110, 12, 100});
+                above->setGeometry({155 + frame * 6, 160, 8, 8});
+                const auto damage = tracker.update(*scene.root(), context.logicalViewport, scale);
+                const QRect physical = render::physicalDamage(damage, context, size);
+                const QRect repaint = render::coverSamples(physical, tracker.samples(kept),
+                                                           context, size);
+                if (frame == 2 || frame == 5)
+                    EXPECT_EQ(repaint, physical) << "scale=" << scale << " frame=" << frame;
+                if (frame == 3 || frame == 4)
+                    EXPECT_NE(repaint, physical) << "scale=" << scale << " frame=" << frame;
+                render::EglRendererTestAccess::applyRepaint(*renderer, repaint);
+                {
+                    const render::BackdropPass backdrops(*renderer, scope,
+                                                         tracker.freshBackdrops(kept));
+                    renderer->clear(scene.background());
+                    scene.root()->render(*renderer);
+                }
+                QImage partial(size, QImage::Format_RGBA8888_Premultiplied);
+                glReadPixels(0, 0, 400, 400, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
+                partial = partial.mirrored(false, true)
+                                  .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                const auto complete = renderer->captureFrame([&] {
+                    scene.render(*renderer);
+                });
+                // Glass shading rounds one rim pixel differently in a capture.
+                int worst = 0;
+                for (int y = 0; y < size.height(); ++y) {
+                    for (int x = 0; x < size.width(); ++x) {
+                        const QRgb p = partial.pixel(x, y), c = complete.pixel(x, y);
+                        worst = std::max({worst, std::abs(qRed(p) - qRed(c)),
+                                          std::abs(qGreen(p) - qGreen(c)),
+                                          std::abs(qBlue(p) - qBlue(c)),
+                                          std::abs(qAlpha(p) - qAlpha(c))});
+                    }
+                }
+                EXPECT_LE(worst, glassy ? 1 : 0)
+                        << "scale=" << scale << " glass=" << glassy << " frame=" << frame;
+            }
+            renderer->cancelFrame();
+        }
+    }
     renderer->releaseTarget(target.get());
 }
 

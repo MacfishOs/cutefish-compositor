@@ -72,7 +72,7 @@ public:
     int blurs = 0;
 
     void drawBackgroundBlur(const QRect &, int, const QRect &, const render::GlassParams &,
-                            const QPainterPath &) override
+                            const QPainterPath &, uint64_t) override
     {
         ++blurs;
     }
@@ -581,15 +581,20 @@ TEST_F(BlurredSnapshot, DrawnWholeItHasTheSceneRepaintWhatItsBlursRead)
 {
     scene::DamageTracker tracker;
     const QRect viewport = scene.root()->geometry();
+    const auto kept = [](uint64_t) {
+        return true;
+    };
     tracker.update(*scene.root(), viewport);
     EXPECT_FALSE(redrawn());
     EXPECT_TRUE(tracker.update(*scene.root(), viewport).isEmpty());
+    EXPECT_TRUE(tracker.samples(kept).empty());
     // A frame with a promoted surface is not kept, so the next one draws whole.
     surface->setPromotedToOverlay(true);
     scene.render(renderer);
     surface->setPromotedToOverlay(false);
     EXPECT_TRUE(redrawn());
-    EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(sampled));
+    EXPECT_FALSE(tracker.update(*scene.root(), viewport).isEmpty());
+    EXPECT_EQ(tracker.samples(kept), std::vector<QRect> {sampled});
     scene.render(renderer);
     EXPECT_FALSE(redrawn());
 }

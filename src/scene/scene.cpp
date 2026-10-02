@@ -4,6 +4,8 @@
 
 #include "scene/scene.h"
 
+#include <optional>
+
 #include "scene/overlay_candidate.h"
 
 namespace cutefish::scene {
@@ -57,12 +59,19 @@ void Scene::retireClosing()
 
 void Scene::render(render::Renderer &renderer) const
 {
+    std::optional<render::BackdropPass> backdrops;
     if (!renderer.capturing) {
         const auto &context = renderer.outputContext();
         auto &tracker = m_damageTrackers[context.outputId];
         const QRegion damage =
                 tracker.update(*m_root, viewportFor(context), context.scale, context.transform);
-        renderer.prepareDamage(damage, tracker.samples());
+        // Each output's tracker stands for what its target holds.
+        const auto scope = uint64_t(reinterpret_cast<uintptr_t>(&tracker));
+        const auto kept = [&](uint64_t owner) {
+            return renderer.keepsBackdrop(scope, owner);
+        };
+        renderer.prepareDamage(damage, tracker.samples(kept));
+        backdrops.emplace(renderer, scope, tracker.freshBackdrops(kept));
     }
     // viz leaves an opaque root pass uncleared (SkiaRenderer::ClearFramebuffer);
     // under a node covering the output, a clear is a full-screen write for nothing.

@@ -906,8 +906,20 @@ void EglRenderer::drawTextureQuads(GlTexture *glTexture, const TextureQuad *quad
     glBindTexture(glTexture->target(), 0);
 }
 
+bool EglRenderer::keepsBackdrop(uint64_t scope, uint64_t owner) const
+{
+    return m_backdrop && m_backdrop->keeps(scope, owner);
+}
+
+void EglRenderer::beginBackdropPass(uint64_t scope, const std::vector<uint64_t> &fresh)
+{
+    if (m_backdrop)
+        m_backdrop->beginPass(scope, fresh);
+}
+
 void EglRenderer::drawBackgroundBlur(const QRect &bounds, int radius, const QRect &clip,
-                                     const GlassParams &glass, const QPainterPath &shape)
+                                     const GlassParams &glass, const QPainterPath &shape,
+                                     uint64_t owner)
 {
     if (!m_current || !m_backdrop)
         return;
@@ -949,7 +961,8 @@ void EglRenderer::drawBackgroundBlur(const QRect &bounds, int radius, const QRec
             },
             [this](const GlProgram &program) {
                 applyRoundedClip(program);
-            });
+            },
+            backdropScope, owner);
 }
 
 } // namespace cutefish::render

@@ -80,7 +80,7 @@ void SurfaceNode::paint(render::Renderer &renderer, const QRect &absoluteGeometr
     if (hasBackgroundBlur() && !renderer.suppressBackgroundBlur)
         renderer.drawBackgroundBlur(m_blurRect.translated(absoluteGeometry.topLeft()), m_blurRadius,
                                     absoluteGeometry, m_glass,
-                                    m_blurShape.translated(absoluteGeometry.topLeft()));
+                                    m_blurShape.translated(absoluteGeometry.topLeft()), damageId());
     renderer.waitFence(m_acquireFence);
     const float alpha = m_alpha * renderer.opacityScale;
     if (m_contentShape) {

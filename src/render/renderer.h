@@ -11,6 +11,7 @@
 #include <list>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <QImage>
@@ -209,11 +210,19 @@ public:
     }
 
     // A non-empty `shape`, in the same coordinates as `bounds`, masks the blur
-    // instead of the rounded rectangle.
+    // instead of the rounded rectangle. In a BackdropPass, the blur of surface
+    // `owner`, by damage id, keeps its result for the next pass.
     virtual void drawBackgroundBlur(const QRect &bounds, int radius, const QRect &clip,
-                                    const GlassParams &glass = {}, const QPainterPath &shape = {})
+                                    const GlassParams &glass = {}, const QPainterPath &shape = {},
+                                    uint64_t owner = 0)
     {
     }
+
+    // Blur results kept between passes into the target `scope` names.
+    virtual bool keepsBackdrop(uint64_t /*scope*/, uint64_t /*owner*/) const { return false; }
+    virtual void beginBackdropPass(uint64_t /*scope*/, const std::vector<uint64_t> & /*fresh*/) { }
+    // Zero outside a BackdropPass, and in the passes nested in one.
+    uint64_t backdropScope = 0;
 
     // Makes subsequent draws wait for `fence` before sampling. Renderers that
     // can queue the wait on the GPU do so; the base implementation blocks,
@@ -382,6 +391,29 @@ private:
 
     std::list<CachedTextures> m_textureCache;
     uint64_t m_textureCacheMisses = 0;
+};
+
+// A pass into the target `scope` names whose blurs keep their results for
+// the next: those of `fresh`, whose backdrop has not changed since the last
+// pass, draw what they kept, and the others' results are dropped.
+class BackdropPass
+{
+public:
+    BackdropPass(Renderer &renderer, uint64_t scope, const std::vector<uint64_t> &fresh)
+        : m_renderer(renderer)
+        , m_saved(std::exchange(renderer.backdropScope, scope))
+    {
+        renderer.beginBackdropPass(scope, fresh);
+    }
+
+    ~BackdropPass() { m_renderer.backdropScope = m_saved; }
+
+    BackdropPass(const BackdropPass &) = delete;
+    BackdropPass &operator=(const BackdropPass &) = delete;
+
+private:
+    Renderer &m_renderer;
+    uint64_t m_saved;
 };
 
 } // namespace cutefish::render

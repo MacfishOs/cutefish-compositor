@@ -93,6 +93,7 @@ public:
         , m_scale(renderer.rasterScale())
         , m_submission(renderer.presentationSubmission)
         , m_capturing(renderer.capturing)
+        , m_backdropScope(std::exchange(renderer.backdropScope, 0))
     {
         renderer.presentationSubmission = nullptr;
     }
@@ -103,6 +104,7 @@ public:
         m_renderer.setRasterScale(m_scale);
         m_renderer.presentationSubmission = m_submission;
         m_renderer.capturing = m_capturing;
+        m_renderer.backdropScope = m_backdropScope;
     }
 
     RendererState(const RendererState &) = delete;
@@ -114,6 +116,7 @@ private:
     double m_scale;
     PresentationSubmission *m_submission;
     bool m_capturing;
+    uint64_t m_backdropScope;
 };
 
 std::unique_ptr<GlTexture> allocate(const std::shared_ptr<EglContext> &context, const QSize &size,

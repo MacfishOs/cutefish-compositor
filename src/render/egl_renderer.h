@@ -64,8 +64,11 @@ public:
     void drawTextureF(Texture *texture, const QRectF &target, float alpha) override;
     void drawTextureTransformed(Texture *texture, const QRectF &target, const QTransform &transform,
                                 float alpha) override;
+    bool keepsBackdrop(uint64_t scope, uint64_t owner) const override;
+    void beginBackdropPass(uint64_t scope, const std::vector<uint64_t> &fresh) override;
     void drawBackgroundBlur(const QRect &bounds, int radius, const QRect &clip,
-                            const GlassParams &glass = {}, const QPainterPath &shape = {}) override;
+                            const GlassParams &glass = {}, const QPainterPath &shape = {},
+                            uint64_t owner = 0) override;
     void drawTexture(Texture *texture, const QRect &target, float alpha) override;
     void drawTextureMapped(Texture *texture, const QRect &target, float alpha,
                            const QTransform &mapping) override;
