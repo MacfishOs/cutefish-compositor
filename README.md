@@ -1,17 +1,12 @@
 # Cutefish Compositor
 
-Cutefish Wayland compositor: DRM/KMS output, rendering, input, window
-management, server-side decorations, the lock screen and rootless Xwayland in
-one process. Much of it is ported from Chromium's Exo and Ash.
-
-It is written in C++ with Qt 6, and the lock screen and the application
-switcher are drawn with Qt Quick.
+The Cutefish Wayland compositor, with window management, the lock screen and
+Xwayland in one process. Much of it is ported from Chromium's Exo and Ash.
 
 ## Dependencies
 
-Qt 6.8 and libwayland 1.23 or newer are required. At runtime it needs
-`adwaita-icon-theme` for cursors and `xwayland` for X11 applications. Tests
-additionally need `libgtest-dev`.
+Qt 6.8 and libwayland 1.23 or newer. At runtime it needs `adwaita-icon-theme`
+and `xwayland`. Tests also need `libgtest-dev`.
 
 ## Build
 
@@ -23,14 +18,7 @@ make
 sudo make install
 ```
 
-Pass `-DBUILD_TESTING=ON` to build the tests, or
-`-DCUTEFISH_ENABLE_XWAYLAND=OFF` to leave Xwayland out.
-
-## Run
-
-The compositor normally runs as the session's display server, taking the seat
-through libseat. `--no-drm` starts a headless Wayland server instead, and
-`--no-xwayland` turns Xwayland off at runtime.
+Pass `-DBUILD_TESTING=ON` to build the tests.
 
 ## License
 
