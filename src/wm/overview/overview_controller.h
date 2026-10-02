@@ -160,6 +160,7 @@ public:
     void onDeskRemoved(const Desk *desk) override;
     void onDeskActivationChanged(const Desk *activated, const Desk *deactivated) override;
     void onDeskNameChanged(const Desk *desk) override;
+    void onChosenDeskChanged() override;
     void onWindowDeskChanged(Window *window) override;
 
 private:

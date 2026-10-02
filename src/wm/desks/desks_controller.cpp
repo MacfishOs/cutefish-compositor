@@ -86,6 +86,13 @@ Desk *DesksController::targetActiveDesk() const
     return m_activeDesk;
 }
 
+Desk *DesksController::chosenDesk() const
+{
+    if (m_animation && m_animation->chosenDeskIndex() >= 0)
+        return deskAt(m_animation->chosenDeskIndex());
+    return m_activeDesk;
+}
+
 Desk *DesksController::nextDesk() const
 {
     return deskAt(deskIndex(targetActiveDesk()) + 1);
@@ -222,8 +229,8 @@ void DesksController::updateSwipeAnimation(double deskDelta, double timeMs)
 
 void DesksController::endSwipeAnimation(double timeMs)
 {
-    if (m_animation)
-        m_animation->endSwipeAnimation(timeMs);
+    if (m_animation && m_animation->endSwipeAnimation(timeMs))
+        notify([](DesksObserver *observer) { observer->onChosenDeskChanged(); });
 }
 
 bool DesksController::moveWindowFromActiveDeskTo(Window *window, Desk *target,

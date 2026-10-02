@@ -78,6 +78,8 @@ public:
     virtual void onDeskNameChanged(const Desk *desk) { }
     virtual void onDeskSwitchAnimationLaunching() { }
     virtual void onDeskSwitchAnimationFinished() { }
+    // See DesksController::chosenDesk.
+    virtual void onChosenDeskChanged() { }
     // The window moved to another desk, or onto or off every desk.
     virtual void onWindowDeskChanged(Window *window) { }
 };
@@ -108,6 +110,9 @@ public:
 
     // The desk an animation is heading for, or the active one.
     Desk *targetActiveDesk() const;
+    // The desk a switch has been decided for: a swipe decides as the fingers
+    // lift, though desks it pulls in are active on the way to take frames.
+    Desk *chosenDesk() const;
     Desk *nextDesk() const;
     Desk *previousDesk() const;
 

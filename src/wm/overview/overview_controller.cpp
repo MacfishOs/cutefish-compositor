@@ -160,7 +160,7 @@ void OverviewController::buildBars()
         const double y = top + margin;
         for (int index = 0; index < count; ++index) {
             bar.desks.push_back({QRectF(x, y, width, height), deskName(index),
-                                 desks->deskAt(index) == desks->activeDesk()});
+                                 desks->deskAt(index) == desks->chosenDesk()});
             barDesks.push_back(desks->deskAt(index));
             x += width + kBarSpacing;
         }
@@ -1032,6 +1032,14 @@ void OverviewController::onDeskActivationChanged(const Desk *, const Desk *)
 }
 
 void OverviewController::onDeskNameChanged(const Desk *)
+{
+    if (!isActive())
+        return;
+    buildBars();
+    updateChrome();
+}
+
+void OverviewController::onChosenDeskChanged()
 {
     if (!isActive())
         return;

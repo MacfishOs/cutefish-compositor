@@ -133,6 +133,8 @@ DeskActivationAnimation::DeskActivationAnimation(DesksController *controller, in
                      ? scene::DeskSwitchNode::Type::Continuous
                      : scene::DeskSwitchNode::Type::Quick)
 {
+    if (m_isContinuousGestureAnimation)
+        m_chosenDesk = startingDesk;
 }
 
 bool DeskActivationAnimation::startNode()
@@ -155,8 +157,10 @@ bool DeskActivationAnimation::replace(bool movingLeft, DesksSwitchSource source)
         return false;
     // Another swipe catches the strip wherever it is; it asks for the desks
     // beyond as the fingers pull it along. Upstream steps the ending desk on.
-    if (m_isContinuousGestureAnimation)
+    if (m_isContinuousGestureAnimation) {
+        m_chosenDesk = m_endingDesk;
         return true;
+    }
     if (!m_node->endingScreenshotTaken())
         return false;
 
@@ -193,6 +197,7 @@ bool DeskActivationAnimation::endSwipeAnimation(double timeMs)
     if (!m_isContinuousGestureAnimation)
         return false;
     m_endingDesk = m_node->endSwipeAnimation(timeMs);
+    m_chosenDesk = -1;
     // A frame dropped with the swipe will not report back.
     if (m_node->endingScreenshotTaken())
         stopScreenshotTimeout();

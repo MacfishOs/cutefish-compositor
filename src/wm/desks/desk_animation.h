@@ -37,6 +37,9 @@ public:
     ~DeskAnimationBase() override;
 
     int endingDeskIndex() const { return m_endingDesk; }
+    // While fingers pull the strip, the desk the swipe was chosen to stay on
+    // until they lift; -1 otherwise.
+    int chosenDeskIndex() const { return m_chosenDesk; }
 
     // Phase (1), and with it the ending desk's activation.
     void launch();
@@ -69,6 +72,7 @@ protected:
     DesksController *m_controller = nullptr;
     scene::DeskSwitchNode *m_node = nullptr;
     int m_endingDesk = -1;
+    int m_chosenDesk = -1;
     // The fingers move the strip, and let it go into its own slide.
     const bool m_isContinuousGestureAnimation;
 

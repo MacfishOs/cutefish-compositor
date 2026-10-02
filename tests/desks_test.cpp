@@ -607,6 +607,7 @@ TEST_F(DeskAnimationTest, ASwipeFollowsTheFingersAndLandsOnTheNearestDesk)
     swipe(-2);
     ASSERT_NE(nullptr, desks->animation());
     EXPECT_EQ(desk(1), desks->activeDesk());
+    EXPECT_EQ(desk(0), desks->chosenDesk());
     paint();
     // A desk's worth of travel: the strip is a little past the second desk,
     // and the desk beyond was activated for its frame.
@@ -615,6 +616,7 @@ TEST_F(DeskAnimationTest, ASwipeFollowsTheFingersAndLandsOnTheNearestDesk)
         swipe(-WmGestureHandler::kSwipeLengthPerDeskMm / 6);
     }
     EXPECT_EQ(desk(2), desks->activeDesk());
+    EXPECT_EQ(desk(0), desks->chosenDesk());
     paint();
     // A fifth of a desk back towards the second, slowing down to hold there,
     // then let go.
@@ -626,6 +628,7 @@ TEST_F(DeskAnimationTest, ASwipeFollowsTheFingersAndLandsOnTheNearestDesk)
     }
     now += 200;
     input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    EXPECT_EQ(desk(1), desks->chosenDesk());
     finish();
     EXPECT_EQ(nullptr, desks->animation());
     EXPECT_EQ(desk(1), desks->activeDesk());
@@ -822,10 +825,12 @@ TEST_F(DeskAnimationTest, ASwipeBackActivatesTheDeskAsTheFingersLift)
         now += 8;
         swipe(6);
     }
+    EXPECT_EQ(desk(1), desks->chosenDesk());
     now += 8;
     input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
     EXPECT_TRUE(node->isAnimating());
     EXPECT_EQ(desk(0), desks->activeDesk());
+    EXPECT_EQ(desk(0), desks->chosenDesk());
     finish();
     EXPECT_EQ(nullptr, desks->animation());
     EXPECT_EQ(desk(0), desks->activeDesk());
