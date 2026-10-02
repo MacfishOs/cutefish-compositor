@@ -308,6 +308,25 @@ TEST(OverviewNode, ReleasedItCarriesOnAtTheFingersSpeed)
     EXPECT_EQ(QList<double>({1}), f.finished);
 }
 
+TEST(OverviewNode, ASlowReleaseSpeedsUpGentlyInsteadOfLunging)
+{
+    Fixture f;
+    f.node->startTracking();
+    for (int step = 0; step < 150; ++step) {
+        f.now += 10;
+        f.node->updateTracking(0.004, double(f.now));
+    }
+    ASSERT_EQ(1, f.node->endTracking(double(f.now)));
+    const double start = double(f.now);
+    const double from = f.node->progress(start);
+    const double duration = Node::kShowDurationMs * std::sqrt(1 - from);
+    const double average = (1 - from) / duration * 1000;
+    double fastest = 0;
+    for (double t = start; t < start + duration; t += 1)
+        fastest = std::max(fastest, (f.node->progress(t + 1) - f.node->progress(t)) * 1000);
+    EXPECT_LT(fastest, 2 * average);
+}
+
 TEST(OverviewNode, TheFingersCatchTheTweenWhereItIsShown)
 {
     Fixture f;
