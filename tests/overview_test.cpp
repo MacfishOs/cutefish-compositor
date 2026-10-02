@@ -708,6 +708,25 @@ TEST_F(OverviewTest, GlassIsDrawnWhereTheWindowIsShown)
     EXPECT_EQ(overview->bars()[0].newDesk.toAlignedRect(), renderer.blurs[1]);
 }
 
+TEST_F(OverviewTest, ABlurredWindowIsNotDrawnAgainEachTimeItComesIn)
+{
+    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    compositor::Surface *surface = window->rootSurface();
+    surface->setBackgroundBlur(QRect(0, 0, 100, 400), 10);
+    surface->commit();
+    compositor.updateTextures(renderer);
+    paint();
+    show();
+    overview->exit();
+    settle();
+    ASSERT_EQ(State::Hidden, overview->state());
+
+    // Its texture without the blur is kept beside the one with it.
+    ASSERT_TRUE(overview->enter());
+    paint();
+    EXPECT_FALSE(drewContentOf(window));
+}
+
 TEST_F(OverviewTest, APreviewsCloseButtonCombinesItsDeskIntoTheNext)
 {
     Window *here = makeWindow(QRect(100, 100, 500, 400));

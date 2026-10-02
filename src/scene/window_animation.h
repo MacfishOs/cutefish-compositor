@@ -275,6 +275,22 @@ private:
     mutable double m_textureScale = 0;
     mutable QRect m_textureViewport;
     mutable uint64_t m_textureRootRevision = 0;
+    // The texture of the other blur mode, for a window with blurs: entering
+    // and leaving the overview swap the two rather than draw one again.
+    struct StashedTexture {
+        std::unique_ptr<render::Texture> texture;
+        bool blurSuppressed = false;
+        bool mipmapped = false;
+        DamageTracker damage {true};
+        bool reusable = false;
+        double scale = 0;
+        QRect viewport;
+        uint64_t rootRevision = 0;
+        QRect coverage;
+        QRect bounds;
+    };
+    mutable std::unique_ptr<StashedTexture> m_stashedTexture;
+    void swapStashedTexture(bool blurSuppressed) const;
     mutable std::unique_ptr<render::Texture> m_landingTexture;
     mutable std::unique_ptr<render::Texture> m_oldTexture;
     mutable QRect m_coverage;

@@ -270,6 +270,7 @@ void WindowAnimation::releaseRenderResources()
 {
     finish();
     m_texture.reset();
+    m_stashedTexture.reset();
     m_textureReusable = false;
     Node::releaseRenderResources();
 }
@@ -321,6 +322,7 @@ void WindowAnimation::start(Type type, const QRect &from, const QRect &to, bool 
     // Whatever m_texture holds after this, it was not drawn from the subtree's
     // current state.
     m_textureReusable = false;
+    m_stashedTexture.reset();
     if (isCrossFade(type) && m_texture) {
         m_oldTexture = std::move(m_texture);
         m_oldCoverage = m_coverage;
@@ -418,6 +420,7 @@ void WindowAnimation::releaseHold()
     // Nothing draws or reads the snapshots of a minimized window again: a
     // restore draws the live window, and the preview is the window's own image.
     m_texture.reset();
+    m_stashedTexture.reset();
     m_oldTexture.reset();
     m_landingTexture.reset();
     m_textureReusable = false;
@@ -719,6 +722,29 @@ bool WindowAnimation::textureIsCurrent(render::Renderer &renderer, const QRect &
             && (m_textureBlurSuppressed == blurSuppressed || !hasBackgroundBlurs());
 }
 
+void WindowAnimation::swapStashedTexture(bool blurSuppressed) const
+{
+    const bool wanted = m_stashedTexture && m_stashedTexture->blurSuppressed == blurSuppressed;
+    const bool other = m_texture && m_textureBlurSuppressed != blurSuppressed;
+    if (!wanted && !(other && hasBackgroundBlurs()))
+        return;
+    if (!m_stashedTexture)
+        m_stashedTexture = std::make_unique<StashedTexture>();
+    StashedTexture &stash = *m_stashedTexture;
+    std::swap(m_texture, stash.texture);
+    std::swap(m_textureBlurSuppressed, stash.blurSuppressed);
+    std::swap(m_textureMipmapped, stash.mipmapped);
+    std::swap(m_textureDamage, stash.damage);
+    std::swap(m_textureReusable, stash.reusable);
+    std::swap(m_textureScale, stash.scale);
+    std::swap(m_textureViewport, stash.viewport);
+    std::swap(m_textureRootRevision, stash.rootRevision);
+    std::swap(m_coverage, stash.coverage);
+    std::swap(m_textureBounds, stash.bounds);
+    if (!stash.texture)
+        m_stashedTexture.reset();
+}
+
 bool WindowAnimation::hasBackgroundBlurs() const
 {
     const std::function<bool(const Node &)> visit = [&](const Node &node) {
@@ -899,6 +925,10 @@ void WindowAnimation::render(render::Renderer &renderer) const
         // live content in it is presented like any layer cc draws through a
         // render surface.
         render::PresentationSubmission *submission = renderer.presentationSubmission;
+        // The overview draws a window's blurs where it shows it.
+        const bool blurSuppressed =
+                renderer.suppressBackgroundBlur || presentedScaled() || m_presentedAt;
+        swapStashedTexture(blurSuppressed);
         QRect repaint;
         if (textureIsCurrent(renderer, coverage, &repaint)) {
             recordPresentation(renderer, *this);
@@ -908,9 +938,6 @@ void WindowAnimation::render(render::Renderer &renderer) const
             // does, so the two share the snapshot; one at another scale or
             // viewport fails textureReusable() anyway.
             const bool reusable = !animating() && !hasPromotedSurface(*this);
-            // The overview draws a window's blurs where it shows it.
-            const bool blurSuppressed =
-                    renderer.suppressBackgroundBlur || presentedScaled() || m_presentedAt;
             if (!renderer.renderToTexture(m_texture, coverage, repaint, [&] {
                     const bool suppressed = renderer.suppressWindowOutlines;
                     const bool wasBlurSuppressed = renderer.suppressBackgroundBlur;
