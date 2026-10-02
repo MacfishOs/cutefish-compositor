@@ -121,6 +121,35 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
                 std::clamp(glass.tintAlpha, 0.0f, 1.0f));
 }
 
+bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, const QRect &coverage,
+                                 const QSize &reduced, unsigned int destination)
+{
+    if (sources.size() != 1 || sources.front().transform
+        || !m_context->glVersion().startsWith("OpenGL ES 3"))
+        return false;
+    const BackdropSource &source = sources.front();
+    if (!QRect(source.offset.toPoint(), source.oriented()).contains(coverage))
+        return false;
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (QSize(viewport[2], viewport[3]) != reduced)
+        return false;
+    const QRect physical = source.framebufferRect(coverage);
+    const bool scissored = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    // Both are bottom-up, as the capture and the draw of it would leave them.
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, source.framebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination);
+    glBlitFramebuffer(physical.x(), physical.y(), physical.x() + physical.width(),
+                      physical.y() + physical.height(), viewport[0], viewport[1],
+                      viewport[0] + viewport[2], viewport[1] + viewport[3], GL_COLOR_BUFFER_BIT,
+                      reduced == coverage.size() ? GL_NEAREST : GL_LINEAR);
+    glBindFramebuffer(GL_FRAMEBUFFER, destination);
+    if (scissored)
+        glEnable(GL_SCISSOR_TEST);
+    return glGetError() == GL_NO_ERROR;
+}
+
 void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radius,
                           const QRect &clip, const GlassParams &glass, double scale,
                           const QPainterPath &shape, const std::vector<BackdropSource> &sources,
@@ -214,6 +243,8 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
                 [&] {
                     GLint destination = 0;
                     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &destination);
+                    if (blitReduced(sources, coverage, reduced, destination))
+                        return;
                     for (const auto &source : sources) {
                         const QRect area = coverage.intersected(
                                 QRect(source.offset.toPoint(), source.oriented()));

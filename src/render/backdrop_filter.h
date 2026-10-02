@@ -53,6 +53,10 @@ private:
     };
 
     Scratch &scratch(const QSize &coverage, const QSize &reduced);
+    // Copies `coverage` of a lone upright source into the bound pass at
+    // `reduced` in one blit. False when it cannot, and nothing is drawn.
+    bool blitReduced(const std::vector<BackdropSource> &sources, const QRect &coverage,
+                     const QSize &reduced, unsigned int destination);
     Texture *mask(Renderer &renderer, const QPainterPath &shape, const ShapeRaster &raster);
     void applyGlassMaterial(const GlProgram &program, const GlassParams &glass,
                             const QSize &coverage, double scale);
