@@ -792,6 +792,46 @@ TEST_F(DeskAnimationTest, AnotherSwipeCatchesTheSettlingDesks)
     input.setGestureFilter(nullptr);
 }
 
+TEST_F(DeskAnimationTest, ASwipeBackActivatesTheDeskAsTheFingersLift)
+{
+    addDesks(1);
+    WmGestureHandler gestures(desks);
+    input.setGestureFilter(&gestures);
+    const auto swipe = [this](double mm) {
+        const QPointF travel(mm / WmGestureHandler::kMmPerUnacceleratedUnit, 0);
+        input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel, travel, 1, 0);
+    };
+    input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
+    swipe(-3);
+    paint();
+    for (int i = 0; i < 4; ++i) {
+        now += 8;
+        swipe(-6);
+    }
+    now += 8;
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    paint();
+    now += 50;
+    paint();
+    EXPECT_EQ(desk(1), desks->activeDesk());
+
+    // Flung back while the strip still settles: the first desk has its frame
+    // in the strip already, and is active before the strip gets there.
+    input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
+    for (int i = 0; i < 4; ++i) {
+        now += 8;
+        swipe(6);
+    }
+    now += 8;
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    EXPECT_TRUE(node->isAnimating());
+    EXPECT_EQ(desk(0), desks->activeDesk());
+    finish();
+    EXPECT_EQ(nullptr, desks->animation());
+    EXPECT_EQ(desk(0), desks->activeDesk());
+    input.setGestureFilter(nullptr);
+}
+
 TEST_F(DeskAnimationTest, UpAndDownSwipesSwitchNothing)
 {
     addDesks(1);

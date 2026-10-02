@@ -196,6 +196,10 @@ bool DeskActivationAnimation::endSwipeAnimation(double timeMs)
     // A frame dropped with the swipe will not report back.
     if (m_node->endingScreenshotTaken())
         stopScreenshotTimeout();
+    // The desk it lands on is active as the fingers lift, not once it settles:
+    // a swipe back to a desk already in the strip activates nothing on its way.
+    if (Desk *desk = m_controller->deskAt(m_endingDesk))
+        activateDeskDuringAnimation(desk, m_updateWindowActivation);
     return true;
 }
 
