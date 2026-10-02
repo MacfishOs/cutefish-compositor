@@ -849,7 +849,6 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar, 
     if (render::Texture *glyph = m_chromeCache.glyph(renderer, OverviewChromeCache::Glyph::Plus,
                                                      plus.size(), kWhite))
         renderer.drawTextureF(glyph, snapped(plus, scale), opacity);
-    nameUnder(bar.newDeskLabel, rect);
 }
 
 void OverviewDeskBarNode::render(render::Renderer &renderer) const

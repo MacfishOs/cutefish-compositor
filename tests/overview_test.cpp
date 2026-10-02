@@ -712,7 +712,6 @@ TEST_F(OverviewTest, EvenOneDeskGetsAPreview)
                 0.02);
     EXPECT_EQ(preview.height(), one.newDesk.height());
     EXPECT_NEAR(preview.width() / 2, one.newDesk.width(), 1);
-    EXPECT_EQ(QStringLiteral("New"), one.newDeskLabel);
     const QRectF place = overview->items()[0].bounds;
 
     click(one.newDesk.center());

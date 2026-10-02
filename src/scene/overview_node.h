@@ -261,7 +261,6 @@ public:
         QRectF bounds;
         std::vector<Desk> desks;
         QRectF newDesk;
-        QString newDeskLabel;
         bool newDeskHighlighted = false;
     };
 

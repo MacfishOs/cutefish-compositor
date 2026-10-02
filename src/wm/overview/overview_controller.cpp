@@ -164,11 +164,8 @@ void OverviewController::buildBars()
             barDesks.push_back(desks->deskAt(index));
             x += width + kBarSpacing;
         }
-        if (canAdd) {
+        if (canAdd)
             bar.newDesk = QRectF(x, y, newDesk, height);
-            bar.newDeskLabel =
-                    QCoreApplication::translate("cutefish::wm::OverviewController", "New");
-        }
         bar.bounds = QRectF(work.left(), top, work.width(),
                             margin + height + kLabelHeight + kBarPadding / 2);
         m_bars.push_back(std::move(bar));
