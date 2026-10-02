@@ -832,16 +832,24 @@ void EglRenderer::drawTextureQuads(GlTexture *glTexture, const TextureQuad *quad
     applyRoundedClip(program);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(glTexture->target(), glTexture->name());
-    if (alpha != uniforms.lastAlpha) {
-        glUniform1f(uniforms.alpha, alpha);
-        uniforms.lastAlpha = alpha;
+    const bool hasAlpha = pixelFormatHasAlpha(glTexture->format()) && !glTexture->contentOpaque;
+    // An XRGB buffer drawn whole shades to alpha 1; blending it only costs a read.
+    const bool opaque = !hasAlpha && (alpha >= 1 || overwriteOpaque)
+            && m_roundedClips.empty() && m_outlineWidth <= 0;
+    // Darkened in place, the colour is scaled in the blend stage and alpha stays
+    // 1: a blur reading a pixel left below 1 lets the sharp backdrop through.
+    const bool darkened =
+            opaque && alpha < 1 && m_pass.blendMode() != GlRenderPass::BlendMode::Copy;
+    const float shaderAlpha = darkened ? 1.0f : alpha;
+    if (shaderAlpha != uniforms.lastAlpha) {
+        glUniform1f(uniforms.alpha, shaderAlpha);
+        uniforms.lastAlpha = shaderAlpha;
     }
     const float swizzle = !external && pixelFormatIsBgr(glTexture->format()) ? 1.0f : 0.0f;
     if (!external && swizzle != uniforms.lastSwizzle) {
         glUniform1f(uniforms.swizzle, swizzle);
         uniforms.lastSwizzle = swizzle;
     }
-    const bool hasAlpha = pixelFormatHasAlpha(glTexture->format()) && !glTexture->contentOpaque;
     if (float(hasAlpha) != uniforms.lastHasAlpha) {
         glUniform1f(uniforms.hasAlpha, hasAlpha ? 1.0f : 0.0f);
         uniforms.lastHasAlpha = float(hasAlpha);
@@ -854,10 +862,11 @@ void EglRenderer::drawTextureQuads(GlTexture *glTexture, const TextureQuad *quad
     glVertexAttribPointer(coordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
     glEnableVertexAttribArray(coordAttr);
 
-    // An XRGB buffer drawn whole shades to alpha 1; blending it only costs a read.
-    const bool opaque = !hasAlpha && (alpha >= 1 || overwriteOpaque)
-            && m_roundedClips.empty() && m_outlineWidth <= 0;
-    if (m_pass.blendMode() == GlRenderPass::BlendMode::Copy || opaque) {
+    if (darkened) {
+        glEnable(GL_BLEND);
+        glBlendColor(alpha, alpha, alpha, 1);
+        glBlendFuncSeparate(GL_CONSTANT_COLOR, GL_ZERO, GL_ONE, GL_ZERO);
+    } else if (m_pass.blendMode() == GlRenderPass::BlendMode::Copy || opaque) {
         glDisable(GL_BLEND);
     } else {
         glEnable(GL_BLEND);

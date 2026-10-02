@@ -11,6 +11,7 @@
 #include "egl_test_util.h"
 #include "scene/overview_node.h"
 #include "scene/scene.h"
+#include "scene/surface_node.h"
 #include "scene/window_animation.h"
 
 using namespace cutefish;
@@ -136,4 +137,77 @@ TEST_F(OverviewPixels, HalfwayTheWindowIsHalfwayThere)
     const QImage image = paint();
     EXPECT_EQ(QColor(Qt::red), image.pixelColor(pixel(rect.center().x(), rect.center().y())));
     EXPECT_NE(QColor(Qt::red), image.pixelColor(pixel(rect.right() + 1, rect.center().y())));
+}
+
+TEST_F(OverviewPixels, AnOpaqueRegionOverAnAlphaBufferReplacesTheLastFrame)
+{
+    // Translucent texels under the opaque region would blend over the frame before.
+    auto *surface = static_cast<scene::SurfaceNode *>(
+            container->addChild(std::make_unique<scene::SurfaceNode>()));
+    container->reorderChildren({surface, desktop, window, node});
+    surface->setGeometry(kViewport);
+    surface->setOpaque(true);
+    std::vector<uint8_t> pixels(kNative.width() * kNative.height() * 4, 0);
+    for (size_t i = 0; i < pixels.size(); i += 4) {
+        pixels[i + 1] = 128;
+        pixels[i + 3] = 128;
+    }
+    surface->setTexture(renderer->createTexture(kNative, pixels.data(), kNative.width() * 4,
+                                                PixelFormat::Rgba8888));
+    node->setBackdrop({surface});
+    node->jumpTo(1);
+    const QImage image = paint();
+    ASSERT_FALSE(image.isNull());
+    const QColor dimmed = image.pixelColor(pixel(4, 4));
+    EXPECT_EQ(0, dimmed.red());
+    EXPECT_EQ(0, dimmed.blue());
+    EXPECT_EQ(255, dimmed.alpha());
+}
+
+TEST_F(OverviewPixels, ADesktopDrawnThroughItsSnapshotReplacesTheLastFrame)
+{
+    // As live: the desktop surface sits in a window drawn from a snapshot texture.
+    auto *desk = static_cast<scene::WindowAnimation *>(
+            container->addChild(std::make_unique<scene::WindowAnimation>([this] {
+                return double(now);
+            })));
+    container->reorderChildren({desk, desktop, window, node});
+    desk->setGeometry(kViewport);
+    auto *surface = static_cast<scene::SurfaceNode *>(
+            desk->addChild(std::make_unique<scene::SurfaceNode>()));
+    surface->setGeometry(QRect(QPoint(), kViewport.size()));
+    surface->setOpaque(true);
+    const std::vector<uint8_t> pixels(kNative.width() * kNative.height() * 4, 255);
+    surface->setTexture(renderer->createTexture(kNative, pixels.data(), kNative.width() * 4,
+                                                PixelFormat::Rgbx8888));
+    desk->finish();
+    node->setBackdrop({desk});
+    node->jumpTo(1);
+    const QImage image = paint();
+    ASSERT_FALSE(image.isNull());
+    const QColor dimmed = image.pixelColor(pixel(4, 4));
+    EXPECT_EQ(dimmed.green(), dimmed.red());
+    EXPECT_EQ(dimmed.green(), dimmed.blue());
+    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), dimmed.green(), 2);
+    EXPECT_EQ(255, dimmed.alpha());
+}
+
+TEST_F(OverviewPixels, AnOpaqueDesktopDarkenedInPlaceStaysOpaque)
+{
+    // A blur over a pixel left below alpha 1 lets the sharp backdrop through.
+    auto *surface = static_cast<scene::SurfaceNode *>(
+            container->addChild(std::make_unique<scene::SurfaceNode>()));
+    container->reorderChildren({surface, desktop, window, node});
+    surface->setGeometry(kViewport);
+    surface->setOpaque(true);
+    const std::vector<uint8_t> pixels(kNative.width() * kNative.height() * 4, 255);
+    surface->setTexture(renderer->createTexture(kNative, pixels.data(), kNative.width() * 4,
+                                                PixelFormat::Rgbx8888));
+    node->setBackdrop({surface});
+    node->jumpTo(1);
+    const QImage image = paint();
+    ASSERT_FALSE(image.isNull());
+    const QColor dimmed = image.pixelColor(pixel(4, 4));
+    EXPECT_EQ(255, dimmed.alpha());
+    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), dimmed.green(), 2);
 }

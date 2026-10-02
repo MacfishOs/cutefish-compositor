@@ -534,8 +534,14 @@ void OverviewNode::render(render::Renderer &renderer) const
     const bool overwrite = renderer.overwriteOpaque;
     renderer.opacityScale = opacity * (1 - dim);
     renderer.overwriteOpaque = inPlace;
-    for (const Node *node : m_backdrop)
-        node->render(renderer);
+    for (const Node *node : m_backdrop) {
+        // In place, drawn live as backdropCovers() saw it: a window's snapshot
+        // is padded with transparent texels and would blend over the last frame.
+        if (inPlace)
+            node->Node::render(renderer);
+        else
+            node->render(renderer);
+    }
     renderer.overwriteOpaque = overwrite;
     renderer.opacityScale = opacity;
 

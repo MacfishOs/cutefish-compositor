@@ -17,6 +17,8 @@ void SurfaceNode::setTexture(std::shared_ptr<render::Texture> texture)
 {
     const bool mappingChanged = bool(m_texture) != bool(texture);
     m_texture = std::move(texture);
+    if (m_texture)
+        m_texture->contentOpaque = m_opaque;
     if (mappingChanged)
         notifyChanged();
 }
@@ -39,6 +41,10 @@ void SurfaceNode::setOpaque(bool opaque)
     if (m_opaque == opaque)
         return;
     m_opaque = opaque;
+    // An alpha buffer under a full opaque region is drawn opaque, as content()
+    // promises; blended, a backdrop darkened in place keeps the previous frame.
+    if (m_texture)
+        m_texture->contentOpaque = opaque;
     notifyChanged();
 }
 
