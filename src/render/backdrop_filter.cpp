@@ -142,7 +142,9 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
         return;
 
     // Sample beyond the mask; the sigma floor keeps the one-tap case finite.
-    const float sigma = (glass.enabled ? std::max(glass.blurSigma, 0.05f) : 30.0f) * scale;
+    const float sigma =
+            (glass.enabled ? std::max(glass.blurSigma, 0.05f) : std::max(glass.plainSigma, 0.05f))
+            * scale;
     // Glass samples the backdrop per output pixel, so it wants device
     // resolution; the plain blur is specified in logical pixels.
     const float quality = glass.enabled ? 1.0f : 0.33f / scale;
@@ -165,7 +167,11 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
         captured = captured.expandedTo(
                 QSize(int(std::ceil(exact.width())) + 1, int(std::ceil(exact.height())) + 1));
     }
-    const int halo = qCeil(kBackdropBlurSupport * scale);
+    // Three sigmas, kBackdropBlurSupport at the plain blur's full size.
+    const float support = glass.enabled
+            ? float(kBackdropBlurSupport)
+            : std::min(3 * glass.plainSigma, float(kBackdropBlurSupport));
+    const int halo = qCeil(support * scale);
     // Moved inside the output rather than cut by its edge, so the size stays
     // the same as the lens nears the edge: cut, it keyed a new set of scratch
     // textures on every frame of a move along it. Only a lens the output

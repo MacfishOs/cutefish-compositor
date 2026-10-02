@@ -796,6 +796,7 @@ void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sampl
                 glass.depth *= float(scale);
                 glass.displacement *= float(scale);
                 glass.ambientOcclusionRadius *= float(scale);
+                glass.plainSigma *= float(scale);
                 glass.opacity *= value.opacity;
                 const QPainterPath &shape = surface->backgroundBlurShape();
                 renderer.drawBackgroundBlur(

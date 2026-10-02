@@ -67,6 +67,8 @@ struct GlassParams {
     float tintAlpha = 0.12f;
     // The plain blur's own opacity, for one that fades with what it sits under.
     float opacity = 1.0f;
+    // The plain blur's sigma, smaller for a window drawn smaller.
+    float plainSigma = 30.0f;
 };
 
 inline bool operator==(const GlassParams &a, const GlassParams &b)
@@ -80,7 +82,7 @@ inline bool operator==(const GlassParams &a, const GlassParams &b)
             && a.ambientOcclusionRadius == b.ambientOcclusionRadius
             && a.saturation == b.saturation && a.rim == b.rim && a.tintRed == b.tintRed
             && a.tintGreen == b.tintGreen && a.tintBlue == b.tintBlue && a.tintAlpha == b.tintAlpha
-            && a.opacity == b.opacity;
+            && a.opacity == b.opacity && a.plainSigma == b.plainSigma;
 }
 
 inline bool operator!=(const GlassParams &a, const GlassParams &b)
