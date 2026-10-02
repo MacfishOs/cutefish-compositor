@@ -204,6 +204,12 @@ void WindowState::enterState(WindowStateType next)
         }
         if (dock)
             m_window->manager()->restackScene();
+    } else if (animation && previous == WindowStateType::Minimized) {
+        // A leftover Minimize keeps drawing the old snapshot in place of the
+        // live window once it shows.
+        animation->setHoldAtEnd(false);
+        animation->setFinishedCallback({});
+        animation->skip(scene::WindowAnimation::Type::Restore);
     }
 
     // Restore bounds and restore history are two views of the same thing;

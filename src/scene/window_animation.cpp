@@ -260,6 +260,12 @@ void WindowAnimation::finish()
     changed();
 }
 
+void WindowAnimation::skip(Type type)
+{
+    m_type = type;
+    finish();
+}
+
 void WindowAnimation::changed() const
 {
     notifyChanged();
@@ -281,8 +287,7 @@ void WindowAnimation::releaseRenderResources()
 void WindowAnimation::start(Type type, const QRect &from, const QRect &to, bool requestFrame)
 {
     if (m_style == Style::None) {
-        m_type = type;
-        finish();
+        skip(type);
         return;
     }
     const bool interrupted = m_running;

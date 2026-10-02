@@ -75,6 +75,8 @@ public:
 
     explicit WindowAnimation(std::function<double()> clock = {});
     void finish();
+    // Takes a transition with nothing to animate, so no earlier type lingers.
+    void skip(Type type);
     void releaseRenderResources() override;
     void start(Type type, const QRect &from, const QRect &to, bool requestFrame = true);
     void close();

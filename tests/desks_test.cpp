@@ -27,6 +27,7 @@
 #include "scene/node.h"
 #include "scene/scene.h"
 #include "scene/slide_out_node.h"
+#include "scene/window_animation.h"
 #include "shm_test_util.h"
 #include "wm/activation.h"
 #include "wm/desks/desk.h"
@@ -264,6 +265,26 @@ TEST_F(DesksTest, ActivatingAWindowOnAnotherDeskSwitchesToIt)
     EXPECT_TRUE(first->isVisible());
     EXPECT_FALSE(second->isVisible());
     EXPECT_FALSE(second->isActive());
+}
+
+TEST_F(DesksTest, AMinimizedWindowRestoredFromAnotherDeskIsDrawnLive)
+{
+    addDesks(1);
+    Window *first = makeWindow();
+    auto *animation = dynamic_cast<scene::WindowAnimation *>(first->node());
+    ASSERT_NE(nullptr, animation);
+    first->minimize();
+    ASSERT_EQ(scene::WindowAnimation::Type::Minimize, animation->type());
+    desks->activateDesk(desk(1), DesksSwitchSource::DeskSwitchShortcut);
+    makeWindow();
+
+    // The dock's click: restored while its desk is still hidden, then activated.
+    first->restore();
+    manager.activation()->activate(first);
+    EXPECT_TRUE(first->isVisible());
+    EXPECT_NE(scene::WindowAnimation::Type::Minimize, animation->type());
+    EXPECT_FALSE(animation->isRunning());
+    EXPECT_FALSE(animation->isHolding());
 }
 
 TEST_F(DesksTest, TheApplicationSwitcherListsWindowsOfEveryDesk)
