@@ -92,6 +92,7 @@ public:
                          const std::function<void()> &paint) override;
     const DmaBufFormats &captureDmaBufFormats() const override;
     dev_t captureDmaBufDevice() const override;
+    bool copyOutputFrame(const QSize &size) override;
     QImage renderToImage(const QSize &size, const std::function<void()> &paint) override;
     bool renderToTexture(std::unique_ptr<Texture> &texture, const QRect &bounds,
                          const std::function<void()> &paint) override;
@@ -223,6 +224,8 @@ private:
     EglSwapState m_swapState;
     // The scissor of a partial repaint, in target pixels.
     std::optional<QRect> m_repaint;
+    // The framebuffer the current frame composites into.
+    unsigned int m_frameFramebuffer = 0;
     EglRenderTarget *m_current = nullptr;
     EglRenderTarget *m_lastTarget = nullptr;
 };

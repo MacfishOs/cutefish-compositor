@@ -42,9 +42,18 @@ public:
     // cursor layers through `cursors`. `cursorBounds` is the cursor image's
     // global logical rectangle (empty while hidden), which is damage a
     // hardware cursor never puts into the tree; `root` is the tree damage is
-    // tracked against for output sources.
+    // tracked against for output sources. `composited` says whether the
+    // frame the output just composited holds what `scene` would paint, so a
+    // copy of it can stand in.
+    enum class Composited {
+        Unusable,
+        WithoutCursor,
+        WithCursor,
+    };
+
     struct Painters {
         std::function<void(bool cursors)> scene;
+        std::function<Composited()> composited;
         std::function<void()> cursors;
         std::function<QRect()> cursorBounds;
         const scene::Node *root = nullptr;

@@ -57,6 +57,9 @@ public:
 
     bool readsLater = false;
     int taken = 0;
+    bool copiesOutput = false;
+
+    bool copyOutputFrame(const QSize &) override { return copiesOutput; }
 
     std::shared_ptr<render::PendingImage>
     captureFrameLater(const std::function<void()> &paint) override
@@ -588,6 +591,57 @@ TEST_F(ImageCaptureTest, DamageIsReportedSinceTheSessionsPreviousFrame)
     ASSERT_EQ(ready, 2);
     ASSERT_EQ(damageRects.size(), 1u);
     EXPECT_EQ(damageRects.front(), QRect(1, 1, 2, 2));
+}
+
+TEST_F(ImageCaptureTest, ACopiedOutputFrameStandsInOnlyWhenItHoldsWhatTheSessionPaints)
+{
+    using Composited = wayland::ImageCaptureManager::Composited;
+    scene::Node root(QStringLiteral("root"));
+    root.setGeometry(QRect(0, 0, 8, 6));
+    int scenes = 0, cursors = 0;
+    Composited composited = Composited::Unusable;
+    wayland::ImageCaptureManager::Painters painters;
+    painters.root = &root;
+    painters.scene = [&](bool) { ++scenes; };
+    painters.cursors = [&] { ++cursors; };
+    painters.composited = [&] { return composited; };
+    renderer.copiesOutput = true;
+
+    fd = memfd_create("capture-test", MFD_CLOEXEC);
+    ASSERT_EQ(ftruncate(fd, 4096), 0);
+    auto *pool = wl_shm_create_pool(shm, fd, 4096);
+    buffer = wl_shm_pool_create_buffer(pool, 0, 8, 6, 32, WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);
+    // Paints one frame of a fresh session and returns {scene paints, cursor paints}.
+    auto capture = [&](uint32_t options) {
+        scenes = cursors = 0;
+        auto *paintSession =
+                ext_image_copy_capture_manager_v1_create_session(copies, source, options);
+        auto *paintFrame = ext_image_copy_capture_session_v1_create_frame(paintSession);
+        ext_image_copy_capture_frame_v1_attach_buffer(paintFrame, buffer);
+        ext_image_copy_capture_frame_v1_capture(paintFrame);
+        EXPECT_TRUE(roundtrip());
+        manager->renderPending(renderer, painters);
+        ext_image_copy_capture_frame_v1_destroy(paintFrame);
+        ext_image_copy_capture_session_v1_destroy(paintSession);
+        EXPECT_TRUE(roundtrip());
+        return std::pair(scenes, cursors);
+    };
+    const uint32_t withCursors = EXT_IMAGE_COPY_CAPTURE_MANAGER_V1_OPTIONS_PAINT_CURSORS;
+
+    composited = Composited::Unusable;
+    EXPECT_EQ(capture(0), std::pair(1, 0));
+    composited = Composited::WithoutCursor;
+    EXPECT_EQ(capture(0), std::pair(0, 0));
+    EXPECT_EQ(capture(withCursors), std::pair(0, 1));
+    // A frame with a software cursor in it is no capture for a session without one.
+    composited = Composited::WithCursor;
+    EXPECT_EQ(capture(0), std::pair(1, 0));
+    EXPECT_EQ(capture(withCursors), std::pair(0, 0));
+
+    renderer.copiesOutput = false;
+    composited = Composited::WithoutCursor;
+    EXPECT_EQ(capture(0), std::pair(1, 0));
 }
 
 TEST_F(ImageCaptureTest, DmaBufTargetsAreAdvertisedFromTheRendererProbe)

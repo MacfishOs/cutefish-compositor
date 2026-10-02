@@ -280,6 +280,28 @@ bool EglRenderer::captureToDmaBuf(const OutputRenderContext &context, const QSiz
     return ok;
 }
 
+bool EglRenderer::copyOutputFrame(const QSize &size)
+{
+    if (!m_current || !capturing || size != m_current->size()
+        || !m_context->glVersion().startsWith("OpenGL ES 3"))
+        return false;
+    GLint destination = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &destination);
+    if (static_cast<unsigned int>(destination) == m_frameFramebuffer)
+        return false;
+    const bool scissored = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    // Both are bottom-up, so the rows land as a paint would have put them.
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_frameFramebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination);
+    glBlitFramebuffer(0, 0, size.width(), size.height(), 0, 0, size.width(), size.height(),
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, destination);
+    if (scissored)
+        glEnable(GL_SCISSOR_TEST);
+    return glGetError() == GL_NO_ERROR;
+}
+
 // Whether this GPU renders into a buffer allocated the way a capture client
 // would allocate it: one probe per format, with a linear layout, so a client
 // never learns of a format the frame path would then refuse.
@@ -481,6 +503,9 @@ bool EglRenderer::beginFrame(RenderTarget *target)
             ? QRect(QPoint(), eglTarget->size())
             : outputContext().nativeContentRect;
     m_current->beginFrame();
+    GLint framebuffer = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+    m_frameFramebuffer = static_cast<unsigned int>(framebuffer);
     m_pass.setGeometry(content.size(), outputContext().logicalViewport.topLeft());
     glViewport(content.x(), eglTarget->size().height() - content.y() - content.height(),
                content.width(), content.height());

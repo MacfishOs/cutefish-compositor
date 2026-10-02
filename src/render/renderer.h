@@ -340,6 +340,11 @@ public:
 
     virtual dev_t captureDmaBufDevice() const { return 0; }
 
+    // Inside a capture of the output this frame draws: copies what the frame
+    // composited, `size` pixels, in place of painting it again, as viz serves
+    // a copy request from the root render pass. False when it cannot.
+    virtual bool copyOutputFrame(const QSize &size) { return false; }
+
     // Reads back what `paint` draws into a `size` pixel image whose logical
     // coordinates are its pixels. Only inside a frame; premultiplied ARGB32.
     virtual QImage renderToImage(const QSize &size, const std::function<void()> &paint)

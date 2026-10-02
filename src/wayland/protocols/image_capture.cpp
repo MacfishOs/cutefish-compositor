@@ -651,7 +651,16 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
                 if (session->cursors && painters.cursors)
                     painters.cursors();
             } else if (painters.scene) {
-                painters.scene(session->cursors);
+                const Composited composited =
+                        painters.composited ? painters.composited() : Composited::Unusable;
+                const bool reusable = composited == Composited::WithoutCursor
+                        || (composited == Composited::WithCursor && session->cursors);
+                if (!reusable || !renderer.copyOutputFrame(size)) {
+                    painters.scene(session->cursors);
+                } else if (session->cursors && composited == Composited::WithoutCursor
+                           && painters.cursors) {
+                    painters.cursors();
+                }
             }
         };
         bool copied = false;

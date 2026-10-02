@@ -155,6 +155,19 @@ scene::OverviewWindowFrame overviewWindowFrame(const decoration::Theme *theme)
     };
     return frame;
 }
+
+// Whether `node` puts anything on the output, walked as the damage tracker does.
+bool drawsAnything(const scene::Node &node)
+{
+    if (!node.isVisible() && !node.paintsWhenHidden())
+        return false;
+    if (node.content() != scene::Node::Content::None)
+        return true;
+    return std::any_of(node.children().begin(), node.children().end(),
+                       [](const scene::Node *child) {
+                           return drawsAnything(*child);
+                       });
+}
 } // namespace
 
 void CompositorShell::SecureScanoutPolicy::setRuntime(display::DisplayRuntime *runtime)
@@ -845,6 +858,27 @@ bool CompositorShell::initWayland()
                          };
                          painters.cursorBounds = [this] {
                              return m_cursor.captureBounds().toAlignedRect();
+                         };
+                         painters.composited = [this] {
+                             using Composited = wayland::ImageCaptureManager::Composited;
+                             // On the output, but never in a capture.
+                             if (drawsAnything(*m_screenTransition)
+                                 || drawsAnything(*m_secureContainer)
+                                 || drawsAnything(*m_startupCover))
+                                 return Composited::Unusable;
+                             for (const scene::Node *child : m_surfaceContainer->children()) {
+                                 if (child->isExcludedFromCapture() && drawsAnything(*child))
+                                     return Composited::Unusable;
+                             }
+                             // A software or client cursor; a hardware one is on its own plane.
+                             const auto &cursors = m_cursorContainer->children();
+                             const bool cursor = std::any_of(
+                                     cursors.begin(), cursors.end(),
+                                     [this](const scene::Node *child) {
+                                         return child != m_dragIconContainer
+                                                 && drawsAnything(*child);
+                                     });
+                             return cursor ? Composited::WithCursor : Composited::WithoutCursor;
                          };
                          imageCapture->renderPending(renderer, painters);
                      });
