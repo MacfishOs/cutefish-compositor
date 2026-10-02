@@ -842,6 +842,13 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar, 
     if (bar.newDesk.isEmpty())
         return;
     const QRectF rect = snapped(bar.newDesk.translated(0, offset), scale);
+    // Frosted, as the title plate is, over the dimmed desk under it.
+    render::GlassParams blur;
+    blur.opacity = opacity;
+    renderer.pushRoundedClip({rect, kPreviewRadius});
+    renderer.drawBackgroundBlur(rect.toAlignedRect(), qRound(kPreviewRadius), rect.toAlignedRect(),
+                                blur);
+    renderer.popRoundedClip();
     fillRounded(renderer, rect, kPreviewRadius,
                 faded(bar.newDeskHighlighted ? kButtonHighlightColor : kButtonColor, opacity));
     QRectF plus(0, 0, kPlusSize, kPlusSize);

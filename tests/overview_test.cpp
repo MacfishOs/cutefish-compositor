@@ -669,9 +669,11 @@ TEST_F(OverviewTest, GlassIsDrawnWhereTheWindowIsShown)
     paint();
     const QRectF place = placeOf(window);
     const double scale = place.width() / 500;
-    ASSERT_EQ(1, renderer.blurs.size());
+    ASSERT_EQ(2, renderer.blurs.size());
     EXPECT_EQ(QRectF(place.topLeft(), QSizeF(100, 400) * scale).toAlignedRect(),
               renderer.blurs[0]);
+    // The new-desk button is frosted over it.
+    EXPECT_EQ(overview->bars()[0].newDesk.toAlignedRect(), renderer.blurs[1]);
 }
 
 TEST_F(OverviewTest, APreviewsCloseButtonCombinesItsDeskIntoTheNext)
