@@ -387,6 +387,14 @@ TEST_F(OverviewTest, EscapeAndAClickOnNothingLeaveAsItWas)
     click(QPointF(10, 790));
     EXPECT_EQ(State::Exiting, overview->state());
     EXPECT_EQ(window, active());
+    settle();
+
+    // The desk bar's empty space too.
+    show();
+    ASSERT_EQ(OverviewController::Hit::Type::Bar, overview->hitTest(QPointF(10, 10)).type);
+    click(QPointF(10, 10));
+    EXPECT_EQ(State::Exiting, overview->state());
+    EXPECT_EQ(window, active());
 }
 
 TEST_F(OverviewTest, TheKeyboardPicksAWindow)

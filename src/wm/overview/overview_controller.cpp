@@ -754,9 +754,11 @@ void OverviewController::release(const QPointF &location)
         if (desks->canCreateDesks())
             desks->newDesk(DesksCreationRemovalSource::Button);
         break;
-    case Hit::Type::Bar:
     case Hit::Type::Panel:
         break;
+    // The bar's empty space is the overview's background, as in Ash, whose
+    // desk bar lets a press through.
+    case Hit::Type::Bar:
     case Hit::Type::None:
         exit();
         break;
