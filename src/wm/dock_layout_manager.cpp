@@ -14,6 +14,7 @@
 #include "compositor/compositor.h"
 #include "input/seat.h"
 #include "wm/activation.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 
@@ -330,8 +331,9 @@ void DockLayoutManager::enter(Window *dock, Dock &entry)
     entry.edge = edgeFor(dock->bounds(), output);
     entry.visibility = computeVisibility(dock, output);
     entry.autoHide = computeAutoHideState(dock, entry, output, false);
-    dock->setPresentationOffset(hiddenOffset(dock->bounds(), output, entry.edge));
-    dock->setPresentationHidden(true);
+    entry.offset = hiddenOffset(dock->bounds(), output, entry.edge);
+    entry.parked = true;
+    present(dock, entry);
     if (entry.autoHide == DockAutoHideState::Shown)
         slideTo(dock, entry, QPoint());
 }
@@ -392,35 +394,57 @@ void DockLayoutManager::applyAutoHideState(Window *dock, Dock &entry, DockAutoHi
 
 void DockLayoutManager::slideTo(Window *dock, Dock &entry, const QPoint &offset)
 {
-    if (entry.sliding ? offset == entry.slideTo : offset == dock->presentationOffset())
+    if (entry.sliding ? offset == entry.slideTo : offset == entry.offset)
         return;
     // A reversal mid-slide turns around from where the dock is.
-    entry.slideFrom = dock->presentationOffset();
+    entry.slideFrom = entry.offset;
     entry.slideStarted = -1;
     entry.sliding = true;
     entry.slideTo = offset;
     // A parked dock comes back into the scene before it moves.
-    dock->setPresentationHidden(false);
+    entry.parked = false;
+    present(dock, entry);
     requestFrame();
+}
+
+void DockLayoutManager::present(Window *dock, const Dock &entry)
+{
+    QPoint offset = entry.offset;
+    bool hidden = entry.parked;
+    if (dock->role() == WindowRole::Panel && m_overviewProgress > 0) {
+        const QPoint away =
+                hiddenOffset(dock->bounds(), m_manager->outputBoundsFor(dock), entry.edge);
+        offset += (QPointF(away - offset) * m_overviewProgress).toPoint();
+        hidden = hidden || m_overviewProgress >= 1;
+    }
+    dock->setPresentationOffset(offset);
+    dock->setPresentationHidden(hidden);
 }
 
 void DockLayoutManager::advance(double frameTimeMs)
 {
+    const double overview = m_manager->overview()->shownProgress(frameTimeMs);
+    const bool overviewMoved = overview != m_overviewProgress;
+    m_overviewProgress = overview;
     bool sliding = false;
     for (auto &[dock, entry] : m_docks) {
-        if (!entry->sliding)
+        if (!entry->sliding) {
+            if (overviewMoved)
+                present(dock, *entry);
             continue;
+        }
         if (entry->slideStarted < 0)
             entry->slideStarted = frameTimeMs;
         const double progress = easeOut((frameTimeMs - entry->slideStarted) / kSlideDurationMs);
         const QPointF travel = entry->slideTo - entry->slideFrom;
-        dock->setPresentationOffset(entry->slideFrom + (travel * progress).toPoint());
+        entry->offset = entry->slideFrom + (travel * progress).toPoint();
         if (progress >= 1) {
             entry->sliding = false;
-            dock->setPresentationHidden(entry->autoHide == DockAutoHideState::Hidden);
+            entry->parked = entry->autoHide == DockAutoHideState::Hidden;
         } else {
             sliding = true;
         }
+        present(dock, *entry);
     }
     if (sliding)
         requestFrame();

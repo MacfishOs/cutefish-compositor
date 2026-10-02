@@ -29,6 +29,7 @@
 #include "wm/activation.h"
 #include "wm/desks/desk.h"
 #include "wm/desks/desks_controller.h"
+#include "wm/dock_layout_manager.h"
 #include "wm/gestures/wm_gesture_handler.h"
 #include "wm/overview/overview_controller.h"
 #include "wm/stacking.h"
@@ -318,6 +319,43 @@ TEST_F(OverviewTest, ThePanelsAndTheDockKeepTheirInput)
     EXPECT_TRUE(overview->onPointerMotion(at(now), QPointF(500, 600)));
 }
 
+TEST_F(OverviewTest, ThePanelsGiveWayAsItComesIn)
+{
+    DockLayoutManager layout {&manager};
+    Window *panel = makeWindow(QRect(0, 0, 1000, 30));
+    panel->setRole(WindowRole::Panel);
+    panel->setFocusPolicy(FocusPolicy::NoFocus);
+    makeWindow(QRect(100, 100, 500, 400));
+    layout.advance(double(now));
+    layout.advance(double(now + DockLayoutManager::kSlideDurationMs));
+    ASSERT_EQ(QPoint(), panel->presentationOffset());
+
+    // Off the top edge with the overview's progress.
+    ASSERT_TRUE(overview->enter());
+    paint();
+    layout.advance(double(now) + scene::OverviewNode::kRestDurationMs / 2);
+    EXPECT_GT(0, panel->presentationOffset().y());
+    EXPECT_LT(-30, panel->presentationOffset().y());
+    EXPECT_FALSE(panel->isPresentationHidden());
+    settle();
+    layout.advance(double(now));
+    EXPECT_EQ(QPoint(0, -30), panel->presentationOffset());
+    EXPECT_TRUE(panel->isPresentationHidden());
+    // The desk bar takes the edge it left, and the pointer there is the overview's.
+    EXPECT_EQ(kOutput.top(), overview->bars().front().bounds.top());
+    // Its previews keep half the margin they had under the panel.
+    const QRect work = manager.outputAreas().front().workArea;
+    EXPECT_EQ(std::round((work.top() + OverviewController::kBarPadding) / 2.0),
+              overview->bars().front().desks.front().bounds.top());
+    EXPECT_NE(OverviewController::Hit::Type::Panel, overview->hitTest(QPointF(500, 10)).type);
+
+    overview->toggle();
+    settle();
+    layout.advance(double(now));
+    EXPECT_EQ(QPoint(), panel->presentationOffset());
+    EXPECT_FALSE(panel->isPresentationHidden());
+}
+
 TEST_F(OverviewTest, AClickedWindowIsActivatedAndLandsOnTop)
 {
     Window *first = makeWindow(QRect(100, 100, 500, 400));
@@ -595,9 +633,9 @@ TEST_F(OverviewTest, ADraggedWindowShrinksOnItsWayToTheBar)
     EXPECT_TRUE(dragged().contains(place.center() + QPointF(0, -10)));
 
     // On the bar, the window at the expanded bar's share of the output's
-    // height: 12 + 80 + 24 + 6 of 800.
+    // height: 6 + 80 + 24 + 6 of 800.
     const auto bar = overview->bars()[0];
-    const double expanded = 122;
+    const double expanded = 116;
     const QPointF onBar = bar.desks[1].bounds.center();
     moveTo(onBar);
     EXPECT_NEAR(500 * expanded / 800, dragged().width(), 0.01);

@@ -32,8 +32,9 @@ class WindowManager;
 //
 // Everything on screen is a function of one progress value and a layout
 // computed when the overview starts, drawn by an OverviewNode and an
-// OverviewDeskBarNode. While it is shown, the pointer and the keyboard are
-// the overview's, except over the panels and the dock, which stay usable.
+// OverviewDeskBarNode. The panels slide off their edge with it
+// (DockLayoutManager). While it is shown, the pointer and the keyboard are
+// the overview's, except over the dock, which stays usable.
 // Upstream Ash (ash/wm/overview) fills its rows by recency; here the rows keep
 // the windows roughly where they are, each as large as the room around it
 // allows (overview_layout.h).
@@ -88,6 +89,8 @@ public:
     {
         return m_state == State::Entering || m_state == State::Exiting;
     }
+    // How far in it is drawn at `timeMs` on the frame clock, from 0 to 1.
+    double shownProgress(double timeMs) const;
 
     // The shortcut.
     void toggle();

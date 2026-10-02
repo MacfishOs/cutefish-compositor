@@ -77,7 +77,7 @@ private:
 // above the active desk's windows and draws them itself, each moved from
 // where it is towards its place in the overview by the overview's progress:
 // 0 is the desk as it is, 1 the overview. Everything below it in its parent
-// is covered while it is active; the panels and the dock above stay.
+// is covered while it is active; the dock above stays.
 //
 // The progress follows the fingers of a touchpad swipe, resampled at frame
 // time as the desk swipe is, pulls against 0 and 1 like a rubber band and
@@ -235,7 +235,7 @@ private:
     mutable OverviewChromeCache m_chromeCache;
 };
 
-// The overview's desk bar along the top of each output's work area: a preview
+// The overview's desk bar along the top edge of each output: a preview
 // of every desk and a new-desk button, even with one desk (Ash shows a strip
 // of buttons until there are two). It slides in from the top edge with the
 // overview's progress and stays still above a desk switch, which slides the

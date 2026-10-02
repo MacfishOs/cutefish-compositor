@@ -117,6 +117,13 @@ bool OverviewController::canCloseDesks() const
     return desks->desks().size() > 1 && desks->canRemoveDesks();
 }
 
+double OverviewController::shownProgress(double timeMs) const
+{
+    if (!m_node || !m_node->isActive())
+        return 0;
+    return std::clamp(m_node->progress(timeMs), 0.0, 1.0);
+}
+
 void OverviewController::buildBars()
 {
     DesksController *desks = m_manager->desks();
@@ -126,7 +133,10 @@ void OverviewController::buildBars()
     m_barDesks.clear();
     for (const auto &output : m_manager->outputAreas()) {
         const QRect work = output.workArea.isEmpty() ? output.bounds : output.workArea;
-        const int top = work.top();
+        // The panels along the top edge give way to the overview; the
+        // previews keep half the margin they had below them.
+        const int top = output.bounds.top();
+        const double margin = std::round((work.top() - top + kBarPadding) / 2.0);
         scene::OverviewDeskBarNode::Bar bar;
         bar.output = output.bounds;
         std::vector<Desk *> barDesks;
@@ -147,7 +157,7 @@ void OverviewController::buildBars()
             newDesk = canAdd ? std::floor(width / 2) : 0;
         }
         double x = std::round(work.center().x() + 0.5 - total() / 2);
-        const double y = top + kBarPadding;
+        const double y = top + margin;
         for (int index = 0; index < count; ++index) {
             bar.desks.push_back({QRectF(x, y, width, height), deskName(index),
                                  desks->deskAt(index) == desks->activeDesk()});
@@ -160,7 +170,7 @@ void OverviewController::buildBars()
                     QCoreApplication::translate("cutefish::wm::OverviewController", "New");
         }
         bar.bounds = QRectF(work.left(), top, work.width(),
-                            kBarPadding + height + kLabelHeight + kBarPadding / 2);
+                            margin + height + kLabelHeight + kBarPadding / 2);
         m_bars.push_back(std::move(bar));
         m_barDesks.push_back(std::move(barDesks));
     }

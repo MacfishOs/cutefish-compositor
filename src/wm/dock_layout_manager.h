@@ -69,6 +69,8 @@ enum class WorkspaceState {
 // there is a window to make room for at all. A dock hides at once and comes
 // back after kRevealDelayMs, so brushing the screen edge does not pop it out.
 // A dock or panel that maps slides in from its edge, as the session starts.
+// The window overview pushes the panels off their edge as it comes in,
+// following its progress, and lets them back as it leaves.
 //
 // Must be destroyed before the WindowManager it observes.
 class DockLayoutManager : public QObject, public WindowObserver
@@ -106,9 +108,10 @@ public:
     // Re-evaluates every dock now. Every observer below funnels into this.
     void update();
 
-    // Moves every running slide to `frameTimeMs`, on the clock output frames
-    // are timed with. Called before each frame is drawn; the animation asks
-    // for the next frame itself while it runs.
+    // Moves every running slide, and the panels with the overview, to
+    // `frameTimeMs`, on the clock output frames are timed with. Called before
+    // each frame is drawn; the animation asks for the next frame itself while
+    // it runs.
     void advance(double frameTimeMs);
     bool isSliding(const Window *dock) const;
 
@@ -134,6 +137,10 @@ private:
         double slideStarted = -1;
         QPoint slideFrom;
         QPoint slideTo;
+        // Where its own state puts it, before the overview: drawn this far
+        // from its bounds, and not drawn at all when parked.
+        QPoint offset;
+        bool parked = false;
     };
 
     Dock *dockFor(Window *window);
@@ -156,6 +163,8 @@ private:
     // Aims the dock at where its current state puts it: on screen, or just
     // past its edge. Animated unless the dock is already parked there.
     void slideTo(Window *dock, Dock &entry, const QPoint &offset);
+    // Draws the dock where its own offset and the overview put it.
+    void present(Window *dock, const Dock &entry);
     void requestFrame();
 
     WindowManager *m_manager = nullptr;
@@ -164,6 +173,8 @@ private:
     bool m_sessionEnding = false;
     std::map<Window *, std::unique_ptr<Dock>> m_docks;
     std::optional<QPointF> m_pointer;
+    // How far in the overview was at the last frame, 0 to 1.
+    double m_overviewProgress = 0;
 };
 
 } // namespace cutefish::wm
