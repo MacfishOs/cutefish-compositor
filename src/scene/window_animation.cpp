@@ -693,20 +693,26 @@ bool WindowAnimation::redrawsSubtree(const QRect &viewport, double scale) const
 bool WindowAnimation::textureIsCurrent(render::Renderer &renderer, const QRect &coverage,
                                        QRect *repaint) const
 {
-    // The blurs in the texture read the output behind the window, which may
-    // have changed wherever this frame draws it again, and nowhere else.
-    const QRegion damage = m_textureDamage.update(*this, coverage, renderer.rasterScale(), 0,
-                                                  [&](const QRect &sampled) {
-                                                      return renderer.repaints(sampled);
-                                                  });
-    const bool valid =
-            textureReusable(coverage, outputViewport(renderer, *this), renderer.rasterScale());
-    *repaint = valid ? render::coverSamples(damage.boundingRect(), m_textureDamage.samples())
-                     : QRect();
     // A texture drawn without its blurs, or with them, is only kept for a draw
     // that wants the same.
     const bool blurSuppressed =
             renderer.suppressBackgroundBlur || presentedScaled() || m_presentedAt;
+    // The blurs in the texture read the output behind the window, which may
+    // have changed wherever this frame draws it again, and nowhere else. One
+    // drawn without them reads nothing behind it: the overview's full repaints
+    // would otherwise draw every blurred window's texture again each frame.
+    const QRegion damage = blurSuppressed
+            ? m_textureDamage.update(*this, coverage, renderer.rasterScale())
+            : m_textureDamage.update(*this, coverage, renderer.rasterScale(), 0,
+                                     [&](const QRect &sampled) {
+                                         return renderer.repaints(sampled);
+                                     });
+    const bool valid =
+            textureReusable(coverage, outputViewport(renderer, *this), renderer.rasterScale());
+    *repaint = !valid ? QRect()
+            : blurSuppressed
+            ? damage.boundingRect()
+            : render::coverSamples(damage.boundingRect(), m_textureDamage.samples());
     // Without blurs the two are the same texture: entering the overview does
     // not draw every window again.
     return valid && damage.isEmpty()
@@ -930,8 +936,8 @@ void WindowAnimation::render(render::Renderer &renderer) const
             const QRect drawn = repaint.isEmpty() ? coverage : repaint;
             const QRect output = outputViewport(renderer, *this);
             const auto &samples = m_textureDamage.samples();
-            const bool backdropCurrent =
-                    std::all_of(samples.begin(), samples.end(), [&](const QRect &sampled) {
+            const bool backdropCurrent = blurSuppressed
+                    || std::all_of(samples.begin(), samples.end(), [&](const QRect &sampled) {
                         return !sampled.intersects(drawn) || !sampled.intersects(output)
                                 || renderer.repaints(sampled);
                     });
