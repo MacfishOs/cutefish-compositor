@@ -607,6 +607,38 @@ TEST_F(OverviewTest, ThreeFingersUpFollowAndDownLeave)
     input.setGestureFilter(nullptr);
 }
 
+TEST_F(OverviewTest, SlowFingersPastTheThresholdMoveItWithoutAJump)
+{
+    makeWindow(QRect(100, 100, 500, 400));
+    show();
+    WmGestureHandler gestures(desks, {}, overview);
+    input.setGestureFilter(&gestures);
+    const double step = 0.5;
+    const double length = WmGestureHandler::kOverviewSwipeLengthMm;
+
+    input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
+    double previous = 1;
+    double travel = 0;
+    while (travel < 4 * WmGestureHandler::kContinuousGestureMoveThresholdMm) {
+        now += 10;
+        travel += step;
+        const QPointF delta(0, step / WmGestureHandler::kMmPerUnacceleratedUnit);
+        input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, delta * 5, delta, 1, 0);
+        const double progress = node->progress(double(now) + 5);
+        // Moving from the first step past the threshold, never more than
+        // twice as fast as the fingers.
+        if (travel > WmGestureHandler::kContinuousGestureMoveThresholdMm)
+            EXPECT_LT(progress, previous);
+        EXPECT_LE(previous - progress, 2 * step / length + 1e-9);
+        previous = progress;
+    }
+    // Under the fingers again.
+    EXPECT_NEAR(1 - travel / length, previous, 1e-9);
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    settle();
+    input.setGestureFilter(nullptr);
+}
+
 TEST_F(OverviewTest, EveryDeskPreviewShowsItsWindows)
 {
     makeWindow(QRect(100, 100, 500, 400));

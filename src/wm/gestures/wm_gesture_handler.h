@@ -36,6 +36,10 @@ public:
     // starts, to leave out accidental swipes.
     static constexpr double kContinuousGestureMoveThresholdMm = 2;
 
+    // The threshold's distance is made up over this many times as much travel
+    // after the start, rather than landing in one frame.
+    static constexpr double kCatchUpTravelRatio = 2;
+
     // Finger travel that moves the desk content by one desk.
     static constexpr double kSwipeLengthPerDeskMm = 50;
 
@@ -58,12 +62,19 @@ public:
     void onGestureEnd(input::Timestamp timestamp, bool cancelled) override;
 
 private:
+    // `delta` along the started axis, with its share of what is owed.
+    double catchUp(double delta);
+
     struct ScrollData {
         // In millimetres.
         double scrollX = 0;
         double scrollY = 0;
         bool horizontalContinuousGestureStarted = false;
         bool verticalContinuousGestureStarted = false;
+        // Threshold distance the started animation has yet to make up, and
+        // the travel along it since the start.
+        double owed = 0;
+        double owedTravel = 0;
         // The overview could not start, or a desk switch could not: the rest
         // of the gesture does nothing.
         bool ignored = false;

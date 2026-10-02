@@ -7,6 +7,7 @@
 
 #include "wm/gestures/wm_gesture_handler.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <utility>
@@ -55,12 +56,14 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
     // Update the continuous animation if it has already been started,
     // otherwise start it once it passes the threshold.
     if (m_scroll.horizontalContinuousGestureStarted) {
-        m_desks->updateSwipeAnimation(delta.x() / kSwipeLengthPerDeskMm, milliseconds(timestamp));
+        m_desks->updateSwipeAnimation(catchUp(delta.x()) / kSwipeLengthPerDeskMm,
+                                      milliseconds(timestamp));
         return;
     }
     // Fingers moving up bring the overview in.
     if (m_scroll.verticalContinuousGestureStarted) {
-        m_overview->updateSwipe(-delta.y() / kOverviewSwipeLengthMm, milliseconds(timestamp));
+        m_overview->updateSwipe(-catchUp(delta.y()) / kOverviewSwipeLengthMm,
+                                milliseconds(timestamp));
         return;
     }
     const double x = std::abs(m_scroll.scrollX);
@@ -77,7 +80,8 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
             return;
         }
         m_scroll.verticalContinuousGestureStarted = true;
-        m_overview->updateSwipe(-m_scroll.scrollY / kOverviewSwipeLengthMm,
+        m_scroll.owed = m_scroll.scrollY - delta.y();
+        m_overview->updateSwipe(-catchUp(delta.y()) / kOverviewSwipeLengthMm,
                                 milliseconds(timestamp));
         return;
     }
@@ -93,10 +97,27 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
         return;
     }
     m_scroll.horizontalContinuousGestureStarted = true;
-    // The distance that went into the threshold moves the desk too, so it
-    // starts out under the fingers.
-    m_desks->updateSwipeAnimation(m_scroll.scrollX / kSwipeLengthPerDeskMm,
+    m_scroll.owed = m_scroll.scrollX - delta.x();
+    m_desks->updateSwipeAnimation(catchUp(delta.x()) / kSwipeLengthPerDeskMm,
                                   milliseconds(timestamp));
+}
+
+double WmGestureHandler::catchUp(double delta)
+{
+    // The distance that went into the threshold moves the content too, so it
+    // ends up under the fingers: at first as fast again as they move, easing
+    // off to their speed. Fingers moving back make up nothing.
+    const double owed = m_scroll.owed;
+    if (owed == 0 || delta * owed <= 0)
+        return delta;
+    const double length = kCatchUpTravelRatio * std::abs(owed);
+    const auto madeUp = [&](double travel) {
+        const double left = 1 - std::min(travel, length) / length;
+        return owed * (1 - left * left);
+    };
+    const double before = madeUp(m_scroll.owedTravel);
+    m_scroll.owedTravel += std::abs(delta);
+    return delta + madeUp(m_scroll.owedTravel) - before;
 }
 
 void WmGestureHandler::onGestureEnd(input::Timestamp timestamp, bool)
