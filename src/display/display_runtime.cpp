@@ -689,6 +689,9 @@ void DisplayRuntime::bindFrames()
                              if (tokens->contains(generation))
                                  compositor.frameDiscarded(tokens->take(generation));
                          });
+        output->setFullRepaintQuery([this, model] {
+            return scene.requiresFullRepaint(QRect(model->position, model->logicalSize()));
+        });
         QObject::connect(&compositor, &compositor::Compositor::repaintNeeded, output,
                          [output](bool decoration) {
                              output->scheduleFrame(decoration

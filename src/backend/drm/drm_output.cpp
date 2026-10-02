@@ -868,7 +868,7 @@ void DrmOutput::scheduleFrame(Reason reason)
         return;
     if (reason == Reason::Startup || reason == Reason::Resume)
         m_forceFrame = true;
-    m_scheduler.request(reason);
+    m_scheduler.request(reason, m_fullRepaintQuery && m_fullRepaintQuery());
     armWakeup();
 }
 

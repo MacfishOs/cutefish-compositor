@@ -21,7 +21,31 @@ OutputScheduler::OutputScheduler(Duration period, std::function<Time()> now)
 
 OutputScheduler::Time OutputScheduler::drawPoint(Time slot) const
 {
-    return m_vblank ? slot + (m_period - m_budget) : slot;
+    return m_vblank ? slot + (m_period - budget()) : slot;
+}
+
+OutputScheduler::Duration OutputScheduler::budget() const
+{
+    // A full repaint after cheap frames is begun as early as the last one
+    // needed, not as late as they allowed: its first frame would miss, and
+    // the doubling after that comes a refresh too late.
+    if (!m_fullDemand)
+        return m_budget;
+    const Duration slowest = fullRepaintDrawTime();
+    if (slowest == Duration::zero())
+        return m_budget;
+    return std::max(m_budget, std::clamp(slowest + kLatchMargin, m_period / 3, m_period));
+}
+
+OutputScheduler::Duration OutputScheduler::fullRepaintDrawTime() const
+{
+    const Time now = m_now();
+    Duration slowest = Duration::zero();
+    for (const auto &[done, took] : m_fullDrawTimes) {
+        if (done + kFullRepaintMemory >= now)
+            slowest = std::max(slowest, took);
+    }
+    return slowest;
 }
 
 OutputScheduler::Time OutputScheduler::slotAt(Time time) const
@@ -32,13 +56,14 @@ OutputScheduler::Time OutputScheduler::slotAt(Time time) const
     return *m_vblank + slots * m_period;
 }
 
-void OutputScheduler::request(Reason reason)
+void OutputScheduler::request(Reason reason, bool fullRepaint)
 {
     ++m_stats.requests;
     ++m_stats.reasons.at(static_cast<size_t>(reason));
     if (m_requested != m_consumed)
         ++m_stats.coalesced;
     ++m_requested;
+    m_fullDemand = m_fullDemand || fullRepaint;
     schedule();
 }
 
@@ -87,6 +112,8 @@ void OutputScheduler::suspend()
     // The display may come back on another timing.
     m_vblank.reset();
     m_drawTimes.clear();
+    m_fullDrawTimes.clear();
+    m_fullDemand = m_fullFrame = false;
     m_minBudget = m_budget = m_period / 3;
 }
 
@@ -120,6 +147,8 @@ uint64_t OutputScheduler::begin()
     // Demand drawn at once, early in a slot, shows the moment it was drawn.
     m_sampleTime = std::min(drawPoint(m_frameTime), std::max(now, m_deadline));
     m_punctual = !m_vblank || now <= drawPoint(m_frameTime) + kWakeupSlack;
+    m_fullFrame = m_fullDemand;
+    m_fullDemand = false;
     m_next = m_frameTime + m_period;
     return m_frame;
 }
@@ -129,7 +158,8 @@ bool OutputScheduler::submitted(uint64_t frame)
     if (!frame || frame != m_frame || m_state != State::Rendering)
         return false;
     m_consumed = m_snapshot; // Re-entrant requests after begin remain outstanding.
-    m_pending.push_back({frame, m_frameTime + m_period, !m_pending.empty(), m_began, m_punctual});
+    m_pending.push_back({frame, m_frameTime + m_period, !m_pending.empty(), m_began, m_punctual,
+                         m_fullFrame});
     m_frame = 0;
     m_failures = 0;
     ++m_stats.submissions;
@@ -207,6 +237,11 @@ void OutputScheduler::drawn(uint64_t frame, Time done)
     m_drawTimes.push_back(done - it->began);
     if (m_drawTimes.size() > kDrawTimeWindow)
         m_drawTimes.pop_front();
+    if (it->fullRepaint) {
+        m_fullDrawTimes.emplace_back(done, done - it->began);
+        while (m_fullDrawTimes.front().first + kFullRepaintMemory < done)
+            m_fullDrawTimes.pop_front();
+    }
     const Duration slowest = *std::max_element(m_drawTimes.begin(), m_drawTimes.end());
     m_minBudget = std::clamp(slowest + kLatchMargin, m_period / 3, m_period);
     m_budget = std::max(m_budget, m_minBudget);

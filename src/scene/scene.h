@@ -37,6 +37,10 @@ public:
     // its last frame.
     bool hasDamage(const render::OutputRenderContext &context) const;
 
+    // Whether a visible node that repaints the whole of `viewport` whenever it
+    // draws (an animation covering the output) lies on it.
+    bool requiresFullRepaint(const QRect &viewport) const;
+
     // Ends and collects closing windows while no output composites: their
     // snapshots would otherwise pile up until the next frame, as retirement
     // normally happens after painting.

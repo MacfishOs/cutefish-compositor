@@ -418,6 +418,48 @@ TEST_F(SchedulerTest, ALateFrameDoesNotQueueTheFramesAfterIt)
     EXPECT_EQ(scheduler.stats().missed, 1u);
 }
 
+TEST_F(SchedulerTest, AFullRepaintAfterCheapFramesIsBegunAsEarlyAsTheLastOne)
+{
+    const auto frame = [this](OutputScheduler::Duration gpu, bool full) {
+        scheduler.request(Reason::Scene, full);
+        now = *scheduler.deadline();
+        const auto began = now;
+        submit();
+        scheduler.drawn(pending, began + gpu);
+        now = scheduler.frameTime() + 10ms;
+        ASSERT_TRUE(scheduler.complete(pending, now));
+        pending = 0;
+    };
+    start();
+    frame(1ms, false);
+    frame(6ms, true);
+    const auto full = 6ms + OutputScheduler::kLatchMargin;
+    EXPECT_EQ(scheduler.fullRepaintDrawTime(), 6ms);
+    // Cheap frames bring the budget back down...
+    for (size_t i = 0; i < OutputScheduler::kDrawTimeWindow + 200; ++i)
+        frame(1ms, false);
+    EXPECT_EQ(scheduler.drawBudget(), OutputScheduler::Duration(10ms) / 3);
+    scheduler.request(Reason::Scene);
+    EXPECT_EQ(*scheduler.deadline(), scheduler.frameTime() + 20ms - OutputScheduler::Duration(10ms) / 3);
+    frame(1ms, false);
+    // ...but a full repaint is begun as early as the last one needed, and
+    // the budget stays there once it has landed.
+    scheduler.request(Reason::Scene, true);
+    EXPECT_EQ(*scheduler.deadline(), scheduler.frameTime() + 20ms - full);
+    now = *scheduler.deadline();
+    submit();
+    scheduler.drawn(pending, now + 6ms);
+    now = scheduler.frameTime() + 10ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+    EXPECT_EQ(scheduler.stats().missed, 0u);
+    EXPECT_EQ(scheduler.drawBudget(), full);
+
+    // Forgotten once it is kFullRepaintMemory old.
+    now += OutputScheduler::kFullRepaintMemory + 1s;
+    EXPECT_EQ(scheduler.fullRepaintDrawTime(), OutputScheduler::Duration::zero());
+}
+
 TEST_F(SchedulerTest, FramesSlowerThanAThirdOfARefreshAreBegunInTime)
 {
     // Each frame lands on the vblank it was aimed at, `gpu` after its wakeup.

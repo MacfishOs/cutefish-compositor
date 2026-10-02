@@ -279,6 +279,9 @@ public:
 
     using Reason = render::OutputScheduler::Reason;
     void scheduleFrame(Reason reason = Reason::Scene);
+    // Answers whether the frame requested next redraws the whole output, for
+    // the scheduler to begin it early enough.
+    void setFullRepaintQuery(std::function<bool()> query) { m_fullRepaintQuery = std::move(query); }
 
     struct FlipEvent {
         QPointer<DrmOutput> output;
@@ -402,6 +405,7 @@ private:
     std::function<void(render::Renderer &, quint64)> m_renderCallback;
     std::function<void(render::Renderer &, quint64)> m_prepareCallback;
     std::function<bool(double)> m_beginFrameCallback;
+    std::function<bool()> m_fullRepaintQuery;
     // The next frame draws whatever the scene says: after a resume, a modeset
     // or a change in how frames are committed, the screen needs a new one.
     bool m_forceFrame = true;

@@ -34,6 +34,10 @@ public:
     static constexpr Duration kLatchMargin = std::chrono::milliseconds(1);
     // How many measured frames the draw budget covers.
     static constexpr size_t kDrawTimeWindow = 60;
+    // How long the slowest full repaint is remembered, so the first frame of
+    // an animation covering the output is begun early enough after a stretch
+    // of cheap frames has let the budget fall.
+    static constexpr Duration kFullRepaintMemory = std::chrono::seconds(10);
 
     enum class State {
         Idle,
@@ -62,7 +66,8 @@ public:
     };
 
     OutputScheduler(Duration period, std::function<Time()> now = Clock::now);
-    void request(Reason reason);
+    // `fullRepaint`: what is requested will redraw the whole output.
+    void request(Reason reason, bool fullRepaint = false);
     void resume();
     void suspend();
     std::optional<Time> deadline() const;
@@ -128,6 +133,9 @@ public:
     // longer, and grown by frames that land late.
     Duration drawBudget() const { return m_budget; }
 
+    // The longest full repaint within kFullRepaintMemory, zero without one.
+    Duration fullRepaintDrawTime() const;
+
     // The longest of the recent frames' wakeup-to-GPU-finished times.
     Duration slowestDrawTime() const
     {
@@ -147,12 +155,17 @@ private:
         Time began {};
         // Begun by its draw point, so landing late means the budget is short.
         bool punctual = true;
+        // Requested as a redraw of the whole output.
+        bool fullRepaint = false;
     };
 
     void schedule();
     void settle();
     // When the frame for the slot starting at `slot` is begun.
     Time drawPoint(Time slot) const;
+    // The budget the next frame is begun with: the full repaint's when one is
+    // asked for.
+    Duration budget() const;
     // The latest slot start at or before `time` on the vblank grid.
     Time slotAt(Time time) const;
     bool behindPendingFrame(Time now) const;
@@ -169,6 +182,12 @@ private:
     // What the budget returns to between frames that land late.
     Duration m_minBudget;
     std::deque<Duration> m_drawTimes;
+    // Full repaints' wakeup-to-GPU-finished times, with when they finished.
+    std::deque<std::pair<Time, Duration>> m_fullDrawTimes;
+    // Whether the demand outstanding, and the frame begun for it, redraw the
+    // whole output.
+    bool m_fullDemand = false;
+    bool m_fullFrame = false;
     uint64_t m_requested = 0, m_consumed = 0, m_snapshot = 0;
     uint64_t m_serial = 0, m_frame = 0;
     std::deque<Pending> m_pending;

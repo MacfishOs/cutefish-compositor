@@ -25,6 +25,22 @@ QRect Scene::viewportFor(const render::OutputRenderContext &context) const
     return context.logicalViewport.isEmpty() ? m_root->geometry() : context.logicalViewport;
 }
 
+bool Scene::requiresFullRepaint(const QRect &viewport) const
+{
+    const std::function<bool(const Node &)> visit = [&](const Node &node) {
+        if (!node.isVisible())
+            return false;
+        if (node.requiresFullRepaint() && node.absoluteGeometry().intersects(viewport))
+            return true;
+        for (const Node *child : node.children()) {
+            if (visit(*child))
+                return true;
+        }
+        return false;
+    };
+    return visit(*m_root);
+}
+
 bool Scene::hasDamage(const render::OutputRenderContext &context) const
 {
     const auto tracker = m_damageTrackers.find(context.outputId);
