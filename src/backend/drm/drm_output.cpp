@@ -872,6 +872,14 @@ void DrmOutput::scheduleFrame(Reason reason)
     armWakeup();
 }
 
+void DrmOutput::warmUp()
+{
+    if (m_retiring || m_blanked)
+        return;
+    m_forceFrame = true;
+    scheduleFrame(Reason::Scene);
+}
+
 void DrmOutput::armWakeup()
 {
     const auto deadline = m_scheduler.deadline();

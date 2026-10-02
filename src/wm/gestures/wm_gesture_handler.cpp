@@ -41,6 +41,8 @@ bool WmGestureHandler::claimGesture(input::Timestamp, input::GestureType type, u
     m_scroll = {};
     // Still claimed, so the client under the pointer does not get it either.
     m_scroll.ignored = m_dragging && m_dragging();
+    if (!m_scroll.ignored && m_warmUp)
+        m_warmUp();
     return true;
 }
 

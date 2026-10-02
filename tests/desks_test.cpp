@@ -695,6 +695,26 @@ TEST_F(DeskAnimationTest, ASwipeStartedDuringADragSwitchesNothing)
     input.setGestureFilter(nullptr);
 }
 
+TEST_F(DeskAnimationTest, ASwipeWarmsUpAsItStartsUnlessItIsIgnored)
+{
+    bool dragging = false;
+    WmGestureHandler gestures(desks, [&dragging] {
+        return dragging;
+    });
+    int warmUps = 0;
+    gestures.setWarmUp([&warmUps] {
+        ++warmUps;
+    });
+
+    EXPECT_TRUE(gestures.claimGesture(input::Timestamp(), input::GestureType::Swipe, 3));
+    EXPECT_EQ(1, warmUps);
+    EXPECT_FALSE(gestures.claimGesture(input::Timestamp(), input::GestureType::Swipe, 4));
+    EXPECT_EQ(1, warmUps);
+    dragging = true;
+    EXPECT_TRUE(gestures.claimGesture(input::Timestamp(), input::GestureType::Swipe, 3));
+    EXPECT_EQ(1, warmUps);
+}
+
 TEST_F(DeskAnimationTest, ASingleDeskIgnoresTheSwipe)
 {
     WmGestureHandler gestures(desks);

@@ -670,6 +670,12 @@ bool CompositorShell::init()
                     return m_seat.drag()->busy() || m_windowManager.eventHandler()->isDragging();
                 },
                 m_windowManager.overview());
+        // After idle the overview's first frame missed its slot on every other
+        // swipe; with one drawn ahead, none did. That one may land late unseen.
+        m_gestureHandler->setWarmUp([this] {
+            for (const auto &output : m_backend->allOutputs())
+                output->warmUp();
+        });
         m_inputManager.setGestureFilter(m_gestureHandler.get());
     }
     if (!m_options.noDrm && !m_options.login)

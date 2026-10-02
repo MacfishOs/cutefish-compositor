@@ -56,6 +56,10 @@ public:
     explicit WmGestureHandler(DesksController *desks, std::function<bool()> dragging = {},
                               OverviewController *overview = nullptr);
 
+    // Called as a swipe this handler takes starts, before it moves anything:
+    // the first frame it brings would meet an idle GPU otherwise.
+    void setWarmUp(std::function<void()> warmUp) { m_warmUp = std::move(warmUp); }
+
     bool claimGesture(input::Timestamp timestamp, input::GestureType type,
                       uint32_t fingers) override;
     void onGestureUpdate(input::Timestamp timestamp, const input::GestureUpdate &update) override;
@@ -83,6 +87,7 @@ private:
     DesksController *m_desks = nullptr;
     std::function<bool()> m_dragging;
     OverviewController *m_overview = nullptr;
+    std::function<void()> m_warmUp;
     ScrollData m_scroll;
 };
 

@@ -279,6 +279,9 @@ public:
 
     using Reason = render::OutputScheduler::Reason;
     void scheduleFrame(Reason reason = Reason::Scene);
+    // Draws a frame even with nothing changed, to wake an idle GPU before frames
+    // that have to make their slots.
+    void warmUp();
     // Answers whether the frame requested next redraws the whole output, for
     // the scheduler to begin it early enough.
     void setFullRepaintQuery(std::function<bool()> query) { m_fullRepaintQuery = std::move(query); }
