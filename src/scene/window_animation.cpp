@@ -585,7 +585,7 @@ void WindowAnimation::draw(render::Renderer &renderer, render::Texture *texture,
     const QPoint offset = coverage.topLeft() - original.topLeft();
     const QRectF target(value.bounds.topLeft() + QPointF(offset.x() * sx, offset.y() * sy),
                         QSizeF(coverage.width() * sx, coverage.height() * sy));
-    renderer.drawTextureF(texture, target, value.opacity * alpha);
+    renderer.drawTextureF(texture, target, value.opacity * alpha * renderer.opacityScale);
 }
 
 render::RoundedShape WindowAnimation::transformedShape(render::RoundedShape shape,

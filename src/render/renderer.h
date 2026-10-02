@@ -133,6 +133,15 @@ public:
     // its surfaces hidden along with it are drawn too.
     bool revealHiddenSurfaces = false;
 
+    // Multiplies the opacity of every surface and colour drawn: the overview
+    // darkens the desktop as it draws it rather than over it, one full-output
+    // pass fewer for an iGPU that composes a frame in several milliseconds.
+    float opacityScale = 1;
+    // With it, an opaque texture drawn at an opacity below 1 replaces the
+    // pixels under it, scaled, instead of blending over them: the overview
+    // darkens a desktop that covers the output without clearing first.
+    bool overwriteOpaque = false;
+
     // Set by an animation morphing a window's corners into its snapshot: the
     // window's visual node clips its content with these instead of its own.
     struct WindowCorners {

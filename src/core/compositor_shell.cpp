@@ -132,8 +132,15 @@ scene::OverviewWindowFrame overviewWindowFrame(const decoration::Theme *theme)
                 ownRadius = shadow->radius();
             }
         }
+        const int radius = theme->visualStyle().radius;
+        // The active window's own shadow is the overview's: drawn once, not
+        // two of them blended over each other all the way.
+        if (own == wm::ShadowElevation::Active && ownRadius == radius) {
+            paint(own, ownRadius, opacity);
+            return;
+        }
         paint(own, ownRadius, opacity * float(1 - uniform));
-        paint(wm::ShadowElevation::Active, theme->visualStyle().radius, opacity * float(uniform));
+        paint(wm::ShadowElevation::Active, radius, opacity * float(uniform));
     };
     frame.outline = [theme](render::Renderer &renderer, const render::RoundedShape &body,
                             float opacity) {

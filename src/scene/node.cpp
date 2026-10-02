@@ -307,8 +307,18 @@ void ColorNode::setColor(const render::Color &color)
 
 void ColorNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
 {
-    if (!absoluteGeometry.isEmpty())
-        renderer.fillRect(absoluteGeometry, m_color);
+    if (absoluteGeometry.isEmpty())
+        return;
+    render::Color color = m_color;
+    if (renderer.overwriteOpaque && m_color.a >= 1) {
+        // Darkened in place, still opaque: nothing under it is blended in.
+        color.r *= renderer.opacityScale;
+        color.g *= renderer.opacityScale;
+        color.b *= renderer.opacityScale;
+    } else {
+        color.a *= renderer.opacityScale;
+    }
+    renderer.fillRect(absoluteGeometry, color);
 }
 
 TextureNode::TextureNode(render::Texture *texture, const QString &name)

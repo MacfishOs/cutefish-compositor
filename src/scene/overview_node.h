@@ -200,6 +200,8 @@ private:
     void settle(double now, double from, double target, double velocity);
     void updateCoast();
     double layoutProgress(double timeMs) const;
+    // Whether the backdrop paints the whole viewport opaquely.
+    bool backdropCovers(const QRect &viewport) const;
     // Whether the chrome shows, and how much, at `timeMs`.
     float chromeOpacity(double timeMs) const;
     void renderItem(render::Renderer &renderer, int index, double progress, double now) const;

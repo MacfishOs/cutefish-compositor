@@ -76,16 +76,16 @@ void SurfaceNode::paint(render::Renderer &renderer, const QRect &absoluteGeometr
                                     absoluteGeometry, m_glass,
                                     m_blurShape.translated(absoluteGeometry.topLeft()));
     renderer.waitFence(m_acquireFence);
+    const float alpha = m_alpha * renderer.opacityScale;
     if (m_contentShape) {
         const auto region = *m_contentShape & QRegion(QRect(QPoint(), absoluteGeometry.size()));
         for (const auto &rect : region) {
             renderer.pushRoundedClip({QRectF(rect.translated(absoluteGeometry.topLeft())), 0});
-            renderer.drawTextureMapped(m_texture.get(), absoluteGeometry, m_alpha,
-                                       m_textureMapping);
+            renderer.drawTextureMapped(m_texture.get(), absoluteGeometry, alpha, m_textureMapping);
             renderer.popRoundedClip();
         }
     } else {
-        renderer.drawTextureMapped(m_texture.get(), absoluteGeometry, m_alpha, m_textureMapping);
+        renderer.drawTextureMapped(m_texture.get(), absoluteGeometry, alpha, m_textureMapping);
     }
     if (m_alpha > 0)
         renderer.recordPresentation(m_presentationContent, absoluteGeometry);

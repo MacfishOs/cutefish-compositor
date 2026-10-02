@@ -855,7 +855,7 @@ void EglRenderer::drawTextureQuads(GlTexture *glTexture, const TextureQuad *quad
     glEnableVertexAttribArray(coordAttr);
 
     // An XRGB buffer drawn whole shades to alpha 1; blending it only costs a read.
-    const bool opaque = !hasAlpha && alpha >= 1
+    const bool opaque = !hasAlpha && (alpha >= 1 || overwriteOpaque)
             && m_roundedClips.empty() && m_outlineWidth <= 0;
     if (m_pass.blendMode() == GlRenderPass::BlendMode::Copy || opaque) {
         glDisable(GL_BLEND);

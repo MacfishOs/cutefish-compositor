@@ -462,6 +462,26 @@ double OverviewNode::endTracking(double timeMs)
     return target;
 }
 
+bool OverviewNode::backdropCovers(const QRect &viewport) const
+{
+    // The first thing drawn that is opaque over the whole output; anything
+    // drawn before it ends up under it.
+    const std::function<bool(const Node &)> covers = [&](const Node &node) {
+        if (!node.isVisible())
+            return false;
+        if (node.content() == Content::Opaque && node.absoluteGeometry().contains(viewport))
+            return true;
+        for (const Node *child : node.children()) {
+            if (covers(*child))
+                return true;
+        }
+        return false;
+    };
+    return std::any_of(m_backdrop.begin(), m_backdrop.end(), [&](const Node *node) {
+        return covers(*node);
+    });
+}
+
 double OverviewNode::layoutProgress(double timeMs) const
 {
     return m_layout ? m_layout->value(timeMs) : 1;
@@ -503,10 +523,21 @@ void OverviewNode::render(render::Renderer &renderer) const
     const QRect viewport = viewportOf(renderer, *this);
     const double progress = this->progress(now);
 
-    renderer.fillRect(viewport, kBlack);
+    // The desktop is drawn darkened rather than under a dim pass, and one
+    // that covers the output opaquely is darkened in place, with no clear and
+    // no blending under it: full-output passes an iGPU can ill afford.
+    const float dim = kDimOpacity * float(std::clamp(progress, 0.0, 1.0));
+    const bool inPlace = !renderer.capturing && backdropCovers(viewport);
+    if (!inPlace)
+        renderer.fillRect(viewport, kBlack);
+    const float opacity = renderer.opacityScale;
+    const bool overwrite = renderer.overwriteOpaque;
+    renderer.opacityScale = opacity * (1 - dim);
+    renderer.overwriteOpaque = inPlace;
     for (const Node *node : m_backdrop)
         node->render(renderer);
-    renderer.fillRect(viewport, faded(kBlack, kDimOpacity * float(std::clamp(progress, 0.0, 1.0))));
+    renderer.overwriteOpaque = overwrite;
+    renderer.opacityScale = opacity;
 
     const int raised = m_raised < int(m_items.size()) && m_raised != m_dragged ? m_raised : -1;
     for (int index = 0; index < int(m_items.size()); ++index) {

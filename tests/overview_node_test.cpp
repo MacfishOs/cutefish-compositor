@@ -208,11 +208,31 @@ TEST(OverviewNode, TheWindowIsDrawnScaledOntoItsPlace)
     EXPECT_EQ(expected, drawn->target);
     // Half its size, it is sampled through mipmaps.
     EXPECT_EQ(1, f.renderer.trilinear.size());
-    // The desktop under it, dimmed.
-    ASSERT_GE(f.renderer.calls.size(), 3);
+    // The desktop covers the output: darkened in place, first, with no clear
+    // before it and no dim pass over it.
+    ASSERT_GE(f.renderer.calls.size(), 2);
     EXPECT_EQ(QStringLiteral("fill"), f.renderer.calls[0].kind);
+    EXPECT_FLOAT_EQ(1 - Node::kDimOpacity, f.renderer.calls[0].color.b);
+    EXPECT_FLOAT_EQ(1, f.renderer.calls[0].color.a);
+    for (const auto &call : f.renderer.calls) {
+        const bool black = call.color.r == 0 && call.color.g == 0 && call.color.b == 0;
+        EXPECT_FALSE(call.kind == QStringLiteral("fill") && black && call.color.a > 0);
+    }
+}
+
+TEST(OverviewNode, ADesktopShortOfTheOutputIsDrawnOverBlack)
+{
+    Fixture f;
+    f.desktop->setGeometry(kViewport.adjusted(0, 0, 0, -100));
+    f.node->jumpTo(1);
+    f.paint();
+    ASSERT_GE(f.renderer.calls.size(), 2);
+    EXPECT_EQ(QStringLiteral("fill"), f.renderer.calls[0].kind);
+    EXPECT_EQ(kViewport, f.renderer.calls[0].rect);
+    EXPECT_FLOAT_EQ(0, f.renderer.calls[0].color.b);
+    EXPECT_FLOAT_EQ(1, f.renderer.calls[0].color.a);
     EXPECT_FLOAT_EQ(1, f.renderer.calls[1].color.b);
-    EXPECT_FLOAT_EQ(Node::kDimOpacity, f.renderer.calls[2].color.a);
+    EXPECT_FLOAT_EQ(1 - Node::kDimOpacity, f.renderer.calls[1].color.a);
 }
 
 TEST(OverviewNode, TheFingersMoveItAndPullAgainstTheEnds)
