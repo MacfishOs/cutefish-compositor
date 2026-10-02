@@ -146,7 +146,7 @@ int WindowAnimation::duration(Type type, const QRectF &from, const QRectF &to, S
     if (style == Style::Launcher && type == Type::Open)
         return 360;
     if (style == Style::Launcher && type == Type::Close)
-        return 240;
+        return 200;
     // Menus open under the pointer and are read immediately: shorter than the
     // 150 ms ui/wm gives WINDOW_TYPE_MENU so the fade never reads as a delay.
     if (style == Style::Popup && type == Type::Open)
@@ -178,9 +178,11 @@ WindowAnimation::Sample WindowAnimation::sample(Type type, const QRectF &from, c
     const double t = std::clamp(progress, 0.0, 1.0);
     if (style == Style::Launcher && (type == Type::Open || type == Type::Close)) {
         // Decelerating on both edges: the launcher responds on the first frame
-        // and lands without a visible stop.
+        // and lands without a visible stop. Closing, it fades out at an even
+        // rate: an eased fade lingers as a faint ghost.
         const double eased = easeOut(t, type == Type::Open ? 4 : 3);
-        const float opacity = type == Type::Open ? easeOut(t / .6, 3) : 1 - easeOut(t / .85, 2);
+        const float opacity = type == Type::Open ? easeOut(t / .6, 3)
+                                                 : 1 - std::clamp(t / .8, 0.0, 1.0);
         return {QRectF(from.topLeft() + (to.topLeft() - from.topLeft()) * eased,
                        from.size() + (to.size() - from.size()) * eased),
                 opacity, t};

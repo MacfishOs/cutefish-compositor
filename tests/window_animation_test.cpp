@@ -1492,7 +1492,7 @@ TEST(WindowAnimation, LauncherFadesThroughASlightZoomAndLandsSoftly)
     const QRectF screen(0, 0, 1000, 800), zoomed(-25, -20, 1050, 840);
     const auto style = Animation::Style::Launcher;
     EXPECT_EQ(Animation::duration(Type::Open, screen, screen, style), 360);
-    EXPECT_EQ(Animation::duration(Type::Close, screen, screen, style), 240);
+    EXPECT_EQ(Animation::duration(Type::Close, screen, screen, style), 200);
     for (const auto type : {Type::Open, Type::Close}) {
         const QRectF from = type == Type::Open ? zoomed : screen;
         const QRectF to = type == Type::Open ? screen : zoomed;
