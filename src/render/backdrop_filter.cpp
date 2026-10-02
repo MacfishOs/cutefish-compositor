@@ -53,15 +53,28 @@ void BackdropFilter::frameEnded()
     m_masks.remove_if(stale);
 }
 
-BackdropFilter::Scratch &BackdropFilter::scratch(const QSize &coverage, const QSize &reduced)
+BackdropFilter::Scratch &BackdropFilter::scratch(const QSize &coverage, const QSize &size)
 {
     auto found = std::find_if(m_scratch.begin(), m_scratch.end(), [&](const Scratch &entry) {
-        return entry.coverage == coverage && entry.reduced == reduced;
+        return entry.coverage == coverage && entry.size == size;
     });
+    // A plain blur takes the smallest set it fits in, so the windows of the
+    // overview share a few sets rather than each keeping its own.
+    if (coverage.isEmpty()) {
+        for (auto entry = m_scratch.begin(); entry != m_scratch.end(); ++entry) {
+            if (!entry->coverage.isEmpty() || entry->size.width() < size.width()
+                || entry->size.height() < size.height())
+                continue;
+            if (found == m_scratch.end()
+                || entry->size.width() * entry->size.height()
+                        < found->size.width() * found->size.height())
+                found = entry;
+        }
+    }
     if (found == m_scratch.end()) {
         if (m_scratch.size() == kCachedSizes)
             m_scratch.pop_back();
-        m_scratch.push_front({coverage, reduced});
+        m_scratch.push_front({coverage, size});
     } else {
         m_scratch.splice(m_scratch.begin(), m_scratch, found);
     }
@@ -132,17 +145,19 @@ bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, con
         return false;
     GLint viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
-    if (QSize(viewport[2], viewport[3]) != reduced)
+    if (viewport[2] < reduced.width() || viewport[3] < reduced.height())
         return false;
     const QRect physical = source.framebufferRect(coverage);
     const bool scissored = glIsEnabled(GL_SCISSOR_TEST);
     glDisable(GL_SCISSOR_TEST);
-    // Both are bottom-up, as the capture and the draw of it would leave them.
+    // Both are bottom-up, as the capture and the draw of it would leave them;
+    // the pass's top left is the top of its rows.
+    const int top = viewport[1] + viewport[3];
     glBindFramebuffer(GL_READ_FRAMEBUFFER, source.framebuffer);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination);
     glBlitFramebuffer(physical.x(), physical.y(), physical.x() + physical.width(),
-                      physical.y() + physical.height(), viewport[0], viewport[1],
-                      viewport[0] + viewport[2], viewport[1] + viewport[3], GL_COLOR_BUFFER_BIT,
+                      physical.y() + physical.height(), viewport[0], top - reduced.height(),
+                      viewport[0] + reduced.width(), top, GL_COLOR_BUFFER_BIT,
                       reduced == coverage.size() ? GL_NEAREST : GL_LINEAR);
     glBindFramebuffer(GL_FRAMEBUFFER, destination);
     if (scissored)
@@ -216,7 +231,23 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     const QSize reduced(std::max(1, int(std::ceil(coverage.width() * quality))),
                         std::max(1, int(std::ceil(coverage.height() * quality))));
     const QRect reducedBounds(QPoint(), reduced);
-    Scratch &textures = scratch(coverage.size(), reduced);
+    // A plain blur shrinks with its window on every frame of the overview.
+    // Sized up to a step, or in a larger set, its textures last the whole
+    // move; the passes use their top left and clamp their samples to it.
+    // Glass keeps exact sizes.
+    const auto stepUp = [](int value) {
+        return (value + kScratchStep - 1) / kScratchStep * kScratchStep;
+    };
+    Scratch &textures = glass.enabled
+            ? scratch(coverage.size(), reduced)
+            : scratch(QSize(), QSize(stepUp(reduced.width()), stepUp(reduced.height())));
+    const QSize allocated = textures.size;
+    const QRect allocatedBounds(QPoint(), allocated);
+    // The used texels, rows bottom-up, and their share of the texture.
+    const QRect texels(0, allocated.height() - reduced.height(), reduced.width(),
+                       reduced.height());
+    const QSizeF used(double(reduced.width()) / allocated.width(),
+                      double(reduced.height()) / allocated.height());
 
     GLint oldScissor[4];
     glGetIntegerv(GL_SCISSOR_BOX, oldScissor);
@@ -239,7 +270,7 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
 
     bool copied = true;
     if (!renderer.renderToTexture(
-                textures.source, reducedBounds,
+                textures.source, allocatedBounds,
                 [&] {
                     GLint destination = 0;
                     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &destination);
@@ -325,12 +356,14 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
         return;
 
     const auto drawQuad = [&](const GlProgram &program, Texture *input, const QRect &target,
-                              bool inverted) {
+                              bool inverted, const QSizeF &share = {1, 1}) {
         const auto *texture = static_cast<GlTexture *>(input);
         float vertices[8];
         quadFor(target, vertices);
-        const float coordinates[8] = {0, 0, 1, 0, 0, 1, 1, 1};
-        const float flipped[8] = {0, 1, 1, 1, 0, 0, 1, 0};
+        const float u = float(share.width());
+        const float v = float(share.height());
+        const float coordinates[8] = {0, 0, u, 0, 0, v, u, v};
+        const float flipped[8] = {0, 1, u, 1, 0, 1 - v, u, 1 - v};
         const GLuint position = GlProgram::kPositionAttribute;
         const GLuint coord = GlProgram::kTexCoordAttribute;
         glActiveTexture(GL_TEXTURE0);
@@ -346,16 +379,17 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
         glBindTexture(GL_TEXTURE_2D, 0);
     };
     const auto filter = [&](Texture *input, std::unique_ptr<Texture> &result, bool horizontal) {
-        return renderer.renderToTexture(result, reducedBounds, [&] {
+        return renderer.renderToTexture(result, allocatedBounds, [&] {
             glUseProgram(m_blurProgram);
             glDisable(GL_BLEND);
             const float scaledSigma = sigma
                     * (horizontal ? float(reduced.width()) / coverage.width()
                                   : float(reduced.height()) / coverage.height());
             setGaussianKernel(m_blurProgram, scaledSigma,
-                              horizontal ? 1.0f / reduced.width() : 0,
-                              horizontal ? 0 : 1.0f / reduced.height());
-            drawQuad(m_blurProgram, input, reducedBounds, true);
+                              horizontal ? 1.0f / allocated.width() : 0,
+                              horizontal ? 0 : 1.0f / allocated.height());
+            setGaussianClamp(m_blurProgram, texels, allocated);
+            drawQuad(m_blurProgram, input, reducedBounds, true, used);
         });
     };
     if (!filter(textures.source.get(), textures.temp, true)
@@ -374,10 +408,14 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     const GlProgram &program = glass.enabled ? m_glassProgram : m_blurMaskProgram;
     glUseProgram(program);
     applyRoundedClip(program);
-    glUniform4f(program.uniform("uSampleRect"), float(bounds.x() - coverage.x()) / coverage.width(),
-                float(bounds.y() - coverage.y()) / coverage.height(),
-                float(bounds.width()) / coverage.width(),
-                float(bounds.height()) / coverage.height());
+    const float u = float(used.width());
+    const float v = float(used.height());
+    glUniform4f(program.uniform("uSampleRect"),
+                float(bounds.x() - coverage.x()) / coverage.width() * u,
+                float(bounds.y() - coverage.y()) / coverage.height() * v,
+                float(bounds.width()) / coverage.width() * u,
+                float(bounds.height()) / coverage.height() * v);
+    setGaussianClamp(program, texels, allocated);
     glUniform2f(program.uniform("uSize"), bounds.width(), bounds.height());
     glUniform1f(program.uniform("uRadius"),
                 std::clamp(radius, 0, std::min(lens.width(), lens.height()) / 2));

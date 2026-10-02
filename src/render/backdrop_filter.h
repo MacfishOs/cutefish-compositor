@@ -32,11 +32,12 @@ public:
               const std::function<void(const GlProgram &)> &applyRoundedClip);
 
 private:
-    // One per blur size, so the dock, the panel and the windows drawn in one
-    // frame do not reallocate each other's textures.
+    // Kept per size, so the dock, the panel and the windows drawn in one
+    // frame do not reallocate each other's textures; plain blurs share them.
     struct Scratch {
+        // Empty for a plain blur, whose textures serve any coverage.
         QSize coverage;
-        QSize reduced;
+        QSize size;
         uint64_t used = 0;
         std::unique_ptr<Texture> capture;
         std::unique_ptr<Texture> opaqueCapture;
@@ -52,9 +53,9 @@ private:
         std::unique_ptr<Texture> texture;
     };
 
-    Scratch &scratch(const QSize &coverage, const QSize &reduced);
-    // Copies `coverage` of a lone upright source into the bound pass at
-    // `reduced` in one blit. False when it cannot, and nothing is drawn.
+    Scratch &scratch(const QSize &coverage, const QSize &size);
+    // Copies `coverage` of a lone upright source into the top left of the
+    // bound pass at `reduced` in one blit. False when it cannot, and nothing is drawn.
     bool blitReduced(const std::vector<BackdropSource> &sources, const QRect &coverage,
                      const QSize &reduced, unsigned int destination);
     Texture *mask(Renderer &renderer, const QPainterPath &shape, const ShapeRaster &raster);
@@ -62,6 +63,7 @@ private:
                             const QSize &coverage, double scale);
 
     static constexpr size_t kCachedSizes = 8;
+    static constexpr int kScratchStep = 64;
     static constexpr uint64_t kUnusedFrames = 60;
     std::shared_ptr<EglContext> m_context;
     GlProgram m_blurProgram;

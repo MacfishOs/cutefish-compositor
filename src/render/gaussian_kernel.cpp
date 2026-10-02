@@ -43,6 +43,14 @@ void setGaussianKernel(const GlProgram &program, float sigma, float stepX, float
     if (tapCount > 0)
         glUniform2fv(program.uniform("uTaps"), tapCount, taps);
     glUniform2f(program.uniform("uStep"), stepX, stepY);
+    glUniform4f(program.uniform("uClamp"), 0, 0, 1, 1);
+}
+
+void setGaussianClamp(const GlProgram &program, const QRect &texels, const QSize &size)
+{
+    glUniform4f(program.uniform("uClamp"), (texels.left() + 0.5f) / size.width(),
+                (texels.top() + 0.5f) / size.height(), (texels.right() + 0.5f) / size.width(),
+                (texels.bottom() + 0.5f) / size.height());
 }
 
 } // namespace cutefish::render
