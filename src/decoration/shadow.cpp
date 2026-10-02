@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 #include "render/rounded_shape.h"
@@ -279,20 +280,35 @@ std::unique_ptr<render::Texture> ShadowGeometry::render(render::Renderer &render
     });
 }
 
-void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, const QPoint &position,
-                 float opacity)
+namespace {
+
+render::Texture *shadowTexture(render::Renderer &renderer, const ShadowGeometry &geometry)
 {
-    if (geometry.paintBounds().isEmpty() || opacity <= 0)
-        return;
     const auto &textures = renderer.cachedTextureSet(geometry.key(), [&] {
         render::Renderer::TextureSet set;
         set.push_back(geometry.render(renderer));
         return set;
     });
-    render::Texture *image = textures.front().get();
+    return textures.front().get();
+}
+
+// The unit square of a slice to `source`, in texture coordinates of `size`.
+QTransform sliceMapping(const QRectF &source, const QSizeF &size)
+{
+    return QTransform(source.width() / size.width(), 0, 0, source.height() / size.height(),
+                      source.x() / size.width(), source.y() / size.height());
+}
+
+} // namespace
+
+void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, const QPoint &position,
+                 float opacity)
+{
+    if (geometry.paintBounds().isEmpty() || opacity <= 0)
+        return;
+    render::Texture *image = shadowTexture(renderer, geometry);
     if (!image)
         return;
-    const QSizeF size = image->size();
     std::vector<render::Renderer::MappedRect> slices;
     for (size_t i = 0; i < 9; ++i) {
         const QRect source = geometry.sources()[i];
@@ -302,10 +318,68 @@ void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, con
             continue;
         // A stretched cut lies in a constant run and any other joins slices
         // drawn at one scale, so filtering across it reads what one image would.
-        const QTransform mapping(source.width() / size.width(), 0, 0,
-                                 source.height() / size.height(), source.x() / size.width(),
-                                 source.y() / size.height());
-        slices.push_back({target.translated(position), mapping});
+        slices.push_back({target.translated(position), sliceMapping(source, image->size())});
+    }
+    renderer.drawTextureMappedRects(image, slices, opacity);
+}
+
+void paintStretchedShadow(render::Renderer &renderer, const ShadowGeometry &geometry,
+                          const QRect &window, float opacity)
+{
+    const QRect from = geometry.paintBounds() - geometry.margins();
+    if (from.isEmpty() || window.isEmpty() || opacity <= 0)
+        return;
+    render::Texture *image = shadowTexture(renderer, geometry);
+    if (!image)
+        return;
+    // The margins keep their size and only the span under the window scales,
+    // so the shadow still meets the window's edges.
+    const auto map = [](int value, int from, int to) {
+        if (value <= 0)
+            return value;
+        if (value >= from)
+            return value - from + to;
+        return int(std::lround(double(value) * to / from));
+    };
+    // [begin, end) cut where the window's edges cross it.
+    const auto pieces = [](int begin, int end, int extent) {
+        std::vector<std::pair<int, int>> result;
+        int start = begin;
+        for (int cut : {0, extent}) {
+            if (cut > start && cut < end) {
+                result.push_back({start, cut});
+                start = cut;
+            }
+        }
+        result.push_back({start, end});
+        return result;
+    };
+    std::vector<render::Renderer::MappedRect> slices;
+    for (size_t i = 0; i < 9; ++i) {
+        const QRect source = geometry.sources()[i];
+        const QRect target = geometry.targets()[i];
+        if (i == 4 || source.isEmpty() || target.isEmpty())
+            continue;
+        const double sx = double(source.width()) / target.width();
+        const double sy = double(source.height()) / target.height();
+        for (const auto &[top, bottom] :
+             pieces(target.top(), target.y() + target.height(), from.height())) {
+            for (const auto &[left, right] :
+                 pieces(target.left(), target.x() + target.width(), from.width())) {
+                const QPoint start(map(left, from.width(), window.width()),
+                                   map(top, from.height(), window.height()));
+                const QPoint end(map(right, from.width(), window.width()),
+                                 map(bottom, from.height(), window.height()));
+                if (end.x() <= start.x() || end.y() <= start.y())
+                    continue;
+                const QRectF piece(source.x() + (left - target.x()) * sx,
+                                   source.y() + (top - target.y()) * sy, (right - left) * sx,
+                                   (bottom - top) * sy);
+                slices.push_back({QRect(start, QSize(end.x() - start.x(), end.y() - start.y()))
+                                          .translated(window.topLeft()),
+                                  sliceMapping(piece, image->size())});
+            }
+        }
     }
     renderer.drawTextureMappedRects(image, slices, opacity);
 }

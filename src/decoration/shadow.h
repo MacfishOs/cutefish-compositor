@@ -89,6 +89,11 @@ private:
 void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry,
                  const QPoint &position, float opacity = 1);
 
+// `geometry` stretched over `window`, a window near its size: one texture
+// stands in for many sizes in a frame of motion.
+void paintStretchedShadow(render::Renderer &renderer, const ShadowGeometry &geometry,
+                          const QRect &window, float opacity = 1);
+
 } // namespace cutefish::decoration
 
 #endif // CUTEFISH_DECORATION_SHADOW_H_

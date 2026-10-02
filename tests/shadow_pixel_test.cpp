@@ -172,6 +172,42 @@ TEST_F(ShadowPixelTest, SlicesSampleTheRenderedSourceAtBothScalesAndTinySizes)
     }
 }
 
+TEST_F(ShadowPixelTest, AShadowStretchedFromANearbySizeStaysCloseToTheExactOne)
+{
+    Metrics metrics;
+    const QPoint origin(100, 100);
+    for (int scale : {1, 2}) {
+        for (const auto &[size, near] : {std::pair {QSize(120, 135), QSize(120, 150)},
+                                         std::pair {QSize(90, 60), QSize(100, 66)}}) {
+            SCOPED_TRACE(::testing::Message()
+                         << size.width() << 'x' << size.height() << '@' << scale);
+            const ShadowGeometry exact(size, 10, metrics.shadow(true), scale);
+            renderer->clear({0, 0, 0, 0});
+            paintShadow(*renderer, exact, origin);
+            const auto expected = pixels();
+            // Over its own size it is the plain draw.
+            renderer->clear({0, 0, 0, 0});
+            paintStretchedShadow(*renderer, exact, QRect(origin, size));
+            EXPECT_EQ(pixels(), expected);
+
+            renderer->clear({0, 0, 0, 0});
+            const ShadowGeometry nearby(near, 10, metrics.shadow(true), scale);
+            paintStretchedShadow(*renderer, nearby, QRect(origin, size));
+            const auto actual = pixels();
+            // The window covers what lies under it.
+            int worst = 0;
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    if (!QRect(origin, size).contains(x, y))
+                        worst = std::max(worst, std::abs(channel(actual, x, y, 3)
+                                                         - channel(expected, x, y, 3)));
+                }
+            }
+            EXPECT_LE(worst, 5);
+        }
+    }
+}
+
 TEST_F(ShadowPixelTest, ActualWindowSceneClearsOldCoverageAndPreservesTranslucentInterior)
 {
     scene::Scene scene;

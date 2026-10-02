@@ -34,11 +34,13 @@ using OverviewTextPainter = std::function<QImage(const QString &text, int pixelS
 // the corners of a window in its normal state, `radius` logical pixels scaled
 // with the window, a shadow under the body and an outline over it. `uniform`
 // goes from 0, where the window's own shadow, which the painter reads off
-// `window`, is drawn, to 1, where only the overview's is.
+// `window`, is drawn, to 1, where only the overview's is. `moving` says the
+// body is not yet where it rests.
 struct OverviewWindowFrame {
     qreal radius = 0;
     std::function<void(render::Renderer &renderer, const WindowAnimation &window,
-                       const render::RoundedShape &body, double uniform, float opacity)>
+                       const render::RoundedShape &body, double uniform, float opacity,
+                       bool moving)>
             shadow;
     std::function<void(render::Renderer &renderer, const render::RoundedShape &body,
                        float opacity)>

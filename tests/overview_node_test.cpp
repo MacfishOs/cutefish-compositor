@@ -419,7 +419,7 @@ TEST(OverviewNode, EveryWindowGetsTheOverviewsCornersShadowAndOutline)
     scene::OverviewWindowFrame frame;
     frame.radius = 14;
     frame.shadow = [&](render::Renderer &, const scene::WindowAnimation &,
-                       const render::RoundedShape &body, double uniform, float opacity) {
+                       const render::RoundedShape &body, double uniform, float opacity, bool) {
         shadows.append({body.bounds, body.radius, uniform, opacity});
     };
     frame.outline = [&](render::Renderer &, const render::RoundedShape &body, float opacity) {

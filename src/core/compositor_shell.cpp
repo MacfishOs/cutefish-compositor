@@ -102,7 +102,8 @@ scene::OverviewWindowFrame overviewWindowFrame(const decoration::Theme *theme)
     scene::OverviewWindowFrame frame;
     frame.radius = theme->visualStyle().radius;
     frame.shadow = [theme](render::Renderer &renderer, const scene::WindowAnimation &window,
-                           const render::RoundedShape &body, double uniform, float opacity) {
+                           const render::RoundedShape &body, double uniform, float opacity,
+                           bool moving) {
         // Inside the body's edges on whole logical pixels: a sliver of shadow
         // under the window rather than a gap beside it.
         const int left = int(std::ceil(body.bounds.left()));
@@ -117,11 +118,32 @@ scene::OverviewWindowFrame overviewWindowFrame(const decoration::Theme *theme)
         const auto paint = [&](wm::ShadowElevation elevation, int radius, float alpha) {
             if (elevation == wm::ShadowElevation::None || alpha <= 0)
                 return;
-            const decoration::ShadowGeometry geometry(
-                    content.size(), std::min(radius, decoration::ShadowGeometry::kMaxRadius),
-                    theme->metrics().shadowFor(elevation),
-                    int(std::ceil(renderer.rasterScale())));
-            decoration::paintShadow(renderer, geometry, content.topLeft(), alpha);
+            radius = std::min(radius, decoration::ShadowGeometry::kMaxRadius);
+            const decoration::ShadowStyle style = theme->metrics().shadowFor(elevation);
+            const int rasterScale = int(std::ceil(renderer.rasterScale()));
+            // Below the nine-patch's least size every size is a texture of its
+            // own. In motion, a size a step of a shared ladder up stands in.
+            QSize size = content.size();
+            if (moving) {
+                const QSize least =
+                        decoration::ShadowGeometry(QSize(4096, 4096), radius, style, rasterScale)
+                                .canonicalSize();
+                const auto step = [](int value, int least) {
+                    if (value >= least || value <= 0)
+                        return value;
+                    constexpr double kRatio = 0.9;
+                    const int k = int(std::floor(std::log(double(value) / least)
+                                                 / std::log(kRatio)));
+                    return std::max(value, int(std::ceil(least * std::pow(kRatio, k))));
+                };
+                size = QSize(step(size.width(), least.width()),
+                             step(size.height(), least.height()));
+            }
+            const decoration::ShadowGeometry geometry(size, radius, style, rasterScale);
+            if (size == content.size())
+                decoration::paintShadow(renderer, geometry, content.topLeft(), alpha);
+            else
+                decoration::paintStretchedShadow(renderer, geometry, content, alpha);
         };
         auto own = wm::ShadowElevation::None;
         int ownRadius = 0;

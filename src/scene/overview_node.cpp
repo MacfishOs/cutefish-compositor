@@ -596,6 +596,7 @@ void OverviewNode::renderItem(render::Renderer &renderer, int index, double prog
     if (!rect.intersects(reach))
         return;
     const double uniform = std::clamp(progress, 0.0, 1.0);
+    const bool moving = !isSettled() || (m_layout && !m_layout->isFinished(now));
     const QRectF from = item.windows.front()->absoluteGeometry();
     for (const WindowAnimation *window : item.windows) {
         const QRectF bounds = mapped(window->absoluteGeometry(), from, rect);
@@ -606,7 +607,7 @@ void OverviewNode::renderItem(render::Renderer &renderer, int index, double prog
                                                           m_frame.radius * scale};
         const render::RoundedShape body = window->presentedBody(presentation);
         if (m_frame.shadow)
-            m_frame.shadow(renderer, *window, body, uniform, 1);
+            m_frame.shadow(renderer, *window, body, uniform, 1, moving);
         window->renderPresented(renderer, presentation);
         if (m_frame.outline && uniform > 0)
             m_frame.outline(renderer, body, float(uniform));
