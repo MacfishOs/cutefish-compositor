@@ -1724,18 +1724,28 @@ TEST(WindowAnimation, ALauncherKeepsWhatLiesUnderItWhileItAnimates)
         EXPECT_EQ(fills(), 0);
         EXPECT_GE(renderer.kinds().count(QStringLiteral("texture")), 1);
     }
-    // Only the part that changed is drawn again.
+    // Opening, what changes under it waits: the launcher covers it by its end.
     auto *window = static_cast<scene::ColorNode *>(surfaces->addChild(
             std::make_unique<scene::ColorNode>(render::Color {1, 1, 1, 1})));
     window->setGeometry({100, 100, 200, 100});
     surfaces->reorderChildren({desktop, window, launcher});
     renderer.calls.clear();
+    scene.render(renderer);
+    EXPECT_EQ(fills(), 0);
+
+    // Closing, it catches up, drawing only the part that changed.
+    launcher->close();
+    renderer.calls.clear();
     renderer.repaintRects.clear();
     scene.render(renderer);
     EXPECT_EQ(fills(), 2);
     EXPECT_TRUE(renderer.repaintRects.contains(QRect(100, 100, 200, 100)));
+    now += 40;
+    renderer.calls.clear();
+    scene.render(renderer);
+    EXPECT_EQ(fills(), 0);
 
-    // At rest the launcher leaves them to the scene again.
+    // Once it is gone, the scene draws them again.
     now = 1000;
     scene.render(renderer);
     renderer.calls.clear();

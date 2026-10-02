@@ -717,9 +717,20 @@ bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t beg
     const double scale = renderer.rasterScale();
     BelowTexture &below = m_belowTextures[renderer.outputContext().outputId];
     below.damage.setChildRange(begin, end);
-    const QRegion damage = below.damage.update(*parent(), viewport, scale);
     const bool reusable = below.texture && below.scale == scale && below.viewport == viewport
             && below.rootRevision == sceneRoot(*this).revision();
+    // Opening, the launcher covers what changes under it by its end: focus
+    // leaving the windows there would otherwise redraw their blurs each frame.
+    // The history stays put, so a close from here catches up.
+    if (reusable && m_type == Type::Open && !m_closing) {
+        if (!below.damage.hasDamage(*parent(), viewport, scale)) {
+            for (size_t i = begin; i < end; ++i)
+                recordPresentation(renderer, *siblings[i]);
+        }
+        renderer.drawTexture(below.texture.get(), viewport);
+        return true;
+    }
+    const QRegion damage = below.damage.update(*parent(), viewport, scale);
     if (reusable && damage.isEmpty()) {
         for (size_t i = begin; i < end; ++i)
             recordPresentation(renderer, *siblings[i]);
