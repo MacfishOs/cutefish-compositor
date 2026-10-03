@@ -113,10 +113,11 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
 // never see, apart from a few actions on Command alone: Command+Tab switches
 // applications, Command+M minimizes, and Command+Q, Command+H and
 // Command+Option+H are the application menu's Quit, Hide and Hide Others.
-// Keys no application uses stay as under PC: Print and its combinations, the
-// device keys, and Control+Command+Escape stops a recording. Command+Shift+3,
-// 4 and 5 capture as well, onto the clipboard with Control. The launcher has
-// no default.
+// Control+Up alone shows all windows; applications still get Ctrl+Up from
+// Command+Up. Keys no application uses stay as under PC: XF86LaunchA, Print
+// and its combinations, the device keys, and Control+Command+Escape stops a
+// recording. Command+Shift+3, 4 and 5 capture as well, onto the clipboard with
+// Control. The launcher has no default.
 inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_q, ControlDown | MetaDown, AcceleratorAction::LockScreen},
 
@@ -133,6 +134,8 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_Right, ControlDown | MetaDown, AcceleratorAction::WindowCycleSnapRight},
         {true, XKB_KEY_m, ControlDown | MetaDown,
          AcceleratorAction::MoveActiveWindowBetweenDisplays},
+        {true, XKB_KEY_Up, ControlDown, AcceleratorAction::ToggleOverview},
+        {true, XKB_KEY_XF86LaunchA, NoModifier, AcceleratorAction::ToggleOverview},
 
         // Desks, with Control+Command where PC has Meta.
         {true, XKB_KEY_bracketleft, ControlDown | MetaDown,

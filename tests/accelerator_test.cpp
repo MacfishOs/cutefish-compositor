@@ -940,6 +940,25 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionApplicationsGetCommandAsCtrl)
     const std::vector<std::pair<uint32_t, bool>> tab = {
             {KEY_LEFTCTRL, true}, {KEY_TAB, true}, {KEY_TAB, false}, {KEY_LEFTCTRL, false}};
     EXPECT_EQ(tab, keyboardDelegate->keys);
+
+    // Control+Up shows all windows, and Command+Up stays the window's Ctrl+Up.
+    scene::OverviewNode node([] {
+        return qint64(0);
+    });
+    wm::OverviewController *overview = manager.overview();
+    overview->setNodes(&node, nullptr);
+    keyboardDelegate->keys.clear();
+    chord({KEY_LEFTCTRL}, KEY_UP);
+    EXPECT_EQ(wm::OverviewController::State::Entering, overview->state());
+    chord({KEY_LEFTCTRL}, KEY_UP);
+    EXPECT_EQ(wm::OverviewController::State::Exiting, overview->state());
+    overview->exitImmediately();
+    EXPECT_TRUE(keyboardDelegate->keys.empty());
+    chord({KEY_LEFTALT}, KEY_UP);
+    const std::vector<std::pair<uint32_t, bool>> up = {
+            {KEY_LEFTCTRL, true}, {KEY_UP, true}, {KEY_UP, false}, {KEY_LEFTCTRL, false}};
+    EXPECT_EQ(up, keyboardDelegate->keys);
+    overview->setNodes(nullptr, nullptr);
 }
 
 TEST_F(AcceleratorTest, ScreenCaptureKeysGoToTheShellUnderBothConventions)
