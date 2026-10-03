@@ -169,7 +169,7 @@ public:
     // whole milliseconds would step a 13.3 ms period by 13 or 14 at random.
     double frameTime = -1;
     // The output's refresh interval in milliseconds; 0 outside an output frame.
-    int64_t framePeriod = 0;
+    double framePeriod = 0;
 
     virtual void pushRoundedClip(const RoundedShape &shape) { m_roundedClips.push_back(shape); }
 

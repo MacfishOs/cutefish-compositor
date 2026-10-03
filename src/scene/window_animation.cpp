@@ -146,7 +146,7 @@ int WindowAnimation::duration(Type type, const QRectF &from, const QRectF &to, S
     if (style == Style::Launcher && type == Type::Open)
         return 360;
     if (style == Style::Launcher && type == Type::Close)
-        return 200;
+        return 160;
     // Menus open under the pointer and are read immediately: shorter than the
     // 150 ms ui/wm gives WINDOW_TYPE_MENU so the fade never reads as a delay.
     if (style == Style::Popup && type == Type::Open)
@@ -177,12 +177,13 @@ WindowAnimation::Sample WindowAnimation::sample(Type type, const QRectF &from, c
 {
     const double t = std::clamp(progress, 0.0, 1.0);
     if (style == Style::Launcher && (type == Type::Open || type == Type::Close)) {
-        // Decelerating on both edges: the launcher responds on the first frame
-        // and lands without a visible stop. Closing, it fades out at an even
-        // rate: an eased fade lingers as a faint ghost.
-        const double eased = easeOut(t, type == Type::Open ? 4 : 3);
-        const float opacity = type == Type::Open ? easeOut(t / .6, 3)
-                                                 : 1 - std::clamp(t / .8, 0.0, 1.0);
+        // Opening decelerates: the launcher responds on the first frame and
+        // lands without a visible stop. Closing, it fades out at an even rate
+        // (an eased fade lingers as a faint ghost) and is still zooming as it
+        // vanishes, at 0.4 of its mean speed: a zoom that settles first leaves
+        // a still image fading out.
+        const double eased = type == Type::Open ? easeOut(t, 4) : t + .6 * t * (1 - t);
+        const float opacity = type == Type::Open ? easeOut(t / .6, 3) : 1 - t;
         return {QRectF(from.topLeft() + (to.topLeft() - from.topLeft()) * eased,
                        from.size() + (to.size() - from.size()) * eased),
                 opacity, t};
@@ -221,9 +222,12 @@ WindowAnimation::Sample WindowAnimation::sample(Type type, const QRectF &from, c
 
 WindowAnimation::Sample WindowAnimation::current() const
 {
-    const double t = (m_started >= 0)
-            ? (now() - m_started) / duration(m_type, m_from, m_to, m_style)
-            : 0;
+    double length = duration(m_type, m_from, m_to, m_style);
+    // A launcher close vanishes on a refresh: a fraction of a step left over
+    // shows as one faint frame that lingers after the even steps before it.
+    if (m_style == Style::Launcher && m_type == Type::Close && m_framePeriod > 0)
+        length = std::max(1.0, std::round(length / m_framePeriod)) * m_framePeriod;
+    const double t = (m_started >= 0) ? (now() - m_started) / length : 0;
     Sample result = sample(m_type, m_from, m_to, t, m_style);
     if (m_type == Type::Minimize && result.progress < 1) {
         // Replace each new endpoint's contribution with a smooth correction
@@ -926,6 +930,7 @@ void WindowAnimation::render(render::Renderer &renderer) const
     // animation by what the display showed since the last one, however late
     // the wakeup or the uploads before this draw were.
     m_frameTime = renderer.frameTime;
+    m_framePeriod = renderer.framePeriod;
     if (m_firstFrame) {
         auto *self = const_cast<WindowAnimation *>(this);
         const QRect geometry = absoluteGeometry();
@@ -955,13 +960,16 @@ void WindowAnimation::render(render::Renderer &renderer) const
         // A window opening or closing already moves in its first frame: one
         // showing where it starts would only add a frame of latency.
         const bool leadIn =
-                m_style == Style::Window && (m_type == Type::Open || m_type == Type::Close);
+                (m_style == Style::Window && (m_type == Type::Open || m_type == Type::Close))
+                || (m_style == Style::Launcher && m_type == Type::Close);
         m_started = leadIn ? m_firstStepAt - renderer.framePeriod : m_firstStepAt;
         m_firstStep = true;
     } else if (m_running && std::exchange(m_firstStep, false) && renderer.framePeriod > 0
-               && now() - m_firstStepAt > renderer.framePeriod * 3 / 2) {
+               && now() - m_firstStepAt > renderer.framePeriod) {
         // A slow first frame (snapshot pass, readback, buffer import) delays
         // the animation by the slots it missed instead of opening with a jump.
+        // One drawn at once mid-refresh is sampled early, yet shows a refresh
+        // before the next, so the second step is one refresh too.
         m_started += now() - m_firstStepAt - renderer.framePeriod;
     }
 

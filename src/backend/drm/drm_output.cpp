@@ -978,7 +978,7 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
                                     m_scheduler.sampleTime().time_since_epoch())
                                     .count();
     m_renderer->framePeriod =
-            std::chrono::duration_cast<std::chrono::milliseconds>(m_scheduler.period()).count();
+            std::chrono::duration<double, std::milli>(m_scheduler.period()).count();
     ++m_frameCount;
     if (!m_outstanding.contains(frame))
         m_outstanding.append(frame);

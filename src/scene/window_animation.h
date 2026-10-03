@@ -327,6 +327,7 @@ private:
     std::optional<Sample> m_handoff;
     std::function<double()> m_now;
     mutable double m_frameTime = -1;
+    mutable double m_framePeriod = 0;
     mutable double m_started = -1;
     mutable bool m_firstStep = false;
     mutable double m_firstStepAt = -1;

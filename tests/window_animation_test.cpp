@@ -326,7 +326,7 @@ TEST(WindowAnimation, StepsOnFractionalFrameTimes)
     node->start(Type::Minimize, bounds, slot);
     const int duration = Animation::duration(Type::Minimize, bounds, slot);
     const double period = 1000.0 / 75;
-    renderer.framePeriod = 13;
+    renderer.framePeriod = period;
     for (int frame = 0; frame < 5; ++frame) {
         renderer.frameTime = 5000 + frame * period;
         scene.render(renderer);
@@ -1497,7 +1497,7 @@ TEST(WindowAnimation, LauncherFadesThroughASlightZoomAndLandsSoftly)
     const QRectF screen(0, 0, 1000, 800), zoomed(-25, -20, 1050, 840);
     const auto style = Animation::Style::Launcher;
     EXPECT_EQ(Animation::duration(Type::Open, screen, screen, style), 360);
-    EXPECT_EQ(Animation::duration(Type::Close, screen, screen, style), 200);
+    EXPECT_EQ(Animation::duration(Type::Close, screen, screen, style), 160);
     for (const auto type : {Type::Open, Type::Close}) {
         const QRectF from = type == Type::Open ? zoomed : screen;
         const QRectF to = type == Type::Open ? screen : zoomed;
@@ -1525,6 +1525,35 @@ TEST(WindowAnimation, LauncherFadesThroughASlightZoomAndLandsSoftly)
                            - (type == Type::Open ? 0 : 1)),
                   .1);
     }
+}
+
+// A hide is drawn as it arrives, between refreshes; each refresh after it must
+// still take the same share of the fade, down to the last one.
+TEST(WindowAnimation, LauncherCloseFadesInEvenRefreshSteps)
+{
+    const QRect screen(0, 0, 1000, 800);
+    scene::Scene scene;
+    SnapshotRenderer renderer;
+    auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>()));
+    node->setStyle(Animation::Style::Launcher);
+    node->setGeometry(screen);
+    node->finish();
+    scene.render(renderer);
+    node->close();
+
+    const double period = 1000.0 / 60;
+    renderer.framePeriod = period;
+    renderer.frameTime = 5000 - 4.4;
+    scene.render(renderer);
+    EXPECT_NEAR(renderer.calls.back().alpha, .9, 1e-4);
+    for (int frame = 1; frame <= 8; ++frame) {
+        renderer.frameTime = 5000 + frame * period;
+        scene.render(renderer);
+        EXPECT_NEAR(renderer.calls.back().alpha, .9 - frame * .1, 1e-4) << frame;
+    }
+    renderer.frameTime = 5000 + 9 * period;
+    scene.render(renderer);
+    EXPECT_EQ(renderer.calls.back().alpha, 0);
 }
 
 TEST(WindowAnimation, FadeOnlyChangesOpacity)
