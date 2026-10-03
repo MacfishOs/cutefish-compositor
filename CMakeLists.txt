@@ -906,8 +906,7 @@ target_link_libraries(cutefish-compositor PRIVATE cutefish-display-runtime
 # to files, so both are allowlisted by their installed paths.
 target_compile_definitions(cutefish-compositor PRIVATE
     CUTEFISH_PORTAL_BACKEND="${CMAKE_INSTALL_FULL_LIBEXECDIR}/xdg-desktop-portal-cutefish"
-    CUTEFISH_SCREEN_RECORDER="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-screenrecorder"
-    CUTEFISH_FILEPREVIEW="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-filepreview")
+    CUTEFISH_SCREEN_RECORDER="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-screenrecorder")
 target_link_libraries(cutefish-compositor
     PRIVATE cutefish-wayland cutefish-compositor-core cutefish-backend cutefish-scene
             cutefish-input cutefish-wayland-input cutefish-wm

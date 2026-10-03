@@ -793,14 +793,10 @@ bool CompositorShell::initWayland()
             QStringList {QStringLiteral("/usr/bin/cutefish-services"),
                          QStringLiteral("/usr/bin/cutefish-polkit-agent")},
             !m_options.noDrm,
-            QStringList {QStringLiteral(CUTEFISH_FILEPREVIEW)},
             QStringList {QStringLiteral("/usr/bin/cutefish-computer-use")}
                     + m_options.computerControlClients);
     m_windowManager.setSystemDialogPolicy([this](qint64 pid) {
         return m_security->showsSystemDialogs(pid);
-    });
-    m_windowManager.setAlwaysOnTopPolicy([this](qint64 pid) {
-        return m_security->showsFloatingWindows(pid);
     });
 
     wayland::ProtocolGlobals::Dependencies dependencies;

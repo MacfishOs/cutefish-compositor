@@ -175,11 +175,6 @@ public:
         m_systemDialogPolicy = std::move(policy);
     }
 
-    void setAlwaysOnTopPolicy(std::function<bool(qint64 pid)> policy)
-    {
-        m_alwaysOnTopPolicy = std::move(policy);
-    }
-
     // Moves `window` to the top of its own stacking layer, in the model and in
     // the scene. A raise never lifts a window past a window of a higher layer:
     // an ordinary application can no more cover the dock than a dock can bury
@@ -433,7 +428,6 @@ private:
     // Bottom to top. Mirrors m_windows but is reordered by raise().
     std::vector<Window *> m_stackingOrder;
     std::function<bool(qint64)> m_systemDialogPolicy;
-    std::function<bool(qint64)> m_alwaysOnTopPolicy;
 
     Activation m_activation;
     Window *m_keyboardGrab = nullptr;
