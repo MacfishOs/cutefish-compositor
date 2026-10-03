@@ -54,7 +54,8 @@ DecorationNode::~DecorationNode() = default;
 
 void DecorationNode::paint(render::Renderer& renderer, const QRect& absoluteGeometry) const
 {
-    if (!m_decoration || !m_decoration->window() || absoluteGeometry.isEmpty())
+    if (!m_decoration || !m_decoration->window() || absoluteGeometry.isEmpty()
+        || !renderer.drawsInto(absoluteGeometry))
         return;
     paintFrame(renderer, absoluteGeometry);
     paintCaption(renderer, absoluteGeometry);

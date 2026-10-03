@@ -75,6 +75,12 @@ void SurfaceNode::paint(render::Renderer &renderer, const QRect &absoluteGeometr
     // composited, or the two would blend on top of each other.
     if (!m_texture || absoluteGeometry.isEmpty() || (isPromotedToOverlay() && !renderer.capturing))
         return;
+    // Left out of a partial repaint, the surface is still the one on screen.
+    if (!renderer.drawsInto(absoluteGeometry)) {
+        if (m_alpha > 0)
+            renderer.recordPresentation(m_presentationContent, absoluteGeometry);
+        return;
+    }
     // The client may still be writing this buffer; the wait is queued on the
     // GPU, so composition does not block the compositor thread.
     if (hasBackgroundBlur() && !renderer.suppressBackgroundBlur)

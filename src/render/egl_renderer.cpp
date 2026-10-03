@@ -472,6 +472,7 @@ bool EglRenderer::endFrame()
         m_backdrop->frameEnded();
     glDisable(GL_SCISSOR_TEST);
     m_repaint.reset();
+    paintClip.reset();
     m_current = nullptr;
     return ok;
 }
@@ -480,6 +481,7 @@ void EglRenderer::cancelFrame()
 {
     glDisable(GL_SCISSOR_TEST);
     m_repaint.reset();
+    paintClip.reset();
     if (m_current)
         m_current->invalidate();
     m_current = nullptr;
@@ -512,12 +514,14 @@ bool EglRenderer::beginFrame(RenderTarget *target)
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_SCISSOR_TEST);
     m_repaint.reset();
+    paintClip.reset();
     return true;
 }
 
 void EglRenderer::applyRepaint(const QRect &repaint)
 {
     m_repaint = repaint;
+    paintClip = logicalRepaint(repaint, outputContext(), m_current->size());
     glEnable(GL_SCISSOR_TEST);
     glScissor(repaint.x(), m_current->size().height() - repaint.y() - repaint.height(),
               repaint.width(), repaint.height());

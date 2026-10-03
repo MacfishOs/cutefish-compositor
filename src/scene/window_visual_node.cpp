@@ -27,6 +27,8 @@ void paintWindowOutline(render::Renderer &renderer, const render::RoundedShape &
     outer.bounds.adjust(-stroke, -stroke, stroke, stroke);
     if (shape.radius > 0)
         outer.radius += stroke / std::max(shape.radiusScale.width(), shape.radiusScale.height());
+    if (!renderer.drawsInto(outer.bounds.toAlignedRect().adjusted(-1, -1, 1, 1)))
+        return;
     auto outline = state.outlineColor;
     outline.a *= opacity;
     renderer.drawRoundedOutline(outer, outline, state.outlineWidthPx);
@@ -58,8 +60,10 @@ void paintShapeOutline(render::Renderer &renderer, const WindowVisualState &stat
                                              render::PixelFormat::Rgba8888));
         return set;
     });
-    if (textures.front())
-        renderer.drawTextureF(textures.front().get(), transform.mapRect(raster.target()), opacity);
+    // Looked up even when culled, so the cache keeps it as long as before.
+    const QRectF target = transform.mapRect(raster.target());
+    if (textures.front() && renderer.drawsInto(target.toAlignedRect()))
+        renderer.drawTextureF(textures.front().get(), target, opacity);
 }
 
 QPointF clientBodySnap(const render::Renderer &renderer, const WindowVisualState &state,
@@ -108,7 +112,8 @@ void WindowVisualNode::render(render::Renderer &renderer) const
     if (clip)
         renderer.pushRoundedClip(shape);
     Node::render(renderer);
-    if (const float dim = presentedDim(renderer); dim > 0)
+    if (const float dim = presentedDim(renderer);
+        dim > 0 && renderer.drawsInto(shape.bounds.toAlignedRect()))
         renderer.fillRectF(shape.bounds, {0, 0, 0, dim});
     if (clip)
         renderer.popRoundedClip();

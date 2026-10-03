@@ -6,6 +6,8 @@
 //           chromium/src/ui/ozone/platform/drm/gpu/page_flip_request.cc (Signal)
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 
+#include <algorithm>
+
 #include <gtest/gtest.h>
 
 #include "backend/drm/presentation_tracker.h"
@@ -319,6 +321,21 @@ TEST_F(PresentationTest, OpaqueOcclusionDoesNotPresentCoveredContent)
     tracker.submitted(1, std::move(submission));
     complete(1);
     EXPECT_EQ(results.size(), 1u);
+}
+
+TEST_F(PresentationTest, ContentLeftOutOfAPartialRepaintIsStillPresented)
+{
+    request();
+    surface->commit();
+    renderer.paintClip = QRect(100, 100, 10, 10);
+    renderer.calls.clear();
+    submit(1);
+    renderer.paintClip.reset();
+    EXPECT_TRUE(std::none_of(renderer.calls.begin(), renderer.calls.end(),
+                             [](const auto& call) { return call.kind == QStringLiteral("texture"); }));
+    complete(1);
+    ASSERT_EQ(results.size(), 1u);
+    EXPECT_TRUE(results[0].valid());
 }
 
 TEST_F(PresentationTest, ClockValidityAndExplicitTeardown)

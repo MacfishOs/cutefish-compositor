@@ -314,7 +314,8 @@ void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, con
         const QRect source = geometry.sources()[i];
         const QRect target = geometry.targets()[i];
         // The middle is the window's own.
-        if (i == 4 || source.isEmpty() || target.isEmpty())
+        if (i == 4 || source.isEmpty() || target.isEmpty()
+            || !renderer.drawsInto(target.translated(position)))
             continue;
         // A stretched cut lies in a constant run and any other joins slices
         // drawn at one scale, so filtering across it reads what one image would.
@@ -370,14 +371,15 @@ void paintStretchedShadow(render::Renderer &renderer, const ShadowGeometry &geom
                                    map(top, from.height(), window.height()));
                 const QPoint end(map(right, from.width(), window.width()),
                                  map(bottom, from.height(), window.height()));
-                if (end.x() <= start.x() || end.y() <= start.y())
+                const QRect placed =
+                        QRect(start, QSize(end.x() - start.x(), end.y() - start.y()))
+                                .translated(window.topLeft());
+                if (placed.isEmpty() || !renderer.drawsInto(placed))
                     continue;
                 const QRectF piece(source.x() + (left - target.x()) * sx,
                                    source.y() + (top - target.y()) * sy, (right - left) * sx,
                                    (bottom - top) * sy);
-                slices.push_back({QRect(start, QSize(end.x() - start.x(), end.y() - start.y()))
-                                          .translated(window.topLeft()),
-                                  sliceMapping(piece, image->size())});
+                slices.push_back({placed, sliceMapping(piece, image->size())});
             }
         }
     }

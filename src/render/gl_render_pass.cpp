@@ -9,6 +9,7 @@
 #include <GLES2/gl2ext.h>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <utility>
 
 #include "render/gl_program.h"
@@ -94,6 +95,7 @@ public:
         , m_submission(renderer.presentationSubmission)
         , m_capturing(renderer.capturing)
         , m_backdropScope(std::exchange(renderer.backdropScope, 0))
+        , m_paintClip(std::exchange(renderer.paintClip, std::nullopt))
     {
         renderer.presentationSubmission = nullptr;
     }
@@ -105,6 +107,7 @@ public:
         m_renderer.presentationSubmission = m_submission;
         m_renderer.capturing = m_capturing;
         m_renderer.backdropScope = m_backdropScope;
+        m_renderer.paintClip = m_paintClip;
     }
 
     RendererState(const RendererState &) = delete;
@@ -117,6 +120,7 @@ private:
     PresentationSubmission *m_submission;
     bool m_capturing;
     uint64_t m_backdropScope;
+    std::optional<QRect> m_paintClip;
 };
 
 std::unique_ptr<GlTexture> allocate(const std::shared_ptr<EglContext> &context, const QSize &size,
@@ -492,6 +496,9 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
         glScissor(scissor.x(), allocation.height() - scissor.y() - scissor.height(),
                   scissor.width(), scissor.height());
     }
+    // The scissor rounds out at a fractional scale; a pixel more keeps what reaches its edge.
+    renderer.paintClip = scissor.isEmpty() ? bounds
+                                           : bounds.intersected(repaint.adjusted(-1, -1, 1, 1));
     renderer.clear({0, 0, 0, 0});
     paint();
     return true;

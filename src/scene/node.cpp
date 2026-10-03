@@ -314,7 +314,7 @@ void ColorNode::setColor(const render::Color &color)
 
 void ColorNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
 {
-    if (absoluteGeometry.isEmpty())
+    if (absoluteGeometry.isEmpty() || !renderer.drawsInto(absoluteGeometry))
         return;
     render::Color color = m_color;
     if (renderer.overwriteOpaque && m_color.a >= 1) {
@@ -336,7 +336,7 @@ TextureNode::TextureNode(render::Texture *texture, const QString &name)
 
 void TextureNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
 {
-    if (m_texture && !absoluteGeometry.isEmpty()) {
+    if (m_texture && !absoluteGeometry.isEmpty() && renderer.drawsInto(absoluteGeometry)) {
         renderer.drawTexture(m_texture, absoluteGeometry, m_alpha);
     }
 }

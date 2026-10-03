@@ -118,6 +118,17 @@ public:
     // target keeps what the last frame left there.
     virtual bool repaints(const QRect &) const { return true; }
 
+    // The logical rectangle outside which nothing drawn now reaches the target,
+    // the repaint of an output frame or the bounds of a pass; none culls nothing.
+    std::optional<QRect> paintClip;
+
+    // False when a draw inside `logical` would be clipped away whole, so it
+    // and any work feeding only it can be skipped, as viz's ShouldSkipQuad.
+    bool drawsInto(const QRect &logical) const
+    {
+        return !paintClip || paintClip->intersects(logical);
+    }
+
     // Ends the frame without presenting it. Used when the display controller
     // decided to scan a client buffer out instead, so the previous composited
     // buffer must be left untouched and reusable.

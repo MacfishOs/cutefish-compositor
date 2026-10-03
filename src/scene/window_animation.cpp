@@ -596,6 +596,8 @@ void WindowAnimation::draw(render::Renderer &renderer, render::Texture *texture,
     const QPoint offset = coverage.topLeft() - original.topLeft();
     const QRectF target(value.bounds.topLeft() + QPointF(offset.x() * sx, offset.y() * sy),
                         QSizeF(coverage.width() * sx, coverage.height() * sy));
+    if (!renderer.drawsInto(target.toAlignedRect()))
+        return;
     renderer.drawTextureF(texture, target, value.opacity * alpha * renderer.opacityScale);
 }
 

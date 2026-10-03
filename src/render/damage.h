@@ -8,6 +8,7 @@
 #include <QRegion>
 #include <cmath>
 #include <deque>
+#include <optional>
 #include <vector>
 
 namespace cutefish::render {
@@ -47,6 +48,37 @@ inline QRect physicalDamage(const QRegion &damage, const OutputRenderContext &co
         result += local.translated(content.topLeft()).toAlignedRect().intersected(content);
     }
     return result.boundingRect().intersected(target);
+}
+
+// The logical rectangle a physical repaint takes in, for culling: anything
+// physicalDamage() maps into `repaint` comes from inside it. None for flips.
+inline std::optional<QRect> logicalRepaint(const QRect &repaint,
+                                           const OutputRenderContext &context,
+                                           const QSize &targetSize)
+{
+    if (context.transform > 3 || context.scale <= 0)
+        return std::nullopt;
+    const QRect content = context.nativeContentRect.isEmpty() ? QRect(QPoint(), targetSize)
+                                                              : context.nativeContentRect;
+    QRectF local(repaint.translated(-content.topLeft()));
+    const double w = content.width(), h = content.height();
+    switch (context.transform) {
+    case 1:
+        local = QRectF(h - local.y() - local.height(), local.x(), local.height(), local.width());
+        break;
+    case 2:
+        local = QRectF(w - local.x() - local.width(), h - local.y() - local.height(),
+                       local.width(), local.height());
+        break;
+    case 3:
+        local = QRectF(local.y(), w - local.x() - local.width(), local.height(), local.width());
+        break;
+    }
+    local = QRectF(local.topLeft() / context.scale, local.size() / context.scale);
+    // A pixel more on every side covers the overhang and the rounding out.
+    return local.toAlignedRect()
+            .adjusted(-1, -1, 1, 1)
+            .translated(context.logicalViewport.topLeft());
 }
 
 // A backdrop blur reads everything in its `samples` region, and outside the

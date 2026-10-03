@@ -287,6 +287,44 @@ TEST(Damage, FractionalTranslatedAndRotatedPhysicalCoverage)
     EXPECT_TRUE(render::physicalDamage(QRect(500, 500, 1, 1), context, {120, 120}).isEmpty());
 }
 
+TEST(Damage, LogicalRepaintTakesInEverythingThatReachesTheRepaint)
+{
+    // Culling by the logical repaint must never skip a rect whose physical
+    // coverage, overhang included, reaches the physical repaint.
+    for (const double scale : {1.0, 1.25, 1.5, 1.75, 2.0}) {
+        for (uint32_t transform = 0; transform < 4; ++transform) {
+            for (const bool letterboxed : {false, true}) {
+                render::OutputRenderContext context {"test", QRect(-40, 30, 24, 20), {}, scale,
+                                                     transform};
+                QSize content(int(std::ceil(24 * scale)), int(std::ceil(20 * scale)));
+                if (transform % 2)
+                    content.transpose();
+                QSize target = content;
+                if (letterboxed) {
+                    context.nativeContentRect = QRect(QPoint(3, 5), content);
+                    target += QSize(7, 9);
+                }
+                for (const QRect &damage : {QRect(-37, 33, 1, 1), QRect(-30, 40, 5, 3)}) {
+                    const QRect repaint = render::physicalDamage(damage, context, target);
+                    const auto clip = render::logicalRepaint(repaint, context, target);
+                    ASSERT_TRUE(clip);
+                    for (int y = 30; y < 50; ++y) {
+                        for (int x = -40; x < -16; ++x) {
+                            const QRect rect(x, y, 1, 1);
+                            if (render::physicalDamage(rect, context, target).intersects(repaint))
+                                EXPECT_TRUE(clip->intersects(rect))
+                                        << scale << " " << transform << " " << letterboxed
+                                        << " " << x << "," << y;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    render::OutputRenderContext flipped {"test", QRect(0, 0, 10, 10), {}, 1, 4};
+    EXPECT_FALSE(render::logicalRepaint(QRect(0, 0, 2, 2), flipped, {10, 10}));
+}
+
 TEST(Damage, BufferAgeRepairsMissingFramesAndResets)
 {
     render::BufferDamageHistory history;
