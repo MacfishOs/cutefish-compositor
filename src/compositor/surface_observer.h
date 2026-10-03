@@ -13,6 +13,8 @@
 #ifndef CUTEFISH_COMPOSITOR_SURFACE_OBSERVER_H_
 #define CUTEFISH_COMPOSITOR_SURFACE_OBSERVER_H_
 
+#include <functional>
+
 namespace cutefish::compositor {
 
 class Surface;
@@ -30,6 +32,12 @@ public:
     // made current. Role owners - xdg-shell in particular - hang their own
     // commit handling off this.
     virtual void onSurfaceCommit(Surface* surface) { }
+
+    // Called when the client sends wl_surface.commit, which may wait for its
+    // buffer before it applies. A role owner takes its own double-buffered
+    // state here and returns what installs it, run right before this
+    // observer's onSurfaceCommit() for that commit.
+    virtual std::function<void()> onSurfaceCommitRequested(Surface* surface) { return {}; }
 
     virtual void onScaleFactorChanged(Surface* surface) { }
 

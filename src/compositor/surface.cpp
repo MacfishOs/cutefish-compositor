@@ -10,14 +10,21 @@
 
 #include "compositor/surface.h"
 
+#include <poll.h>
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
+
+#include <QSocketNotifier>
+#include <QTimer>
 
 #include "compositor/compositor.h"
 #include "compositor/sub_surface.h"
 #include "compositor/surface_observer.h"
 #include "core/logging.h"
+#include "core/scoped_fd.h"
+#include "render/drm_syncobj.h"
 #include "render/renderer.h"
 #include "scene/surface_node.h"
 
@@ -51,7 +58,77 @@ QRect clampDamage(const QRect &rect)
     return result.intersected(QRect(-kMax / 2, -kMax / 2, kMax, kMax));
 }
 
+// Held commits across all surfaces, so that the common case never walks a tree.
+size_t s_heldCommits = 0;
+uint64_t s_commitSequence = 0;
+
+struct NotifierDeleter {
+    // The notifier may be the one whose activation is being handled.
+    void operator()(QSocketNotifier *notifier) const
+    {
+        notifier->setEnabled(false);
+        notifier->deleteLater();
+    }
+};
+
 } // namespace
+
+// Everything one wl_surface.commit carries, taken out of pending state when the
+// client sends it, so later requests cannot leak into a commit that waits.
+struct Surface::CommitRequest {
+    struct Fence {
+        // Readable once signalled: a sync_file or a syncobj eventfd.
+        ScopedFd fd;
+        std::unique_ptr<QSocketNotifier, NotifierDeleter> notifier;
+    };
+
+    CommitRequest() = default;
+    CommitRequest(const CommitRequest &) = delete;
+    CommitRequest &operator=(const CommitRequest &) = delete;
+
+    // What a dropped commit still owes the client.
+    ~CommitRequest()
+    {
+        for (const FrameCallback &callback : state.frameCallbacks)
+            callback(std::nullopt);
+        if (state.release)
+            state.release->signal(render::SyncFence());
+        if (buffer)
+            buffer->onDetach(true);
+    }
+
+    void addFence(ScopedFd fd)
+    {
+        if (fd.isValid())
+            fences.push_back(Fence {std::move(fd), nullptr});
+    }
+
+    bool isReady()
+    {
+        std::erase_if(fences, [](const Fence &fence) {
+            // An error or a hangup never turns into a signal; waiting on would
+            // hold the surface for good.
+            pollfd readable = {fence.fd.get(), POLLIN, 0};
+            return ::poll(&readable, 1, 0) > 0;
+        });
+        return fences.empty();
+    }
+
+    uint64_t sequence = 0;
+    ExtendedState state;
+    // Holds the cached attachment's claim on client storage, and keeps the
+    // contents a client destroys its wl_buffer under while the commit waits.
+    std::shared_ptr<Buffer> buffer;
+    bool attachedBuffer = false;
+    bool explicitSyncBuffer = false;
+    std::shared_ptr<render::PresentationContent> presentation;
+    SubSurfaceList subSurfaces;
+    std::vector<std::pair<SurfaceObserver *, std::function<void()>>> roleState;
+    std::vector<Fence> fences;
+    bool held = false;
+    // wl_subsurface.set_desync, which applies a cache rather than commits one.
+    bool desynchronize = false;
+};
 
 uint32_t Surface::preferredScale() const
 {
@@ -105,6 +182,8 @@ Surface::~Surface()
                                });
         it->surface->m_subSurface->onSurfaceDestroying(this);
     }
+    s_heldCommits -= m_heldCommits.size();
+    m_heldCommits.clear();
     if (m_cached.buffer) {
         if (auto buffer = m_cached.buffer->buffer.lock())
             buffer->onDetach(true);
@@ -153,6 +232,12 @@ bool Surface::hasPendingAttachedBuffer() const
 void Surface::setAcquireFence(render::SyncFence fence)
 {
     m_pending.acquireFence = std::move(fence);
+}
+
+void Surface::setAcquirePoint(std::shared_ptr<render::DrmSyncobj> timeline, uint64_t point)
+{
+    m_pending.acquireTimeline = std::move(timeline);
+    m_pending.acquirePoint = point;
 }
 
 void Surface::setBufferRelease(std::shared_ptr<BufferRelease> release)
@@ -252,73 +337,216 @@ void Surface::abandonUnsubmittedPresentation(const render::PresentationSubmissio
 void Surface::commit()
 {
     const auto alive = m_lifetime;
+    auto request = std::make_unique<CommitRequest>();
+    request->sequence = ++s_commitSequence;
+    request->state = std::move(m_pending);
+    m_pending = ExtendedState();
+    m_pending.basicState = request->state.basicState;
+    m_pending.basicState.offset = {};
+    request->presentation = std::move(m_pendingPresentation);
+    request->subSurfaces = m_pendingSubSurfaces;
+
+    ExtendedState &state = request->state;
+    request->buffer = state.buffer ? state.buffer->buffer.lock() : nullptr;
+    // Cached attachments also hold client storage until applied or replaced.
+    if (request->buffer)
+        request->buffer->onAttach(true);
+    request->attachedBuffer = request->buffer != nullptr;
+    request->explicitSyncBuffer = request->buffer && request->buffer->supportsExplicitSync();
+    m_lastCommitAttachedBuffer = request->attachedBuffer;
+    m_lastCommitBufferSupportsExplicitSync = request->explicitSyncBuffer;
+
+    if (request->buffer) {
+        if (state.acquireTimeline) {
+            ScopedFd signalled = state.acquireTimeline->signalEventFd(state.acquirePoint);
+            // The kernel cannot wait for a point it has no fence for yet; take
+            // whatever is there now.
+            if (!signalled.isValid())
+                state.acquireFence = state.acquireTimeline->exportFence(state.acquirePoint);
+            request->addFence(std::move(signalled));
+        }
+        if (state.acquireFence.isValid()) {
+            request->addFence(ScopedFd(state.acquireFence.duplicate().release()));
+        } else if (!state.acquireTimeline) {
+            for (render::SyncFence &fence : request->buffer->implicitFences())
+                request->addFence(ScopedFd(fence.release()));
+        }
+    }
+    state.acquireTimeline.reset();
+
+    for (SurfaceObserver *observer : std::vector<SurfaceObserver *>(m_observers)) {
+        if (!hasSurfaceObserver(observer))
+            continue;
+        if (auto install = observer->onSurfaceCommitRequested(this))
+            request->roleState.emplace_back(observer, std::move(install));
+        if (!*alive)
+            return;
+    }
+
+    if ((s_heldCommits == 0 || !rootSurface()->oldestHeldCommit()) && request->isReady()) {
+        applyCommit(*request);
+        return;
+    }
+    holdCommit(std::move(request));
+}
+
+void Surface::applyCommit(CommitRequest &request)
+{
+    if (request.desynchronize) {
+        if (!isSynchronized())
+            commitDesynchronized();
+        return;
+    }
+
+    const auto alive = m_lifetime;
+    ExtendedState &incoming = request.state;
     auto replacedApplied = m_node ? m_node->presentationContent() : nullptr;
     auto replacedPresentation =
-            std::exchange(m_cachedPresentation, std::move(m_pendingPresentation));
+            std::exchange(m_cachedPresentation, std::move(request.presentation));
     m_needsCommitSurface = true;
     // Cached buffer damage cannot be reinterpreted through a later mapping.
-    m_cached.fullDamage |= m_cached.basicState.crop != m_pending.basicState.crop
-            || m_cached.basicState.viewport != m_pending.basicState.viewport
-            || m_cached.basicState.bufferScale != m_pending.basicState.bufferScale
-            || m_cached.basicState.clientScale != m_pending.basicState.clientScale
-            || m_cached.basicState.bufferTransform != m_pending.basicState.bufferTransform
-            || (m_cached.buffer && m_pending.buffer
-                && m_cached.buffer->size != m_pending.buffer->size);
+    m_cached.fullDamage |= m_cached.basicState.crop != incoming.basicState.crop
+            || m_cached.basicState.viewport != incoming.basicState.viewport
+            || m_cached.basicState.bufferScale != incoming.basicState.bufferScale
+            || m_cached.basicState.clientScale != incoming.basicState.clientScale
+            || m_cached.basicState.bufferTransform != incoming.basicState.bufferTransform
+            || (m_cached.buffer && incoming.buffer
+                && m_cached.buffer->size != incoming.buffer->size);
     // Synchronized commits accumulate offsets before the parent applies them.
-    const QPoint offset = m_cached.basicState.offset + m_pending.basicState.offset;
-    m_cached.basicState = m_pending.basicState;
+    const QPoint offset = m_cached.basicState.offset + incoming.basicState.offset;
+    m_cached.basicState = incoming.basicState;
     m_cached.basicState.offset = offset;
-    m_pending.basicState.offset = {};
-    {
-        const auto attached = m_pending.buffer ? m_pending.buffer->buffer.lock() : nullptr;
-        m_lastCommitAttachedBuffer = attached != nullptr;
-        m_lastCommitBufferSupportsExplicitSync = attached && attached->supportsExplicitSync();
-    }
-    if (m_pending.buffer) {
-        auto incoming = m_pending.buffer->buffer.lock();
-        auto outgoing = m_cached.buffer ? m_cached.buffer->buffer.lock() : nullptr;
-        // Cached attachments also hold client storage until applied or replaced.
-        if (incoming)
-            incoming->onAttach(true);
-        if (outgoing)
+    m_lastCommitAttachedBuffer = request.attachedBuffer;
+    m_lastCommitBufferSupportsExplicitSync = request.explicitSyncBuffer;
+    if (incoming.buffer) {
+        // The incoming buffer took its cached claim when the commit was sent.
+        if (auto outgoing = m_cached.buffer ? m_cached.buffer->buffer.lock() : nullptr)
             outgoing->onDetach(true);
-        m_cached.buffer = std::move(m_pending.buffer);
-        m_pending.buffer.reset();
-        if (m_cached.release && m_cached.release != m_pending.release)
+        request.buffer.reset();
+        m_cached.buffer = std::move(incoming.buffer);
+        if (m_cached.release && m_cached.release != incoming.release)
             m_cached.release->signal(render::SyncFence());
-        m_cached.acquireFence = std::move(m_pending.acquireFence);
-        m_cached.release = std::move(m_pending.release);
+        m_cached.acquireFence = std::move(incoming.acquireFence);
+        m_cached.release = std::move(incoming.release);
     }
-    m_pending.acquireFence.reset();
+    incoming.acquireFence.reset();
     // A release committed without a buffer applies to nothing, and the protocol
     // layer has already raised no_buffer; signal it rather than strand it.
-    if (m_pending.release) {
-        m_pending.release->signal(render::SyncFence());
-        m_pending.release.reset();
+    if (incoming.release) {
+        incoming.release->signal(render::SyncFence());
+        incoming.release.reset();
     }
-    m_cached.damage += m_pending.damage;
-    m_cached.bufferDamage += m_pending.bufferDamage;
-    m_pending.damage = {};
-    m_pending.bufferDamage = {};
+    m_cached.damage += incoming.damage;
+    m_cached.bufferDamage += incoming.bufferDamage;
     m_cached.frameCallbacks.insert(m_cached.frameCallbacks.end(),
-                                   std::make_move_iterator(m_pending.frameCallbacks.begin()),
-                                   std::make_move_iterator(m_pending.frameCallbacks.end()));
-    m_pending.frameCallbacks.clear();
-    m_cachedSubSurfaces = m_pendingSubSurfaces;
+                                   std::make_move_iterator(incoming.frameCallbacks.begin()),
+                                   std::make_move_iterator(incoming.frameCallbacks.end()));
+    incoming.frameCallbacks.clear();
+    if (request.held) {
+        // Children added or removed while the commit waited are already in the
+        // live lists; the commit places the others.
+        const auto isIn = [](const SubSurfaceList &list, Surface *surface) {
+            return std::any_of(list.begin(), list.end(), [surface](const auto &e) {
+                return e.surface == surface;
+            });
+        };
+        request.subSurfaces.remove_if([&](const auto &e) {
+            return !isIn(m_pendingSubSurfaces, e.surface);
+        });
+        for (const auto &entry : m_pendingSubSurfaces) {
+            if (!isIn(request.subSurfaces, entry.surface))
+                request.subSurfaces.push_back(entry);
+        }
+    }
+    m_cachedSubSurfaces = std::move(request.subSurfaces);
 
     // Exo SubSurface::OnSurfaceCommit: early out when synchronized with parent.
     if (!isSynchronized())
         commitDesynchronized();
 
-    if (!*alive)
-        return;
     // Exo runs this through SurfaceDelegate::OnSurfaceCommit, which owns the
     // hierarchy commit above. Cutefish notifies afterwards instead, so a role
     // owner sees committed state. Handlers may destroy other observers.
     for (SurfaceObserver *observer : std::vector<SurfaceObserver *>(m_observers)) {
-        if (hasSurfaceObserver(observer))
-            observer->onSurfaceCommit(this);
+        if (!*alive)
+            return;
+        if (!hasSurfaceObserver(observer))
+            continue;
+        for (auto &[owner, install] : request.roleState) {
+            if (owner == observer && install)
+                std::exchange(install, nullptr)();
+        }
+        observer->onSurfaceCommit(this);
     }
+}
+
+void Surface::holdCommit(std::unique_ptr<CommitRequest> request)
+{
+    request->held = true;
+    for (CommitRequest::Fence &fence : request->fences) {
+        auto *notifier = new QSocketNotifier(fence.fd.get(), QSocketNotifier::Read);
+        fence.notifier.reset(notifier);
+        QObject::connect(notifier, &QSocketNotifier::activated, notifier,
+                         [notifier, alive = m_lifetime] {
+                             // Level-triggered: a signalled fence behind an
+                             // older commit would fire on every iteration.
+                             notifier->setEnabled(false);
+                             if (*alive)
+                                 (*alive)->applyReadyCommits();
+                         });
+    }
+    m_heldCommits.push_back(std::move(request));
+    ++s_heldCommits;
+}
+
+void Surface::applyReadyCommits()
+{
+    const auto alive = m_lifetime;
+    while (*alive) {
+        Surface *surface = rootSurface()->oldestHeldCommit();
+        if (!surface || !surface->m_heldCommits.front()->isReady())
+            return;
+        std::unique_ptr<CommitRequest> request = std::move(surface->m_heldCommits.front());
+        surface->m_heldCommits.pop_front();
+        --s_heldCommits;
+        surface->applyCommit(*request);
+    }
+}
+
+void Surface::requestDesynchronizedCommit()
+{
+    if (s_heldCommits == 0 || !rootSurface()->oldestHeldCommit()) {
+        commitDesynchronized();
+        return;
+    }
+    auto request = std::make_unique<CommitRequest>();
+    request->sequence = ++s_commitSequence;
+    request->desynchronize = true;
+    holdCommit(std::move(request));
+}
+
+Surface *Surface::rootSurface()
+{
+    Surface *root = this;
+    while (Surface *parent = root->parentSurface())
+        root = parent;
+    return root;
+}
+
+Surface *Surface::oldestHeldCommit()
+{
+    Surface *oldest = m_heldCommits.empty() ? nullptr : this;
+    for (const auto &entry : m_pendingSubSurfaces) {
+        if (entry.surface == this)
+            continue;
+        Surface *candidate = entry.surface->oldestHeldCommit();
+        if (candidate
+            && (!oldest
+                || candidate->m_heldCommits.front()->sequence
+                        < oldest->m_heldCommits.front()->sequence))
+            oldest = candidate;
+    }
+    return oldest;
 }
 
 void Surface::applyCachedState()
@@ -417,6 +645,11 @@ void Surface::removeSurfaceObserver(SurfaceObserver *observer)
 {
     m_observers.erase(std::remove(m_observers.begin(), m_observers.end(), observer),
                       m_observers.end());
+    for (const auto &request : m_heldCommits) {
+        std::erase_if(request->roleState, [observer](const auto &entry) {
+            return entry.first == observer;
+        });
+    }
 }
 
 bool Surface::hasSurfaceObserver(const SurfaceObserver *observer) const
@@ -487,10 +720,7 @@ void Surface::commitSurfaceHierarchy(bool synchronized)
 
 void Surface::commitDesynchronized()
 {
-    Surface *root = this;
-    while (Surface *parent = root->parentSurface())
-        root = parent;
-    root->commitSurfaceHierarchy(false);
+    rootSurface()->commitSurfaceHierarchy(false);
 }
 
 bool Surface::isSynchronized() const
@@ -561,6 +791,16 @@ void Surface::removeSubSurface(Surface *child)
     updateSubSurfaceStacking();
     if (m_compositor)
         m_compositor->scheduleRepaint();
+    // Either side may have waited only behind the other's commits. Not from
+    // here: this runs inside protocol requests and surface destruction.
+    if (s_heldCommits) {
+        for (Surface *surface : {this, child}) {
+            QTimer::singleShot(0, [alive = surface->lifetimeToken()] {
+                if (*alive)
+                    (*alive)->applyReadyCommits();
+            });
+        }
+    }
 }
 
 void Surface::setSubSurfacePosition(Surface *child, const QPoint &position)

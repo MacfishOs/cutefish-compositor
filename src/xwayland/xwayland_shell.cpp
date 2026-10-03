@@ -54,19 +54,22 @@ struct XwaylandShell::Role : compositor::SurfaceObserver {
         surface = nullptr;
     }
 
-    void onSurfaceCommit(compositor::Surface*) override
+    std::function<void()> onSurfaceCommitRequested(compositor::Surface*) override
     {
         if (!pending)
-            return;
+            return {};
         const auto serial = std::exchange(pending, 0);
         if (committed) {
             if (resource)
                 wl_resource_post_error(resource, XWAYLAND_SURFACE_V1_ERROR_ALREADY_ASSOCIATED,
                                        "surface association already committed");
-            return;
+            return {};
         }
         committed = true;
-        association->addSurface(serial, surface);
+        return [this, serial] {
+            if (surface)
+                association->addSurface(serial, surface);
+        };
     }
 
     static void setSerial(wl_client*, wl_resource* resource, uint32_t low, uint32_t high)

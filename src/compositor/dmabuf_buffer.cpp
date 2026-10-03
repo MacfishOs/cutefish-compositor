@@ -10,6 +10,11 @@
 
 #include "compositor/dmabuf_buffer.h"
 
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
+
+#include <cerrno>
+
 #include "core/logging.h"
 
 namespace cutefish::compositor {
@@ -49,6 +54,22 @@ DmaBufBuffer::~DmaBufBuffer() = default;
 int DmaBufBuffer::stride() const
 {
     return m_attributes.planes.empty() ? 0 : static_cast<int>(m_attributes.planes[0].stride);
+}
+
+std::vector<render::SyncFence> DmaBufBuffer::implicitFences() const
+{
+    std::vector<render::SyncFence> fences;
+    for (const render::DmaBufPlane &plane : m_attributes.planes) {
+        // READ asks for the writers a reader has to wait for.
+        dma_buf_export_sync_file request = {.flags = DMA_BUF_SYNC_READ, .fd = -1};
+        int result;
+        do {
+            result = ::ioctl(plane.fd.get(), DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &request);
+        } while (result != 0 && (errno == EINTR || errno == EAGAIN));
+        if (result == 0)
+            fences.emplace_back(ScopedFd(request.fd));
+    }
+    return fences;
 }
 
 } // namespace cutefish::compositor

@@ -108,12 +108,12 @@ public:
         unregister();
     }
 
-    // Checked before every commit that carries state from this object.
-    void onSurfaceCommit(compositor::Surface* surface) override
+    // Checked when the client commits, before the commit waits for its point.
+    std::function<void()> onSurfaceCommitRequested(compositor::Surface* surface) override
     {
-        if (surface != m_surface)
-            return;
-        validateCommit();
+        if (surface == m_surface)
+            validateCommit();
+        return {};
     }
 
     compositor::Surface* surface() const { return m_surface; }
@@ -126,7 +126,8 @@ public:
         m_acquireSyncobj = syncobj;
         m_acquirePoint = point;
         m_hasAcquire = true;
-        applyAcquire();
+        if (m_surface)
+            m_surface->setAcquirePoint(syncobj, point);
     }
 
     void setReleasePoint(const std::shared_ptr<render::DrmSyncobj>& syncobj, uint64_t point)
@@ -148,15 +149,6 @@ public:
     const std::shared_ptr<render::DrmSyncobj>& releaseSyncobj() const { return m_releaseSyncobj; }
 
 private:
-    // Exports the acquire point now, so the fence travels with the commit even
-    // if the client destroys its timeline immediately afterwards.
-    void applyAcquire()
-    {
-        if (!m_surface || !m_acquireSyncobj)
-            return;
-        m_surface->setAcquireFence(m_acquireSyncobj->exportFence(m_acquirePoint));
-    }
-
     void validateCommit()
     {
         SyncobjCommit commit;

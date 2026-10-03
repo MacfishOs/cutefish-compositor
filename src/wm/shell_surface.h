@@ -259,6 +259,7 @@ public:
 
     void onSurfaceDestroying(compositor::Surface *surface) override;
     void onSurfaceCommit(compositor::Surface *surface) override;
+    std::function<void()> onSurfaceCommitRequested(compositor::Surface *surface) override;
 
     // --- WindowObserver ---
 
@@ -301,8 +302,22 @@ private:
         ConfigureState state;
     };
 
+    // Double-buffered state, taken when the client commits and installed when
+    // that commit applies, which may be later.
+    struct CommittedState {
+        QRect geometry;
+        QSize minimumSize;
+        QSize maximumSize;
+        // The accumulated offset of every configure acknowledged before the
+        // commit, and the resize direction that came with the newest of them.
+        QPoint originOffset;
+        ResizeEdge resizeEdge = ResizeEdge::None;
+        std::optional<ConfigureState> acknowledgedConfigure;
+        bool decorationRemoval = false;
+    };
+
     void configure();
-    void applyPendingState();
+    void applyCommittedState(const CommittedState &state);
     void mapToplevel();
     void unmapToplevel();
     void mapPopup();
@@ -395,6 +410,9 @@ private:
 
     bool m_hasDecorationObject = false;
     bool m_decorationRemovalPending = false;
+    // Installed by a commit about to apply; unset for a commit sent before
+    // the role existed.
+    std::optional<CommittedState> m_committed;
     std::optional<DecorationMode> m_requestedMode;
     bool m_hasDialogObject = false;
     bool m_modal = false;

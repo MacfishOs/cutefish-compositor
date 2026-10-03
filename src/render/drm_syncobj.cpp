@@ -4,6 +4,7 @@
 
 #include "render/drm_syncobj.h"
 
+#include <sys/eventfd.h>
 #include <xf86drm.h>
 
 #include <utility>
@@ -122,6 +123,22 @@ SyncFence DrmSyncobj::exportFence(uint64_t point, int waitMs) const
         return SyncFence();
 
     return SyncFence(ScopedFd(fenceFd));
+}
+
+ScopedFd DrmSyncobj::signalEventFd(uint64_t point) const
+{
+    if (!m_handle)
+        return ScopedFd();
+
+    ScopedFd eventFd(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
+    if (!eventFd.isValid())
+        return ScopedFd();
+
+    // Without WAIT_AVAILABLE the eventfd waits for the signal, not the submission.
+    if (drmSyncobjEventfd(m_drmFd, m_handle, point, eventFd.get(), 0) != 0)
+        return ScopedFd();
+
+    return eventFd;
 }
 
 bool DrmSyncobj::signal(uint64_t point, const SyncFence& fence)

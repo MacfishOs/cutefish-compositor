@@ -182,6 +182,7 @@ void ShellSurface::clearRole()
     // The role object took its decoration object with it, if it had one.
     m_hasDecorationObject = false;
     m_decorationRemovalPending = false;
+    m_committed.reset();
     m_requestedMode.reset();
     m_hasDialogObject = false;
     m_modal = false;
@@ -557,13 +558,16 @@ void ShellSurface::onSurfaceCommit(compositor::Surface *surface)
     if (surface != m_surface || m_role == Role::None)
         return;
 
+    if (!m_committed)
+        return;
+    const CommittedState committed = *std::exchange(m_committed, std::nullopt);
+
     // Send at most one configure for whatever this commit set in motion.
     ScopedConfigure scoped(this, false);
 
-    applyPendingState();
+    applyCommittedState(committed);
 
-    if (m_decorationRemovalPending) {
-        m_decorationRemovalPending = false;
+    if (committed.decorationRemoval) {
         if (m_window) {
             m_window->setDecorated(decorationMode() == DecorationMode::ServerSide);
             scoped.setNeedsConfigure();
@@ -611,10 +615,10 @@ void ShellSurface::onSurfaceCommit(compositor::Surface *surface)
     // Qt's render thread can attach an old-size frame after the configure ack.
     const bool resized = m_boundsTransitionOldContentSize.isEmpty()
             || surface->contentSize() != m_boundsTransitionOldContentSize;
+    const auto &ack = committed.acknowledgedConfigure;
     const bool acknowledged = !m_configureCallback
-            || (m_acknowledgedConfigure
-                && m_acknowledgedConfigure->size == m_window->contentBounds().size()
-                && m_acknowledgedConfigure->stateType == m_window->presentedStateType());
+            || (ack && ack->size == m_window->contentBounds().size()
+                && ack->stateType == m_window->presentedStateType());
     if (acknowledged && surface->lastCommitAttachedBuffer() && resized) {
         if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_window->node()))
             animation->setBoundsContentReady(true);
@@ -792,17 +796,32 @@ void ShellSurface::configure()
     }
 }
 
-void ShellSurface::applyPendingState()
+std::function<void()> ShellSurface::onSurfaceCommitRequested(compositor::Surface *surface)
 {
-    m_geometry = m_pendingGeometry;
-    m_minimumSize = m_pendingMinimumSize;
-    m_maximumSize = m_pendingMaximumSize;
+    if (surface != m_surface || m_role == Role::None)
+        return {};
+    CommittedState state {
+        .geometry = m_pendingGeometry,
+        .minimumSize = m_pendingMinimumSize,
+        .maximumSize = m_pendingMaximumSize,
+        .originOffset = std::exchange(m_pendingOriginOffset, QPoint()),
+        .resizeEdge = m_pendingResizeEdge,
+        .acknowledgedConfigure = m_acknowledgedConfigure,
+        .decorationRemoval = std::exchange(m_decorationRemovalPending, false),
+    };
+    // The surface drops this when the observer goes away.
+    return [this, state = std::move(state)] {
+        m_committed = state;
+    };
+}
 
-    // The accumulated offset of every configure acknowledged since the last
-    // commit, and the resize direction that came with the newest of them.
-    m_originOffset += m_pendingOriginOffset;
-    m_pendingOriginOffset = QPoint();
-    m_resizeEdge = m_pendingResizeEdge;
+void ShellSurface::applyCommittedState(const CommittedState &state)
+{
+    m_geometry = state.geometry;
+    m_minimumSize = state.minimumSize;
+    m_maximumSize = state.maximumSize;
+    m_originOffset += state.originOffset;
+    m_resizeEdge = state.resizeEdge;
 
     updateSizeConstraints();
 }

@@ -43,6 +43,10 @@ public:
     // "synchronize some other way" rather than "already signalled".
     SyncFence exportFence(uint64_t point, int waitMs = 0) const;
 
+    // An eventfd that turns readable once `point` signals, also when the
+    // client submits its fence only later. Invalid when the kernel cannot.
+    ScopedFd signalEventFd(uint64_t point) const;
+
     // Signals `point`, immediately when `fence` is invalid, otherwise when
     // `fence` signals. Returns false if the kernel rejected it.
     bool signal(uint64_t point, const SyncFence& fence);

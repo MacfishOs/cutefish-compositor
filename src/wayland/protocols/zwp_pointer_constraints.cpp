@@ -100,13 +100,22 @@ public:
         m_surface = nullptr;
     }
 
+    // Both are double-buffered state of the surface.
+    std::function<void()> onSurfaceCommitRequested(compositor::Surface *) override
+    {
+        if (!m_pendingRegion && !m_pendingHint)
+            return {};
+        return [this, region = std::exchange(m_pendingRegion, std::nullopt),
+                hint = std::exchange(m_pendingHint, std::nullopt)] {
+            if (region)
+                m_region = *region;
+            if (hint)
+                m_hint = hint;
+        };
+    }
+
     void onSurfaceCommit(compositor::Surface *) override
     {
-        // Both are double-buffered state of the surface.
-        if (m_pendingRegion)
-            m_region = *std::exchange(m_pendingRegion, std::nullopt);
-        if (m_pendingHint)
-            m_hint = std::exchange(m_pendingHint, std::nullopt);
         m_seat->pointerConstraints()->update();
     }
 

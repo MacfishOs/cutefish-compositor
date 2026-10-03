@@ -103,6 +103,11 @@ public:
     // compositor is done with them. Shm contents are copied out on the CPU.
     virtual bool supportsExplicitSync() const { return false; }
 
+    // The fences of client GPU work still writing the contents, as the kernel
+    // tracks them on the storage. Empty when nothing is pending or the kernel
+    // cannot tell; a commit is held until these signal.
+    virtual std::vector<render::SyncFence> implicitFences() const { return {}; }
+
     // Sends wl_buffer.release. Set by the protocol layer, which owns the buffer
     // through the wl_buffer resource.
     void setReleaseCallback(std::function<void()> callback);

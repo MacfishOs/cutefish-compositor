@@ -12,6 +12,7 @@
 #define CUTEFISH_COMPOSITOR_SURFACE_H_
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <list>
 #include <map>
@@ -33,8 +34,9 @@
 
 namespace cutefish::render {
 
+class DrmSyncobj;
 class Renderer;
-}
+} // namespace cutefish::render
 
 namespace cutefish::scene {
 
@@ -75,6 +77,9 @@ using FrameCallback = std::function<void(std::optional<uint32_t> presentationTim
 // State is committed in three steps: requests update pending state, commit()
 // transfers pending to cached state, and commitSurfaceHierarchy() applies cached
 // state to current state. Synchronized subsurfaces wait for their parent here.
+//
+// A commit whose buffer the client's GPU is still writing is held, and with it
+// every later commit in the same surface tree, until the buffer is ready.
 //
 // Some fields persist between commits (which buffer is attached, the regions,
 // scale and transform) and some do not (damage, frame callbacks). Attachment
@@ -181,17 +186,22 @@ public:
     void setClientScale(double scale);
     void setBufferTransform(Transform transform);
 
-    // Explicit synchronization, from wp_linux_drm_syncobj_surface_v1. Both are
+    // Explicit synchronization, from wp_linux_drm_syncobj_surface_v1. All are
     // double-buffered and apply to the buffer attached in the same commit; the
     // protocol layer enforces that they come in pairs with a buffer.
     void setAcquireFence(render::SyncFence fence);
+    void setAcquirePoint(std::shared_ptr<render::DrmSyncobj> timeline, uint64_t point);
     void setBufferRelease(std::shared_ptr<BufferRelease> release);
 
-    bool hasPendingAcquireFence() const { return m_pending.acquireFence.isValid(); }
+    bool hasPendingAcquireFence() const
+    {
+        return m_pending.acquireFence.isValid() || m_pending.acquireTimeline;
+    }
 
     bool hasPendingBufferRelease() const { return m_pending.release != nullptr; }
 
-    // Whether the most recent commit() carried a non-null buffer attachment.
+    // Whether the most recent commit carried a non-null buffer attachment: the
+    // one requested last, or inside onSurfaceCommit() the one being applied.
     // Explicit sync needs this and not hasContents(): a synchronized subsurface
     // commits its buffer into cached state without applying it yet.
     bool lastCommitAttachedBuffer() const { return m_lastCommitAttachedBuffer; }
@@ -202,8 +212,12 @@ public:
         return m_lastCommitBufferSupportsExplicitSync;
     }
 
-    // Caches pending state; applies it atomically if not synchronized.
+    // Caches pending state once its buffer is ready; applies it atomically if
+    // not synchronized.
     void commit();
+
+    // Commits waiting for their buffer, or behind one that is.
+    size_t heldCommitCount() const { return m_heldCommits.size(); }
 
     bool isSynchronized() const;
     Surface *parentSurface() const;
@@ -350,8 +364,18 @@ public:
 
 private:
     friend class SubSurface;
+    struct CommitRequest;
+
     void addSubSurface(Surface *child);
     void removeSubSurface(Surface *child);
+    // wl_subsurface.set_desync, in order with the tree's held commits.
+    void requestDesynchronizedCommit();
+    void applyCommit(CommitRequest &request);
+    void holdCommit(std::unique_ptr<CommitRequest> request);
+    // Applies the tree's held commits, oldest first, up to one still waiting.
+    void applyReadyCommits();
+    Surface *rootSurface();
+    Surface *oldestHeldCommit();
     void setSubSurfacePosition(Surface *child, const QPoint &position);
     bool placeSubSurface(Surface *child, Surface *reference, bool above);
     void applyCachedState();
@@ -416,9 +440,12 @@ private:
         QRegion bufferDamage;
         bool fullDamage = false;
         std::vector<FrameCallback> frameCallbacks;
-        // Not persisted between commits, and never copied: both are move-only
-        // and belong to exactly one buffer attachment.
+        // Not persisted between commits, and never copied: they belong to
+        // exactly one buffer attachment. The acquire point only lives until
+        // commit, which waits for it.
         render::SyncFence acquireFence;
+        std::shared_ptr<render::DrmSyncobj> acquireTimeline;
+        uint64_t acquirePoint = 0;
         std::shared_ptr<BufferRelease> release;
     };
 
@@ -479,6 +506,8 @@ private:
     std::vector<std::pair<Surface *, QPoint>> m_subSurfaceStack;
 
     std::vector<SurfaceObserver *> m_observers;
+
+    std::deque<std::unique_ptr<CommitRequest>> m_heldCommits;
 };
 
 } // namespace cutefish::compositor

@@ -75,7 +75,7 @@ void SubSurface::setCommitBehavior(bool synchronized)
     // cache if no ancestor still synchronizes us. Exo's setter alone doesn't
     // flush it; Cutefish has no SurfaceTreeHost to trigger that application.
     if (m_surface && !isSurfaceSynchronized())
-        m_surface->commitDesynchronized();
+        m_surface->requestDesynchronizedCommit();
 }
 
 bool SubSurface::isSurfaceSynchronized() const

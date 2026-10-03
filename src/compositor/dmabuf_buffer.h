@@ -59,6 +59,8 @@ public:
 
     bool supportsExplicitSync() const override { return true; }
 
+    std::vector<render::SyncFence> implicitFences() const override;
+
     void onScanoutAcquired() override { Buffer::onScanoutAcquired(); }
 
     void onScanoutReleased(render::SyncFence fence) override

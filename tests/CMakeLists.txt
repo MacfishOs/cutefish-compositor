@@ -170,6 +170,7 @@ cutefish_add_test(output_cursor_router_test cutefish-cursor)
 cutefish_add_test(overlay_candidate_test cutefish-scene)
 cutefish_add_test(plane_assignment_test cutefish-backend PkgConfig::Libdrm)
 cutefish_add_test(sync_fence_test cutefish-sync cutefish-compositor-core)
+cutefish_add_test(commit_readiness_test cutefish-sync cutefish-compositor-core)
 
 add_library(cutefish-fake-drm STATIC fake_drm_device.cpp fake_drm_device.h)
 target_include_directories(cutefish-fake-drm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
