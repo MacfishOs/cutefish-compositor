@@ -29,9 +29,9 @@ public:
     // a millisecond late, out of a budget of a third of a refresh.
     static constexpr Duration kWakeupSlack = std::chrono::milliseconds(1);
 
-    // KMS takes a flip whose rendering finishes this long before the vblank;
-    // amdgpu needed about 0.7 ms.
-    static constexpr Duration kLatchMargin = std::chrono::milliseconds(1);
+    // KMS takes a flip whose rendering finishes this long before the vblank's
+    // timestamp; amdgpu missed some with up to 1.4 ms to spare.
+    static constexpr Duration kLatchMargin = std::chrono::milliseconds(2);
     // How many measured frames the draw budget covers.
     static constexpr size_t kDrawTimeWindow = 60;
     // How long the slowest full repaint is remembered, so the first frame of
@@ -62,6 +62,9 @@ public:
         uint64_t completions = 0, failures = 0, staleCompletions = 0, skips = 0;
         // Frames that landed at least a refresh after the one they were aimed at.
         uint64_t missed = 0;
+        // Those begun past their draw point for demand that came late, counted
+        // apart: their lost refresh is latency, not judder.
+        uint64_t lateDemand = 0;
         std::array<uint64_t, static_cast<size_t>(Reason::Count)> reasons {};
     };
 
@@ -123,7 +126,7 @@ public:
     {
         m_period = period;
         m_drawTimes.clear();
-        m_minBudget = m_budget = period / 3;
+        m_drawnBudget = m_lateBudget = period / 3;
         m_vblank.reset();
     }
 
@@ -131,7 +134,7 @@ public:
     // timestamps: viz's estimated display draw time, a third of the period, or
     // what recent frames took from wakeup to the GPU finishing when that is
     // longer, and grown by frames that land late.
-    Duration drawBudget() const { return m_budget; }
+    Duration drawBudget() const { return std::max(m_lateBudget, m_drawnBudget); }
 
     // The longest full repaint within kFullRepaintMemory, zero without one.
     Duration fullRepaintDrawTime() const;
@@ -157,6 +160,9 @@ private:
         bool punctual = true;
         // Requested as a redraw of the whole output.
         bool fullRepaint = false;
+        // How long before its vblank it was begun, and what it took to draw.
+        Duration budget {};
+        std::optional<Duration> took;
     };
 
     void schedule();
@@ -178,9 +184,12 @@ private:
     // timestamps, and then slots only keep their own cadence.
     std::optional<Time> m_vblank;
     bool m_punctual = true;
-    Duration m_budget;
-    // What the budget returns to between frames that land late.
-    Duration m_minBudget;
+    Duration m_frameBudget {};
+    // Grown by frames that land late, and won back slowly.
+    Duration m_lateBudget;
+    // What the slowest recent frame needed; it drops as soon as that frame
+    // leaves the window.
+    Duration m_drawnBudget;
     std::deque<Duration> m_drawTimes;
     // Full repaints' wakeup-to-GPU-finished times, with when they finished.
     std::deque<std::pair<Time, Duration>> m_fullDrawTimes;

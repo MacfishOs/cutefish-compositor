@@ -424,7 +424,8 @@ TEST_F(SchedulerTest, ALateFrameDoesNotQueueTheFramesAfterIt)
     EXPECT_EQ(scheduler.state(), State::FlipPending);
     now = at(50ms);
     ASSERT_TRUE(scheduler.complete(late, at(50ms)));
-    EXPECT_EQ(scheduler.stats().missed, 1u);
+    EXPECT_EQ(scheduler.stats().missed, 0u);
+    EXPECT_EQ(scheduler.stats().lateDemand, 1u);
     // Begun late, it leaves the budget alone, and the next frame is drawn
     // for the slot it landed in.
     EXPECT_EQ(scheduler.drawBudget(), budget);
@@ -434,7 +435,8 @@ TEST_F(SchedulerTest, ALateFrameDoesNotQueueTheFramesAfterIt)
     now = at(60ms);
     ASSERT_TRUE(scheduler.complete(pending, at(60ms)));
     pending = 0;
-    EXPECT_EQ(scheduler.stats().missed, 1u);
+    EXPECT_EQ(scheduler.stats().missed, 0u);
+    EXPECT_EQ(scheduler.stats().lateDemand, 1u);
 }
 
 TEST_F(SchedulerTest, AFullRepaintFromIdlePastItsDrawPointBeginsAtTheNextOne)
@@ -448,15 +450,16 @@ TEST_F(SchedulerTest, AFullRepaintFromIdlePastItsDrawPointBeginsAtTheNextOne)
     ASSERT_TRUE(scheduler.complete(pending, now));
     pending = 0;
     const auto slot = now + 1s;
+    const auto budget = 6ms + OutputScheduler::kLatchMargin;
 
     // Begun at once it would miss the vblank and show a stale slot.
     now = slot + 5ms;
     scheduler.request(Reason::Scene, true);
-    EXPECT_EQ(*scheduler.deadline(), slot + 13ms);
+    EXPECT_EQ(*scheduler.deadline(), slot + 20ms - budget);
     now = *scheduler.deadline();
     submit();
     EXPECT_EQ(scheduler.frameTime(), slot + 10ms);
-    EXPECT_EQ(scheduler.sampleTime(), slot + 13ms);
+    EXPECT_EQ(scheduler.sampleTime(), slot + 20ms - budget);
     now = scheduler.frameTime() + 10ms;
     ASSERT_TRUE(scheduler.complete(pending, now));
     pending = 0;
@@ -466,7 +469,7 @@ TEST_F(SchedulerTest, AFullRepaintFromIdlePastItsDrawPointBeginsAtTheNextOne)
     scheduler.request(Reason::Scene);
     EXPECT_EQ(*scheduler.deadline(), now);
     scheduler.request(Reason::Scene, true);
-    EXPECT_EQ(*scheduler.deadline(), now + 8ms);
+    EXPECT_EQ(*scheduler.deadline(), now + 15ms - budget);
 }
 
 TEST_F(SchedulerTest, AFullRepaintAfterCheapFramesIsBegunAsEarlyAsTheLastOne)
@@ -536,9 +539,12 @@ TEST_F(SchedulerTest, FramesSlowerThanAThirdOfARefreshAreBegunInTime)
     scheduler.request(Reason::Scene);
     EXPECT_EQ(*scheduler.deadline(), scheduler.frameTime() + 20ms - budget);
 
-    // Once a window of fast frames has gone by, the budget works its way back.
-    for (size_t i = 0; i < OutputScheduler::kDrawTimeWindow + 200; ++i)
+    // It holds while the slow frame is in the window, and is back as soon as
+    // the frame has left it.
+    for (size_t i = 0; i < OutputScheduler::kDrawTimeWindow - 1; ++i)
         frame(1ms);
+    EXPECT_EQ(scheduler.drawBudget(), budget);
+    frame(1ms);
     EXPECT_EQ(scheduler.drawBudget(), OutputScheduler::Duration(10ms) / 3);
     EXPECT_EQ(scheduler.stats().missed, 0u);
 }
@@ -593,6 +599,41 @@ TEST_F(SchedulerTest, LateStampedFlipsBeginFramesEarlierThenWinTheTimeBack)
     scheduler.suspend();
     scheduler.resume();
     EXPECT_EQ(*scheduler.deadline(), now);
+}
+
+TEST_F(SchedulerTest, AFrameLateForItsOwnDrawTimeDoesNotDoubleTheBudget)
+{
+    start();
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline();
+    submit();
+    now = scheduler.frameTime() + 10ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+    // Begun a third of the refresh before its vblank, it takes 5 ms and lands
+    // a refresh late: the budget becomes what it needed, not the whole period.
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline();
+    const auto began = now;
+    submit();
+    scheduler.drawn(pending, began + 5ms);
+    now = scheduler.frameTime() + 20ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+    EXPECT_EQ(scheduler.stats().missed, 1u);
+    EXPECT_EQ(scheduler.drawBudget(), 5ms + OutputScheduler::kLatchMargin);
+
+    // One late although it finished in time still doubles it, up to the period.
+    scheduler.request(Reason::Scene);
+    now = *scheduler.deadline();
+    const auto next = now;
+    submit();
+    scheduler.drawn(pending, next + 1ms);
+    now = scheduler.frameTime() + 20ms;
+    ASSERT_TRUE(scheduler.complete(pending, now));
+    pending = 0;
+    EXPECT_EQ(scheduler.stats().missed, 2u);
+    EXPECT_EQ(scheduler.drawBudget(), 10ms);
 }
 
 // With two frames in flight and the budget at a whole period, each frame is

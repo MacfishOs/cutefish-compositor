@@ -12,8 +12,8 @@ namespace cutefish::render {
 OutputScheduler::OutputScheduler(Duration period, std::function<Time()> now)
     : m_period(period)
     , m_now(std::move(now))
-    , m_budget(period / 3)
-    , m_minBudget(period / 3)
+    , m_lateBudget(period / 3)
+    , m_drawnBudget(period / 3)
 {
     if (period <= Duration::zero())
         throw std::invalid_argument("nonpositive output period");
@@ -30,11 +30,11 @@ OutputScheduler::Duration OutputScheduler::budget() const
     // needed, not as late as they allowed: its first frame would miss, and
     // the doubling after that comes a refresh too late.
     if (!m_fullDemand)
-        return m_budget;
+        return drawBudget();
     const Duration slowest = fullRepaintDrawTime();
     if (slowest == Duration::zero())
-        return m_budget;
-    return std::max(m_budget, std::clamp(slowest + kLatchMargin, m_period / 3, m_period));
+        return drawBudget();
+    return std::max(drawBudget(), std::clamp(slowest + kLatchMargin, m_period / 3, m_period));
 }
 
 OutputScheduler::Duration OutputScheduler::fullRepaintDrawTime() const
@@ -124,7 +124,7 @@ void OutputScheduler::suspend()
     m_drawTimes.clear();
     m_fullDrawTimes.clear();
     m_fullDemand = m_fullFrame = false;
-    m_minBudget = m_budget = m_period / 3;
+    m_drawnBudget = m_lateBudget = m_period / 3;
 }
 
 std::optional<OutputScheduler::Time> OutputScheduler::deadline() const
@@ -159,6 +159,7 @@ uint64_t OutputScheduler::begin()
     // Demand drawn at once, early in a slot, shows the moment it was drawn.
     m_sampleTime = std::min(drawPoint(m_frameTime), std::max(now, m_deadline));
     m_punctual = !m_vblank || now <= drawPoint(m_frameTime) + kWakeupSlack;
+    m_frameBudget = budget();
     m_fullFrame = m_fullDemand;
     m_fullDemand = false;
     m_next = m_frameTime + m_period;
@@ -171,7 +172,7 @@ bool OutputScheduler::submitted(uint64_t frame)
         return false;
     m_consumed = m_snapshot; // Re-entrant requests after begin remain outstanding.
     m_pending.push_back({frame, m_frameTime + m_period, !m_pending.empty(), m_began, m_punctual,
-                         m_fullFrame});
+                         m_fullFrame, m_frameBudget});
     m_frame = 0;
     m_failures = 0;
     ++m_stats.submissions;
@@ -200,17 +201,24 @@ bool OutputScheduler::complete(uint64_t frame, std::optional<Time> presented)
         expected = std::max(expected, *m_landed + m_period);
     const bool missed = landed >= expected + m_period / 2;
     m_landed = landed;
-    if (missed)
+    if (missed && m_pending.front().punctual)
         ++m_stats.missed;
+    else if (missed)
+        ++m_stats.lateDemand;
     if (presented && *presented <= now) {
         // Frames drawn to a stamped flip are begun a budget before the vblank;
         // a late one moves them earlier, down to the vblank itself, and on-time
         // ones win the time back slowly so a steady load does not stutter. One
-        // begun past its draw point, as late demand is, says nothing about it.
-        if (missed && m_pending.front().punctual)
-            m_budget = std::min(m_period, m_budget * 2);
-        else if (m_budget > m_minBudget)
-            m_budget = std::max(m_minBudget, m_budget - m_period / 300);
+        // begun past its draw point, as late demand is, says nothing about it,
+        // nor does one that took longer than it was given: drawn() has already
+        // moved the draw point early enough for it, and doubling on top kept
+        // frames begun near the vblank for seconds after a single slow one.
+        const Pending &front = m_pending.front();
+        const bool overran = front.took && *front.took + kLatchMargin > front.budget;
+        if (missed && front.punctual && !overran)
+            m_lateBudget = std::min(m_period, drawBudget() * 2);
+        else if (m_lateBudget > m_period / 3)
+            m_lateBudget = std::max(m_period / 3, m_lateBudget - m_period / 300);
         // Lay the slots on the display's own vblank, as viz feeds presentation
         // feedback back into its DelayBasedTimeSource timebase.
         m_vblank = *presented;
@@ -243,6 +251,7 @@ void OutputScheduler::drawn(uint64_t frame, Time done)
     });
     if (it == m_pending.end() || done < it->began)
         return;
+    it->took = done - it->began;
     // Past viz's fixed third: a GPU clocked down for a light load takes longer
     // than that over a full-screen frame, and every frame it overran was a
     // refresh lost. The draw point moves early enough for the slowest recent one.
@@ -255,8 +264,7 @@ void OutputScheduler::drawn(uint64_t frame, Time done)
             m_fullDrawTimes.pop_front();
     }
     const Duration slowest = *std::max_element(m_drawTimes.begin(), m_drawTimes.end());
-    m_minBudget = std::clamp(slowest + kLatchMargin, m_period / 3, m_period);
-    m_budget = std::max(m_budget, m_minBudget);
+    m_drawnBudget = std::clamp(slowest + kLatchMargin, m_period / 3, m_period);
 }
 
 void OutputScheduler::skipped(uint64_t frame)

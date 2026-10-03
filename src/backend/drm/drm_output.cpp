@@ -1233,8 +1233,9 @@ QString DrmOutput::statsLine() const
         << std::chrono::duration_cast<std::chrono::nanoseconds>(m_scheduler.period()).count()
         << "renders" << m_frameCount << "KMS-commits" << m_commits << "normal-commits"
         << m_flipCommits << "unique-completions" << m_completions << "missed-slots" << s.missed
-        << "requests" << s.requests << "coalesced" << s.coalesced << "failures" << s.failures
-        << "stale-completions" << s.staleCompletions << "skipped" << s.skips
+        << "late-demand" << s.lateDemand << "requests" << s.requests << "coalesced"
+        << s.coalesced << "failures" << s.failures << "stale-completions" << s.staleCompletions
+        << "skipped" << s.skips
         << "direct-scanout-frames" << m_directScanoutFrames << "overlay-frames" << m_overlayFrames
         << "plane-test-failures" << (m_scanout ? m_scanout->testFailures() : 0)
         << "scanout-import-failures" << (m_scanout ? m_scanout->importFailures() : 0)
