@@ -248,6 +248,8 @@ public:
         // lit while the pointer is on the button.
         bool closeShown = false;
         bool closeHovered = false;
+        // Stays with the desk as the bar changes around it.
+        quintptr id = 0;
     };
 
     struct Bar {
@@ -275,6 +277,18 @@ public:
     // previews than this in one frame.
     static constexpr double kPreviewRefreshMs = 500;
     static constexpr int kPreviewsPerFrame = 1;
+
+    // Ash's desk_mini_view_animations: the rest move over to their new
+    // places, a new desk scales up from its top centre and fades in, a removed
+    // one fades out where it was. The new-desk button moves, comes and goes
+    // the same way.
+    static constexpr double kShiftDurationMs = 150;
+    static constexpr double kAddScaleDelayMs = 50;
+    static constexpr double kAddScaleDurationMs = 150;
+    static constexpr double kAddInitialScale = 0.1;
+    static constexpr double kAddFadeDelayMs = 100;
+    static constexpr double kAddFadeDurationMs = 100;
+    static constexpr double kRemoveFadeDurationMs = 200;
 
     explicit OverviewDeskBarNode(const OverviewNode *overview);
 
@@ -306,17 +320,56 @@ private:
         bool stale = true;
     };
 
-    void renderBar(render::Renderer &renderer, const Bar &bar, double progress,
-                   double now) const;
+    // How a preview or the new-desk button heads for where the bar puts it.
+    struct Placement {
+        QRectF from;
+        std::optional<motion::Tween> shift;
+        std::optional<motion::Tween> scale;
+        std::optional<motion::Tween> fade;
+
+        static Placement appearing(double now);
+        QRectF rect(const QRectF &to, double now) const;
+        double scaleAt(double now) const { return scale ? scale->value(now) : 1; }
+        float opacity(double now) const { return fade ? float(fade->value(now)) : 1.0f; }
+        bool isMoving(double now) const;
+        void moveTo(const QRectF &oldTo, const QRectF &to, double now);
+    };
+
+    struct BarMotion {
+        std::map<quintptr, Placement> desks;
+        Placement newDesk;
+    };
+
+    // A removed desk, or the new-desk button gone, fading out where it was.
+    struct Leaving {
+        Bar bar;
+        std::optional<Desk> desk;
+        QRectF rect;
+        double scale = 1;
+        std::unique_ptr<render::Texture> preview;
+        motion::Tween fade;
+    };
+
+    void renderBar(render::Renderer &renderer, const Bar &bar, const BarMotion *motion,
+                   double progress, double now) const;
+    // `rect` is where the desk sits, its preview scaled by `scale` from the
+    // top centre.
+    void renderDesk(render::Renderer &renderer, const Desk &desk, const QRectF &rect,
+                    double scale, render::Texture *preview, float opacity) const;
+    void renderNewDesk(render::Renderer &renderer, const QRectF &rect, bool highlighted,
+                       float opacity) const;
     void updatePreview(render::Renderer &renderer, const Bar &bar, int desk, double now) const;
 
     const OverviewNode *m_overview = nullptr;
     OverviewTextPainter m_textPainter;
     std::vector<Bar> m_bars;
+    // One for each bar.
+    std::vector<BarMotion> m_motions;
+    mutable std::vector<Leaving> m_leaving;
     std::vector<const Node *> m_backdrop;
     std::vector<DeskContent> m_desks;
-    // Keyed by the output's bounds and the desk.
-    mutable std::map<std::pair<QString, int>, Preview> m_previews;
+    // Keyed by the output's bounds and the desk's id.
+    mutable std::map<std::pair<QString, quintptr>, Preview> m_previews;
     mutable int m_previewsLeft = 0;
     mutable OverviewChromeCache m_chromeCache;
 };

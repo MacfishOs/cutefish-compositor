@@ -57,6 +57,18 @@ public:
     QList<render::Texture *> trilinear;
 
     void enableTrilinearFiltering(render::Texture *texture) override { trilinear.append(texture); }
+
+    struct Outline {
+        QRectF bounds;
+        float alpha = 0;
+    };
+    QList<Outline> outlines;
+
+    void drawRoundedOutline(const render::RoundedShape &shape, const render::Color &color,
+                            qreal) override
+    {
+        outlines.append({shape.bounds, color.a});
+    }
 };
 
 constexpr QRect kViewport(0, 0, 1000, 800);
@@ -110,6 +122,7 @@ struct Fixture {
     void paint()
     {
         renderer.calls.clear();
+        renderer.outlines.clear();
         renderer.setOutputContext({QStringLiteral("out"), kViewport, kViewport.size(), 1, 0, 0, {}});
         renderer.frameTime = double(now);
         container->render(renderer);
@@ -475,4 +488,111 @@ TEST(OverviewNode, ADraggedWindowIsDrawnOverTheDeskBar)
                      coverage.size() * scale),
               targets[0]);
     EXPECT_EQ(QStringLiteral("texture"), f.renderer.calls.last().kind);
+}
+
+namespace {
+
+using Bar = scene::OverviewDeskBarNode::Bar;
+using DeskBar = scene::OverviewDeskBarNode;
+
+// The outline of an inactive desk preview, drawn on its body.
+constexpr float kOutlineAlpha = 0.22f;
+
+DeskBar::Desk barDesk(quintptr id, double x)
+{
+    DeskBar::Desk desk;
+    desk.id = id;
+    desk.bounds = QRectF(x, 20, 100, 60);
+    desk.name = QStringLiteral("Desk %1").arg(id);
+    return desk;
+}
+
+Bar bar(std::vector<DeskBar::Desk> desks, double newDeskX)
+{
+    Bar bar;
+    bar.output = kViewport;
+    bar.bounds = QRectF(0, 0, 1000, 100);
+    bar.desks = std::move(desks);
+    bar.newDesk = QRectF(newDeskX, 20, 50, 60);
+    return bar;
+}
+
+} // namespace
+
+TEST(OverviewNode, ABarPutUpAnewStandsWhereItIsPut)
+{
+    Fixture f;
+    auto *deskBar = static_cast<DeskBar *>(
+            f.container->addChild(std::make_unique<DeskBar>(f.node)));
+    f.node->jumpTo(1);
+    deskBar->setBars({bar({barDesk(1, 340), barDesk(2, 450)}, 560)});
+    f.paint();
+    ASSERT_EQ(2, f.renderer.outlines.size());
+    EXPECT_EQ(QRectF(340, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(QRectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
+    EXPECT_FLOAT_EQ(kOutlineAlpha, f.renderer.outlines[1].alpha);
+}
+
+TEST(OverviewNode, ANewDeskScalesUpAndFadesInWhileTheRestMoveOver)
+{
+    Fixture f;
+    auto *deskBar = static_cast<DeskBar *>(
+            f.container->addChild(std::make_unique<DeskBar>(f.node)));
+    f.node->jumpTo(1);
+    deskBar->setBars({bar({barDesk(1, 400)}, 510)});
+    f.paint();
+    deskBar->setBars({bar({barDesk(1, 340), barDesk(2, 450)}, 560)});
+
+    // The new desk waits out its fade's delay; the old one sets off from
+    // where it was.
+    f.paint();
+    ASSERT_EQ(1, f.renderer.outlines.size());
+    EXPECT_EQ(QRectF(400, 20, 100, 60), f.renderer.outlines[0].bounds);
+
+    f.now += 125;
+    f.paint();
+    ASSERT_EQ(2, f.renderer.outlines.size());
+    const QRectF moving = f.renderer.outlines[0].bounds;
+    EXPECT_LT(340, moving.x());
+    EXPECT_GT(400, moving.x());
+    EXPECT_EQ(QSizeF(100, 60), moving.size());
+    // Scaled about the middle of its top edge, partly faded in.
+    const QRectF growing = f.renderer.outlines[1].bounds;
+    EXPECT_EQ(20, growing.top());
+    EXPECT_NEAR(500, growing.center().x(), 0.5);
+    EXPECT_GT(100, growing.width());
+    EXPECT_LT(10, growing.width());
+    EXPECT_NEAR(kOutlineAlpha * 0.25f, f.renderer.outlines[1].alpha, 0.01f);
+
+    f.now += kSettleMs;
+    f.paint();
+    ASSERT_EQ(2, f.renderer.outlines.size());
+    EXPECT_EQ(QRectF(340, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(QRectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
+    EXPECT_FLOAT_EQ(kOutlineAlpha, f.renderer.outlines[1].alpha);
+}
+
+TEST(OverviewNode, ARemovedDeskFadesOutWhereItWasUnderTheRest)
+{
+    Fixture f;
+    auto *deskBar = static_cast<DeskBar *>(
+            f.container->addChild(std::make_unique<DeskBar>(f.node)));
+    f.node->jumpTo(1);
+    deskBar->setBars({bar({barDesk(1, 340), barDesk(2, 450)}, 560)});
+    f.paint();
+    deskBar->setBars({bar({barDesk(1, 400)}, 510)});
+
+    f.now += 100;
+    f.paint();
+    ASSERT_EQ(2, f.renderer.outlines.size());
+    EXPECT_EQ(QRectF(450, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_GT(kOutlineAlpha, f.renderer.outlines[0].alpha);
+    EXPECT_LT(0, f.renderer.outlines[0].alpha);
+    EXPECT_LT(340, f.renderer.outlines[1].bounds.x());
+    EXPECT_GT(400, f.renderer.outlines[1].bounds.x());
+
+    f.now += kSettleMs;
+    f.paint();
+    ASSERT_EQ(1, f.renderer.outlines.size());
+    EXPECT_EQ(QRectF(400, 20, 100, 60), f.renderer.outlines[0].bounds);
 }

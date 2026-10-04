@@ -44,6 +44,7 @@ constexpr double kPlusSize = 14;
 // draws nothing there.
 constexpr int kShadowMargin = 64;
 constexpr size_t kCacheLimit = 32;
+constexpr motion::TimingCurve kLinear {0, 0, 1, 1};
 
 double snap(double value, double scale)
 {
@@ -112,7 +113,7 @@ QRect viewportOf(const render::Renderer &renderer, const Node &node)
     return viewport.isEmpty() ? node.absoluteGeometry() : viewport;
 }
 
-std::pair<QString, int> previewKey(const OverviewDeskBarNode::Bar &bar, int desk)
+std::pair<QString, quintptr> previewKey(const OverviewDeskBarNode::Bar &bar, quintptr desk)
 {
     return {QStringLiteral("%1,%2,%3,%4")
                     .arg(bar.output.x())
@@ -120,6 +121,34 @@ std::pair<QString, int> previewKey(const OverviewDeskBarNode::Bar &bar, int desk
                     .arg(bar.output.width())
                     .arg(bar.output.height()),
             desk};
+}
+
+std::vector<OverviewDeskBarNode::Desk>::const_iterator
+findDesk(const std::vector<OverviewDeskBarNode::Desk> &desks, quintptr id)
+{
+    return std::find_if(desks.begin(), desks.end(), [id](const OverviewDeskBarNode::Desk &desk) {
+        return desk.id == id;
+    });
+}
+
+// `rect` rounded relative to `rest`, so a moving one lands on the pixels it
+// rests on rather than a pixel late.
+QRectF snappedFrom(const QRectF &rect, const QRectF &rest, double scale)
+{
+    const QRectF base = snapped(rest, scale);
+    return QRectF(base.x() + snap(rect.x() - rest.x(), scale),
+                  base.y() + snap(rect.y() - rest.y(), scale),
+                  base.width() + snap(rect.width() - rest.width(), scale),
+                  base.height() + snap(rect.height() - rest.height(), scale));
+}
+
+// `rect` scaled by `scale` about the centre of its top edge.
+QRectF scaledFromTop(const QRectF &rect, double scale)
+{
+    if (scale == 1)
+        return rect;
+    return QRectF(rect.center().x() - rect.width() * scale / 2, rect.top(), rect.width() * scale,
+                  rect.height() * scale);
 }
 
 void fillRounded(render::Renderer &renderer, const QRectF &rect, qreal radius,
@@ -684,9 +713,102 @@ OverviewDeskBarNode::OverviewDeskBarNode(const OverviewNode *overview)
 {
 }
 
+OverviewDeskBarNode::Placement OverviewDeskBarNode::Placement::appearing(double now)
+{
+    const double delayScale = motion::durationScale();
+    Placement placement;
+    placement.scale = motion::Tween(now + kAddScaleDelayMs * delayScale, kAddInitialScale, 1,
+                                    kAddScaleDurationMs);
+    placement.fade = motion::Tween(now + kAddFadeDelayMs * delayScale, 0, 1, kAddFadeDurationMs,
+                                   0, kLinear);
+    return placement;
+}
+
+QRectF OverviewDeskBarNode::Placement::rect(const QRectF &to, double now) const
+{
+    return shift ? lerp(from, to, shift->value(now)) : to;
+}
+
+bool OverviewDeskBarNode::Placement::isMoving(double now) const
+{
+    return (shift && !shift->isFinished(now)) || (scale && !scale->isFinished(now))
+            || (fade && !fade->isFinished(now));
+}
+
+void OverviewDeskBarNode::Placement::moveTo(const QRectF &oldTo, const QRectF &to, double now)
+{
+    if (oldTo == to)
+        return;
+    from = rect(oldTo, now);
+    shift = motion::Tween(now, 0, 1, kShiftDurationMs);
+}
+
 void OverviewDeskBarNode::setBars(std::vector<Bar> bars)
 {
+    const double now = m_overview->clockTime();
+    std::vector<BarMotion> motions(bars.size());
+    for (size_t index = 0; index < bars.size(); ++index) {
+        const Bar &bar = bars[index];
+        const auto old = std::find_if(m_bars.begin(), m_bars.end(), [&](const Bar &other) {
+            return other.output == bar.output;
+        });
+        // A bar new to its output, as the overview comes in or the output
+        // changes, is put up as it is.
+        if (old == m_bars.end())
+            continue;
+        BarMotion &was = m_motions[size_t(old - m_bars.begin())];
+        BarMotion &motion = motions[index];
+        const auto leave = [&](const Placement &placement, const QRectF &rect) {
+            Leaving leaving;
+            leaving.bar.output = old->output;
+            leaving.bar.bounds = old->bounds;
+            leaving.rect = placement.rect(rect, now);
+            leaving.scale = placement.scaleAt(now);
+            leaving.fade = motion::Tween(now, placement.opacity(now), 0, kRemoveFadeDurationMs);
+            return leaving;
+        };
+
+        for (const Desk &desk : bar.desks) {
+            const auto before = findDesk(old->desks, desk.id);
+            Placement &placement = motion.desks[desk.id];
+            if (before == old->desks.end()) {
+                placement = Placement::appearing(now);
+                continue;
+            }
+            placement = std::move(was.desks[desk.id]);
+            placement.moveTo(before->bounds, desk.bounds, now);
+        }
+        for (const Desk &desk : old->desks) {
+            if (findDesk(bar.desks, desk.id) != bar.desks.end())
+                continue;
+            Leaving leaving = leave(was.desks[desk.id], desk.bounds);
+            leaving.desk = desk;
+            const auto preview = m_previews.find(previewKey(*old, desk.id));
+            if (preview != m_previews.end()) {
+                leaving.preview = std::move(preview->second.texture);
+                m_previews.erase(preview);
+            }
+            m_leaving.push_back(std::move(leaving));
+        }
+
+        if (bar.newDesk.isEmpty()) {
+            if (!old->newDesk.isEmpty())
+                m_leaving.push_back(leave(was.newDesk, old->newDesk));
+        } else if (old->newDesk.isEmpty()) {
+            motion.newDesk = Placement::appearing(now);
+        } else {
+            motion.newDesk = std::move(was.newDesk);
+            motion.newDesk.moveTo(old->newDesk, bar.newDesk, now);
+        }
+    }
+    // What was leaving an output that is gone, or a bar taken down, goes with it.
+    std::erase_if(m_leaving, [&](const Leaving &leaving) {
+        return std::none_of(bars.begin(), bars.end(), [&](const Bar &bar) {
+            return bar.output == leaving.bar.output;
+        });
+    });
     m_bars = std::move(bars);
+    m_motions = std::move(motions);
     notifyChanged();
 }
 
@@ -723,7 +845,7 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
     if (renderer.capturing)
         return;
     const QRectF bounds = bar.desks[desk].bounds;
-    Preview &preview = m_previews[previewKey(bar, desk)];
+    Preview &preview = m_previews[previewKey(bar, bar.desks[desk].id)];
     const bool live = bar.desks[desk].active && now - preview.drawnAt >= kPreviewRefreshMs;
     if (preview.texture && !preview.stale && !live && preview.bounds == bounds
         && preview.scale == renderer.rasterScale())
@@ -763,60 +885,54 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
     preview.stale = false;
 }
 
-void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar, double progress,
-                                    double now) const
+void OverviewDeskBarNode::renderDesk(render::Renderer &renderer, const Desk &desk,
+                                     const QRectF &rect, double scale,
+                                     render::Texture *preview, float opacity) const
 {
-    const double scale = renderer.rasterScale();
-    const double offset = snap(slideOffset(bar, progress), scale);
-    const float opacity = float(std::clamp(progress, 0.0, 1.0));
-    const auto label = [&](const QString &text, const QPointF &centre, int maxWidth) {
-        QSizeF size;
-        render::Texture *texture = m_chromeCache.label(renderer, m_textPainter, text,
-                                                       kLabelPixelSize, kWhite, maxWidth, &size);
-        if (!texture)
-            return;
-        QRectF rect(QPointF(), size);
-        rect.moveCenter(centre);
-        renderer.drawTextureF(texture, snapped(rect, scale), opacity);
-    };
-
-    const auto nameUnder = [&](const QString &text, const QRectF &rect) {
-        label(text, QPointF(rect.center().x(), rect.bottom() + kLabelGap + kLabelPixelSize * 0.75),
-              int(rect.width()));
-    };
-
-    for (int index = 0; index < int(bar.desks.size()); ++index) {
-        const Desk &desk = bar.desks[index];
-        const QRectF rect = snapped(desk.bounds.translated(0, offset), scale);
-        updatePreview(renderer, bar, index, now);
-        const auto preview = m_previews.find(previewKey(bar, index));
-        renderer.pushRoundedClip(render::RoundedShape {rect, kPreviewRadius});
-        if (preview != m_previews.end() && preview->second.texture)
-            renderer.drawTextureF(preview->second.texture.get(), rect, opacity);
-        else
-            renderer.fillRectF(rect, faded(kBlack, opacity));
-        renderer.popRoundedClip();
-        const render::Color outline = desk.active ? kRingColor
-                : desk.highlighted              ? kSelectionColor
-                                                : kPreviewOutlineColor;
-        const double width = desk.active || desk.highlighted ? kRingWidth : 1;
-        const double gap = desk.active || desk.highlighted ? kRingOffset : 0;
-        renderer.drawRoundedOutline(
-                render::RoundedShape {rect.adjusted(-gap, -gap, gap, gap), kPreviewRadius + gap},
-                faded(outline, opacity), width * scale);
-        nameUnder(desk.name, rect);
-        if (desk.closeShown) {
-            const QRectF button = snapped(closeButtonRect(rect), scale);
-            const render::Color cross = desk.closeHovered ? kWhite : faded(kWhite, 0.8f);
-            if (render::Texture *glyph = m_chromeCache.glyph(
-                        renderer, OverviewChromeCache::Glyph::Close, button.size(), cross))
-                renderer.drawTextureF(glyph, button, opacity);
-        }
-    }
-
-    if (bar.newDesk.isEmpty())
+    if (opacity <= 0)
         return;
-    const QRectF rect = snapped(bar.newDesk.translated(0, offset), scale);
+    const double density = renderer.rasterScale();
+    const QRectF body = snapped(scaledFromTop(rect, scale), density);
+    const double radius = kPreviewRadius * scale;
+    renderer.pushRoundedClip(render::RoundedShape {body, radius});
+    if (preview)
+        renderer.drawTextureF(preview, body, opacity);
+    else
+        renderer.fillRectF(body, faded(kBlack, opacity));
+    renderer.popRoundedClip();
+    const render::Color outline = desk.active ? kRingColor
+            : desk.highlighted              ? kSelectionColor
+                                            : kPreviewOutlineColor;
+    const double width = desk.active || desk.highlighted ? kRingWidth : 1;
+    const double gap = desk.active || desk.highlighted ? kRingOffset : 0;
+    renderer.drawRoundedOutline(
+            render::RoundedShape {body.adjusted(-gap, -gap, gap, gap), radius + gap},
+            faded(outline, opacity), width * density);
+
+    QSizeF size;
+    if (render::Texture *texture =
+                m_chromeCache.label(renderer, m_textPainter, desk.name, kLabelPixelSize, kWhite,
+                                    int(rect.width()), &size)) {
+        QRectF label(QPointF(), size);
+        label.moveCenter(QPointF(rect.center().x(),
+                                 rect.bottom() + kLabelGap + kLabelPixelSize * 0.75));
+        renderer.drawTextureF(texture, snapped(label, density), opacity);
+    }
+    if (desk.closeShown) {
+        const QRectF button = snapped(closeButtonRect(body), density);
+        const render::Color cross = desk.closeHovered ? kWhite : faded(kWhite, 0.8f);
+        if (render::Texture *glyph = m_chromeCache.glyph(
+                    renderer, OverviewChromeCache::Glyph::Close, button.size(), cross))
+            renderer.drawTextureF(glyph, button, opacity);
+    }
+}
+
+void OverviewDeskBarNode::renderNewDesk(render::Renderer &renderer, const QRectF &rect,
+                                        bool highlighted, float opacity) const
+{
+    if (opacity <= 0)
+        return;
+    const double density = renderer.rasterScale();
     // Frosted, as the title plate is, over the dimmed desk under it.
     render::GlassParams blur;
     blur.opacity = opacity;
@@ -825,12 +941,70 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar, 
                                 blur);
     renderer.popRoundedClip();
     fillRounded(renderer, rect, kPreviewRadius,
-                faded(bar.newDeskHighlighted ? kButtonHighlightColor : kButtonColor, opacity));
+                faded(highlighted ? kButtonHighlightColor : kButtonColor, opacity));
     QRectF plus(0, 0, kPlusSize, kPlusSize);
     plus.moveCenter(rect.center());
     if (render::Texture *glyph = m_chromeCache.glyph(renderer, OverviewChromeCache::Glyph::Plus,
                                                      plus.size(), kWhite))
-        renderer.drawTextureF(glyph, snapped(plus, scale), opacity);
+        renderer.drawTextureF(glyph, snapped(plus, density), opacity);
+}
+
+void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar,
+                                    const BarMotion *motion, double progress, double now) const
+{
+    const double density = renderer.rasterScale();
+    const double offset = snap(slideOffset(bar, progress), density);
+    const float opacity = float(std::clamp(progress, 0.0, 1.0));
+    bool moving = false;
+
+    // Under the rest, which move over them.
+    for (const Leaving &leaving : m_leaving) {
+        if (leaving.bar.output != bar.output)
+            continue;
+        moving = true;
+        const QRectF rect = snapped(leaving.rect.translated(0, offset), density);
+        const float fade = opacity * float(leaving.fade.value(now));
+        if (leaving.desk)
+            renderDesk(renderer, *leaving.desk, rect, leaving.scale, leaving.preview.get(), fade);
+        else
+            renderNewDesk(renderer, snapped(scaledFromTop(rect, leaving.scale), density), false,
+                          fade);
+    }
+
+    const auto place = [&](const Placement *placement, const QRectF &rest) {
+        const QRectF at = rest.translated(0, offset);
+        if (!placement)
+            return snapped(at, density);
+        moving = moving || placement->isMoving(now);
+        return snappedFrom(placement->rect(rest, now).translated(0, offset), at, density);
+    };
+
+    for (int index = 0; index < int(bar.desks.size()); ++index) {
+        const Desk &desk = bar.desks[index];
+        const Placement *placement = nullptr;
+        if (motion) {
+            const auto it = motion->desks.find(desk.id);
+            if (it != motion->desks.end())
+                placement = &it->second;
+        }
+        const QRectF rect = place(placement, desk.bounds);
+        updatePreview(renderer, bar, index, now);
+        const auto preview = m_previews.find(previewKey(bar, desk.id));
+        renderDesk(renderer, desk, rect, placement ? placement->scaleAt(now) : 1,
+                   preview != m_previews.end() ? preview->second.texture.get() : nullptr,
+                   opacity * (placement ? placement->opacity(now) : 1));
+    }
+
+    if (!bar.newDesk.isEmpty()) {
+        const Placement *placement = motion ? &motion->newDesk : nullptr;
+        const QRectF rect = place(placement, bar.newDesk);
+        const double scale = placement ? placement->scaleAt(now) : 1;
+        renderNewDesk(renderer, snapped(scaledFromTop(rect, scale), density),
+                      bar.newDeskHighlighted,
+                      opacity * (placement ? placement->opacity(now) : 1));
+    }
+    if (moving)
+        notifyChanged();
 }
 
 void OverviewDeskBarNode::render(render::Renderer &renderer) const
@@ -841,9 +1015,14 @@ void OverviewDeskBarNode::render(render::Renderer &renderer) const
     const QRect viewport = viewportOf(renderer, *this);
     const double progress = m_overview->progress(now);
     m_previewsLeft = kPreviewsPerFrame;
-    for (const Bar &bar : m_bars) {
+    std::erase_if(m_leaving, [now](const Leaving &leaving) {
+        return leaving.fade.isFinished(now);
+    });
+    for (size_t index = 0; index < m_bars.size(); ++index) {
+        const Bar &bar = m_bars[index];
         if (bar.output.intersects(viewport))
-            renderBar(renderer, bar, progress, now);
+            renderBar(renderer, bar, index < m_motions.size() ? &m_motions[index] : nullptr,
+                      progress, now);
     }
     // A window dragged to a desk goes over the bar.
     m_overview->renderDragged(renderer);
@@ -852,6 +1031,8 @@ void OverviewDeskBarNode::render(render::Renderer &renderer) const
 void OverviewDeskBarNode::releaseRenderResources()
 {
     m_previews.clear();
+    for (Leaving &leaving : m_leaving)
+        leaving.preview.reset();
     m_chromeCache.clear();
     Node::releaseRenderResources();
 }

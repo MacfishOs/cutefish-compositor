@@ -162,8 +162,12 @@ void OverviewController::buildBars()
         double x = std::round(work.center().x() + 0.5 - total() / 2);
         const double y = top + margin;
         for (int index = 0; index < count; ++index) {
-            bar.desks.push_back({QRectF(x, y, width, height), deskName(index),
-                                 desks->deskAt(index) == desks->chosenDesk()});
+            scene::OverviewDeskBarNode::Desk desk;
+            desk.bounds = QRectF(x, y, width, height);
+            desk.name = deskName(index);
+            desk.active = desks->deskAt(index) == desks->chosenDesk();
+            desk.id = quintptr(desks->deskAt(index));
+            bar.desks.push_back(std::move(desk));
             barDesks.push_back(desks->deskAt(index));
             x += width + kBarSpacing;
         }
