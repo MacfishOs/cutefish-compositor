@@ -79,6 +79,8 @@ private:
         // the travel along it since the start.
         double owed = 0;
         double owedTravel = 0;
+        // The time of the gesture's last event so far, its begin included.
+        double timeMs = 0;
         // The overview could not start, or a desk switch could not: the rest
         // of the gesture does nothing.
         bool ignored = false;

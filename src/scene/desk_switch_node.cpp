@@ -293,8 +293,8 @@ std::optional<int> DeskSwitchNode::updateSwipeAnimation(double deskDelta, double
     notifyChanged();
 
     // Close to the end of the strip, the desk beyond it needs a frame; one at
-    // a time.
-    if (!endingScreenshotTaken())
+    // a time. Without a move there is no way to tell which end.
+    if (deskDelta == 0 || !endingScreenshotTaken())
         return std::nullopt;
     const bool movingLeft = deskDelta < 0;
     const double threshold = kMinDistanceBeforeScreenshot / slotDistance(m_width);

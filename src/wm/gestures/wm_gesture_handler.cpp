@@ -34,11 +34,13 @@ WmGestureHandler::WmGestureHandler(DesksController *desks, std::function<bool()>
 {
 }
 
-bool WmGestureHandler::claimGesture(input::Timestamp, input::GestureType type, uint32_t fingers)
+bool WmGestureHandler::claimGesture(input::Timestamp timestamp, input::GestureType type,
+                                    uint32_t fingers)
 {
     if (type != input::GestureType::Swipe || fingers != kDeskSwitchFingers)
         return false;
     m_scroll = {};
+    m_scroll.timeMs = milliseconds(timestamp);
     // Still claimed, so the client under the pointer does not get it either.
     m_scroll.ignored = m_dragging && m_dragging();
     if (!m_scroll.ignored && m_warmUp)
@@ -51,6 +53,10 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
 {
     if (m_scroll.ignored)
         return;
+    // The fingers left the start at the previous event: a started animation
+    // gets it as a first sample, so a flick that libinput reports past the
+    // threshold in one event still lets go at speed.
+    const double previousTimeMs = std::exchange(m_scroll.timeMs, milliseconds(timestamp));
     const QPointF delta = update.unacceleratedDelta * kMmPerUnacceleratedUnit;
     m_scroll.scrollX += delta.x();
     m_scroll.scrollY += delta.y();
@@ -83,6 +89,7 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
         }
         m_scroll.verticalContinuousGestureStarted = true;
         m_scroll.owed = m_scroll.scrollY - delta.y();
+        m_overview->updateSwipe(0, previousTimeMs);
         m_overview->updateSwipe(-catchUp(delta.y()) / kOverviewSwipeLengthMm,
                                 milliseconds(timestamp));
         return;
@@ -100,6 +107,7 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
     }
     m_scroll.horizontalContinuousGestureStarted = true;
     m_scroll.owed = m_scroll.scrollX - delta.x();
+    m_desks->updateSwipeAnimation(0, previousTimeMs);
     m_desks->updateSwipeAnimation(catchUp(delta.x()) / kSwipeLengthPerDeskMm,
                                   milliseconds(timestamp));
 }

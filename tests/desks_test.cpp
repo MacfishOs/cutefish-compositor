@@ -684,6 +684,26 @@ TEST_F(DeskAnimationTest, AShortFlickSwitchesDesksAndAShortHeldSwipeDoesNot)
     input.setGestureFilter(nullptr);
 }
 
+TEST_F(DeskAnimationTest, AFlickInOneEventSwitchesDesks)
+{
+    addDesks(1);
+    WmGestureHandler gestures(desks);
+    input.setGestureFilter(&gestures);
+
+    // A quick flick that libinput reports in a single event past the threshold.
+    input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
+    now += 8;
+    const QPointF travel(-6 / WmGestureHandler::kMmPerUnacceleratedUnit, 0);
+    input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel, travel, 1, 0);
+    paint();
+    now += 9;
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    finish();
+    EXPECT_EQ(nullptr, desks->animation());
+    EXPECT_EQ(desk(1), desks->activeDesk());
+    input.setGestureFilter(nullptr);
+}
+
 TEST_F(DeskAnimationTest, ASwipeStartedDuringADragSwitchesNothing)
 {
     addDesks(1);

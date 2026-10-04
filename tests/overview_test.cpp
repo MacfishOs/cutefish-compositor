@@ -608,6 +608,25 @@ TEST_F(OverviewTest, ThreeFingersUpFollowAndDownLeave)
     input.setGestureFilter(nullptr);
 }
 
+TEST_F(OverviewTest, AFlickInOneEventBringsItIn)
+{
+    makeWindow(QRect(100, 100, 500, 400));
+    WmGestureHandler gestures(desks, {}, overview);
+    input.setGestureFilter(&gestures);
+
+    // A quick flick that libinput reports in a single event past the threshold.
+    input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
+    now += 8;
+    const QPointF travel(0, -6 / WmGestureHandler::kMmPerUnacceleratedUnit);
+    input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel * 5, travel, 1, 0);
+    now += 9;
+    input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
+    EXPECT_EQ(State::Entering, overview->state());
+    settle();
+    EXPECT_EQ(State::Shown, overview->state());
+    input.setGestureFilter(nullptr);
+}
+
 TEST_F(OverviewTest, SlowFingersPastTheThresholdMoveItWithoutAJump)
 {
     makeWindow(QRect(100, 100, 500, 400));
