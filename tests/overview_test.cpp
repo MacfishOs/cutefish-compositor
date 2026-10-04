@@ -19,6 +19,7 @@
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "display/display_manager.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
@@ -987,4 +988,135 @@ TEST_F(OverviewTest, ASidewaysSwipeLandsItWhereItWasHeading)
     sideways();
     EXPECT_EQ(State::Hidden, overview->state());
     input.setGestureFilter(nullptr);
+}
+
+TEST_F(OverviewTest, ANewOutputSizeLaysItOutAgainAtOnce)
+{
+    Window *first = makeWindow(QRect(100, 100, 500, 400));
+    Window *second = makeWindow(QRect(300, 200, 500, 400));
+    show();
+    const QRectF place = placeOf(second);
+    moveTo(place.center());
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    moveTo(place.center() + QPointF(60, 40));
+
+    constexpr QRect kWide(0, 0, 1600, 800);
+    manager.setOutputBounds(kWide);
+    EXPECT_EQ(State::Shown, overview->state());
+    EXPECT_EQ(kWide, node->geometry());
+    EXPECT_EQ(kWide, bar->geometry());
+    ASSERT_EQ(1u, overview->bars().size());
+    EXPECT_EQ(kWide, overview->bars()[0].output);
+    ASSERT_EQ(2u, overview->items().size());
+    // At its new place straight away, not on a tween from the old one.
+    for (const Window *window : {first, second}) {
+        EXPECT_TRUE(QRectF(kWide).contains(placeOf(window)));
+        EXPECT_EQ(placeOf(window), node->items()[indexOf(window)].to);
+    }
+    EXPECT_NE(place, placeOf(second));
+    // The drag is dropped, so letting go does nothing.
+    input.onPointerButton(at(now), BTN_LEFT, false);
+    EXPECT_EQ(State::Shown, overview->state());
+    EXPECT_EQ(desk(0), desks->deskOf(second));
+}
+
+namespace {
+
+display::DisplayId displayId(const char *value)
+{
+    return display::DisplayId(QString::fromLatin1(value));
+}
+
+display::DisplaySnapshot physicalDisplay(const char *name, QSize size)
+{
+    display::DisplaySnapshot result;
+    result.sessionId = displayId(name);
+    result.persistentKey = QStringLiteral("edid-") + QString::fromLatin1(name);
+    result.portKey = QStringLiteral("port-") + QString::fromLatin1(name);
+    result.connectorName = QString::fromLatin1(name);
+    result.devicePath = QStringLiteral("/dev/dri/card0");
+    result.physicalSizeMm = {600, 340};
+    result.modes = {{size, 60000, 148500, size.width() + 100, size.height() + 50, 0,
+                     QStringLiteral("mode"), true}};
+    result.currentMode = result.modes.first();
+    return result;
+}
+
+display::LogicalDisplay logicalDisplay(const char *name, QRect bounds, bool primary)
+{
+    return {displayId(name),
+            {displayId(name)},
+            QStringLiteral("Cutefish-") + QString::fromLatin1(name),
+            bounds,
+            bounds,
+            {},
+            display::DisplayRotation::Normal,
+            primary};
+}
+
+constexpr QRect kSecondary(1000, 0, 800, 600);
+
+} // namespace
+
+class MultiOutputOverviewTest : public OverviewTest
+{
+protected:
+    display::DisplayManager displays;
+    uint64_t revision = 0;
+
+    void SetUp() override
+    {
+        OverviewTest::SetUp();
+        ASSERT_TRUE(displays.installHardware(
+                {QStringLiteral("instance"),
+                 QStringLiteral("seat0"),
+                 1,
+                 {physicalDisplay("a", kOutput.size()), physicalDisplay("b", kSecondary.size())}}));
+        apply(true);
+        manager.setDisplayManager(&displays);
+    }
+
+    void TearDown() override
+    {
+        manager.setDisplayManager(nullptr);
+        OverviewTest::TearDown();
+    }
+
+    void apply(bool withSecondary)
+    {
+        QList<display::LogicalDisplay> logical {logicalDisplay("a", kOutput, true)};
+        QList<display::DisplayPlacement> placements;
+        if (withSecondary) {
+            logical.append(logicalDisplay("b", kSecondary, false));
+            placements.append({displayId("b"), displayId("a"), display::LayoutEdge::Right, 0});
+        }
+        ASSERT_TRUE(displays.installApplied(
+                {QStringLiteral("instance"), 1, ++revision, {}, logical, placements}));
+    }
+};
+
+TEST_F(MultiOutputOverviewTest, AnOutputGoingOrComingLaysItOutAgain)
+{
+    Window *here = makeWindow(QRect(100, 100, 500, 400));
+    Window *there = makeWindow(QRect(1100, 100, 500, 400));
+    show();
+    ASSERT_EQ(2u, overview->bars().size());
+    EXPECT_TRUE(QRectF(kSecondary).contains(placeOf(there)));
+
+    apply(false);
+    EXPECT_EQ(State::Shown, overview->state());
+    EXPECT_EQ(kOutput, node->geometry());
+    ASSERT_EQ(1u, overview->bars().size());
+    // The window brought back from the output that went is laid out with the rest.
+    ASSERT_EQ(2u, overview->items().size());
+    for (const Window *window : {here, there})
+        EXPECT_TRUE(QRectF(kOutput).contains(placeOf(window)));
+
+    apply(true);
+    const QRect both = kOutput.united(kSecondary);
+    EXPECT_EQ(both, node->geometry());
+    EXPECT_EQ(both, bar->geometry());
+    ASSERT_EQ(2u, overview->bars().size());
+    EXPECT_EQ(kSecondary, overview->bars()[1].output);
+    EXPECT_EQ(2u, overview->items().size());
 }

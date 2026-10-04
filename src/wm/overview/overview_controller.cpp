@@ -68,12 +68,15 @@ OverviewController::OverviewController(WindowManager *manager)
                                                    m_swipeTarget = nullptr;
                                                rebuild(true);
                                            });
+    m_outputsConnection = QObject::connect(m_manager, &WindowManager::outputsChanged, m_manager,
+                                           [this] { onOutputsChanged(); });
 }
 
 OverviewController::~OverviewController()
 {
     QObject::disconnect(m_addedConnection);
     QObject::disconnect(m_removedConnection);
+    QObject::disconnect(m_outputsConnection);
     m_manager->desks()->removeObserver(this);
     m_manager->activation()->removeObserver(this);
 }
@@ -412,6 +415,24 @@ void OverviewController::landDeskSwitch()
     // lands at once: the overview starts from the desk it was heading to.
     if (DeskAnimationBase *animation = m_manager->desks()->animation())
         animation->finishNow();
+}
+
+void OverviewController::onOutputsChanged()
+{
+    if (!isActive() || !m_node)
+        return;
+    // A drag or press is aimed at the old layout; the bars and previews have
+    // the old outputs' shapes.
+    m_press.reset();
+    m_dragged = -1;
+    m_node->setGeometry(m_manager->outputBounds());
+    if (m_bar)
+        m_bar->setGeometry(m_manager->outputBounds());
+    rebuild(false);
+    if (m_bar)
+        m_bar->invalidatePreviews();
+    // What lies under the pointer is found again by a synthesized motion.
+    Q_EMIT m_manager->pointerTargetsChanged();
 }
 
 void OverviewController::activateForExit(Window *window)

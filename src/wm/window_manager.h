@@ -352,6 +352,8 @@ public:
         QRect bounds;
         QRect workArea;
         double scale = 1;
+
+        bool operator==(const OutputArea &) const = default;
     };
     // Every output, or the single output bounds without a display manager.
     std::vector<OutputArea> outputAreas() const;
@@ -385,6 +387,9 @@ Q_SIGNALS:
     // What lies under a still pointer may have changed: a window was shown,
     // hidden, removed or restacked.
     void pointerTargetsChanged();
+    // An output came, went or changed its bounds, work area or scale; windows
+    // left on no output have been brought back by now.
+    void outputsChanged();
 
 private:
     bool hasApplicationWindow(qint64 process) const;
@@ -396,6 +401,8 @@ private:
     // Puts `window` at the top of its own layer in m_stackingOrder.
     void insertIntoStackingOrder(Window *window);
     void applyExclusiveZones();
+    // Emits outputsChanged() when outputAreas() differs from the last time.
+    void notifyOutputsChanged();
     bool isInsidePopupGrabChain(compositor::Surface *surface) const;
     // The window a pointer event at `location` is aimed at, frames included,
     // when a modal transient blocks it.
@@ -442,6 +449,7 @@ private:
     display::DisplayManager *m_displayManager = nullptr;
     QRect m_outputBounds;
     QRect m_workArea;
+    std::vector<OutputArea> m_outputAreas;
     ExclusiveZones m_exclusiveZones;
     std::map<compositor::Surface *, ShellWindowMetadata> m_shellMetadata;
     std::map<const Window *, QString> m_windowOutputs;

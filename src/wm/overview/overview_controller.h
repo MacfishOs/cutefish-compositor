@@ -194,6 +194,8 @@ private:
     void releasePointer();
 
     void landDeskSwitch();
+    // Lays everything out again on the outputs there are now, at once.
+    void onOutputsChanged();
     // Clicks, touches and Enter act while it is shown or coming in on its
     // own, not while the fingers move it.
     bool acceptsPresses() const;
@@ -247,6 +249,7 @@ private:
 
     QMetaObject::Connection m_addedConnection;
     QMetaObject::Connection m_removedConnection;
+    QMetaObject::Connection m_outputsConnection;
 };
 
 } // namespace cutefish::wm

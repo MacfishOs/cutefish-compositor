@@ -82,6 +82,10 @@ void WindowManager::setOutputBounds(const QRect &bounds)
     // The reservations are edge thicknesses, so they survive a resolution
     // change and simply apply to the new output.
     setWorkArea(m_exclusiveZones.apply(m_outputBounds));
+    // With a display manager its displaysChanged follows, once windows are
+    // back on the new outputs.
+    if (!m_displayManager)
+        notifyOutputsChanged();
 }
 
 void WindowManager::setDisplayManager(display::DisplayManager *manager)
@@ -91,6 +95,7 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
     if (m_displayManager)
         disconnect(m_displayManager, nullptr, this, nullptr);
     m_displayManager = manager;
+    notifyOutputsChanged();
     if (!m_displayManager)
         return;
     connect(m_displayManager, &display::DisplayManager::displaysChanged, this,
@@ -129,7 +134,17 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
                     }
                     window->state()->onEvent(event);
                 }
+                notifyOutputsChanged();
             });
+}
+
+void WindowManager::notifyOutputsChanged()
+{
+    std::vector<OutputArea> areas = outputAreas();
+    if (areas == m_outputAreas)
+        return;
+    m_outputAreas = std::move(areas);
+    Q_EMIT outputsChanged();
 }
 
 QRect WindowManager::outputBounds() const
