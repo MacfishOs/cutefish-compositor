@@ -160,5 +160,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(WindowDebugServiceTest)
+QTEST_GUILESS_MAIN(WindowDebugServiceTest)
 #include "window_debug_service_test.moc"
