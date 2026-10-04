@@ -16,6 +16,7 @@
 #include "scene/slide_out_node.h"
 #include "wm/desks/desk.h"
 #include "wm/desks/desk_animation.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/stacking.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
@@ -139,7 +140,12 @@ void DesksController::removeDesk(Desk *desk, DesksCreationRemovalSource source)
     if (!canRemoveDesks() || deskIndex(desk) < 0)
         return;
 
-    if (desk == m_activeDesk && source != DesksCreationRemovalSource::DesksRestore) {
+    // In the overview the next desk takes over at once, as upstream: the
+    // removal animation's strip is black where the removed desk's frame was.
+    const OverviewController *overview = m_manager->overview();
+    const bool inOverview = overview && overview->isActive();
+    if (desk == m_activeDesk && !inOverview
+        && source != DesksCreationRemovalSource::DesksRestore) {
         // Removing the active desk slides to the desk on its left, or on its
         // right when it is the first.
         const int current = deskIndex(desk);

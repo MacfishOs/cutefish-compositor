@@ -23,6 +23,7 @@
 #include "fake_renderer.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
+#include "scene/desk_switch_node.h"
 #include "scene/overview_node.h"
 #include "scene/scene.h"
 #include "scene/window_animation.h"
@@ -777,6 +778,49 @@ TEST_F(OverviewTest, APreviewsCloseButtonCombinesItsDeskIntoTheNext)
     // One desk left, which cannot go.
     moveTo(overview->bars()[0].desks[0].bounds.center());
     EXPECT_FALSE(overview->bars()[0].desks[0].closeShown);
+}
+
+TEST_F(OverviewTest, ClosingTheActiveDeskSwitchesAtOnceWithoutTheRemovalStrip)
+{
+    // Outside the overview the active desk would go with the removal
+    // animation, black where the removed desk's frame was.
+    auto *switchNode = static_cast<scene::DeskSwitchNode *>(
+            surfaceContainer->addChild(std::make_unique<scene::DeskSwitchNode>([this] {
+                return now;
+            })));
+    manager.setDeskOverlays({node, switchNode, bar});
+    desks->setSwitchNode(switchNode);
+    desks->setScreenshotter([this](const std::function<void(render::Renderer &)> &paint) {
+        paint(renderer);
+        scene::DeskSwitchNode::Frames frames;
+        frames[QStringLiteral("out")] = std::make_unique<FrameTexture>(kOutput.size());
+        return frames;
+    });
+    Window *here = makeWindow(QRect(100, 100, 500, 400));
+    show();
+
+    // A new desk, clicked to, then closed.
+    click(overview->bars()[0].newDesk.center());
+    ASSERT_EQ(2u, desks->desks().size());
+    click(overview->bars()[0].desks[1].bounds.center());
+    settle();
+    ASSERT_EQ(desk(1), desks->activeDesk());
+    ASSERT_EQ(nullptr, desks->animation());
+    ASSERT_EQ(State::Shown, overview->state());
+    EXPECT_TRUE(overview->items().empty());
+
+    const QRectF preview = overview->bars()[0].desks[1].bounds;
+    moveTo(preview.center());
+    click(scene::OverviewDeskBarNode::closeButtonRect(preview).center());
+    EXPECT_EQ(nullptr, desks->animation());
+    EXPECT_FALSE(switchNode->isActive());
+    ASSERT_EQ(1u, desks->desks().size());
+    EXPECT_EQ(desk(0), desks->activeDesk());
+    EXPECT_EQ(State::Shown, overview->state());
+    ASSERT_EQ(1u, overview->items().size());
+    EXPECT_EQ(here, overview->items()[0].window);
+    paint();
+    EXPECT_TRUE(drewContentOf(here));
 }
 
 TEST_F(OverviewTest, EvenOneDeskGetsAPreview)
