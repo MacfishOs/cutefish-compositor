@@ -251,12 +251,6 @@ QString DisplayConfigService::SetDockedLidClosed(bool closed)
                                                    : NativeDisplayDelegate::PowerState::On);
 }
 
-void DisplayConfigService::IdentifyDisplays(const QStringList& displayIds)
-{
-    if (authorizeWrite())
-        emit IdentifyRequested(displayIds);
-}
-
 void DisplayConfigService::SetNightLight(double strength, uint durationMs)
 {
     // A tint, not a configuration: a session that is not on screen keeps it

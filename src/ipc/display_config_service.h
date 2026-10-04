@@ -72,7 +72,6 @@ public slots:
                                qulonglong appliedRevision);
     QString SetDisplayPower(const QStringList& displayIds, uint state);
     QString SetDockedLidClosed(bool closed);
-    void IdentifyDisplays(const QStringList& displayIds);
     void SetNightLight(double strength, uint durationMs);
 
 signals:
@@ -82,7 +81,6 @@ signals:
                            qulonglong topologyGeneration, qulonglong appliedRevision);
     void PreviewChanged(QString previewToken, qulonglong deadlineMs,
                         qulonglong topologyGeneration, qulonglong appliedRevision);
-    void IdentifyRequested(QStringList displayIds);
 
 private:
     bool authorizeWrite();

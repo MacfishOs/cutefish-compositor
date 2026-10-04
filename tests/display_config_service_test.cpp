@@ -115,7 +115,7 @@ private slots:
         Service service;
         QVERIFY(service.service.registerService(kService));
 
-        const auto reply = call(QStringLiteral("IdentifyDisplays"), {QStringList()});
+        const auto reply = call(QStringLiteral("RevertConfiguration"), {QString()});
         QCOMPARE(reply.type(), QDBusMessage::ErrorMessage);
         QCOMPARE(reply.errorName(),
                  QStringLiteral("com.cutefish.DisplayConfig1.Error.Unauthorized"));

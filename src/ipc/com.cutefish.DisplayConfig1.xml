@@ -86,9 +86,6 @@ Adapted for Cutefish: a versioned session D-Bus interface without Ash or Mojo.
       <arg name="closed" type="b" direction="in"/>
       <arg name="operationToken" type="s" direction="out"/>
     </method>
-    <method name="IdentifyDisplays">
-      <arg name="displayIds" type="as" direction="in"/>
-    </method>
     <method name="SetNightLight">
       <arg name="strength" type="d" direction="in"/>
       <arg name="durationMs" type="u" direction="in"/>
@@ -112,9 +109,6 @@ Adapted for Cutefish: a versioned session D-Bus interface without Ash or Mojo.
       <arg name="deadlineMs" type="t"/>
       <arg name="topologyGeneration" type="t"/>
       <arg name="appliedRevision" type="t"/>
-    </signal>
-    <signal name="IdentifyRequested">
-      <arg name="displayIds" type="as"/>
     </signal>
   </interface>
 </node>
