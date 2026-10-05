@@ -2024,6 +2024,57 @@ TEST_F(WmTest, FixedSizeWindowWithoutActiveApplicationReferenceUsesWorkArea)
     EXPECT_EQ(nullptr, dialog->transientParent());
 }
 
+TEST_F(WmTest, AWindowWithARestoreIdOpensWhereTheLastOneWasLeft)
+{
+    const auto map = [&](const QSize &size, compositor::ResizeAnchor anchor) {
+        compositor::Surface *surface = makeSurface(size);
+        surface->setRestoreId(QStringLiteral("preview"));
+        surface->setResizeAnchor(anchor);
+        return manager.createWindow(surface, {.requestedSize = size,
+                                              .applicationId = QStringLiteral("app"),
+                                              .positionManaged = true});
+    };
+    Window *first = map(QSize(200, 100), compositor::ResizeAnchor::TopLeft);
+    EXPECT_EQ(QRect(400, 350, 200, 100), first->bounds());
+    first->requestBounds(QRect(100, 120, 200, 100));
+    manager.destroyWindow(first);
+
+    Window *second = map(QSize(300, 200), compositor::ResizeAnchor::TopLeft);
+    EXPECT_EQ(QRect(100, 120, 300, 200), second->bounds());
+    second->requestBounds(QRect(600, 500, 300, 200));
+    manager.destroyWindow(second);
+
+    // The centre comes back, and the window stays inside the work area.
+    Window *third = map(QSize(600, 500), compositor::ResizeAnchor::Center);
+    EXPECT_EQ(QRect(400, 300, 600, 500), third->bounds());
+}
+
+TEST_F(WmTest, ARestoreIdIsKeptPerApplicationAndOutput)
+{
+    const auto map = [&](const QString &applicationId, const QString &restoreId) {
+        compositor::Surface *surface = makeSurface(QSize(200, 100));
+        surface->setRestoreId(restoreId);
+        return manager.createWindow(surface, {.requestedSize = QSize(200, 100),
+                                              .applicationId = applicationId,
+                                              .positionManaged = true});
+    };
+    Window *first = map(QStringLiteral("app"), QStringLiteral("preview"));
+    first->requestBounds(QRect(100, 120, 200, 100));
+    manager.destroyWindow(first);
+
+    Window *other = map(QStringLiteral("other"), QStringLiteral("preview"));
+    EXPECT_EQ(QRect(400, 350, 200, 100), other->bounds());
+    manager.destroyWindow(other);
+    Window *otherId = map(QStringLiteral("app"), QStringLiteral("inspector"));
+    EXPECT_EQ(QRect(400, 350, 200, 100), otherId->bounds());
+    manager.destroyWindow(otherId);
+
+    // The output it was left on is gone.
+    manager.setOutputBounds(QRect(0, 0, 1200, 900));
+    Window *moved = map(QStringLiteral("app"), QStringLiteral("preview"));
+    EXPECT_EQ(QRect(500, 400, 200, 100), moved->bounds());
+}
+
 TEST_F(WmTest, TheCascadeFollowsTheMostRecentWindowWhereverItIs)
 {
     Window *first = mapManagedWindow(QSize(300, 200));

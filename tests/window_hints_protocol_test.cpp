@@ -209,6 +209,21 @@ TEST_F(WindowHintsProtocolTest, ServerResizeIsImmediateAndRejectsOtherValues)
     wl_surface_destroy(surface);
 }
 
+TEST_F(WindowHintsProtocolTest, RestoreIdIsImmediateAndPersistsUntilTheSurfaceDies)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_TRUE(model->restoreId().isEmpty());
+    cutefish_window_hints_v1_set_restore_id(hints, surface, "preview");
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(model->restoreId(), QStringLiteral("preview"));
+    cutefish_window_hints_v1_set_restore_id(hints, surface, "");
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->restoreId().isEmpty());
+    wl_surface_destroy(surface);
+}
+
 TEST_F(WindowHintsProtocolTest, InteractiveResizeReachesTheSurfacesClient)
 {
     struct Event {

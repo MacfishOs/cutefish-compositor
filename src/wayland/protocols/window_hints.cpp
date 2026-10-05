@@ -70,8 +70,13 @@ void setServerResize(wl_client *, wl_resource *resource, wl_resource *surface, u
     getUserDataAs<compositor::Surface>(surface)->setServerResize(enabled != 0);
 }
 
+void setRestoreId(wl_client *, wl_resource *, wl_resource *surface, const char *id)
+{
+    getUserDataAs<compositor::Surface>(surface)->setRestoreId(QString::fromUtf8(id));
+}
+
 const struct cutefish_window_hints_v1_interface implementation = {
-        destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor, setServerResize};
+        destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor, setServerResize, setRestoreId};
 
 void unbind(wl_resource *resource)
 {

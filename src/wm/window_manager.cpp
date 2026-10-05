@@ -449,7 +449,7 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
         if (workArea.isEmpty())
             workArea = workAreaFor(window);
         window->setBounds(m_placement.place(window->frameInsets().outset(size), workArea));
-        if (init.positionManaged)
+        if (init.positionManaged && !restorePlacement(window))
             window->setBounds(window_positioner::boundsForNewWindow(window));
     }
 
@@ -463,6 +463,42 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
                           << m_stackingOrder.size();
     Q_EMIT windowAdded(window);
     return window;
+}
+
+void WindowManager::rememberPlacement(const Window *window)
+{
+    const compositor::Surface *surface = window->rootSurface();
+    if (!surface || surface->restoreId().isEmpty() || window->applicationId().isEmpty()
+        || window->isPopup() || window->isShellWindow() || window->transientParent()
+        || !window->state()->isNormal()) {
+        return;
+    }
+    m_rememberedPlacements[{window->applicationId(), surface->restoreId()}] = {
+            window->bounds(), outputBoundsFor(window)};
+}
+
+bool WindowManager::restorePlacement(Window *window) const
+{
+    const compositor::Surface *surface = window->rootSurface();
+    if (!surface || surface->restoreId().isEmpty())
+        return false;
+    const auto it = m_rememberedPlacements.find({window->applicationId(), surface->restoreId()});
+    if (it == m_rememberedPlacements.end())
+        return false;
+    const QRect workArea = workAreaForOutput(it->second.output);
+    if (workArea.isEmpty())
+        return false;
+    const QRect &previous = it->second.bounds;
+    QRect bounds = window->bounds();
+    bounds.moveTopLeft(previous.topLeft());
+    if (surface->resizeAnchor() == compositor::ResizeAnchor::Center) {
+        // Halves of the difference, as a client resize around the centre moves it.
+        bounds.translate((previous.width() - bounds.width()) / 2,
+                         (previous.height() - bounds.height()) / 2);
+    }
+    adjustBoundsToFit(workArea, &bounds);
+    window->setBounds(bounds);
+    return true;
 }
 
 void WindowManager::destroyWindow(Window *window)
@@ -479,6 +515,8 @@ void WindowManager::destroyWindow(Window *window)
     // iterator into m_windows would not survive a window being added from
     // there. Ownership is held locally so the window stays valid meanwhile.
     std::unique_ptr<Window> owned = std::move(*it);
+    // While the window still knows its output.
+    rememberPlacement(window);
     m_windows.erase(it);
     m_windowOutputs.erase(window);
     m_stackingOrder.erase(std::remove(m_stackingOrder.begin(), m_stackingOrder.end(), window),

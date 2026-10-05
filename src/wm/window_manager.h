@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
 #include <QObject>
@@ -419,6 +420,10 @@ private:
     void activateForPress(Window *window);
     // Hands the keyboard back to the active window.
     void releaseKeyboardGrab();
+    // Where a window with a restore id is, kept as it unmaps and given back
+    // to the next one with the same id; see set_restore_id.
+    void rememberPlacement(const Window *window);
+    bool restorePlacement(Window *window) const;
 
     compositor::Compositor *m_compositor = nullptr;
     input::Seat *m_seat = nullptr;
@@ -453,6 +458,12 @@ private:
     ExclusiveZones m_exclusiveZones;
     std::map<compositor::Surface *, ShellWindowMetadata> m_shellMetadata;
     std::map<const Window *, QString> m_windowOutputs;
+    struct RememberedPlacement {
+        QRect bounds;
+        QRect output;
+    };
+    // By application id and restore id.
+    std::map<std::pair<QString, QString>, RememberedPlacement> m_rememberedPlacements;
 
     std::map<compositor::Surface *, Window *> m_surfaceOwners;
     std::vector<compositor::Surface *> m_auxiliarySurfaces;

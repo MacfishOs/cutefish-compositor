@@ -60,6 +60,19 @@
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="enabled" type="uint"/>
     </request>
+    <request name="set_restore_id">
+      <description summary="reopen a window where it was last left">
+        A non-empty id makes the compositor remember where a normal window was
+        when it unmapped, for the rest of the session. The next window of the
+        same application, by xdg_toplevel app_id, that maps with the same id
+        opens there on the same output and inside its work area: its centre
+        goes back to the remembered centre with the center resize anchor, its
+        top-left corner otherwise. Set it before the first commit. An empty id
+        is the default and remembers nothing.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="id" type="string"/>
+    </request>
     <event name="interactive_resize">
       <description summary="an interactive resize started or ended">
         Sent with active 1 when the user starts resizing one of the client's

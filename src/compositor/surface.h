@@ -103,6 +103,9 @@ public:
     // Read when the pointer or a touch reaches the window's edges.
     bool serverResize() const { return m_serverResize; }
     void setServerResize(bool enabled) { m_serverResize = enabled; }
+    // Read when the window maps and unmaps; see set_restore_id.
+    const QString &restoreId() const { return m_restoreId; }
+    void setRestoreId(const QString &id) { m_restoreId = id; }
 
     struct MenuAddress {
         QString service;
@@ -497,6 +500,7 @@ private:
     bool m_alwaysOnTop = false;
     ResizeAnchor m_resizeAnchor = ResizeAnchor::TopLeft;
     bool m_serverResize = false;
+    QString m_restoreId;
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 
