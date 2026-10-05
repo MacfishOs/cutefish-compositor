@@ -974,6 +974,13 @@ bool WindowManager::isInsidePopupGrabChain(compositor::Surface *surface) const
     return false;
 }
 
+bool WindowManager::isCaptureWindow(const Window *window) const
+{
+    // Capture mode leaves open menus up so they can be in the picture; a press
+    // on the capture interface is the capture's, not the end of the grab.
+    return window && layerFor(window) == StackingLayer::Capture;
+}
+
 void WindowManager::dismissPopupGrabs()
 {
     // Innermost first, one at a time, each taken out of the list before its
@@ -1244,8 +1251,8 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const QPoint
 
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
-        windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit)) {
+        Window *target = windowAt(location, &hit, nullptr);
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)) {
             // The press belongs to the grab, not to whatever is underneath.
             dismissPopupGrabs();
             return true;
@@ -1305,8 +1312,8 @@ bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const QP
 
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
-        windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit)) {
+        Window *target = windowAt(location, &hit, nullptr);
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)) {
             dismissPopupGrabs();
             return true;
         }

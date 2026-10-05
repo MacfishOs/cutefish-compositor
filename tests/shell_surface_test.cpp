@@ -947,6 +947,31 @@ TEST_F(ShellSurfaceTest, APressOutsideAGrabbingPopupDismissesTheChainAndIsNotDel
     EXPECT_TRUE(manager.popupGrabs().empty());
 }
 
+TEST_F(ShellSurfaceTest, APressOnTheCaptureInterfaceLeavesAGrabbingPopupOpen)
+{
+    ShellSurface *parent = makeMappedToplevel(QSize(400, 300));
+    parent->window()->setBounds(QRect(0, 0, 400, 300));
+
+    Recorder *menuRecorder = nullptr;
+    ShellSurface *menu = makeShell(&menuRecorder);
+    ASSERT_TRUE(menu->setPopup(parent, QRect(10, 20, 100, 80)));
+    menu->grab();
+    attach(menu->rootSurface(), QSize(100, 80));
+    menu->rootSurface()->commit();
+    compositor.updateTextures(renderer);
+    ASSERT_EQ(1u, manager.popupGrabs().size());
+
+    ShellSurface *capture = makeMappedToplevel(QSize(400, 300));
+    capture->window()->setRole(WindowRole::Capture);
+    capture->window()->setBounds(QRect(0, 0, 400, 300));
+    compositor.updateTextures(renderer);
+
+    // The menu stays up for the picture, and the press is the capture's.
+    EXPECT_FALSE(manager.onPointerButton(at(1), QPointF(300, 250), BTN_LEFT, true));
+    EXPECT_EQ(0, menuRecorder->closes);
+    EXPECT_EQ(1u, manager.popupGrabs().size());
+}
+
 TEST_F(ShellSurfaceTest, DestroyingAPopupParentLeavesTheChainSafeToTearDown)
 {
     ShellSurface *parent = makeMappedToplevel(QSize(400, 300));

@@ -405,6 +405,7 @@ private:
     // Emits outputsChanged() when outputAreas() differs from the last time.
     void notifyOutputsChanged();
     bool isInsidePopupGrabChain(compositor::Surface *surface) const;
+    bool isCaptureWindow(const Window *window) const;
     // The window a pointer event at `location` is aimed at, frames included,
     // when a modal transient blocks it.
     Window *modalBlockedWindowAt(const QPointF &location) const;
