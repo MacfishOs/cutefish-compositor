@@ -870,6 +870,47 @@ TEST_F(WindowVisualPixelTest, AnimationUsesOnePhysicalOutlineAndClipsSquareOldSn
     }
 }
 
+// A window whose content changes frame after frame skips its snapshot and is
+// drawn straight to the output; the two must not differ by a pixel, or every
+// periodic snapshot frame would flicker.
+TEST_F(WindowVisualPixelTest, DrawingDirectlyMatchesTheSnapshotAtEveryScale)
+{
+    for (double scale : {1., 1.25, 1.5, 1.75, 2.}) {
+        SCOPED_TRACE(scale);
+        renderer->setRasterScale(scale);
+        WindowScene model;
+        auto *window = model.window(Mode::ServerFrame, {0.2f, 0.4f, 0.8f, 1});
+        ASSERT_NE(window, nullptr);
+        // A fractional device position, where a resampled snapshot would show.
+        window->setBounds({QPoint(81, 83), window->bounds().size()});
+        // One-pixel stripes, which any resampling blurs.
+        const auto stripes = [&] {
+            const QSize size(160, 120);
+            std::vector<uint8_t> bytes(size.width() * size.height() * 4, 255);
+            for (int y = 0; y < size.height(); ++y)
+                for (int x = 0; x < size.width(); x += 2)
+                    std::fill_n(bytes.begin() + (y * size.width() + x) * 4, 3, uint8_t(0));
+            const int fd = testsupport::makeMemfd(bytes.size());
+            ASSERT_GE(fd, 0);
+            ASSERT_EQ(pwrite(fd, bytes.data(), bytes.size(), 0), ssize_t(bytes.size()));
+            auto pool = compositor::ShmPool::create(fd, bytes.size());
+            model.buffers.push_back(pool->createBuffer(size, 0, size.width() * 4,
+                                                       render::PixelFormat::Rgba8888, nullptr));
+            window->rootSurface()->attach(model.buffers.back(), {});
+            window->rootSurface()->damage({QPoint(), size});
+            window->rootSurface()->commit();
+        };
+        paint(model, window);
+        paint(model, window);
+        stripes();
+        paint(model, window);
+        const auto snapshot = pixels();
+        stripes();
+        paint(model, window);
+        EXPECT_EQ(pixels(), snapshot);
+    }
+}
+
 TEST_F(WindowVisualPixelTest, MaximizedSsdHasNoSideOrBottomFrame)
 {
     WindowScene model;

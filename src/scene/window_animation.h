@@ -261,6 +261,14 @@ private:
                           QRect *repaint) const;
     // Whether any surface in it blurs what is behind it.
     bool hasBackgroundBlurs() const;
+    // A settled window whose own content changes frame after frame, as a
+    // video's does, skips its texture and is drawn straight to the output, as a
+    // cc layer without a render surface is. Every kDirectRefresh-th such frame
+    // draws the texture again: a close, a minimize or a cross-fade starts from it.
+    bool drawsDirectly(bool contentChanged) const;
+    // Drawn as it is, unscaled and unblended.
+    bool settled() const;
+    static constexpr int kDirectRefresh = 8;
 
     // What renderPresented() draws during its render().
     mutable std::optional<Presentation> m_presentedAt;
@@ -280,6 +288,12 @@ private:
     // root's revision, which session-wide appearance changes bump.
     mutable DamageTracker m_textureDamage {true};
     mutable bool m_textureReusable = false;
+    // Frames drawn straight to the output since the texture was last drawn,
+    // whether the last frame had content of the window's own to show, and the
+    // frame time that counted, so a capture or a second output does not count.
+    mutable int m_directFrames = 0;
+    mutable bool m_contentChanged = false;
+    mutable double m_directFrameTime = -1;
     mutable double m_textureScale = 0;
     mutable QRect m_textureViewport;
     mutable uint64_t m_textureRootRevision = 0;

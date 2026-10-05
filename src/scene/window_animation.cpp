@@ -704,7 +704,23 @@ bool WindowAnimation::redrawsSubtree(const QRect &viewport, double scale) const
     const QRect coverage = textureCoverage();
     if (!animating() && !viewport.isEmpty() && !coverage.intersects(viewport))
         return false;
-    return !textureReusable(coverage, viewport, scale);
+    if (textureReusable(coverage, viewport, scale))
+        return false;
+    // Drawn directly, its blurs draw on the output like any other. Only its own
+    // content decides, as in render(): a blur's backdrop changing would draw
+    // it to the texture again and pull the repaint wide.
+    return !drawsDirectly(m_textureDamage.hasDamage(*this, coverage, scale));
+}
+
+bool WindowAnimation::settled() const
+{
+    return !animating() && m_type != Type::Minimize && m_opacity >= 1 && !presentedScaled()
+            && !m_presentedAt;
+}
+
+bool WindowAnimation::drawsDirectly(bool contentChanged) const
+{
+    return contentChanged && m_contentChanged && m_directFrames < kDirectRefresh - 1 && settled();
 }
 
 bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t begin,
@@ -1015,9 +1031,28 @@ void WindowAnimation::render(render::Renderer &renderer) const
         const bool blurSuppressed =
                 renderer.suppressBackgroundBlur || presentedScaled() || m_presentedAt;
         swapStashedTexture(blurSuppressed);
+        const bool contentChanged =
+                m_textureDamage.hasDamage(*this, coverage, renderer.rasterScale());
+        const bool direct = !renderer.suppressBackgroundBlur && drawsDirectly(contentChanged);
+        if (!renderer.capturing
+            && (renderer.frameTime < 0 || renderer.frameTime != m_directFrameTime)) {
+            m_directFrameTime = renderer.frameTime;
+            m_directFrames = direct ? m_directFrames + 1 : 0;
+            // A first texture, or an animation's own frames, start no run.
+            m_contentChanged = contentChanged && settled() && m_texture;
+        }
         QRect repaint;
         if (textureIsCurrent(renderer, coverage, &repaint)) {
             recordPresentation(renderer, *this);
+        } else if (direct) {
+            // The texture keeps its last image, bounds and coverage, and is
+            // drawn whole again by the next frame that does not draw directly.
+            // Asking for that frame here damaged the whole window and its
+            // shadow on every frame, which cost more than the pass it saved.
+            m_textureReusable = false;
+            Node::render(renderer);
+            m_presented = {QRectF(absoluteGeometry()), 1, 1};
+            return;
         } else {
             // Mid-animation passes and plane promotions draw what only this
             // frame shows. A capture of the same output draws what the screen

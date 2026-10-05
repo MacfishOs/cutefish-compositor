@@ -437,6 +437,34 @@ TEST_F(SnapshotReuse, DamageRedrawsItsPartAndAWholePixelMoveKeepsTheSnapshot)
     EXPECT_EQ(renderer.captures, 2);
 }
 
+TEST_F(SnapshotReuse, ContentChangingEveryFrameSkipsTheSnapshotAllButEveryEighthFrame)
+{
+    const auto drawFrames = [&](int count, bool damage) {
+        QList<bool> snapshots;
+        for (int frame = 0; frame < count; ++frame) {
+            if (damage)
+                surface->notifyDamage(QRect(0, 0, 400, 300));
+            const int before = renderer.captures;
+            scene.render(renderer);
+            snapshots.append(renderer.captures > before);
+        }
+        return snapshots;
+    };
+    drawFrames(1, false);
+    // A change on its own still goes through the snapshot; from the second
+    // frame in a row the window is drawn straight to the output.
+    EXPECT_EQ(drawFrames(10, true),
+              QList<bool>({true, false, false, false, false, false, false, false, true, false}));
+    // The next frame drawn without a change draws the snapshot again, and then
+    // it is kept.
+    EXPECT_EQ(drawFrames(2, false), QList<bool>({true, false}));
+
+    // Blended by the client's opacity, it always goes through the snapshot.
+    window->setOpacity(0.5f);
+    drawFrames(1, false);
+    EXPECT_EQ(drawFrames(3, true), QList<bool>({true, true, true}));
+}
+
 TEST_F(SnapshotReuse, AFractionalPixelMoveRedrawsAll)
 {
     renderer.setRasterScale(1.5);
@@ -555,6 +583,8 @@ protected:
         blur->setBackgroundBlur({0, 0, 100, 100}, 12);
         const int halo = render::kBackdropBlurSupport + 2;
         sampled = QRect(250, 200, 100, 100).adjusted(-halo, -halo, halo, halo);
+        scene.render(renderer);
+        // Idle once, so a change is not the second in a row, drawn directly.
         scene.render(renderer);
         captures = renderer.captures;
     }
