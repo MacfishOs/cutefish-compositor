@@ -26,6 +26,7 @@
 #include "backend/drm/presentation_tracker.h"
 #include "backend/drm/scanout_controller.h"
 #include "render/cursor_sink.h"
+#include "render/gpu_timer.h"
 #include "render/output_render_context.h"
 #include "render/output_scheduler.h"
 #include "render/texture.h"
@@ -336,7 +337,9 @@ private:
         // reaches the screen, which is when the frame it replaces stops being
         // read. That makes it the release fence for the previous frame.
         render::SyncFence releaseFence;
-        // Signalled when the GPU finished composing the primary plane's buffer.
+        // When the GPU finished composing the primary plane's buffer: a
+        // timestamp query, or a fence where the GL has none.
+        render::GpuTimer::Mark drawnMark;
         render::SyncFence drawnFence;
         // Committed in secure mode with no application plane programmed.
         bool secure = false;

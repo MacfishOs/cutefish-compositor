@@ -1013,6 +1013,7 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
     }
 
     std::unique_ptr<CompositedBuffer> compositedBuffer;
+    render::GpuTimer::Mark drawnMark;
     render::SyncFence drawnFence;
     if (direct) {
         // Nothing to composite: the client's own buffer goes on the primary
@@ -1029,7 +1030,12 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
         if (m_renderCallback)
             m_renderCallback(*m_renderer, frame);
         // Tells the scheduler how long composition really takes on this GPU.
-        drawnFence = m_renderer->createReleaseFence();
+        // A fence's export waits for the driver to submit the frame; a
+        // timestamp query rides the swap's own submission.
+        if (m_renderer->marksDrawn())
+            drawnMark = m_renderer->markDrawn();
+        else
+            drawnFence = m_renderer->createReleaseFence();
         if (!m_enabled || !m_renderer->endFrame()) {
             clearPromotions();
             return false;
@@ -1069,6 +1075,7 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
         m_presentations.submitted(frame, submitted.presentation);
     submitted.planes = std::move(planes);
     submitted.composited = std::move(compositedBuffer);
+    submitted.drawnMark = std::move(drawnMark);
     submitted.drawnFence = std::move(drawnFence);
     if (!queue)
         submitted.releaseFence = std::move(m_lastReleaseFence);
@@ -1154,10 +1161,14 @@ void DrmOutput::finishFlip(uint64_t frame, uint32_t timeMs,
     else
         m_flipTimeout.start();
     if (frame == m_bufferFrame && !m_pendingFrame.planes.empty()) {
-        if (const auto done = m_pendingFrame.drawnFence.signalTimeNs()) {
+        if (const auto done = m_renderer ? m_renderer->drawnAt(m_pendingFrame.drawnMark)
+                                         : std::nullopt) {
+            m_scheduler.drawn(frame, *done);
+        } else if (const auto done = m_pendingFrame.drawnFence.signalTimeNs()) {
             m_scheduler.drawn(frame,
                               render::OutputScheduler::Time(std::chrono::nanoseconds(*done)));
         }
+        m_pendingFrame.drawnMark = {};
         m_pendingFrame.drawnFence.reset();
         // The commit that just landed is what stopped the previous frame's
         // buffers being read, so its out-fence is their release fence.

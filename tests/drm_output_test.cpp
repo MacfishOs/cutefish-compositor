@@ -858,6 +858,33 @@ TEST_F(DrmOutputTest, InitialModesetHasMeasuredWireCompletionAndSchedulesAgain)
     EXPECT_EQ(b.events.size(), 2u);
 }
 
+double slowestDrawMs(const Output &output)
+{
+    const QStringList fields = output.statsLine().split(QLatin1Char(' '));
+    const qsizetype index = fields.indexOf(QStringLiteral("slowest-draw-ms"));
+    return index >= 0 && index + 1 < fields.size() ? fields[index + 1].toDouble() : -1;
+}
+
+// The scheduler learns what composition takes on this GPU from every frame
+// that lands, whether a timestamp query or a fence timed it.
+TEST_F(DrmOutputTest, EachLandedFrameTellsTheSchedulerWhenItWasDrawn)
+{
+    ASSERT_TRUE(drm->enable());
+    flip(0);
+    EXPECT_EQ(slowestDrawMs(*drm), 0);
+    for (unsigned frame = 1; frame <= 3; ++frame) {
+        update();
+        drm->scheduleFrame();
+        ASSERT_TRUE(waitEvents(frame + 1));
+        // Flips come at once here; a real one lands once the GPU is done.
+        glFinish();
+        flip(frame, 42 + frame);
+    }
+    if (!egl->marksDrawn() && !gbmDevice)
+        GTEST_SKIP() << "Neither timestamp queries nor native fences";
+    EXPECT_GT(slowestDrawMs(*drm), 0);
+}
+
 // virtio-gpu has no vblank: every flip carries sequence 0, and the mode's
 // refresh is QEMU's invention. Two such flips switch the output to 60 Hz.
 TEST_F(DrmOutputTest, AnOutputWithoutVblankIsPacedAtSixtyHertz)

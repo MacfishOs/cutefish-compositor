@@ -760,6 +760,8 @@ add_library(cutefish-render STATIC
     src/render/egl_render_target.h
     src/render/egl_fence.cpp
     src/render/egl_fence.h
+    src/render/gpu_timer.cpp
+    src/render/gpu_timer.h
     src/render/egl_dmabuf_importer.cpp
     src/render/egl_dmabuf_importer.h
     src/render/gl_texture.cpp

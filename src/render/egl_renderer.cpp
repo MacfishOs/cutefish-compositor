@@ -22,6 +22,7 @@ namespace cutefish::render {
 EglRenderer::EglRenderer(std::shared_ptr<EglContext> context, gbm_device *device)
     : m_context(std::move(context))
     , m_fences(*m_context)
+    , m_timer(*m_context)
     , m_importer(m_context, device)
     , m_upload(m_context)
     , m_pass(m_context)
@@ -187,6 +188,18 @@ void EglRenderer::waitFence(const SyncFence &fence)
 SyncFence EglRenderer::createReleaseFence()
 {
     return m_fences.release(m_current != nullptr);
+}
+
+GpuTimer::Mark EglRenderer::markDrawn()
+{
+    return m_current ? m_timer.mark() : GpuTimer::Mark();
+}
+
+std::optional<GpuTimer::Time> EglRenderer::drawnAt(const GpuTimer::Mark &mark)
+{
+    if (!mark.isValid() || !makeContextCurrent())
+        return std::nullopt;
+    return m_timer.reached(mark);
 }
 
 std::unique_ptr<Texture> EglRenderer::createTexture(const QSize &size, const uint8_t *pixels,

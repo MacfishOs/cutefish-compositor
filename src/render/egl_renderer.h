@@ -23,6 +23,7 @@
 #include "render/egl_render_target.h"
 #include "render/gl_program.h"
 #include "render/gl_render_pass.h"
+#include "render/gpu_timer.h"
 #include "render/renderer.h"
 
 struct gbm_device;
@@ -56,6 +57,15 @@ public:
 
     void waitFence(const SyncFence &fence) override;
     SyncFence createReleaseFence() override;
+
+    // Whether markDrawn() works; otherwise the drawn frame takes a release fence.
+    bool marksDrawn() const { return m_timer.available(); }
+
+    // Marks the end of the frame's commands, without the submission a fence forces.
+    GpuTimer::Mark markDrawn();
+
+    // When the GPU got past `mark`, once it has.
+    std::optional<GpuTimer::Time> drawnAt(const GpuTimer::Mark &mark);
 
     void clear(const Color &color) override;
     void fillRect(const QRect &rect, const Color &color) override;
@@ -206,6 +216,7 @@ private:
 
     std::shared_ptr<EglContext> m_context;
     EglFence m_fences;
+    GpuTimer m_timer;
     EglDmaBufImporter m_importer;
     gbm_device *m_device = nullptr;
     // Probed on first use: which DMA-BUFs this GPU can render captures into.

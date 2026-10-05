@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <gbm.h>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <stdexcept>
 
 #include "egl_test_util.h"
@@ -542,6 +543,29 @@ TEST(ProgramInitialization, RetiredTextureCannotTerminateAReplacementDisplay)
     EXPECT_FALSE(EglContext::createSurfaceless(1000));
     EXPECT_EQ(eglGetCurrentContext(), current);
     EXPECT_TRUE(GlProgram::create(vertex, fragment));
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(RenderInternals, AMarkTellsWhenTheGpuGotPastTheFrame)
+{
+    if (!renderer->marksDrawn())
+        GTEST_SKIP() << "No GL_EXT_disjoint_timer_query";
+    EXPECT_FALSE(renderer->drawnAt({}));
+    const auto before = std::chrono::steady_clock::now();
+    renderer->clear({0, 1, 0, 1});
+    const auto mark = renderer->markDrawn();
+    ASSERT_TRUE(mark.isValid());
+    glFinish();
+    const auto after = std::chrono::steady_clock::now();
+    const auto drawn = renderer->drawnAt(mark);
+    ASSERT_TRUE(drawn);
+    // The two clocks are matched by reading both, which takes a little while.
+    const auto slack = std::chrono::milliseconds(2);
+    EXPECT_GE(*drawn, before - slack);
+    EXPECT_LE(*drawn, after + slack);
+    // Outside a frame there is nothing to mark.
+    renderer->cancelFrame();
+    EXPECT_FALSE(renderer->markDrawn().isValid());
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
