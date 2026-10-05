@@ -634,9 +634,11 @@ TEST_F(ShadowPixelTest, GlassSofteningMatchesDiscreteGaussian)
                                                           : 1;
                     expected += weights[i + 30] * coverage;
                 }
+                // Past a sigma of 4 the blur runs at a reduced resolution,
+                // whose bilinear resampling widens it slightly.
                 EXPECT_NEAR(channel(actual, horizontal ? 450 + offset : 450,
                                     horizontal ? 300 : 300 + offset),
-                            255 * expected / total, 2)
+                            255 * expected / total, sigma > 4 ? 3 : 2)
                         << "sigma=" << sigma << " horizontal=" << horizontal
                         << " offset=" << offset;
             }

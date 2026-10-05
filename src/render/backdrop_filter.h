@@ -87,6 +87,8 @@ private:
     void applyGlassMaterial(const GlProgram &program, const GlassParams &glass,
                             const QSize &coverage, double scale);
 
+    // Skia's kMaxLinearSigma, in texels of the glass capture.
+    static constexpr float kMaxGlassSigma = 4;
     static constexpr size_t kCachedSizes = 8;
     static constexpr int kScratchStep = 64;
     static constexpr uint64_t kUnusedFrames = 60;

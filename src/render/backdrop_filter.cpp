@@ -307,8 +307,11 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
             (glass.enabled ? std::max(glass.blurSigma, 0.05f) : std::max(glass.plainSigma, 0.05f))
             * scale;
     // Glass samples the backdrop per output pixel, so it wants device
-    // resolution; the plain blur is specified in logical pixels.
-    const float quality = glass.enabled ? 1.0f : 0.33f / scale;
+    // resolution until its sigma passes Skia's kMaxLinearSigma, past which
+    // Skia halves the resolution too; the plain blur is specified in logical pixels.
+    float quality = glass.enabled ? 1.0f : 0.33f / scale;
+    while (glass.enabled && sigma * quality > kMaxGlassSigma)
+        quality /= 2;
     const QRect output(sources.front().offset.toPoint(), sources.front().oriented());
     const QRect visibleBounds = bounds.intersected(clip).intersected(output);
     if (visibleBounds.isEmpty())
@@ -489,6 +492,7 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
         glUniform1f(program.uniform("uOpacity"), std::clamp(glass.opacity, 0.0f, 1.0f));
     if (glass.enabled) {
         applyGlassMaterial(program, glass, coverage.size(), scale);
+        glUniform2f(program.uniform("uBackdropSize"), reduced.width(), reduced.height());
         glUniform4f(program.uniform("uLens"), lens.x() - bounds.x(), lens.y() - bounds.y(),
                     lens.width(), lens.height());
     }

@@ -3,6 +3,8 @@ uniform sampler2D uTexture;
 uniform vec4 uSampleRect;
 uniform vec2 uSize;
 uniform vec2 uCoverage;
+// The blurred backdrop's texels, fewer than the coverage's pixels for a wide blur.
+uniform vec2 uBackdropSize;
 uniform float uRadius;
 uniform float uBevel;
 uniform float uDepth;
@@ -109,7 +111,7 @@ void shade() {
     // apart in the backdrop, so widen the sampling footprint there.
     vec2 texel = mix(0.75, 2.5, clamp(1.0 + sd / band, 0.0, 1.0)) / uCoverage;
     // Bilinear filtering must not reach past what was captured.
-    vec2 margin = 1.2 / uCoverage;
+    vec2 margin = 1.2 / uBackdropSize;
     vec3 refracted = 0.25 * (
         refractedAt(p, vec2(0.375, -0.125), halfSize, r, band, uv, texel, margin) +
         refractedAt(p, vec2(0.125, 0.375), halfSize, r, band, uv, texel, margin) +
