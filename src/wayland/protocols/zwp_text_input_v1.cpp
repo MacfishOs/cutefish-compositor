@@ -272,7 +272,7 @@ private:
         if (!validCursorRectangle(x, y, width, height))
             return;
         auto *t = from(resource);
-        t->m_state.rectangle = QRect(x, y, width, height);
+        t->m_state.rectangle = clientRect(x, y, width, height);
         t->changed();
     }
 

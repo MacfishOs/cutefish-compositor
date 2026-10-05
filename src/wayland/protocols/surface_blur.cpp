@@ -32,7 +32,7 @@ void set(wl_client *, wl_resource *resource, wl_resource *surfaceResource, int32
         return;
     }
     auto *surface = getUserDataAs<compositor::Surface>(surfaceResource);
-    surface->setBackgroundBlur(QRect(x, y, width, height),
+    surface->setBackgroundBlur(clientRect(x, y, width, height),
                                std::min(radius, std::min(width, height) / 2));
 }
 

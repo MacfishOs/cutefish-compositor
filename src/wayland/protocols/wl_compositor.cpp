@@ -38,13 +38,13 @@ void region_destroy(wl_client*, wl_resource* resource)
 void region_add(wl_client*, wl_resource* resource, int32_t x, int32_t y, int32_t width,
                 int32_t height)
 {
-    *getUserDataAs<QRegion>(resource) += QRect(x, y, width, height);
+    *getUserDataAs<QRegion>(resource) += clientRect(x, y, width, height);
 }
 
 void region_subtract(wl_client*, wl_resource* resource, int32_t x, int32_t y, int32_t width,
                      int32_t height)
 {
-    *getUserDataAs<QRegion>(resource) -= QRect(x, y, width, height);
+    *getUserDataAs<QRegion>(resource) -= clientRect(x, y, width, height);
 }
 
 const struct wl_region_interface region_implementation = { region_destroy, region_add,
@@ -96,13 +96,13 @@ void surface_damage(wl_client* client, wl_resource* resource, int32_t x, int32_t
                     int32_t width, int32_t height)
 {
     getUserDataAs<compositor::Surface>(resource)->damage(
-        clientToLogical(QRect(x, y, width, height), clientScale(client)));
+        clientToLogical(clientRect(x, y, width, height), clientScale(client)));
 }
 
 void surface_damage_buffer(wl_client*, wl_resource* resource, int32_t x, int32_t y,
                            int32_t width, int32_t height)
 {
-    getUserDataAs<compositor::Surface>(resource)->damageBuffer(QRect(x, y, width, height));
+    getUserDataAs<compositor::Surface>(resource)->damageBuffer(clientRect(x, y, width, height));
 }
 
 // Nulled when the wl_callback resource goes away, so a frame completing after

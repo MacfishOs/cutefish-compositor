@@ -182,7 +182,7 @@ void windowSetMinimizedGeometry(wl_client*, wl_resource* resource, wl_resource* 
         return;
     }
 
-    window->setMinimizedGeometry(panelWindow, QRect(x, y, width, height));
+    window->setMinimizedGeometry(panelWindow, clientRect(x, y, width, height));
 }
 
 void windowHandoff(wl_client*, wl_resource* resource)

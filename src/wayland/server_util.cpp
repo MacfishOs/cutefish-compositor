@@ -12,7 +12,9 @@
 
 #include <QHash>
 
+#include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include <wayland-server-protocol.h>
 
@@ -68,6 +70,19 @@ double clientScale(wl_client* client)
 {
     Server* server = client ? Server::serverForDisplay(wl_client_get_display(client)) : nullptr;
     return server ? server->clientScale(client) : 1;
+}
+
+QRect clientRect(int32_t x, int32_t y, int32_t width, int32_t height)
+{
+    static constexpr qint64 kLimit = 1 << 24;
+    const auto span = [](int32_t origin, int32_t size) {
+        const qint64 start = std::clamp<qint64>(origin, -kLimit, kLimit);
+        const qint64 end = std::clamp<qint64>(qint64(origin) + std::max(size, 0), start, kLimit);
+        return std::pair<int, int>(int(start), int(end - start));
+    };
+    const auto [left, w] = span(x, width);
+    const auto [top, h] = span(y, height);
+    return QRect(left, top, w, h);
 }
 
 QRect clientToLogical(const QRect& rect, double scale)

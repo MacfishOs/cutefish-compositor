@@ -161,7 +161,7 @@ const struct zwp_text_input_v3_interface TextInputV3::implementation = {
                 wl_resource_post_error(r, 0, "Invalid cursor rectangle");
                 return;
             }
-            from(r)->m_pending.rectangle = QRect(x, y, width, height);
+            from(r)->m_pending.rectangle = clientRect(x, y, width, height);
         },
         [](wl_client *, wl_resource *r) {
             from(r)->commit();

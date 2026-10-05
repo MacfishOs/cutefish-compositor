@@ -185,7 +185,7 @@ const struct cutefish_computer_control_v1_interface controlImplementation = {
         },
         [](wl_client *, wl_resource *resource, uint32_t handle, int32_t x, int32_t y,
            int32_t width, int32_t height) {
-            controlOf(resource)->setWindowFrame(handle, QRect(x, y, width, height));
+            controlOf(resource)->setWindowFrame(handle, clientRect(x, y, width, height));
         },
         [](wl_client *, wl_resource *resource, int32_t fd) {
             if (const auto text = readClipboard(resource, fd))

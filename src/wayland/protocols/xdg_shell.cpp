@@ -67,7 +67,7 @@ void xdg_positioner_set_anchor_rect(wl_client*, wl_resource* resource, int32_t x
                                "width and height must be positive and non-zero");
         return;
     }
-    getUserDataAs<WaylandPositioner>(resource)->setAnchorRect(QRect(x, y, width, height));
+    getUserDataAs<WaylandPositioner>(resource)->setAnchorRect(clientRect(x, y, width, height));
 }
 
 void xdg_positioner_set_anchor(wl_client*, wl_resource* resource, uint32_t anchor)
@@ -815,7 +815,7 @@ void xdg_surface_set_window_geometry(wl_client*, wl_resource* resource, int32_t 
         return;
     }
     getUserDataAs<WaylandXdgSurface>(resource)->shellSurface->setGeometry(
-        QRect(x, y, width, height));
+        clientRect(x, y, width, height));
 }
 
 void xdg_surface_ack_configure(wl_client*, wl_resource* resource, uint32_t serial)

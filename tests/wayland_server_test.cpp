@@ -8,6 +8,7 @@
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 
 #include "wayland/server.h"
+#include "wayland/server_util.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
@@ -274,3 +275,21 @@ TEST_F(WaylandServerTest, FlushDoesNotCrashDuringClientDisconnect)
 
 } // namespace
 } // namespace cutefish::wayland
+
+// Found by protocol_fuzzer: a region built from INT_MAX-sized arguments
+// overflowed QRect's right edge.
+TEST(ClientRect, EdgesStayWithinRangeAndNegativeSizesAreEmpty)
+{
+    using cutefish::wayland::clientRect;
+    EXPECT_EQ(clientRect(10, 20, 30, 40), QRect(10, 20, 30, 40));
+    EXPECT_EQ(clientRect(-5, -6, 10, 12), QRect(-5, -6, 10, 12));
+    EXPECT_TRUE(clientRect(10, 20, -30, 40).isEmpty());
+    EXPECT_TRUE(clientRect(10, 20, 30, 0).isEmpty());
+
+    const int limit = 1 << 24;
+    EXPECT_EQ(clientRect(1828966744, 0, 1353190006, 1), QRect(limit, 0, 0, 1));
+    EXPECT_EQ(clientRect(0, 0, INT32_MAX, INT32_MAX), QRect(0, 0, limit, limit));
+    EXPECT_EQ(clientRect(INT32_MIN, INT32_MIN, INT32_MAX, 5),
+              QRect(-limit, -limit, limit - 1, 0));
+    EXPECT_EQ(clientRect(-limit - 10, 0, 20, 1), QRect(-limit, 0, 10, 1));
+}
