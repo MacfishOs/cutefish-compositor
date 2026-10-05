@@ -409,7 +409,8 @@ bool ScanoutController::commit(const std::vector<PlaneContent> &planes, bool mod
             m_colorPending = pending;
             return false;
         }
-        qCWarning(cfDrm, "The driver refused the colour transform for CRTC %u; it stays untinted",
+        qCWarning(cfDrm,
+                  "The driver refused the colour transform for CRTC %u; blending it instead",
                   m_config.crtcId);
         destroyBlobs(color);
         m_colorRejected = true;

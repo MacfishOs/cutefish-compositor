@@ -260,9 +260,17 @@ public:
     // ScanoutController::supportsColorTransform().
     bool supportsColorTransform() const;
 
+    // Whether the tint is blended over composited frames, the CRTC having none.
+    bool blendsColorTransform() const
+    {
+        return !m_colorTransform.isIdentity() && !supportsColorTransform();
+    }
+
     // Tints everything this output shows from its next frame on, through KMS,
     // so neither composition nor direct scanout changes. A frame with nothing
     // new to draw still flips to carry it; a dark output takes it when it wakes.
+    // A CRTC with neither CTM nor gamma LUT gets it blended over each
+    // composited frame instead, and on its cursor plane's image.
     void setColorTransform(const render::ColorTransform &transform);
 
     // render::CursorSink: the KMS cursor plane, when the device has one.
@@ -432,6 +440,9 @@ private:
     bool m_directScanoutEnabled = true;
     // Kept for the scanout controller init() creates.
     render::ColorTransform m_colorTransform;
+    // Full repaints still owed after a blended tint ends, one per buffer the
+    // GBM surface may still hold tinted.
+    int m_untintedRepaints = 0;
     bool m_secureScanout = false;
     std::function<bool(double)> m_secureContentCheck;
     bool m_keepCarriedFrame = false;

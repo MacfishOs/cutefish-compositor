@@ -14,6 +14,7 @@
 #include <QDeadlineTimer>
 #include <QSet>
 #include <algorithm>
+#include <array>
 #include <drm_fourcc.h>
 #include <ext-image-capture-source-v1-client-protocol.h>
 #include <ext-image-copy-capture-v1-client-protocol.h>
@@ -97,6 +98,9 @@ protected:
     // The first pixel every acquired buffer must have; any byte order, so a
     // grey is the colour to expect.
     std::optional<uint8_t> checkPixel;
+    // The first pixel of the last acquired buffer, red, green and blue, while asked for.
+    bool recordPixel = false;
+    std::array<uint8_t, 3> lastPixel {};
     int acquired = 0, released = 0, pacing = 0, prepared = 0;
     double scale = 1;
     std::shared_ptr<ScanoutStorage> storage;
@@ -289,7 +293,7 @@ protected:
         buffer->primary.modifier = DRM_FORMAT_MOD_LINEAR;
         buffer->primary.sourceRect = {0, 0, width, height};
         acquiredSize = {width, height};
-        if (checkPixel) {
+        if (checkPixel || recordPixel) {
             unsigned char pixel[4] = {255, 255, 255, 0};
             if (front) {
                 // After swap, the EGL back buffer no longer represents the submitted frame.
@@ -306,9 +310,14 @@ protected:
                 glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
                 EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
             }
-            EXPECT_EQ(pixel[0], *checkPixel);
-            EXPECT_EQ(pixel[1], *checkPixel);
-            EXPECT_EQ(pixel[2], *checkPixel);
+            // XRGB8888 lies blue first in memory; glReadPixels gives red first.
+            lastPixel = front ? std::array<uint8_t, 3> {pixel[2], pixel[1], pixel[0]}
+                              : std::array<uint8_t, 3> {pixel[0], pixel[1], pixel[2]};
+            if (checkPixel) {
+                EXPECT_EQ(pixel[0], *checkPixel);
+                EXPECT_EQ(pixel[1], *checkPixel);
+                EXPECT_EQ(pixel[2], *checkPixel);
+            }
         }
         return buffer;
     }
@@ -883,6 +892,55 @@ TEST_F(DrmOutputTest, EachLandedFrameTellsTheSchedulerWhenItWasDrawn)
     if (!egl->marksDrawn() && !gbmDevice)
         GTEST_SKIP() << "Neither timestamp queries nor native fences";
     EXPECT_GT(slowestDrawMs(*drm), 0);
+}
+
+// virtio-gpu and others have neither CTM nor gamma LUT; Ash composites a
+// colour matrix there, as the output does here over every frame.
+TEST_F(DrmOutputTest, WithoutColourPropertiesTheTintIsBlendedOverEachFrame)
+{
+    auto config = initialConfig;
+    config.crtcProperties = {};
+    config.crtcProperties.insert("MODE_ID", 20, 0);
+    config.crtcProperties.insert("ACTIVE", 21, 0);
+    config.crtcProperties.insert("OUT_FENCE_PTR", 23, 0);
+    // The fixture's output drives the same CRTC.
+    drm.reset();
+    drm = std::make_unique<Output>(
+            &device, config,
+            [&] {
+                return active;
+            },
+            true);
+    ASSERT_TRUE(drm->init(
+            egl.get(), createTarget({16, 16}),
+            [&] {
+                return acquireBuffer();
+            },
+            [&](QSize size) {
+                return createTarget(size);
+            }));
+    drm->setRenderCallback([](render::Renderer &renderer, quint64) {
+        renderer.clear({0.8f, 0.8f, 0.8f, 1});
+    });
+    recordPixel = true;
+    ASSERT_TRUE(drm->enable());
+    flip(0);
+    EXPECT_FALSE(drm->supportsColorTransform());
+    EXPECT_EQ(lastPixel, (std::array<uint8_t, 3> {204, 204, 204}));
+
+    drm->setColorTransform({1.0f, 0.5f, 0.25f});
+    EXPECT_TRUE(drm->blendsColorTransform());
+    ASSERT_TRUE(waitEvents(2));
+    EXPECT_EQ(lastPixel, (std::array<uint8_t, 3> {204, 102, 51}));
+    // Nothing went to the CRTC for it.
+    EXPECT_FALSE(propertyValue(device.commits.back().request, 7, 24));
+    flip(1);
+
+    drm->setColorTransform({});
+    EXPECT_FALSE(drm->blendsColorTransform());
+    ASSERT_TRUE(waitEvents(3));
+    EXPECT_EQ(lastPixel, (std::array<uint8_t, 3> {204, 204, 204}));
+    flip(2);
 }
 
 // virtio-gpu has no vblank: every flip carries sequence 0, and the mode's

@@ -220,8 +220,8 @@ HardwareSnapshot DisplayRuntime::discover(backend::DrmBackend *backend,
                 | cutefish::display::DisplayCapability::Rotation
                 | cutefish::display::DisplayCapability::SoftwareMirror
                 | cutefish::display::DisplayCapability::Power;
-        if (backend && index < int(backend->allOutputs().size())
-            && backend->allOutputs()[index]->supportsColorTransform())
+        // Through the CRTC, or blended over the frame where it cannot.
+        if (backend && index < int(backend->allOutputs().size()))
             physical.capabilities |= cutefish::display::DisplayCapability::ColorTransform;
         physical.modes = modes;
         physical.currentMode = mode;

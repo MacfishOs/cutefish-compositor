@@ -122,7 +122,7 @@ public:
 
     // The tint every commit from the next one on carries. Returns whether that
     // changed what the next commit sends; a CRTC that cannot take it, or whose
-    // driver once refused it, stays untinted.
+    // driver once refused it, stays untinted, and DrmOutput blends the tint.
     bool setColorTransform(const render::ColorTransform &transform);
 
     // The DRM framebuffer id for `buffer`, imported on first use and cached on

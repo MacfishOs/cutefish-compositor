@@ -36,6 +36,9 @@ namespace cutefish::backend {
 
 namespace {
 
+// Mesa's GBM surfaces hold up to four colour buffers.
+constexpr int kSwapBuffers = 4;
+
 // A mode without timings has no rate; viz paces such a display at
 // BeginFrameArgs::DefaultInterval(), 60 Hz. llround(inf) is undefined, and on
 // amd64 gives a negative period.
@@ -254,10 +257,24 @@ bool DrmOutput::supportsColorTransform() const
 
 void DrmOutput::setColorTransform(const render::ColorTransform &transform)
 {
+    const bool changed = transform != m_colorTransform;
+    const bool blended = blendsColorTransform();
     m_colorTransform = transform;
-    if (!m_scanout || !m_scanout->setColorTransform(transform))
+    if (m_scanout && m_scanout->setColorTransform(transform)) {
+        // Nothing on screen has to change for it, but only a commit carries it.
+        if (m_enabled && m_sessionActive && m_sessionActive()) {
+            m_forceFrame = true;
+            scheduleFrame(Reason::Scene);
+        }
         return;
-    // Nothing on screen has to change for it, but only a commit carries it.
+    }
+    if (!changed || supportsColorTransform())
+        return;
+    // Ash's composited colour matrix, for virtual GPUs. The previous frames'
+    // buffers hold the old tint, so every frame repaints whole until each has
+    // been drawn again.
+    if (blended && !blendsColorTransform())
+        m_untintedRepaints = kSwapBuffers;
     if (m_enabled && m_sessionActive && m_sessionActive()) {
         m_forceFrame = true;
         scheduleFrame(Reason::Scene);
@@ -998,7 +1015,13 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
     // to outlive the commit further down, not just the validation.
     scene::OverlayPlan plan;
     std::vector<PlaneContent> planes;
-    if (allowPromotion && !m_secureScanout && !modeset && m_scanout && m_scanoutPlanner) {
+    // A plane the blend cannot reach would show untinted; the cursor's image
+    // carries the tint instead.
+    const bool blended = blendsColorTransform();
+    if (m_cursor)
+        m_cursor->setTint(blended ? m_colorTransform : render::ColorTransform());
+    if (allowPromotion && !blended && !m_secureScanout && !modeset && m_scanout
+        && m_scanoutPlanner) {
         plan = m_scanoutPlanner(size(), m_scanout->maxOverlays());
         planes = m_scanout->validate(plan, composited, m_modeBlobId);
     }
@@ -1027,8 +1050,14 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
             m_renderer->prepareDamage(viewport.isEmpty() ? QRect(QPoint(), size()) : viewport,
                                       {});
         }
+        // A buffer kept from an earlier frame holds another tint, or none.
+        if (blended || m_untintedRepaints > 0)
+            m_renderer->invalidateFrame();
         if (m_renderCallback)
             m_renderCallback(*m_renderer, frame);
+        // After the scene and the captures that copy it, which stay untinted.
+        if (blended)
+            m_renderer->tintFrame(m_colorTransform);
         // Tells the scheduler how long composition really takes on this GPU.
         // A fence's export waits for the driver to submit the frame; a
         // timestamp query rides the swap's own submission.
@@ -1040,6 +1069,10 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
             clearPromotions();
             return false;
         }
+        if (blended)
+            m_untintedRepaints = 0;
+        else if (m_untintedRepaints > 0)
+            --m_untintedRepaints;
         compositedBuffer = m_acquireBuffer();
         if (!compositedBuffer) {
             qCWarning(cfDrm) << "Failed to obtain a framebuffer for the composited frame";

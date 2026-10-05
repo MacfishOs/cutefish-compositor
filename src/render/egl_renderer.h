@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "render/backdrop_filter.h"
+#include "render/color_transform.h"
 #include "render/dmabuf.h"
 #include "render/drop_shadow.h"
 #include "render/egl_context.h"
@@ -57,6 +58,13 @@ public:
 
     void waitFence(const SyncFence &fence) override;
     SyncFence createReleaseFence() override;
+
+    // Repaints the whole target this frame, whatever its buffer holds.
+    void invalidateFrame();
+
+    // Multiplies every pixel the frame drew by the gains, as a CRTC's CTM
+    // would after it; for a CRTC that has none.
+    void tintFrame(const ColorTransform &transform);
 
     // Whether markDrawn() works; otherwise the drawn frame takes a release fence.
     bool marksDrawn() const { return m_timer.available(); }

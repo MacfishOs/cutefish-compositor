@@ -197,6 +197,36 @@ TEST_F(DrmCursorTest, ConsecutiveImagesAlternateBuffers)
     EXPECT_NE(m_device->cursorHandle, first);
 }
 
+// A CRTC without colour properties cannot tint its cursor plane, so the image
+// carries the gains, on the channels as the plane reads them.
+TEST_F(DrmCursorTest, ATintScalesTheColoursThePlaneShows)
+{
+    auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
+    ASSERT_TRUE(cursor);
+    const QSize size(1, 1);
+    const uint8_t pixel[] = {200, 100, 40, 255};
+    const auto shown = [&] {
+        const auto *data =
+                static_cast<const uint8_t *>(m_device->dumbMappings[m_device->cursorHandle]);
+        return std::vector<uint8_t>(data, data + 4);
+    };
+
+    ASSERT_TRUE(cursor->setImage(pixel, size, 4, QPoint()));
+    EXPECT_EQ(shown(), std::vector<uint8_t>({200, 100, 40, 255}));
+
+    // Blue, green, red and alpha in memory.
+    cursor->setTint({1.0f, 0.5f, 0.25f});
+    EXPECT_EQ(m_device->setCursorCalls, 2);
+    EXPECT_EQ(shown(), std::vector<uint8_t>({50, 50, 40, 255}));
+
+    // A hidden cursor takes the tint with its next image.
+    cursor->hide();
+    cursor->setTint({});
+    EXPECT_EQ(m_device->setCursorCalls, 3);
+    ASSERT_TRUE(cursor->setImage(pixel, size, 4, QPoint()));
+    EXPECT_EQ(shown(), std::vector<uint8_t>({200, 100, 40, 255}));
+}
+
 TEST_F(DrmCursorTest, AnImageLargerThanThePlaneIsRefused)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);

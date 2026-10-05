@@ -14,6 +14,7 @@
 #ifndef CUTEFISH_BACKEND_DRM_DRM_CURSOR_H_
 #define CUTEFISH_BACKEND_DRM_DRM_CURSOR_H_
 
+#include <QByteArray>
 #include <QPoint>
 #include <QSize>
 
@@ -22,6 +23,7 @@
 #include <memory>
 
 #include "backend/drm/drm_device_api.h"
+#include "render/color_transform.h"
 
 namespace cutefish::backend {
 
@@ -47,6 +49,10 @@ public:
     // caller must then fall back to compositing it.
     bool setImage(const uint8_t* pixels, const QSize& size, int stride, const QPoint& hotspot);
 
+    // Scales the colour channels of the image the plane shows, for a CRTC that
+    // cannot tint its planes itself; a visible cursor is uploaded again.
+    void setTint(const render::ColorTransform& tint);
+
     // Takes the cursor off the plane. Idempotent.
     void hide();
 
@@ -65,6 +71,7 @@ private:
 
     DrmCursor(DrmDeviceApi* device, uint32_t crtcId, const QSize& size,
               std::array<Buffer, 2> buffers);
+    bool upload();
 
     DrmDeviceApi* m_device = nullptr;
     uint32_t m_crtcId = 0;
@@ -73,6 +80,11 @@ private:
     // currently scanning out.
     std::array<Buffer, 2> m_buffers;
     size_t m_front = 0;
+    // The last image, kept to be tinted again.
+    QByteArray m_image;
+    QSize m_imageSize;
+    int m_imageStride = 0;
+    render::ColorTransform m_tint;
     QPoint m_hotspot;
     QPoint m_position;
     // Until the first move the plane stays where the previous DRM master left it.

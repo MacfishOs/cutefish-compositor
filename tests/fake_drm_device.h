@@ -174,9 +174,10 @@ public:
         return true;
     }
 
-    void *mapDumbBuffer(uint32_t, uint64_t size) override
+    void *mapDumbBuffer(uint32_t handle, uint64_t size) override
     {
         void *data = std::calloc(1, size);
+        dumbMappings[handle] = data;
         ++liveMappings;
         return data;
     }
@@ -187,6 +188,9 @@ public:
             return;
         if (beforeUnmap)
             beforeUnmap(data);
+        std::erase_if(dumbMappings, [data](const auto &entry) {
+            return entry.second == data;
+        });
         std::free(data);
         --liveMappings;
     }
@@ -220,6 +224,8 @@ public:
     int moveCursorCalls = 0;
     int liveDumbBuffers = 0;
     int liveMappings = 0;
+    // What each mapped dumb buffer holds, by handle.
+    std::map<uint32_t, void *> dumbMappings;
 
     // Commits that were validation only, and the ones that were real.
     size_t testCommitCount() const { return countCommits(true); }

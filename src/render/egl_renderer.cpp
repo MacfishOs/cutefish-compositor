@@ -490,6 +490,38 @@ bool EglRenderer::endFrame()
     return ok;
 }
 
+void EglRenderer::invalidateFrame()
+{
+    if (m_current)
+        m_current->invalidate();
+}
+
+void EglRenderer::tintFrame(const ColorTransform &transform)
+{
+    if (!m_current || transform.isIdentity())
+        return;
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glViewport(0, 0, m_current->size().width(), m_current->size().height());
+    glDisable(GL_SCISSOR_TEST);
+    static constexpr float vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
+    glUseProgram(m_colorProgram);
+    applyRoundedClip(m_colorProgram);
+    glUniform4f(m_colorUniform, transform.red, transform.green, transform.blue, 1);
+    glVertexAttribPointer(GlProgram::kPositionAttribute, 2, GL_FLOAT, GL_FALSE, 0, vertices);
+    glEnableVertexAttribArray(GlProgram::kPositionAttribute);
+    glEnable(GL_BLEND);
+    // The destination times the gains, its alpha kept.
+    glBlendFuncSeparate(GL_ZERO, GL_SRC_COLOR, GL_ZERO, GL_ONE);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glDisableVertexAttribArray(GlProgram::kPositionAttribute);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    if (m_repaint)
+        applyRepaint(*m_repaint);
+}
+
 void EglRenderer::cancelFrame()
 {
     glDisable(GL_SCISSOR_TEST);

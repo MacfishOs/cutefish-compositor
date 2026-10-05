@@ -9,6 +9,7 @@
 
 #include "backend/drm/drm_cursor.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "core/logging.h"
@@ -75,20 +76,51 @@ bool DrmCursor::setImage(const uint8_t* pixels, const QSize& size, int stride,
     if (size.width() > m_size.width() || size.height() > m_size.height())
         return false;
 
+    m_image = QByteArray(reinterpret_cast<const char*>(pixels),
+                         qsizetype(stride) * (size.height() - 1) + size.width() * 4);
+    m_imageSize = size;
+    m_imageStride = stride;
+    m_hotspot = hotspot;
+    return upload();
+}
+
+void DrmCursor::setTint(const render::ColorTransform& tint)
+{
+    if (tint == m_tint)
+        return;
+    m_tint = tint;
+    if (m_visible && !m_image.isEmpty())
+        upload();
+}
+
+bool DrmCursor::upload()
+{
     // Never write into the buffer the display is scanning out.
     const size_t back = m_visible ? (m_front ^ 1) : m_front;
     Buffer& buffer = m_buffers[back];
 
     std::memset(buffer.data, 0, buffer.info.size);
     auto* destination = static_cast<uint8_t*>(buffer.data);
-    const int rowBytes = size.width() * 4;
-    for (int y = 0; y < size.height(); ++y) {
-        std::memcpy(destination + static_cast<size_t>(y) * buffer.info.stride,
-                    pixels + static_cast<size_t>(y) * stride, static_cast<size_t>(rowBytes));
+    const auto* pixels = reinterpret_cast<const uint8_t*>(m_image.constData());
+    const int rowBytes = m_imageSize.width() * 4;
+    for (int y = 0; y < m_imageSize.height(); ++y) {
+        uint8_t* row = destination + static_cast<size_t>(y) * buffer.info.stride;
+        std::memcpy(row, pixels + static_cast<size_t>(y) * m_imageStride,
+                    static_cast<size_t>(rowBytes));
+        if (m_tint.isIdentity())
+            continue;
+        const auto scaled = [](uint8_t value, float gain) {
+            return uint8_t(std::min(255.0f, value * gain + 0.5f));
+        };
+        // The plane reads ARGB8888: blue, green, red and alpha in memory.
+        for (int x = 0; x < rowBytes; x += 4) {
+            row[x] = scaled(row[x], m_tint.blue);
+            row[x + 1] = scaled(row[x + 1], m_tint.green);
+            row[x + 2] = scaled(row[x + 2], m_tint.red);
+        }
     }
 
-    m_hotspot = hotspot;
-    if (!m_device->setCursor(m_crtcId, buffer.info.handle, m_size, hotspot)) {
+    if (!m_device->setCursor(m_crtcId, buffer.info.handle, m_size, m_hotspot)) {
         qCInfo(cfDrm) << "The driver rejected the hardware cursor; compositing it instead";
         m_failed = true;
         m_visible = false;
