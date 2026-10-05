@@ -81,6 +81,21 @@ cutefish_add_test(xdg_shell_protocol_test cutefish-wayland-shell cutefish-waylan
     PkgConfig::WaylandClient)
 cutefish_add_test(protocol_binding_test cutefish-wayland-globals PkgConfig::WaylandClient)
 set_tests_properties(protocol_binding_test PROPERTIES TIMEOUT 60)
+# Seeded random request sequences against every global; with clang,
+# -DCUTEFISH_LIBFUZZER=ON builds it for libFuzzer and AddressSanitizer instead.
+option(CUTEFISH_LIBFUZZER "Build protocol_fuzzer for libFuzzer" OFF)
+add_executable(protocol_fuzzer protocol_fuzzer.cpp)
+target_include_directories(protocol_fuzzer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(protocol_fuzzer PRIVATE cutefish-wayland-globals PkgConfig::WaylandClient
+    Qt6::Core)
+if(CUTEFISH_LIBFUZZER)
+    target_compile_definitions(protocol_fuzzer PRIVATE CUTEFISH_LIBFUZZER)
+    target_compile_options(protocol_fuzzer PRIVATE -fsanitize=fuzzer,address)
+    target_link_options(protocol_fuzzer PRIVATE -fsanitize=fuzzer,address)
+else()
+    add_test(NAME protocol_fuzzer COMMAND protocol_fuzzer)
+    set_tests_properties(protocol_fuzzer PROPERTIES TIMEOUT 300)
+endif()
 cutefish_add_test(xdg_foreign_protocol_test cutefish-wayland-shell cutefish-wayland-input
     PkgConfig::WaylandClient)
 cutefish_add_test(xdg_toplevel_drag_protocol_test cutefish-wayland-shell cutefish-wayland-input
