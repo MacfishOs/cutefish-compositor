@@ -1075,6 +1075,15 @@ TEST_F(SeatProtocolTest, KeyboardSendsKeymapRepeatInfoEnterKeysAndModifiers)
         ASSERT_GT(c.observed.modifiers.size(), modifierCount);
         EXPECT_EQ(0u, c.observed.modifiers.back()[0]);
 
+        // Caps Lock arrives in the locked mask, not the latched one.
+        check([&] {
+            seat.onKey(at(6), KEY_CAPSLOCK, true);
+            seat.onKey(at(7), KEY_CAPSLOCK, false);
+        });
+        c.sync();
+        EXPECT_EQ(0u, c.observed.modifiers.back()[1]);
+        EXPECT_NE(0u, c.observed.modifiers.back()[2]);
+
         check([&] { seat.setFocusedSurface(nullptr); });
         c.sync();
         EXPECT_EQ("leave", c.observed.keyboardEvents.back());

@@ -112,8 +112,8 @@ void WaylandKeyboardDelegate::sendKeyboardModifiers()
 {
     wl_keyboard_send_modifiers(m_keyboardResource,
                                m_serialTracker->nextSerial(SerialTracker::OTHER_EVENT),
-                               m_currentModifiers.depressed, m_currentModifiers.locked,
-                               m_currentModifiers.latched, m_currentModifiers.group);
+                               m_currentModifiers.depressed, m_currentModifiers.latched,
+                               m_currentModifiers.locked, m_currentModifiers.group);
     wl_client_flush(client());
 }
 
