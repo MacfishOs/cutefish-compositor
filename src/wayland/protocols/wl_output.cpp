@@ -47,7 +47,8 @@ struct OutputState {
     std::shared_ptr<compositor::CaptureSource> capture =
             std::make_shared<compositor::CaptureSource>();
     // Context of the delayed destruction, which dies with the display.
-    QObject lifetime;
+    // Braced, or aggregate initialisation copy-initialises it (explicit ctor).
+    QObject lifetime {};
 };
 
 struct Membership {
