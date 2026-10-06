@@ -44,10 +44,9 @@ const Window *referenceWindow(WindowManager *manager, const QRect &output,
 
 } // namespace
 
-QRect boundsForNewWindow(const Window *window)
+QRect boundsForNewWindow(const Window *window, QRect bounds)
 {
     WindowManager *manager = window->manager();
-    QRect bounds = window->bounds();
     if (!window->maximumSize().isEmpty() && window->minimumSize() == window->maximumSize()) {
         const Window *reference = manager->activation()->activeWindow();
         if (reference && reference != window && !window->applicationId().isEmpty()

@@ -2178,6 +2178,24 @@ TEST_F(WmTest, AWindowWithARestoreIdOpensWhereTheLastOneWasLeft)
     EXPECT_EQ(QRect(400, 300, 600, 500), third->bounds());
 }
 
+TEST_F(WmTest, AMaximizedWindowWithARestoreIdIsRememberedByItsRestoreBounds)
+{
+    const auto map = [&] {
+        compositor::Surface *surface = makeSurface(QSize(200, 100));
+        surface->setRestoreId(QStringLiteral("preview"));
+        return manager.createWindow(surface, {.requestedSize = QSize(200, 100),
+                                              .applicationId = QStringLiteral("app"),
+                                              .positionManaged = true});
+    };
+    Window *first = map();
+    first->requestBounds(QRect(100, 120, 200, 100));
+    first->maximize();
+    manager.destroyWindow(first);
+
+    Window *second = map();
+    EXPECT_EQ(QRect(100, 120, 200, 100), second->bounds());
+}
+
 TEST_F(WmTest, ARestoreIdIsKeptPerApplicationAndOutput)
 {
     const auto map = [&](const QString &applicationId, const QString &restoreId) {

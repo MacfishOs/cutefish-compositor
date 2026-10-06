@@ -335,6 +335,8 @@ private:
     void updateWindowBoundsFromClient();
     void updateSizeConstraints();
     QSize configureBounds() const;
+    // The frame a normal window would have, whatever the current state.
+    Insets normalFrameInsets() const;
     bool computeResizable() const;
     // An ordinary top-level application window: no transient parent, not the
     // trusted shell's.

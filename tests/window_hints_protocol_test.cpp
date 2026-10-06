@@ -224,6 +224,22 @@ TEST_F(WindowHintsProtocolTest, RestoreIdIsImmediateAndPersistsUntilTheSurfaceDi
     wl_surface_destroy(surface);
 }
 
+TEST_F(WindowHintsProtocolTest, RestoreSizeIsImmediateAndRejectsNegativeValues)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_TRUE(model->restoreSize().isEmpty());
+    cutefish_window_hints_v1_set_restore_size(hints, surface, 300, 200);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(model->restoreSize(), QSize(300, 200));
+    cutefish_window_hints_v1_set_restore_size(hints, surface, -1, 200);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
 TEST_F(WindowHintsProtocolTest, InteractiveResizeReachesTheSurfacesClient)
 {
     struct Event {

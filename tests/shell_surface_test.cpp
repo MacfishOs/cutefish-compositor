@@ -283,6 +283,42 @@ TEST_F(ShellSurfaceTest, AStateRequestedBeforeMappingIsAppliedOnMap)
     EXPECT_EQ(kOutput, shell->window()->bounds());
 }
 
+TEST_F(ShellSurfaceTest, AWindowMappedMaximizedRestoresToItsRestoreSize)
+{
+    Recorder *recorder = nullptr;
+    ShellSurface *shell = makeShell(&recorder);
+    shell->setToplevel();
+    shell->rootSurface()->setRestoreSize(QSize(300, 200));
+    shell->maximize();
+    shell->rootSurface()->commit();
+    ASSERT_TRUE(shell->acknowledgeConfigure(recorder->serials.back()));
+    attach(shell->rootSurface(), kOutput.size());
+    shell->rootSurface()->commit();
+    ASSERT_NE(nullptr, shell->window());
+    ASSERT_TRUE(shell->window()->state()->isMaximized());
+
+    shell->unmaximize();
+
+    EXPECT_EQ(QRect(350, 300, 300, 200), shell->window()->bounds());
+    EXPECT_EQ(QSize(300, 200), recorder->last().size);
+}
+
+TEST_F(ShellSurfaceTest, AWindowMappedMaximizedWithoutARestoreSizeRestoresInsideTheWorkArea)
+{
+    Recorder *recorder = nullptr;
+    ShellSurface *shell = makeShell(&recorder);
+    shell->setToplevel();
+    shell->maximize();
+    shell->rootSurface()->commit();
+    ASSERT_TRUE(shell->acknowledgeConfigure(recorder->serials.back()));
+    attach(shell->rootSurface(), kOutput.size());
+    shell->rootSurface()->commit();
+
+    shell->unmaximize();
+
+    EXPECT_EQ(kOutput.adjusted(10, 10, -10, -10), shell->window()->bounds());
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Configure serials and acknowledgement
 

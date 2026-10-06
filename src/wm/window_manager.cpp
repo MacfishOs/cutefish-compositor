@@ -456,8 +456,8 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
         if (workArea.isEmpty())
             workArea = workAreaFor(window);
         window->setBounds(m_placement.place(window->frameInsets().outset(size), workArea));
-        if (init.positionManaged && !restorePlacement(window))
-            window->setBounds(window_positioner::boundsForNewWindow(window));
+        if (init.positionManaged)
+            window->setBounds(boundsForNewWindow(window, window->bounds()));
     }
 
     // Onto a desk before anything is drawn or announced: a dialog of a window
@@ -472,19 +472,33 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     return window;
 }
 
+QRect WindowManager::boundsForNewWindow(const Window *window, QRect bounds) const
+{
+    if (!restorePlacement(window, &bounds))
+        bounds = window_positioner::boundsForNewWindow(window, bounds);
+    return bounds;
+}
+
 void WindowManager::rememberPlacement(const Window *window)
 {
     const compositor::Surface *surface = window->rootSurface();
     if (!surface || surface->restoreId().isEmpty() || window->applicationId().isEmpty()
-        || window->isPopup() || window->isShellWindow() || window->transientParent()
-        || !window->state()->isNormal()) {
+        || window->isPopup() || window->isShellWindow() || window->transientParent()) {
         return;
     }
+    // A maximized or fullscreen window is remembered by where it returns to.
+    const WindowState *state = window->state();
+    QRect bounds = window->bounds();
+    if (!state->isNormal()) {
+        if (!(state->isMaximized() || state->isFullscreen()) || !state->hasRestoreBounds())
+            return;
+        bounds = state->restoreBounds();
+    }
     m_rememberedPlacements[{window->applicationId(), surface->restoreId()}] = {
-            window->bounds(), outputBoundsFor(window)};
+            bounds, outputBoundsFor(window)};
 }
 
-bool WindowManager::restorePlacement(Window *window) const
+bool WindowManager::restorePlacement(const Window *window, QRect *bounds) const
 {
     const compositor::Surface *surface = window->rootSurface();
     if (!surface || surface->restoreId().isEmpty())
@@ -496,15 +510,13 @@ bool WindowManager::restorePlacement(Window *window) const
     if (workArea.isEmpty())
         return false;
     const QRect &previous = it->second.bounds;
-    QRect bounds = window->bounds();
-    bounds.moveTopLeft(previous.topLeft());
+    bounds->moveTopLeft(previous.topLeft());
     if (surface->resizeAnchor() == compositor::ResizeAnchor::Center) {
         // Halves of the difference, as a client resize around the centre moves it.
-        bounds.translate((previous.width() - bounds.width()) / 2,
-                         (previous.height() - bounds.height()) / 2);
+        bounds->translate((previous.width() - bounds->width()) / 2,
+                          (previous.height() - bounds->height()) / 2);
     }
-    adjustBoundsToFit(workArea, &bounds);
-    window->setBounds(bounds);
+    adjustBoundsToFit(workArea, bounds);
     return true;
 }
 

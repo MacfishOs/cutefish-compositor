@@ -75,8 +75,20 @@ void setRestoreId(wl_client *, wl_resource *, wl_resource *surface, const char *
     getUserDataAs<compositor::Surface>(surface)->setRestoreId(QString::fromUtf8(id));
 }
 
+void setRestoreSize(wl_client *, wl_resource *resource, wl_resource *surface, int32_t width,
+                    int32_t height)
+{
+    if (width < 0 || height < 0) {
+        wl_resource_post_error(resource, CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE,
+                               "restore size must not be negative");
+        return;
+    }
+    getUserDataAs<compositor::Surface>(surface)->setRestoreSize(QSize(width, height));
+}
+
 const struct cutefish_window_hints_v1_interface implementation = {
-        destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor, setServerResize, setRestoreId};
+        destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor,
+        setServerResize, setRestoreId, setRestoreSize};
 
 void unbind(wl_resource *resource)
 {

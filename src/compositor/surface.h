@@ -106,6 +106,9 @@ public:
     // Read when the window maps and unmaps; see set_restore_id.
     const QString &restoreId() const { return m_restoreId; }
     void setRestoreId(const QString &id) { m_restoreId = id; }
+    // Read when the window maps maximized or fullscreen; see set_restore_size.
+    const QSize &restoreSize() const { return m_restoreSize; }
+    void setRestoreSize(const QSize &size) { m_restoreSize = size; }
 
     struct MenuAddress {
         QString service;
@@ -501,6 +504,7 @@ private:
     ResizeAnchor m_resizeAnchor = ResizeAnchor::TopLeft;
     bool m_serverResize = false;
     QString m_restoreId;
+    QSize m_restoreSize;
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 

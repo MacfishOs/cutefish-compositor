@@ -26,11 +26,11 @@ class WindowManager;
 
 namespace window_positioner {
 
-// Where a new `window`, already centered in its work area, should go: offset
-// down and right from its application's most recent window on the same output,
-// or from that window's restore bounds while it is maximized. A cascade that
-// would run past the work area restarts from its top-left corner.
-QRect boundsForNewWindow(const Window *window);
+// Where a new `window` at `bounds`, centered in its work area, should go:
+// offset down and right from its application's most recent window on the same
+// output, or from that window's restore bounds while it is maximized. A cascade
+// that would run past the work area restarts from its top-left corner.
+QRect boundsForNewWindow(const Window *window, QRect bounds);
 
 // The state a new window of `applicationId` on `output` should be shown in,
 // decided before it exists. A window that asked for nothing is maximized when

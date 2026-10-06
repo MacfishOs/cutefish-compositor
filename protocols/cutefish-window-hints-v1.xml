@@ -73,6 +73,20 @@
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="id" type="string"/>
     </request>
+    <request name="set_restore_size">
+      <description summary="the size a window first shown maximized returns to">
+        When a window maps maximized or fullscreen, the compositor has no
+        normal size of its own to return it to. A non-empty size, in surface
+        coordinates, makes such a window return to a window geometry of this
+        size when it leaves that state, placed as a normal window of that size
+        mapping at the same time would have been. Set it before the first
+        commit. 0x0 is the default and leaves the choice to the compositor; a
+        negative width or height is an invalid_value error.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
     <event name="interactive_resize">
       <description summary="an interactive resize started or ended">
         Sent with active 1 when the user starts resizing one of the client's

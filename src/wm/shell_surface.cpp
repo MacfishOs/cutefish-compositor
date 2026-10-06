@@ -21,6 +21,7 @@
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
 #include "wm/activation.h"
+#include "wm/placement.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_frame.h"
@@ -885,6 +886,18 @@ void ShellSurface::mapToplevel()
         break;
     }
 
+    // Mapped maximized or fullscreen, the window has no normal bounds to come
+    // back to; give it those it would have had mapping normal at its own size.
+    const QSize restoreSize = m_surface->restoreSize();
+    if (!restoreSize.isEmpty()
+        && (m_window->state()->isMaximized() || m_window->state()->isFullscreen())) {
+        QRect bounds = Placement().place(normalFrameInsets().outset(restoreSize),
+                                         m_manager->workAreaFor(m_window));
+        if (isPositionManaged())
+            bounds = m_manager->boundsForNewWindow(m_window, bounds);
+        m_window->state()->setRestoreBounds(bounds);
+    }
+
     // The capture interface is never activated; mapping it takes the keyboard.
     if (m_window->role() == WindowRole::Capture)
         m_manager->setKeyboardGrab(m_window);
@@ -1122,15 +1135,19 @@ QSize ShellSurface::configureBounds() const
     // dock's strip.
     if (m_manager->shellMetadata(m_surface) || (m_window && m_window->isShellWindow()))
         return QSize(0, 0);
-    // The frame a normal window would have, whatever the current state.
-    Insets insets;
-    if (decorationMode() == DecorationMode::ServerSide && m_manager->frameProvider())
-        insets = m_manager->frameProvider()->defaultExtents();
+    const Insets insets = normalFrameInsets();
     QRect workArea = m_window ? m_manager->workAreaFor(m_window)
                               : m_manager->workAreaForOutput(m_initialOutput);
     if (workArea.isEmpty())
         workArea = m_manager->workAreaFor(nullptr);
     return insets.inset(workArea.size());
+}
+
+Insets ShellSurface::normalFrameInsets() const
+{
+    if (decorationMode() == DecorationMode::ServerSide && m_manager->frameProvider())
+        return m_manager->frameProvider()->defaultExtents();
+    return Insets();
 }
 
 bool ShellSurface::computeResizable() const
@@ -1143,9 +1160,7 @@ bool ShellSurface::computeResizable() const
 QSize ShellSurface::initialSizeForState(WindowStateType stateType) const
 {
     // No window yet, so no frame either: ask what one would cost.
-    Insets insets;
-    if (decorationMode() == DecorationMode::ServerSide && m_manager->frameProvider())
-        insets = m_manager->frameProvider()->defaultExtents();
+    const Insets insets = normalFrameInsets();
 
     switch (stateType) {
     case WindowStateType::Maximized: {

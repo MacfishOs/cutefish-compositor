@@ -376,6 +376,10 @@ public:
     // The work area of the output with `outputBounds`, or an empty rect when
     // there is no such output any more.
     QRect workAreaForOutput(const QRect &outputBounds) const;
+    // Where a new ordinary window at `bounds`, centered in its work area, goes
+    // when its position is managed: back where the last window with its
+    // restore id was left, or cascaded; see window_positioner.h.
+    QRect boundsForNewWindow(const Window *window, QRect bounds) const;
 
     struct OutputArea {
         QRect bounds;
@@ -454,7 +458,7 @@ private:
     // Where a window with a restore id is, kept as it unmaps and given back
     // to the next one with the same id; see set_restore_id.
     void rememberPlacement(const Window *window);
-    bool restorePlacement(Window *window) const;
+    bool restorePlacement(const Window *window, QRect *bounds) const;
 
     compositor::Compositor *m_compositor = nullptr;
     input::Seat *m_seat = nullptr;
