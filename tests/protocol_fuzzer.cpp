@@ -295,7 +295,36 @@ private:
         auto *proxy = static_cast<wl_proxy *>(
                 wl_registry_bind(m_registry, global.name, interface, version));
         if (proxy)
-            m_objects.push_back({proxy, interface});
+            track(proxy, interface);
+    }
+
+    // Objects the server creates by events are tracked as requested ones are,
+    // so they are destroyed and can be used; descriptors the events carry are
+    // closed.
+    void track(wl_proxy *proxy, const wl_interface *interface)
+    {
+        m_objects.push_back({proxy, interface});
+        wl_proxy_add_dispatcher(proxy, dispatch, nullptr, this);
+    }
+
+    static int dispatch(const void *, void *target, uint32_t, const wl_message *message,
+                        wl_argument *arguments)
+    {
+        auto *harness = static_cast<Harness *>(
+                wl_proxy_get_user_data(static_cast<wl_proxy *>(target)));
+        int index = 0;
+        for (const char *signature = message->signature; *signature; ++signature) {
+            if ((*signature >= '0' && *signature <= '9') || *signature == '?')
+                continue;
+            if (*signature == 'n' && arguments[index].o && message->types[index]) {
+                harness->track(reinterpret_cast<wl_proxy *>(arguments[index].o),
+                               message->types[index]);
+            } else if (*signature == 'h') {
+                close(arguments[index].h);
+            }
+            ++index;
+        }
+        return 0;
     }
 
     // An object of `interface` the input picks; any interface when null.
@@ -414,7 +443,7 @@ private:
             if (destructor)
                 object.proxy = nullptr;
             if (proxy && created)
-                m_objects.push_back({proxy, created});
+                track(proxy, created);
         }
         // The request holds its own copies.
         for (int fd : fds) {
@@ -448,6 +477,13 @@ void runInput(const uint8_t *data, size_t size)
 }
 
 } // namespace
+
+// Once a client has a protocol error, libwayland no longer dispatches the
+// events it has read, so the objects they create never reach the harness.
+extern "C" const char *__lsan_default_suppressions()
+{
+    return "leak:wl_display_read_events\n";
+}
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
