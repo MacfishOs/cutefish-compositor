@@ -40,6 +40,7 @@ public:
                        const QPointF &offset, bool discrete) override;
     bool onPointerAxisStop(input::Timestamp timestamp, const QPointF &location) override;
     bool onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
+    bool onSecureKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
     bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
     bool onTouchMotion(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
     bool onTouchUp(input::Timestamp timestamp, int32_t id) override;

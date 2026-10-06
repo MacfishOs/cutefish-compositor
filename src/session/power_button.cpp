@@ -95,6 +95,11 @@ bool PowerButton::onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pre
     return true;
 }
 
+bool PowerButton::onSecureKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed)
+{
+    return m_next && m_next->onSecureKey(timestamp, evdevCode, pressed);
+}
+
 bool PowerButton::onPointerMotion(input::Timestamp timestamp, const QPointF &location)
 {
     return m_next && m_next->onPointerMotion(timestamp, location);

@@ -39,12 +39,20 @@ public slots:
 
 struct Keys : input::EventSink {
     QList<uint32_t> keys;
+    QList<uint32_t> secureKeys;
 
     bool onKey(input::Timestamp, uint32_t evdevCode, bool pressed) override
     {
         if (pressed)
             keys.append(evdevCode);
         return false;
+    }
+
+    bool onSecureKey(input::Timestamp, uint32_t evdevCode, bool pressed) override
+    {
+        if (pressed)
+            secureKeys.append(evdevCode);
+        return true;
     }
 };
 
@@ -119,6 +127,15 @@ private slots:
         fixture.button.onKey(input::Timestamp {}, KEY_A, true);
         QCOMPARE(fixture.next.keys, (QList<uint32_t> {KEY_POWER, KEY_A}));
         QCOMPARE(fixture.controller.state(), session::SessionState::Active);
+    }
+
+    void keysForTheLockScreenPassOn()
+    {
+        // The accelerators behind it take the volume and brightness keys there.
+        Fixture fixture;
+        QVERIFY(fixture.button.onSecureKey(input::Timestamp {}, KEY_VOLUMEUP, true));
+        QVERIFY(fixture.button.onSecureKey(input::Timestamp {}, KEY_VOLUMEUP, false));
+        QCOMPARE(fixture.next.secureKeys, (QList<uint32_t> {KEY_VOLUMEUP}));
     }
 
     void thePressThatWokeTheSystemDoesNotLock()
