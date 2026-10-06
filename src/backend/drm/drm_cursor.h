@@ -44,7 +44,7 @@ public:
 
     QSize maxSize() const { return m_size; }
 
-    // Uploads `pixels`, premultiplied RGBA8888 in increasing address order.
+    // Uploads `pixels`, premultiplied ARGB32 (blue, green, red, alpha in memory).
     // Returns false when the image is larger than the plane can show; the
     // caller must then fall back to compositing it.
     bool setImage(const uint8_t* pixels, const QSize& size, int stride, const QPoint& hotspot);

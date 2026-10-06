@@ -261,7 +261,7 @@ bool Cursor::pushToSink()
     // artwork down (wm::ScaleAndRotateCursorBitmapAndHotpoint, floored). The
     // hotspot then lands within half a device pixel, and the cursor moves on
     // the plane instead of costing a composited frame per motion.
-    QImage image = frame->image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+    QImage image = frame->image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     const double ratio = m_scale / m_node->density();
     const QSize deviceSize(int(std::floor(image.width() * ratio)),
                            int(std::floor(image.height() * ratio)));

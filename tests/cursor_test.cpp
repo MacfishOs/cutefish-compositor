@@ -260,7 +260,7 @@ TEST_F(CursorSearchTest, SwitchingThemeRefreshesHardwareImageWithoutPointerMotio
         bool setCursorImage(const render::CursorImage &frame) override
         {
             image = QImage(frame.pixels, frame.size.width(), frame.size.height(), frame.stride,
-                           QImage::Format_RGBA8888_Premultiplied)
+                           QImage::Format_ARGB32_Premultiplied)
                             .copy();
             return true;
         }
@@ -311,7 +311,7 @@ TEST_F(CursorSearchTest, AShapeIsReadOncePerThemeAndSize)
         bool setCursorImage(const render::CursorImage &frame) override
         {
             image = QImage(frame.pixels, frame.size.width(), frame.size.height(), frame.stride,
-                           QImage::Format_RGBA8888_Premultiplied)
+                           QImage::Format_ARGB32_Premultiplied)
                             .copy();
             return true;
         }

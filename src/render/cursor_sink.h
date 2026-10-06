@@ -16,6 +16,7 @@ namespace cutefish::render {
 // Premultiplied RGBA8888 in increasing address order, matching the compositor's
 // own texture upload format.
 struct CursorImage {
+    // Premultiplied ARGB32, which is the plane's ARGB8888 in memory.
     const uint8_t* pixels = nullptr;
     QSize size;
     int stride = 0;
