@@ -95,6 +95,8 @@ struct TrackedWindow {
     int parentCount = 0;
     int minimizeLandedCount = 0;
     uint32_t desk = 0;
+    bool responsive = true;
+    int notRespondingCount = 0;
     bool closed = false;
 };
 
@@ -189,6 +191,12 @@ const cutefish_window_v1_listener windowListener = {
         },
         [](void *data, cutefish_window_v1 *, uint32_t desk) {
             static_cast<TrackedWindow *>(data)->desk = desk;
+        },
+        [](void *data, cutefish_window_v1 *, uint32_t responsive) {
+            static_cast<TrackedWindow *>(data)->responsive = responsive != 0;
+        },
+        [](void *data, cutefish_window_v1 *) {
+            ++static_cast<TrackedWindow *>(data)->notRespondingCount;
         },
 };
 
@@ -1987,5 +1995,67 @@ TEST_F(PrivateShellProtocolTest, ChangingTheShellAppIdClosesAndReannouncesTheTas
         ASSERT_EQ(c.liveTracked().size(), 2u);
         EXPECT_EQ(c.tracked.back()->id, helperId);
         EXPECT_EQ(c.activeWindowId, helperId);
+    });
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Windows that stop responding
+
+TEST_F(PrivateShellProtocolTest, AnUnresponsiveWindowAsksTheShellAndTakesASheet)
+{
+    run([&](Client &c) {
+        ASSERT_TRUE(c.bindShell());
+        ASSERT_TRUE(c.bindManagement());
+        XdgWindow *app = c.makeToplevel("Editor", "editor");
+        c.map(app, QSize(400, 300));
+        ASSERT_EQ(1u, c.liveTracked().size());
+        TrackedWindow *task = c.liveTracked().front();
+        EXPECT_TRUE(task->responsive);
+
+        // What a ping timeout does.
+        check([&] {
+            windowManager.windowById(task->id)->setResponsive(false);
+        });
+        c.sync();
+        EXPECT_FALSE(task->responsive);
+
+        // The application is not asked to close: the shell is asked to offer
+        // force quit.
+        cutefish_window_v1_close(task->object);
+        c.sync();
+        EXPECT_EQ(1, task->notRespondingCount);
+        EXPECT_EQ(0, app->closes);
+
+        XdgWindow *sheet = c.makeToplevel("Not Responding", "cutefish-shell");
+        sheet->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, sheet->surface);
+        cutefish_shell_surface_v1_set_role(sheet->shellSurface,
+                                           CUTEFISH_SHELL_SURFACE_V1_ROLE_SHEET);
+        cutefish_shell_surface_v1_set_parent(sheet->shellSurface, uint32_t(task->id >> 32),
+                                             uint32_t(task->id));
+        c.map(sheet, QSize(200, 100));
+
+        check([&] {
+            wm::Window *parent = windowManager.windowById(task->id);
+            wm::Window *sheetWindow = windowWithRole(wm::WindowRole::Sheet);
+            ASSERT_NE(nullptr, sheetWindow);
+            EXPECT_EQ(parent, sheetWindow->transientParent());
+            EXPECT_TRUE(sheetWindow->isModal());
+            EXPECT_EQ(sheetWindow, windowManager.activation()->activeWindow());
+            EXPECT_EQ(sheetWindow, windowManager.windows().back());
+            const QRect bounds = parent->bounds();
+            EXPECT_EQ(bounds.center(), sheetWindow->bounds().center());
+            parent->setBounds(bounds.translated(30, 40));
+            EXPECT_EQ(bounds.translated(30, 40).center(), sheetWindow->bounds().center());
+        });
+        // The sheet is not a task of its own, and the window it hangs from
+        // stays the active application.
+        EXPECT_EQ(1u, c.liveTracked().size());
+        EXPECT_EQ(task->id, c.activeWindowId);
+
+        check([&] {
+            windowManager.windowById(task->id)->setResponsive(true);
+        });
+        c.sync();
+        EXPECT_TRUE(task->responsive);
     });
 }

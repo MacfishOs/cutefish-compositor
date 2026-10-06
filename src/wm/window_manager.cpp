@@ -358,7 +358,9 @@ void WindowManager::setShellMetadata(compositor::Surface *surface,
             window->setRole(metadata.role);
             window->setFocusPolicy(metadata.focusPolicy);
             window->setPanelBehavior(metadata.panelBehavior);
-            if (metadata.hasPosition)
+            if (metadata.role == WindowRole::Sheet)
+                attachSheet(window, metadata.parentWindow);
+            else if (metadata.hasPosition)
                 window->setClientPosition(metadata.position);
         }
     }
@@ -413,6 +415,8 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
         window->setRole(metadata->role);
         window->setFocusPolicy(metadata->focusPolicy);
         window->setPanelBehavior(metadata->panelBehavior);
+        if (metadata->role == WindowRole::Sheet)
+            attachSheet(window, metadata->parentWindow);
     }
 
     m_stackingOrder.push_back(window);
@@ -432,6 +436,9 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     const ShellWindowMetadata *metadata = shellMetadata(rootSurface);
     if (window->isPopup()) {
         window->setBounds(QRect(init.origin, size));
+    } else if (window->role() == WindowRole::Sheet && window->transientParent()) {
+        window->setBounds(QRect(QPoint(), size));
+        placeSheet(window);
     } else if (metadata && metadata->hasPosition) {
         // Shell positions bypass the normal window placement policy.
         window->setBounds(QRect(metadata->position, size));
@@ -739,6 +746,32 @@ void WindowManager::onWindowStackingChanged(Window *window)
         m_compositor->scheduleRepaint();
 }
 
+void WindowManager::attachSheet(Window *sheet, quint64 parentId)
+{
+    Window *parent = windowById(parentId);
+    // Only an application window has a sheet; another shell surface is no
+    // place to hang one from.
+    if (parent == sheet || (parent && (parent->isShellWindow() || parent->isPopup())))
+        parent = nullptr;
+    sheet->setTransientParent(parent);
+    sheet->setModal(parent != nullptr);
+    if (hasWindow(sheet))
+        placeSheet(sheet);
+}
+
+void WindowManager::placeSheet(Window *sheet)
+{
+    Window *parent = sheet->transientParent();
+    if (!hasWindow(sheet) || !hasWindow(parent))
+        return;
+    // What the parent shows: a client that has not drawn a new size yet, as a
+    // hung one never does, keeps its old contents where they were.
+    const QRect bounds = parent->presentedBounds().translated(parent->bounds().topLeft());
+    const QSize size = sheet->bounds().size();
+    sheet->setClientPosition(QPoint(bounds.x() + (bounds.width() - size.width()) / 2,
+                                    bounds.y() + (bounds.height() - size.height()) / 2));
+}
+
 void WindowManager::onWindowModalChanged(Window *window)
 {
     if (hasWindow(window))
@@ -862,6 +895,22 @@ void WindowManager::quitApplication(Window *window)
                 m_terminateProcess(process);
         }
     });
+}
+
+void WindowManager::forceQuit(Window *window)
+{
+    if (!hasWindow(window))
+        return;
+    const qint64 process = window->processId();
+    window->kill();
+    // Never the compositor itself, whatever claims its pid.
+    if (m_forceQuitProcess && process != 0 && process != QCoreApplication::applicationPid())
+        m_forceQuitProcess(process);
+}
+
+bool WindowManager::promptNotResponding(Window *window)
+{
+    return m_notRespondingPrompt && hasWindow(window) && m_notRespondingPrompt(window);
 }
 
 void WindowManager::hideApplication(Window *window)
@@ -1417,6 +1466,11 @@ bool WindowManager::onKey(input::Timestamp, uint32_t evdevCode, bool pressed)
     // own; the key belongs to the lock screen.
     if (!allowsActivation())
         return false;
+    // Typing is waiting on the window as much as a press is.
+    if (pressed && !m_keyboardGrab) {
+        if (Window *active = m_activation.activeWindow())
+            active->ping();
+    }
     if (!m_eventHandler->isDragging())
         return false;
     if (pressed)

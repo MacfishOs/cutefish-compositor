@@ -69,6 +69,8 @@ struct ShellWindowMetadata {
     QPoint position;
     bool hasPosition = false;
     QString outputName;
+    // The window a Sheet hangs from, by Window::id; zero for none.
+    quint64 parentWindow = 0;
 };
 
 // Everything a window is announced with. The application id and the process id
@@ -228,6 +230,28 @@ public:
 
     void setQuitGracePeriod(std::chrono::milliseconds period) { m_quitGracePeriod = period; }
 
+    // Ends `window`'s client at once, without asking it, and the rest of the
+    // application through setForceQuitProcess().
+    void forceQuit(Window *window);
+
+    // How force quit also ends the application scope the process was started
+    // in: the session's AppRuntime in production. Unset, only the client ends.
+    void setForceQuitProcess(std::function<void(qint64 pid)> forceQuit)
+    {
+        m_forceQuitProcess = std::move(forceQuit);
+    }
+
+    // How the user is offered force quit for a window that stopped answering;
+    // returns whether anybody offered it. The window-management protocol's
+    // not_responding in production.
+    void setNotRespondingPrompt(std::function<bool(Window *)> prompt)
+    {
+        m_notRespondingPrompt = std::move(prompt);
+    }
+
+    // Called by Window; not part of the public API.
+    bool promptNotResponding(Window *window);
+
     // The window with this identifier, or null. Identifiers are stable for the
     // life of the compositor and never reused.
     Window *windowById(quint64 id) const;
@@ -245,6 +269,10 @@ public:
     // Re-sorts `window` into the stacking order after its role or panel
     // behavior changed. Called by Window; not part of the public API.
     void onWindowStackingChanged(Window *window);
+
+    // Centres a Sheet on what its transient parent shows. Called by Window; not
+    // part of the public API.
+    void placeSheet(Window *sheet);
 
     // Called by Window and TransientManager; not part of the public API.
     void onWindowModalChanged(Window *window);
@@ -421,6 +449,8 @@ private:
     void activateForPress(Window *window);
     // Hands the keyboard back to the active window.
     void releaseKeyboardGrab();
+    // Hangs a Sheet from the application window `parentId`, or from nothing.
+    void attachSheet(Window *sheet, quint64 parentId);
     // Where a window with a restore id is, kept as it unmaps and given back
     // to the next one with the same id; see set_restore_id.
     void rememberPlacement(const Window *window);
@@ -476,6 +506,8 @@ private:
     // Touch points that went down on a window's frame.
     std::map<int32_t, Window *> m_frameTouches;
     std::function<void(qint64 pid)> m_terminateProcess;
+    std::function<void(qint64 pid)> m_forceQuitProcess;
+    std::function<bool(Window *)> m_notRespondingPrompt;
     std::chrono::milliseconds m_quitGracePeriod {3000};
 };
 

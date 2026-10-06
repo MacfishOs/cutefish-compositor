@@ -2126,6 +2126,8 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
             },
             [](void *, auto *, uint32_t) {},
             [](void *, auto *, uint32_t) {},
+            [](void *, auto *, uint32_t) {},
+            [](void *, auto *) {},
     };
     static const cutefish_window_management_v1_listener managementListener = {
             [](void *p, auto *, cutefish_window_v1 *window, uint32_t, uint32_t) {

@@ -78,6 +78,7 @@ public:
     void onWindowStateTypeChanged(wm::Window* window, wm::WindowStateType oldType) override;
     void onWindowActivationChanged(wm::Window* window, bool active) override;
     void onWindowTransientParentChanged(wm::Window* window, wm::Window* oldParent) override;
+    void onWindowResponsiveChanged(wm::Window* window) override;
     void onWindowHiddenChanged(wm::Window* window) override;
     void onWindowMinimizedSnapshotChanged(wm::Window* window) override;
     void onWindowMinimizeLanded(wm::Window* window) override;

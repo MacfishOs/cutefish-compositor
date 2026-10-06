@@ -44,6 +44,8 @@ const char* toString(WindowRole role)
         return "capture";
     case WindowRole::Osd:
         return "osd";
+    case WindowRole::Sheet:
+        return "sheet";
     }
     return "unknown";
 }

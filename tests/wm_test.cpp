@@ -37,6 +37,7 @@
 #include "wm/placement.h"
 #include "wm/quit_all.h"
 #include "wm/snap_drag_controller.h"
+#include "wm/stacking.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/transient_manager.h"
 #include "wm/window.h"
@@ -373,6 +374,134 @@ TEST_F(WmTest, CloseAsksAResponsiveWindowAndKillsAnUnresponsiveOne)
     window->requestClose();
     EXPECT_EQ(2, closes);
     EXPECT_EQ(1, kills);
+}
+
+TEST_F(WmTest, WaitingOnAnUnresponsiveWindowOffersForceQuit)
+{
+    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    int closes = 0;
+    int kills = 0;
+    window->setCloseCallback([&] {
+        ++closes;
+    });
+    window->setPingCallback([] {});
+    window->setKillCallback([&] {
+        ++kills;
+    });
+    int prompts = 0;
+    manager.setNotRespondingPrompt([&](Window *prompted) {
+        EXPECT_EQ(window, prompted);
+        ++prompts;
+        return true;
+    });
+    manager.activation()->activate(window);
+
+    // Nothing is offered while the window answers.
+    window->ping();
+    input.onKey(at(1), KEY_A, true);
+    input.onKey(at(2), KEY_A, false);
+    window->requestClose();
+    EXPECT_EQ(0, prompts);
+    EXPECT_EQ(1, closes);
+
+    // A press, a key or a close on a window that stopped answering is the user
+    // waiting on it.
+    window->setResponsive(false);
+    window->ping();
+    EXPECT_EQ(1, prompts);
+    input.onKey(at(3), KEY_A, true);
+    input.onKey(at(4), KEY_A, false);
+    EXPECT_EQ(2, prompts);
+    window->requestClose();
+    EXPECT_EQ(3, prompts);
+    EXPECT_EQ(1, closes);
+    EXPECT_EQ(0, kills);
+
+    // With nobody to offer it, closing ends the client.
+    manager.setNotRespondingPrompt([](Window *) {
+        return false;
+    });
+    window->requestClose();
+    EXPECT_EQ(1, kills);
+}
+
+TEST_F(WmTest, ForceQuitEndsTheClientAndItsApplication)
+{
+    Window *window = manager.createWindow(makeSurface({300, 200}),
+                                          {.requestedSize = {300, 200}, .processId = 4242});
+    int kills = 0;
+    window->setKillCallback([&] {
+        ++kills;
+    });
+    std::vector<qint64> ended;
+    manager.setForceQuitProcess([&](qint64 pid) {
+        ended.push_back(pid);
+    });
+
+    manager.forceQuit(window);
+    EXPECT_EQ(1, kills);
+    EXPECT_EQ(std::vector<qint64>({4242}), ended);
+}
+
+TEST_F(WmTest, ASheetHangsFromItsParentWhereverItGoes)
+{
+    Window *parent = makeWindow(QRect(100, 100, 400, 300));
+    Window *other = makeWindow(QRect(600, 100, 300, 200));
+    compositor::Surface *surface = makeSurface({200, 80});
+    ShellWindowMetadata metadata;
+    metadata.role = WindowRole::Sheet;
+    metadata.parentWindow = parent->id();
+    manager.setShellMetadata(surface, metadata);
+    Window *sheet = manager.createWindow(surface, {.requestedSize = {200, 80}});
+
+    // Centred on the parent, and modal for it.
+    EXPECT_EQ(parent, sheet->transientParent());
+    EXPECT_EQ(sheet, modalTransient(parent));
+    EXPECT_EQ(QRect(200, 210, 200, 80), sheet->bounds());
+    EXPECT_EQ(StackingLayer::Normal, layerFor(sheet));
+
+    // It follows what the parent shows: until the client draws its new size,
+    // as a hung one never does, its old contents stay where they were.
+    parent->setBounds(QRect(300, 200, 500, 300));
+    EXPECT_EQ(QRect(400, 310, 200, 80), sheet->bounds());
+    compositor::Surface *parentSurface = parent->rootSurface();
+    parentSurface->attach(pool->createBuffer({500, 300}, 0, 500 * 4,
+                                             render::PixelFormat::Bgrx8888, nullptr),
+                          {});
+    parentSurface->damage(QRect(0, 0, 500, 300));
+    parentSurface->commit();
+    compositor.updateTextures(renderer);
+    EXPECT_EQ(QRect(450, 310, 200, 80), sheet->bounds());
+    sheet->setBounds(QRect(sheet->bounds().topLeft(), QSize(300, 120)));
+    EXPECT_EQ(QRect(400, 290, 300, 120), sheet->bounds());
+
+    // Right above the parent whichever window is raised.
+    manager.raise(other);
+    manager.raise(parent);
+    ASSERT_EQ(3u, manager.windows().size());
+    EXPECT_EQ(parent, manager.windows()[1]);
+    EXPECT_EQ(sheet, manager.windows()[2]);
+
+    // Minimized and restored with it.
+    parent->minimize();
+    EXPECT_FALSE(sheet->isVisible());
+    parent->restore();
+    EXPECT_TRUE(sheet->isVisible());
+}
+
+TEST_F(WmTest, ASheetNeverHangsFromAShellWindow)
+{
+    Window *panel = makeWindow(QRect(0, 0, 800, 30));
+    panel->setRole(WindowRole::Panel);
+    compositor::Surface *surface = makeSurface({200, 80});
+    ShellWindowMetadata metadata;
+    metadata.role = WindowRole::Sheet;
+    metadata.parentWindow = panel->id();
+    manager.setShellMetadata(surface, metadata);
+    Window *sheet = manager.createWindow(surface, {.requestedSize = {200, 80}});
+
+    EXPECT_EQ(nullptr, sheet->transientParent());
+    EXPECT_FALSE(sheet->isModal());
 }
 
 TEST_F(WmTest, ShellWindowsAreNeverPinged)

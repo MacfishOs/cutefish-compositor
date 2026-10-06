@@ -219,6 +219,12 @@ void windowMoveToDesk(wl_client*, wl_resource* resource, uint32_t deskId)
         desks->sendToDeskAtIndex(window, desks->deskIndex(desk));
 }
 
+void windowForceQuit(wl_client*, wl_resource* resource)
+{
+    if (wm::Window* window = resolve(resource))
+        window->manager()->forceQuit(window);
+}
+
 const struct cutefish_window_v1_interface kWindowImplementation = {
     windowDestroy,
     windowActivate,
@@ -232,6 +238,7 @@ const struct cutefish_window_v1_interface kWindowImplementation = {
     windowHide,
     windowUnhide,
     windowMoveToDesk,
+    windowForceQuit,
 };
 
 void managementDestroy(wl_client*, wl_resource* resource)
@@ -371,6 +378,12 @@ WaylandCutefishWindowManagement::WaylandCutefishWindowManagement(wm::WindowManag
             &WaylandCutefishWindowManagement::onActiveWindowChanged);
 
     m_windowManager->desks()->addObserver(this);
+    m_windowManager->setNotRespondingPrompt([this](wm::Window* window) {
+        const std::vector<wl_resource*> resources = resourcesFor(window);
+        for (wl_resource* resource : resources)
+            cutefish_window_v1_send_not_responding(resource);
+        return !resources.empty();
+    });
 
     // Windows that already exist - the compositor may have been running for a
     // while before the protocol was registered.
@@ -381,6 +394,7 @@ WaylandCutefishWindowManagement::WaylandCutefishWindowManagement(wm::WindowManag
 
 WaylandCutefishWindowManagement::~WaylandCutefishWindowManagement()
 {
+    m_windowManager->setNotRespondingPrompt({});
     m_windowManager->desks()->removeObserver(this);
     for (auto* window : m_observedWindows) {
         window->removeObserver(this);
@@ -464,6 +478,9 @@ void WaylandCutefishWindowManagement::onActiveWindowChanged(wm::Window* window)
     std::erase_if(m_applicationHistory, [this](quint64 id) {
         return !m_windowResources.count(m_windowManager->windowById(id));
     });
+    // A sheet speaks for the window it hangs from.
+    if (window && window->role() == wm::WindowRole::Sheet && window->transientParent())
+        window = window->transientParent();
     if (!window || window->isShellWindow() || window->isPopup()) {
         m_applicationHistory.clear();
     } else if (m_windowResources.count(window)) {
@@ -590,6 +607,7 @@ void WaylandCutefishWindowManagement::sendState(wl_resource* resource, wm::Windo
                                   stateType == wm::WindowStateType::Maximized ? 1 : 0,
                                   stateType == wm::WindowStateType::Fullscreen ? 1 : 0,
                                   window->isHidden() ? 1 : 0);
+    cutefish_window_v1_send_responsive(resource, window->isResponsive() ? 1 : 0);
 
     const QRect bounds = window->bounds();
     cutefish_window_v1_send_geometry(resource, bounds.x(), bounds.y(), bounds.width(),
@@ -749,6 +767,14 @@ void WaylandCutefishWindowManagement::onWindowTransientParentChanged(wm::Window*
 {
     for (wl_resource* resource : resourcesFor(window)) {
         sendParent(resource, window);
+        cutefish_window_v1_send_done(resource);
+    }
+}
+
+void WaylandCutefishWindowManagement::onWindowResponsiveChanged(wm::Window* window)
+{
+    for (wl_resource* resource : resourcesFor(window)) {
+        cutefish_window_v1_send_responsive(resource, window->isResponsive() ? 1 : 0);
         cutefish_window_v1_send_done(resource);
     }
 }

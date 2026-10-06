@@ -157,6 +157,21 @@ TEST(WindowVisualPolicy, AnUnresponsiveWindowIsDimmedLikeABlockedOne)
     manager.destroyWindow(window);
 }
 
+TEST(WindowVisualPolicy, ASheetIsClippedAndOutlinedLikeAWindow)
+{
+    decoration::Theme theme;
+    wm::WindowManager manager(nullptr, nullptr);
+    manager.setOutputBounds({0, 0, 1200, 900});
+    auto *sheet = manager.createWindow(nullptr, {.requestedSize = {400, 140}});
+    sheet->setRole(wm::WindowRole::Sheet);
+    const auto state = wm::WindowVisualController::evaluate(*sheet, theme.visualStyle());
+    EXPECT_EQ(Mode::ServerExterior, state.mode);
+    EXPECT_TRUE(state.clipContent);
+    EXPECT_TRUE(state.drawOutline);
+    EXPECT_GT(state.shape.radius, 0);
+    manager.destroyWindow(sheet);
+}
+
 TEST(WindowVisualPolicy, SmallWindowsClampAllCornersAndDarkModeDeepensTheOutline)
 {
     wm::Window window(nullptr, nullptr);

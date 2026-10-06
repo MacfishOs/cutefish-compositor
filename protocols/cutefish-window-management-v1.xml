@@ -230,7 +230,8 @@
     <request name="close">
       <description summary="ask the application to close the window">
         Sends the ordinary xdg_toplevel.close; the application decides what to
-        do about it. The compositor never kills the process.
+        do about it. A window that is not responsive gets not_responding
+        instead.
       </description>
     </request>
 
@@ -295,6 +296,15 @@
         the user along.
       </description>
       <arg name="desk" type="uint"/>
+    </request>
+
+    <request name="force_quit">
+      <description summary="end the application behind the window">
+        Ends the client process at once, without asking it: what the shell
+        offers once not_responding was sent. When the session started the
+        process in an application scope of its own, the rest of that scope
+        ends with it. Anything the application did not save is lost.
+      </description>
     </request>
 
     <event name="title">
@@ -415,6 +425,25 @@
         the next done event.
       </description>
       <arg name="desk" type="uint"/>
+    </event>
+
+    <event name="responsive">
+      <description summary="whether the application answers the compositor">
+        Zero once the client stopped answering the compositor's pings past a
+        timeout, one when it answers again. The compositor dims the window
+        meanwhile. Every window starts out responsive. Applies with the next
+        done event.
+      </description>
+      <arg name="responsive" type="uint"/>
+    </event>
+
+    <event name="not_responding">
+      <description summary="the user is waiting on a window that stopped answering">
+        Sent when the user presses on, types into or closes the window while
+        it is not responsive. The shell is expected to offer force_quit. With
+        no shell bound to offer it, closing such a window ends the
+        application instead.
+      </description>
     </event>
   </interface>
 </protocol>

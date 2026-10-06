@@ -186,6 +186,7 @@ void Window::onSurfaceCommit(compositor::Surface *surface)
     forEachObserver(this, m_observers, [this](WindowObserver *observer) {
         observer->onWindowContentChanged(this);
     });
+    placeSheets();
 }
 
 void Window::onSurfaceWindowHintsChanged(compositor::Surface *surface)
@@ -309,6 +310,18 @@ void Window::setBounds(const QRect &bounds)
     forEachObserver(this, m_observers, [this, &oldBounds](WindowObserver *observer) {
         observer->onWindowBoundsChanged(this, oldBounds);
     });
+
+    placeSheets();
+    if (m_role == WindowRole::Sheet && bounds.size() != oldBounds.size())
+        m_manager->placeSheet(this);
+}
+
+void Window::placeSheets()
+{
+    for (Window *child : std::vector<Window *>(m_transientChildren)) {
+        if (child->role() == WindowRole::Sheet)
+            m_manager->placeSheet(child);
+    }
 }
 
 void Window::setSurfaceOrigin(const QPoint &origin)
@@ -322,6 +335,7 @@ void Window::setSurfaceOrigin(const QPoint &origin)
     forEachObserver(this, m_observers, [this](WindowObserver *observer) {
         observer->onWindowContentChanged(this);
     });
+    placeSheets();
 }
 
 void Window::setPresentationOffset(const QPoint &offset)
@@ -376,7 +390,7 @@ void Window::setVisible(bool visible)
     m_visible = visible;
     onEffectiveVisibilityChanged(wasVisible);
     for (Window *child : std::vector<Window *>(m_transientChildren)) {
-        if (child->isPopup())
+        if (child->isPopup() || child->role() == WindowRole::Sheet)
             child->setVisible(visible);
     }
     m_manager->onWindowModalityInputsChanged(this);
@@ -653,8 +667,8 @@ void Window::requestClose()
 {
     // A client that stopped answering pings cannot act on a close request.
     if (!m_responsive && m_killCallback) {
-        const KillCallback callback = m_killCallback;
-        callback();
+        if (!m_manager->promptNotResponding(this))
+            m_manager->forceQuit(this);
         return;
     }
     if (!m_closeCallback)
@@ -675,8 +689,11 @@ void Window::setPingCallback(PingCallback callback)
 
 void Window::ping()
 {
-    if (m_pingCallback && !isShellWindow() && !isShellApplication())
-        m_pingCallback();
+    if (!m_pingCallback || isShellWindow() || isShellApplication())
+        return;
+    m_pingCallback();
+    if (!m_responsive)
+        m_manager->promptNotResponding(this);
 }
 
 void Window::setResponsive(bool responsive)
@@ -692,6 +709,15 @@ void Window::setResponsive(bool responsive)
 void Window::setKillCallback(KillCallback callback)
 {
     m_killCallback = std::move(callback);
+}
+
+void Window::kill()
+{
+    if (!m_killCallback)
+        return;
+    // A local copy, as for the close callback.
+    const KillCallback callback = m_killCallback;
+    callback();
 }
 
 WindowStateType Window::presentedStateType() const

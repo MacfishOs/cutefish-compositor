@@ -357,7 +357,8 @@ public:
     bool canClose() const { return static_cast<bool>(m_closeCallback); }
 
     // Runs the close callback, which is client-visible and may destroy this
-    // window. An unresponsive window runs the kill callback instead.
+    // window. An unresponsive window offers force quit instead, or is force
+    // quit when nobody can offer it.
     void requestClose();
 
     // --- Responsiveness ---
@@ -368,19 +369,22 @@ public:
     using PingCallback = std::function<void()>;
     void setPingCallback(PingCallback callback);
 
-    // Does nothing for shell windows, which the session supervises.
+    // Does nothing for shell windows, which the session supervises. Pinging a
+    // window that already stopped answering means the user is waiting on it,
+    // and offers force quit.
     void ping();
 
     // False while a ping goes unanswered past its timeout. The window is dimmed,
-    // and closing it ends the client process instead of asking the client.
+    // and closing it offers force quit instead of asking the client.
     bool isResponsive() const { return m_responsive; }
 
     void setResponsive(bool responsive);
 
-    // Ends the client process behind the window. The only place the window
-    // manager terminates a client, and only one that stopped answering pings.
+    // Ends the client process behind the window: the only place the window
+    // manager terminates a client. See WindowManager::forceQuit().
     using KillCallback = std::function<void()>;
     void setKillCallback(KillCallback callback);
+    void kill();
 
     // --- Transients ---
 
@@ -437,6 +441,8 @@ private:
     void updateNodeVisibility();
     // Applies a change of isVisible() from `wasVisible`.
     void onEffectiveVisibilityChanged(bool wasVisible);
+    // Recentres the sheets hanging from this window on what it shows.
+    void placeSheets();
     void updateFrame();
     // Returns the client's surface tree to the compositor's surface container,
     // so it survives this window's scene node.

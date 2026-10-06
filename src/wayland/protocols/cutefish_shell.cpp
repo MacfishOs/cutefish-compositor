@@ -47,6 +47,8 @@ std::optional<WindowRole> roleFromWayland(uint32_t role)
         return WindowRole::Capture;
     case CUTEFISH_SHELL_SURFACE_V1_ROLE_OSD:
         return WindowRole::Osd;
+    case CUTEFISH_SHELL_SURFACE_V1_ROLE_SHEET:
+        return WindowRole::Sheet;
     default:
         return std::nullopt;
     }
@@ -146,6 +148,12 @@ public:
     }
 
     void clearExclusiveZone() { m_manager->clearExclusiveZone(this); }
+
+    void setParent(quint64 parentWindow)
+    {
+        m_metadata.parentWindow = parentWindow;
+        apply();
+    }
 
     void activate()
     {
@@ -269,6 +277,12 @@ void shellSurfaceSetOutput(wl_client*, wl_resource* resource, const char* name)
     }
 }
 
+void shellSurfaceSetParent(wl_client*, wl_resource* resource, uint32_t idHigh, uint32_t idLow)
+{
+    getUserDataAs<CutefishShellSurface>(resource)->setParent(
+            (static_cast<quint64>(idHigh) << 32) | idLow);
+}
+
 const struct cutefish_shell_surface_v1_interface kShellSurfaceImplementation = {
     shellSurfaceDestroy,
     shellSurfaceSetRole,
@@ -279,6 +293,7 @@ const struct cutefish_shell_surface_v1_interface kShellSurfaceImplementation = {
     shellSurfaceClearExclusiveZone,
     shellSurfaceActivate,
     shellSurfaceSetOutput,
+    shellSurfaceSetParent,
 };
 
 void shellDestroy(wl_client*, wl_resource* resource)

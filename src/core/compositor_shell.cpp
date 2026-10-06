@@ -584,6 +584,15 @@ void CompositorShell::initAccelerators()
         message << static_cast<uint>(pid);
         QDBusConnection::sessionBus().asyncCall(message);
     });
+    // Force quit ends the client itself; AppRuntime ends what else runs in the
+    // application scope it started the process in.
+    m_windowManager.setForceQuitProcess([](qint64 pid) {
+        QDBusMessage message = QDBusMessage::createMethodCall(
+                QStringLiteral("com.cutefish.AppRuntime"), QStringLiteral("/AppRuntime"),
+                QStringLiteral("com.cutefish.AppRuntime"), QStringLiteral("forceQuitByPid"));
+        message << static_cast<uint>(pid);
+        QDBusConnection::sessionBus().asyncCall(message);
+    });
 
     input::KeyTranslator *translator = m_seat.keyTranslator();
     translator->setTerminalProvider([this] {

@@ -46,6 +46,8 @@ enum class WindowRole {
     Capture,
     // The on-screen display of a volume or brightness key; never focusable.
     Osd,
+    // A shell dialog hanging from an application window, window-modal for it.
+    Sheet,
 };
 
 // Whether a window may take the keyboard. A Panel or Dock still receives

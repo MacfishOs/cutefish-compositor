@@ -83,6 +83,11 @@
 
         An osd surface never takes the keyboard, whatever its focus policy,
         and it stays above the notification banners.
+
+        A sheet surface is window-modal for the window given by set_parent:
+        it is stacked right above that window, kept centred on it as the window
+        moves or either of them resizes, shown and hidden with it and kept on
+        its desk. Its position is the compositor's.
       </description>
       <entry name="desktop" value="0" summary="the desktop background, below everything"/>
       <entry name="panel" value="1" summary="a panel such as the status bar"/>
@@ -93,6 +98,8 @@
              summary="the screen capture interface, above everything else"/>
       <entry name="osd" value="6"
              summary="the on-screen display of a volume or brightness change"/>
+      <entry name="sheet" value="7"
+             summary="a dialog hanging from an application window, see set_parent"/>
     </enum>
 
     <enum name="panel_behavior">
@@ -187,6 +194,18 @@
         in global coordinates. Exclusive zones apply only to this output.
       </description>
       <arg name="name" type="string" summary="wl_output name"/>
+    </request>
+
+    <request name="set_parent">
+      <description summary="the application window a sheet belongs to">
+        The identifier cutefish_window_management_v1.window announced the
+        window with. Only meaningful for the sheet role, and best sent before
+        the first commit; a mapped sheet moves to its new parent. A window
+        that is gone, or zero, leaves the sheet on its own, placed like any
+        other shell surface.
+      </description>
+      <arg name="id_hi" type="uint"/>
+      <arg name="id_lo" type="uint"/>
     </request>
   </interface>
 </protocol>

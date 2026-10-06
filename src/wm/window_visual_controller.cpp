@@ -40,7 +40,9 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
     using Mode = scene::WindowVisualMode;
     scene::WindowVisualState state;
     state.shape.bounds = window.presentedBounds();
-    if (window.isPopup() || window.role() != WindowRole::Normal) {
+    // A sheet is a dialog: clipped and outlined like an application window.
+    if (window.isPopup()
+        || (window.role() != WindowRole::Normal && window.role() != WindowRole::Sheet)) {
         // Menus and shell panels describe their rounded body through the blur request.
         const auto *surface = window.rootSurface();
         const QPoint origin = window.frameInsets().topLeft() + window.surfaceOrigin();

@@ -29,6 +29,8 @@ StackingLayer layerFor(WindowRole role, PanelBehavior behavior)
         return StackingLayer::Osd;
     case WindowRole::Capture:
         return StackingLayer::Capture;
+    case WindowRole::Sheet:
+        return StackingLayer::Normal;
     }
     return StackingLayer::Normal;
 }
@@ -37,6 +39,8 @@ StackingLayer layerFor(const Window *window)
 {
     if (!window)
         return StackingLayer::Normal;
+    if (window->role() == WindowRole::Sheet && window->transientParent())
+        return layerFor(window->transientParent());
     if (window->isPopup() && window->transientParent()) {
         const StackingLayer parentLayer = layerFor(window->transientParent());
         return parentLayer == StackingLayer::Desktop ? StackingLayer::DesktopPopup : parentLayer;
