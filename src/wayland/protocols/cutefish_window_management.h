@@ -8,6 +8,7 @@
 #include <wayland-server-core.h>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -55,6 +56,13 @@ public:
 
     wm::WindowManager* windowManager() const { return m_windowManager; }
     PrivilegedClients* privileged() const { return m_privileged; }
+
+    // Answers cutefish_window_v1.create_capture_source: creates the
+    // ext_image_capture_source_v1 `id` for `window`, null once the window is
+    // gone. Image capture installs it; without one the source only stops.
+    using CaptureSourceExporter = std::function<void(wl_client*, uint32_t id, wm::Window* window)>;
+    void setCaptureSourceExporter(CaptureSourceExporter exporter);
+    const CaptureSourceExporter& captureSourceExporter() const { return m_captureSourceExporter; }
 
     // Announces every existing application window to a newly bound manager,
     // followed by the active window and initial_state_done.
@@ -110,6 +118,7 @@ private:
 
     wm::WindowManager* m_windowManager = nullptr;
     PrivilegedClients* m_privileged = nullptr;
+    CaptureSourceExporter m_captureSourceExporter;
     std::vector<wl_resource*> m_managers;
     std::set<wm::Window*> m_observedWindows;
     std::vector<quint64> m_applicationHistory;

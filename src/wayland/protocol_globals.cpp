@@ -39,7 +39,10 @@
 #include "wayland/protocols/wp_fractional_scale.h"
 #include "wayland/protocols/wp_viewporter.h"
 #include "wayland/protocols/xdg_activation.h"
+#include "wm/shadow_controller.h"
+#include "wm/window.h"
 #include "wm/window_manager.h"
+#include "wm/window_shadow.h"
 #include "wayland/protocols/xdg_decoration.h"
 #include "wayland/protocols/xdg_dialog.h"
 #include "wayland/protocols/xdg_foreign.h"
@@ -195,6 +198,19 @@ bool ProtocolGlobals::registerCapture()
     m_imageCapture->setToplevelSourceResolver([list = m_toplevelList.get()](wl_resource *handle) {
         return list->sourceFor(handle);
     });
+    // The margins are fixed per shadow role, so a shadow not yet moved to the
+    // window's new bounds still gives the right ones.
+    m_toplevelList->setShadowBounds([shadows = m_deps.shadowController](const wm::Window *window) {
+        const QRect bounds = window->bounds();
+        const wm::WindowShadow *shadow = shadows ? shadows->shadowForWindow(window) : nullptr;
+        if (!shadow || shadow->shadowBounds().isEmpty() || shadow->contentBounds().isEmpty())
+            return bounds;
+        const QRect content = shadow->contentBounds();
+        const QRect painted = shadow->shadowBounds();
+        return bounds.adjusted(painted.left() - content.left(), painted.top() - content.top(),
+                               painted.right() - content.right(),
+                               painted.bottom() - content.bottom());
+    });
     return true;
 }
 
@@ -227,6 +243,11 @@ bool ProtocolGlobals::registerPrivateShell()
         qCCritical(cfWayland) << "Failed to register the private shell globals";
         return false;
     }
+    m_windowManagement->setCaptureSourceExporter(
+            [capture = m_imageCapture.get(), list = m_toplevelList.get()](
+                    wl_client *client, uint32_t id, wm::Window *window) {
+                capture->exportSource(client, id, window ? list->shadowedSourceFor(window) : nullptr);
+            });
     return true;
 }
 
@@ -322,6 +343,9 @@ void ProtocolGlobals::shutdown()
     m_computerControl.reset();
     if (m_privileged && m_qtHardwareIntegration)
         m_privileged->removeRestrictedGlobal(m_qtHardwareIntegration);
+    // Window sources keep coming while the shell is up; after this they stop.
+    if (m_windowManagement)
+        m_windowManagement->setCaptureSourceExporter({});
     if (m_imageCapture)
         m_imageCapture->shutdown();
     if (m_toplevelList)

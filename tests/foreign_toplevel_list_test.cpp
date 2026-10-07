@@ -327,6 +327,49 @@ TEST_F(ForeignToplevelListTest, ClosingAWindowStopsItsSource)
     EXPECT_FALSE(sourceOf(*handles.front()));
 }
 
+TEST_F(ForeignToplevelListTest, AShadowedSourceCoversTheShadowBounds)
+{
+    wm::Window *window = makeWindow(QRect(100, 50, 300, 200));
+    ASSERT_TRUE(roundtrip());
+    ASSERT_EQ(handles.size(), 1u);
+    auto plain = sourceOf(*handles.front());
+    auto shadowed = toplevels->shadowedSourceFor(window);
+    ASSERT_TRUE(shadowed);
+    EXPECT_NE(shadowed, plain);
+    EXPECT_EQ(shadowed->kind, compositor::CaptureSource::Kind::Window);
+    EXPECT_EQ(shadowed->node, window->node());
+    // Without a shadow the picture is the window.
+    EXPECT_EQ(shadowed->bounds, QRect(100, 50, 300, 200));
+    EXPECT_EQ(toplevels->shadowedSourceFor(nullptr), nullptr);
+
+    int changes = 0;
+    // The context dies with the locals the lambda captures.
+    QObject scope;
+    QObject::connect(shadowed.get(), &compositor::CaptureSource::changed, &scope, [&] {
+        ++changes;
+    });
+    toplevels->setShadowBounds([](const wm::Window *window) {
+        return window->bounds().adjusted(-20, -10, 20, 40);
+    });
+    EXPECT_EQ(shadowed->bounds, QRect(80, 40, 340, 250));
+    EXPECT_EQ(shadowed->pixelSize(), QSize(680, 500));
+    EXPECT_EQ(shadowed->renderedOn(), "eDP-1");
+    EXPECT_EQ(changes, 1);
+    EXPECT_EQ(plain->bounds, QRect(100, 50, 300, 200));
+
+    // The margins may reach outside the output.
+    window->setBounds(QRect(0, 0, 300, 200));
+    EXPECT_EQ(shadowed->bounds, QRect(-20, -10, 340, 250));
+    EXPECT_EQ(changes, 1);
+    EXPECT_EQ(toplevels->shadowedSourceFor(window), shadowed);
+
+    manager.destroyWindow(window);
+    ASSERT_TRUE(roundtrip());
+    EXPECT_FALSE(shadowed->active);
+    EXPECT_EQ(shadowed->node, nullptr);
+    EXPECT_EQ(changes, 2);
+}
+
 TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
 {
     struct WindowRenderer : testsupport::FakeRenderer {

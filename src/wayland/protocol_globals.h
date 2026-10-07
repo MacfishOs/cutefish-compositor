@@ -32,6 +32,7 @@ class Node;
 }
 
 namespace wm {
+class ShadowController;
 class WindowManager;
 }
 
@@ -72,6 +73,8 @@ public:
         input::Seat *seat = nullptr;
         input::InputManager *inputManager = nullptr;
         wm::WindowManager *windowManager = nullptr;
+        // Null leaves shadowed window captures at the window bounds.
+        wm::ShadowController *shadowController = nullptr;
         // Candidate popups stack here, above every window but below the lock
         // screen.
         scene::Node *inputMethodPopupLayer = nullptr;

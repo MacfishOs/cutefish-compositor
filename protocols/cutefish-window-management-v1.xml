@@ -307,6 +307,21 @@
       </description>
     </request>
 
+    <request name="create_capture_source">
+      <description summary="a capture source of the window as it is shown">
+        Creates an ext_image_capture_source_v1 of the window with what the
+        compositor draws around it: the outline, the shadow and the
+        transparent margins the shadow needs, so a still picture of the
+        window looks the way the window does on screen. The buffer covers
+        the window's shadow bounds instead of its bounds, at the scale of
+        the output that holds most of the window; a window that fills its
+        area casts no shadow and gives the same picture as the toplevel
+        source. In every other way the source behaves like one from
+        ext_foreign_toplevel_image_capture_source_manager_v1.
+      </description>
+      <arg name="id" type="new_id" interface="ext_image_capture_source_v1"/>
+    </request>
+
     <event name="title">
       <arg name="title" type="string"/>
     </event>

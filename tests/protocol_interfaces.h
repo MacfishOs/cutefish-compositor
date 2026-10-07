@@ -14,11 +14,11 @@
 #include <cutefish-shell-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
+#include <ext-image-capture-source-v1-client-protocol.h>
 #include <cutefish-window-management-v1-client-protocol.h>
 #include <ext-data-control-v1-client-protocol.h>
 #include <ext-foreign-toplevel-list-v1-client-protocol.h>
 #include <ext-idle-notify-v1-client-protocol.h>
-#include <ext-image-capture-source-v1-client-protocol.h>
 #include <ext-image-copy-capture-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <hardware-integration-client-protocol.h>

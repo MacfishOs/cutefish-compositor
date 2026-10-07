@@ -356,7 +356,7 @@ void createCursorSession(wl_client *client, wl_resource *resource, uint32_t id, 
 const struct ext_image_copy_capture_manager_v1_interface copyImplementation = {
         createSession, createCursorSession, destroy};
 
-void exportSource(wl_client *client, uint32_t id, Source source)
+void createSourceResource(wl_client *client, uint32_t id, Source source)
 {
     auto *result = wl_resource_create(client, &ext_image_capture_source_v1_interface, 1, id);
     if (!result) {
@@ -373,7 +373,8 @@ void exportSource(wl_client *client, uint32_t id, Source source)
 void createSource(wl_client *client, wl_resource *resource, uint32_t id, wl_resource *output)
 {
     auto state = *static_cast<std::shared_ptr<State> *>(wl_resource_get_user_data(resource));
-    exportSource(client, id, state->authorize(client) ? outputCaptureSource(output) : Source());
+    createSourceResource(client, id,
+                         state->authorize(client) ? outputCaptureSource(output) : Source());
 }
 
 const struct ext_output_image_capture_source_manager_v1_interface outputImplementation = {
@@ -386,7 +387,7 @@ void createToplevelSource(wl_client *client, wl_resource *resource, uint32_t id,
     Source source;
     if (state->authorize(client) && state->toplevelSource)
         source = state->toplevelSource(handle);
-    exportSource(client, id, std::move(source));
+    createSourceResource(client, id, std::move(source));
 }
 
 const struct ext_foreign_toplevel_image_capture_source_manager_v1_interface
@@ -466,6 +467,12 @@ void ImageCaptureManager::failPending()
         if (!frame->finished)
             frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_UNKNOWN);
     }
+}
+
+void ImageCaptureManager::exportSource(wl_client *client, uint32_t id,
+                                       std::shared_ptr<compositor::CaptureSource> source)
+{
+    createSourceResource(client, id, m_state->authorize(client) ? std::move(source) : Source());
 }
 
 void ImageCaptureManager::setToplevelSourceResolver(ToplevelSourceResolver resolver)

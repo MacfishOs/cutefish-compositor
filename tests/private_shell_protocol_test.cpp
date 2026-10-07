@@ -32,7 +32,9 @@
 #include "wayland/protocols/window_hints.h"
 #include "wm/mru_window_tracker.h"
 #include <cutefish-shell-v1-client-protocol.h>
+#include <ext-image-capture-source-v1-client-protocol.h>
 #include <cutefish-window-management-v1-client-protocol.h>
+#include <ext-image-capture-source-v1-server-protocol.h>
 #include <wayland-client.h>
 #include <wayland-server-core.h>
 #include <xdg-shell-client-protocol.h>
@@ -498,6 +500,8 @@ protected:
 
     std::mutex mutex;
     std::deque<std::function<void()>> pendingChecks;
+    // Runs on the window management object before the globals are created.
+    std::function<void(wayland::WaylandCutefishWindowManagement &)> configureManagement;
 
     void SetUp() override
     {
@@ -568,6 +572,8 @@ protected:
                 std::make_unique<wayland::WaylandCutefishShell>(&windowManager, privileged.get());
         auto management = std::make_unique<wayland::WaylandCutefishWindowManagement>(
                 &windowManager, privileged.get());
+        if (configureManagement)
+            configureManagement(*management);
 
         ASSERT_TRUE(wayland::createCompositorGlobal(server.display(), &compositor));
         ASSERT_TRUE(wayland::createSubcompositorGlobal(server.display()));
@@ -2000,6 +2006,74 @@ TEST_F(PrivateShellProtocolTest, ChangingTheShellAppIdClosesAndReannouncesTheTas
 
 ////////////////////////////////////////////////////////////////////////////////
 // Windows that stop responding
+
+TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAWindowComesFromImageCapture)
+{
+    static const struct ext_image_capture_source_v1_interface sourceImplementation = {
+            [](wl_client *, wl_resource *resource) {
+                wl_resource_destroy(resource);
+            }};
+    std::atomic<quint64> exported = 0;
+    std::atomic<int> exports = 0;
+    configureManagement = [&](wayland::WaylandCutefishWindowManagement &management) {
+        management.setCaptureSourceExporter(
+                [&](wl_client *client, uint32_t id, wm::Window *window) {
+                    ++exports;
+                    exported = window ? window->id() : 0;
+                    wl_resource *source = wl_resource_create(
+                            client, &ext_image_capture_source_v1_interface, 1, id);
+                    ASSERT_NE(source, nullptr);
+                    wl_resource_set_implementation(source, &sourceImplementation, nullptr,
+                                                   nullptr);
+                });
+    };
+
+    run([&](Client &c) {
+        ASSERT_TRUE(c.bindShell());
+        ASSERT_TRUE(c.bindManagement());
+        XdgWindow *app = c.makeToplevel("Editor", "editor");
+        c.map(app, QSize(400, 300));
+        ASSERT_EQ(1u, c.liveTracked().size());
+        TrackedWindow *task = c.liveTracked().front();
+
+        auto *source = cutefish_window_v1_create_capture_source(task->object);
+        c.sync();
+        EXPECT_EQ(exports, 1);
+        EXPECT_EQ(exported, task->id);
+        ext_image_capture_source_v1_destroy(source);
+        c.sync();
+        EXPECT_EQ(wl_display_get_error(c.display), 0);
+
+        // A closed window still answers, with a source that cannot be painted.
+        c.destroyWindowObjects(app);
+        c.sync();
+        EXPECT_TRUE(task->closed);
+        source = cutefish_window_v1_create_capture_source(task->object);
+        c.sync();
+        EXPECT_EQ(exports, 2);
+        EXPECT_EQ(exported, 0u);
+        ext_image_capture_source_v1_destroy(source);
+        c.sync();
+        EXPECT_EQ(wl_display_get_error(c.display), 0);
+    });
+}
+
+TEST_F(PrivateShellProtocolTest, WithoutImageCaptureAWindowSourceOnlyStops)
+{
+    run([&](Client &c) {
+        ASSERT_TRUE(c.bindShell());
+        ASSERT_TRUE(c.bindManagement());
+        XdgWindow *app = c.makeToplevel("Editor", "editor");
+        c.map(app, QSize(400, 300));
+        ASSERT_EQ(1u, c.liveTracked().size());
+
+        auto *source = cutefish_window_v1_create_capture_source(c.liveTracked().front()->object);
+        c.sync();
+        ext_image_capture_source_v1_destroy(source);
+        c.sync();
+        EXPECT_EQ(wl_display_get_error(c.display), 0);
+    });
+}
 
 TEST_F(PrivateShellProtocolTest, AnUnresponsiveWindowAsksTheShellAndTakesASheet)
 {

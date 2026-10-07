@@ -5,6 +5,7 @@
 #include "wayland/protocols/cutefish_window_management.h"
 
 #include <cutefish-window-management-v1-server-protocol.h>
+#include <ext-image-capture-source-v1-server-protocol.h>
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -225,6 +226,32 @@ void windowForceQuit(wl_client*, wl_resource* resource)
         window->manager()->forceQuit(window);
 }
 
+void sourceDestroy(wl_client*, wl_resource* resource)
+{
+    wl_resource_destroy(resource);
+}
+
+// A source nothing paints: the capture manager does not recognise it, so a
+// session on it stops, as one on a closed window's source does.
+const struct ext_image_capture_source_v1_interface kStoppedSourceImplementation = {
+    sourceDestroy,
+};
+
+void windowCreateCaptureSource(wl_client* client, wl_resource* resource, uint32_t id)
+{
+    auto* data = getUserDataAs<WindowResourceData>(resource);
+    if (data->management->captureSourceExporter()) {
+        data->management->captureSourceExporter()(client, id, resolve(resource));
+        return;
+    }
+    wl_resource* source = wl_resource_create(client, &ext_image_capture_source_v1_interface, 1, id);
+    if (!source) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    wl_resource_set_implementation(source, &kStoppedSourceImplementation, nullptr, nullptr);
+}
+
 const struct cutefish_window_v1_interface kWindowImplementation = {
     windowDestroy,
     windowActivate,
@@ -239,6 +266,7 @@ const struct cutefish_window_v1_interface kWindowImplementation = {
     windowUnhide,
     windowMoveToDesk,
     windowForceQuit,
+    windowCreateCaptureSource,
 };
 
 void managementDestroy(wl_client*, wl_resource* resource)
@@ -390,6 +418,11 @@ WaylandCutefishWindowManagement::WaylandCutefishWindowManagement(wm::WindowManag
     for (wm::Window* window : m_windowManager->windows())
         onWindowAdded(window);
     onActiveWindowChanged(m_windowManager->activation()->activeWindow());
+}
+
+void WaylandCutefishWindowManagement::setCaptureSourceExporter(CaptureSourceExporter exporter)
+{
+    m_captureSourceExporter = std::move(exporter);
 }
 
 WaylandCutefishWindowManagement::~WaylandCutefishWindowManagement()

@@ -6,6 +6,7 @@
 #include <GLES3/gl3.h>
 #include <array>
 #include <csignal>
+#include <ext-image-capture-source-v1-client-protocol.h>
 #include <cutefish-window-management-v1-client-protocol.h>
 #include <drm_fourcc.h>
 #include <future>

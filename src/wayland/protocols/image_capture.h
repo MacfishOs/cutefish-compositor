@@ -85,6 +85,13 @@ public:
     // toplevel list owns; it installs the lookup here.
     void setToplevelSourceResolver(ToplevelSourceResolver resolver);
 
+    // Creates the ext_image_capture_source_v1 `id` of `source` for a request
+    // of another protocol, as cutefish_window_v1.create_capture_source does.
+    // A null source, or a client that may not capture, gets a source whose
+    // sessions stop at once.
+    void exportSource(wl_client *client, uint32_t id,
+                      std::shared_ptr<compositor::CaptureSource> source);
+
     // DMA-BUF capture targets are advertised from this renderer's probe; null
     // keeps every session SHM-only.
     void setRenderer(const render::Renderer *renderer);

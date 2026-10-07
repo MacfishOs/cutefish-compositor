@@ -814,6 +814,7 @@ bool CompositorShell::initWayland()
     dependencies.seat = &m_seat;
     dependencies.inputManager = &m_inputManager;
     dependencies.windowManager = &m_windowManager;
+    dependencies.shadowController = &m_shadowController;
     dependencies.inputMethodPopupLayer = m_inputMethodContainer;
     dependencies.security = m_security.get();
     dependencies.computerControl = m_computerControl.get();

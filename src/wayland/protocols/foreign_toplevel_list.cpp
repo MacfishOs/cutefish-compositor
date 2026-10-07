@@ -27,6 +27,8 @@ struct ForeignToplevelList::Entry {
     wm::Window *window = nullptr;
     QString identifier;
     std::shared_ptr<compositor::CaptureSource> source;
+    // The window with its shadow, for cutefish_window_v1.create_capture_source.
+    std::shared_ptr<compositor::CaptureSource> shadowed;
     // One handle per client that saw this window; owner data points here.
     std::vector<wl_resource *> handles;
 };
@@ -168,6 +170,9 @@ void ForeignToplevelList::add(wm::Window *window)
     entry->source = std::make_shared<compositor::CaptureSource>();
     entry->source->kind = compositor::CaptureSource::Kind::Window;
     entry->source->node = window->node();
+    entry->shadowed = std::make_shared<compositor::CaptureSource>();
+    entry->shadowed->kind = compositor::CaptureSource::Kind::Window;
+    entry->shadowed->node = window->node();
     Entry *raw = entry.get();
     m_entries.emplace(window, std::move(entry));
     updateGeometry(*raw);
@@ -184,9 +189,11 @@ void ForeignToplevelList::remove(wm::Window *window)
     std::unique_ptr<Entry> entry = std::move(it->second);
     m_entries.erase(it);
     window->removeObserver(this);
-    entry->source->node = nullptr;
-    entry->source->active = false;
-    Q_EMIT entry->source->changed();
+    for (auto &source : {entry->source, entry->shadowed}) {
+        source->node = nullptr;
+        source->active = false;
+        Q_EMIT source->changed();
+    }
     // Handles outlive the window until the client destroys them; they simply
     // no longer resolve to a source.
     for (wl_resource *handle : entry->handles) {
@@ -233,13 +240,31 @@ void ForeignToplevelList::updateGeometry(Entry &entry)
             scale = view.scale.value();
         }
     }
-    auto &source = *entry.source;
-    const QSize before = source.pixelSize();
-    source.bounds = bounds;
-    source.scale = scale;
-    source.outputName = outputName;
-    if (source.pixelSize() != before)
-        Q_EMIT source.changed();
+    const auto update = [&](compositor::CaptureSource &source, const QRect &bounds) {
+        const QSize before = source.pixelSize();
+        source.bounds = bounds;
+        source.scale = scale;
+        source.outputName = outputName;
+        if (source.pixelSize() != before)
+            Q_EMIT source.changed();
+    };
+    update(*entry.source, bounds);
+    update(*entry.shadowed, m_shadowBounds ? m_shadowBounds(entry.window) | bounds : bounds);
+}
+
+void ForeignToplevelList::setShadowBounds(ShadowBounds bounds)
+{
+    m_shadowBounds = std::move(bounds);
+    updateAllGeometry();
+}
+
+std::shared_ptr<compositor::CaptureSource> ForeignToplevelList::shadowedSourceFor(wm::Window *window)
+{
+    const auto it = m_entries.find(window);
+    if (it == m_entries.end())
+        return nullptr;
+    updateGeometry(*it->second);
+    return it->second->shadowed;
 }
 
 void ForeignToplevelList::updateAllGeometry()
@@ -259,6 +284,14 @@ std::shared_ptr<compositor::CaptureSource> ForeignToplevelList::sourceFor(wl_res
 }
 
 void ForeignToplevelList::onWindowBoundsChanged(wm::Window *window, const QRect &)
+{
+    if (const auto it = m_entries.find(window); it != m_entries.end())
+        updateGeometry(*it->second);
+}
+
+// Maximized and fullscreen windows cast no shadow, so the shadowed bounds
+// follow the state as well as the bounds.
+void ForeignToplevelList::onWindowStateTypeChanged(wm::Window *window, wm::WindowStateType)
 {
     if (const auto it = m_entries.find(window); it != m_entries.end())
         updateGeometry(*it->second);
