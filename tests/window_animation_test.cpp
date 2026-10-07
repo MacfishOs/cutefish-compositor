@@ -481,6 +481,27 @@ TEST_F(SnapshotReuse, AFractionalPixelMoveRedrawsAll)
     EXPECT_EQ(renderer.captures, 3);
 }
 
+TEST_F(SnapshotReuse, AWindowMovedWhileDrawnDirectlyClosesWhereItWasDrawn)
+{
+    scene.render(renderer);
+    const QRectF captured = renderer.lastTarget;
+    // Content changing every frame is drawn directly from the second frame on,
+    // and the snapshot stays where it was captured.
+    for (int x = 101; x <= 104; ++x) {
+        window->setPosition({x, 100});
+        surface->notifyDamage(QRect(0, 0, 400, 300));
+        scene.render(renderer);
+    }
+    ASSERT_EQ(renderer.captures, 2);
+    window->close();
+    scene.render(renderer);
+    // The close has run for the microseconds the real clock moved on.
+    const QRectF expected = captured.translated(4, 0);
+    EXPECT_NEAR(renderer.lastTarget.x(), expected.x(), 0.01);
+    EXPECT_NEAR(renderer.lastTarget.y(), expected.y(), 0.01);
+    EXPECT_NEAR(renderer.lastTarget.width(), expected.width(), 0.01);
+}
+
 TEST_F(SnapshotReuse, APlanePromotionIsNeverKeptForALaterFrame)
 {
     // The promoted surface is left out of the snapshot drawn while it is on a

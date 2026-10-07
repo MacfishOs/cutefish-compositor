@@ -584,7 +584,17 @@ void WindowAnimation::close()
     }
     // The snapshot is scaled relative to where it was captured; the live
     // geometry may have changed since the last paint.
-    const QRect snapshot = m_texture ? m_textureBounds : m_oldBounds;
+    QRect &bounds = m_texture ? m_textureBounds : m_oldBounds;
+    QRect &coverage = m_texture ? m_coverage : m_oldCoverage;
+    // Frames drawn directly leave the snapshot where it was captured, up to
+    // kDirectRefresh frames back; a window dragged since closes where it was drawn.
+    const QRectF drawn = m_presented.bounds;
+    if (!m_running && drawn.size() == QSizeF(bounds.size())) {
+        const QPoint moved = drawn.topLeft().toPoint() - bounds.topLeft();
+        bounds.translate(moved);
+        coverage.translate(moved);
+    }
+    const QRect snapshot = bounds;
     start(Type::Close, snapshot, snapshot);
     m_closing = true;
 }
