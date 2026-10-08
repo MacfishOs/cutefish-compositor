@@ -116,6 +116,7 @@ Item {
             TextInput {
                 anchors.fill: parent
                 anchors.margins: 10
+                clip: true
                 color: "white"
                 text: authController.userName
                 enabled: !authController.busy && !authController.succeeded

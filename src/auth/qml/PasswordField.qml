@@ -63,6 +63,8 @@ FocusScope {
             anchors.fill: parent
             anchors.leftMargin: 14
             anchors.rightMargin: 40
+            // TextInput scrolls a long line but still paints past its bounds.
+            clip: true
             verticalAlignment: TextInput.AlignVCenter
             horizontalAlignment: TextInput.AlignLeft
 
