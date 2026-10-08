@@ -265,6 +265,7 @@ private:
     // video's does, skips its texture and is drawn straight to the output, as a
     // cc layer without a render surface is. Every kDirectRefresh-th such frame
     // draws the texture again: a close, a minimize or a cross-fade starts from it.
+    // A popup never does: its close must fade out the frame that was on screen.
     bool drawsDirectly(bool contentChanged) const;
     // Drawn as it is, unscaled and unblended.
     bool settled() const;

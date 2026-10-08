@@ -502,6 +502,22 @@ TEST_F(SnapshotReuse, AWindowMovedWhileDrawnDirectlyClosesWhereItWasDrawn)
     EXPECT_NEAR(renderer.lastTarget.width(), expected.width(), 0.01);
 }
 
+TEST_F(SnapshotReuse, APopupChangingEveryFrameIsDrawnThroughItsSnapshot)
+{
+    // A menu lights another row on every pointer motion and closes on the
+    // click: drawn directly, its close would fade out a snapshot frames old.
+    window->setStyle(Animation::Style::Popup);
+    for (int frame = 0; frame < 4; ++frame) {
+        surface->notifyDamage(QRect(0, 0, 400, 300));
+        scene.render(renderer);
+        EXPECT_EQ(renderer.captures, frame + 2);
+    }
+    window->close();
+    scene.render(renderer);
+    EXPECT_EQ(renderer.captures, 5);
+    EXPECT_EQ(renderer.kinds().back(), QStringLiteral("texture"));
+}
+
 TEST_F(SnapshotReuse, APlanePromotionIsNeverKeptForALaterFrame)
 {
     // The promoted surface is left out of the snapshot drawn while it is on a

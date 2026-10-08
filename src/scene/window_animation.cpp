@@ -730,6 +730,11 @@ bool WindowAnimation::settled() const
 
 bool WindowAnimation::drawsDirectly(bool contentChanged) const
 {
+    // A menu's highlight follows the pointer frame after frame and the menu
+    // closes on the click that ends it: its close fades out the snapshot, which
+    // has to be the frame that was on screen, not one up to kDirectRefresh back.
+    if (m_style == Style::Popup)
+        return false;
     return contentChanged && m_contentChanged && m_directFrames < kDirectRefresh - 1 && settled();
 }
 
