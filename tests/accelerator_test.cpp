@@ -19,6 +19,7 @@
 #include <QCoreApplication>
 #include <QDBusConnection>
 #include <QDBusInterface>
+#include <QDBusMessage>
 #include <QDBusReply>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1703,6 +1704,31 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     ASSERT_TRUE(added.isValid());
     EXPECT_EQ(QStringLiteral("success"), parse(added.value()).value(QStringLiteral("result")));
     EXPECT_EQ(1, changes.count());
+}
+
+TEST_F(AcceleratorTest, ARecorderThatLeavesTheBusLiftsTheAcceleratorBlock)
+{
+    ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
+    AcceleratorService service(configuration.get(), controller.get(), seat.xkbTracker());
+    ASSERT_TRUE(service.registerService());
+
+    // A second connection stands in for Settings, which dies while recording.
+    const QString name = QStringLiteral("recorder");
+    {
+        QDBusConnection recorder = QDBusConnection::connectToBus(QDBusConnection::SessionBus, name);
+        ASSERT_TRUE(recorder.isConnected());
+        // Not a QDBusInterface: it introspects synchronously, and the service
+        // answers on this thread.
+        QDBusMessage call = QDBusMessage::createMethodCall(
+                QStringLiteral("com.cutefish.Shortcuts1"), QStringLiteral("/com/cutefish/Shortcuts1"),
+                QStringLiteral("com.cutefish.Shortcuts1"),
+                QStringLiteral("preventProcessingAccelerators"));
+        call << true;
+        recorder.asyncCall(call);
+        EXPECT_TRUE(QTest::qWaitFor([&] { return controller->shouldPreventProcessingAccelerators(); }));
+    }
+    QDBusConnection::disconnectFromBus(name);
+    EXPECT_TRUE(QTest::qWaitFor([&] { return !controller->shouldPreventProcessingAccelerators(); }));
 }
 
 int main(int argc, char **argv)

@@ -14,7 +14,10 @@
 #include <algorithm>
 
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QDBusError>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <xkbcommon/xkbcommon.h>
@@ -64,6 +67,9 @@ AcceleratorService::AcceleratorService(AcceleratorConfiguration *configuration,
 {
     connect(m_configuration, &AcceleratorConfiguration::acceleratorsUpdated, this,
             &AcceleratorService::acceleratorsChanged);
+    m_watcher.setWatchMode(QDBusServiceWatcher::WatchForUnregistration);
+    connect(&m_watcher, &QDBusServiceWatcher::serviceUnregistered, this,
+            &AcceleratorService::releasePreventOwner);
 }
 
 AcceleratorService::~AcceleratorService()
@@ -99,6 +105,7 @@ bool AcceleratorService::registerService()
         bus.unregisterObject(QLatin1String(kPath));
         return false;
     }
+    m_watcher.setConnection(bus);
     m_registered = true;
     return true;
 }
@@ -392,6 +399,38 @@ void AcceleratorService::preventProcessingAccelerators(bool prevent)
     m_pending.reset();
     m_conflictState = ConflictErrorState::Standby;
     m_controller->setPreventProcessingAccelerators(prevent);
+    setPreventOwner(prevent && calledFromDBus() ? message().service() : QString());
+}
+
+void AcceleratorService::setPreventOwner(const QString &owner)
+{
+    if (owner == m_preventOwner)
+        return;
+    if (!m_preventOwner.isEmpty())
+        m_watcher.removeWatchedService(m_preventOwner);
+    m_preventOwner = owner;
+    if (owner.isEmpty())
+        return;
+    m_watcher.addWatchedService(owner);
+    // The watch never reports a caller that left before its match rule was in
+    // place; sent behind that rule on the same connection, NameHasOwner does.
+    auto *check = new QDBusPendingCallWatcher(
+            m_watcher.connection().interface()->asyncCall(QStringLiteral("NameHasOwner"), owner),
+            this);
+    connect(check, &QDBusPendingCallWatcher::finished, this,
+            [this, owner](QDBusPendingCallWatcher *call) {
+                call->deleteLater();
+                const QDBusPendingReply<bool> reply = *call;
+                if (!reply.isError() && !reply.value())
+                    releasePreventOwner(owner);
+            });
+}
+
+void AcceleratorService::releasePreventOwner(const QString &owner)
+{
+    if (owner != m_preventOwner)
+        return;
+    preventProcessingAccelerators(false);
 }
 
 bool AcceleratorService::hasCustomAccelerators()

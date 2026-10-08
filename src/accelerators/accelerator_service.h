@@ -16,6 +16,8 @@
 
 #include <optional>
 
+#include <QDBusContext>
+#include <QDBusServiceWatcher>
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
@@ -32,7 +34,7 @@ namespace cutefish::accelerators {
 
 class AcceleratorController;
 
-class AcceleratorService : public QObject
+class AcceleratorService : public QObject, protected QDBusContext
 {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "com.cutefish.Shortcuts1")
@@ -75,7 +77,8 @@ public Q_SLOTS:
 
     // True while the user is recording a shortcut, so that the keys they
     // press do not also trigger anything. Also resets the confirmation
-    // state of a pending conflict or warning.
+    // state of a pending conflict or warning. Over the bus the caller owns
+    // the flag; it is lifted when the caller leaves the bus.
     void preventProcessingAccelerators(bool prevent);
 
     bool hasCustomAccelerators();
@@ -105,11 +108,16 @@ private:
     ConflictErrorState maybeHandleNonMetaAccelerator(const Accelerator &accelerator,
                                                      AcceleratorActionId id);
     QString result(AcceleratorConfigResult result, const QString &conflictAction = {}) const;
+    void setPreventOwner(const QString &owner);
+    void releasePreventOwner(const QString &owner);
 
     AcceleratorConfiguration *m_configuration = nullptr;
     AcceleratorController *m_controller = nullptr;
     const input::XkbTracker *m_xkb = nullptr;
     bool m_registered = false;
+
+    QDBusServiceWatcher m_watcher;
+    QString m_preventOwner;
 
     std::optional<PendingAccelerator> m_pending;
     ConflictErrorState m_conflictState = ConflictErrorState::Standby;
