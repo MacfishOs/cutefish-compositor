@@ -302,7 +302,7 @@ QTransform sliceMapping(const QRectF &source, const QSizeF &size)
 } // namespace
 
 void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, const QPoint &position,
-                 float opacity)
+                 float opacity, const QMargins &bufferMargins)
 {
     if (geometry.paintBounds().isEmpty() || opacity <= 0)
         return;
@@ -312,7 +312,7 @@ void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, con
     // The shadow meets the window where its buffer lands, so the pixel along an
     // edge never gets only part of the shadow's darkest row.
     const QSize window = (geometry.paintBounds() - geometry.margins()).size();
-    const QRectF body = renderer.pixelAligned(QRectF(position, window));
+    const QRectF body = renderer.pixelAligned(QRectF(position, window), bufferMargins);
     const auto place = [](int value, int extent, qreal begin, qreal end) {
         return value * 2 <= extent ? begin + value : end + (value - extent);
     };

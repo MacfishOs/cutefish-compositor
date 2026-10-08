@@ -71,6 +71,14 @@ void ShadowNode::update(const QRect &content, wm::ShadowElevation elevation, con
     notifyChanged();
 }
 
+void ShadowNode::setBufferMargins(const QMargins &margins)
+{
+    if (margins == m_bufferMargins)
+        return;
+    m_bufferMargins = margins;
+    notifyChanged();
+}
+
 void ShadowNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
 {
     if (m_elevation == wm::ShadowElevation::None || m_content.isEmpty())
@@ -81,7 +89,8 @@ void ShadowNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry
     // paintShadow's target rects are already offset by the margins, so it wants
     // the window's own top-left, not the node's.
     paintShadow(renderer, geometry,
-                absoluteGeometry.topLeft() + QPoint(m_margins.left(), m_margins.top()));
+                absoluteGeometry.topLeft() + QPoint(m_margins.left(), m_margins.top()), 1,
+                m_bufferMargins);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -160,6 +169,7 @@ void Shadow::updateNode()
         return;
     }
     const auto visual = wm::WindowVisualController::evaluate(*m_window, m_theme->visualStyle());
+    m_node->setBufferMargins(visual.bufferMargins);
     // A client-drawn outline casts the shadow instead of the surface rectangle.
     if (!visual.outlinePath.isEmpty()) {
         content = visual.outlinePath.boundingRect().toAlignedRect();

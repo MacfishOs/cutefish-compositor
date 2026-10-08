@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <QMargins>
 #include <QPainterPath>
 #include <QTransform>
 
@@ -31,6 +32,8 @@ struct WindowVisualState {
     render::Color outlineColor;
     render::Color highlightColor {0, 0, 0, 0};
     qreal outlineWidthPx = 0;
+    // How far the client buffer reaches past shape on each side.
+    QMargins bufferMargins;
     // Black over the body while a modal transient blocks the window; 0 is none.
     float dimOpacity = 0;
     bool clipContent = false;

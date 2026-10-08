@@ -62,6 +62,10 @@ public:
 
     QMargins margins() const { return m_margins; }
 
+    // How far the client buffer reaches past `content`, so the shadow meets the
+    // body where the window clips it.
+    void setBufferMargins(const QMargins &margins);
+
     // A drawn shadow is blended over whatever is behind the window, so the
     // frame it appears in has to be composited.
     Content content() const override
@@ -78,6 +82,7 @@ private:
     Corners m_corners;
     int m_radius = 0;
     QPainterPath m_silhouette;
+    QMargins m_bufferMargins;
     // What the controller asked for, and what is actually drawn - which is
     // None as well whenever the window is too small for the style.
     wm::ShadowElevation m_requested = wm::ShadowElevation::None;

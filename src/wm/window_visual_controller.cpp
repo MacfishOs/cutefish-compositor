@@ -75,6 +75,7 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
         state.mode = Mode::ServerExterior;
     const auto exterior = window.clientExteriorInsets();
     state.shape.bounds.adjust(exterior.left, exterior.top, -exterior.right, -exterior.bottom);
+    state.bufferMargins = QMargins(exterior.left, exterior.top, exterior.right, exterior.bottom);
     // Exterior pixels stay hidden even when the body has square, tiled edges.
     state.clipContent = !exterior.isNull();
     if (window.decoratedStateType() == WindowStateType::Normal) {

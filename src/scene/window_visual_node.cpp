@@ -25,7 +25,8 @@ void paintWindowOutline(render::Renderer &renderer, const render::RoundedShape &
     const qreal stroke = state.outlineWidthPx / renderer.rasterScale();
     auto inner = shape;
     // On the client buffer's pixels, so no edge splits its stroke over two.
-    inner.bounds = renderer.pixelAligned(shape.bounds);
+    const bool unscaled = shape.bounds.size() == state.outlined().bounds.size();
+    inner.bounds = renderer.pixelAligned(shape.bounds, unscaled ? state.bufferMargins : QMargins());
     auto outer = inner;
     outer.bounds.adjust(-stroke, -stroke, stroke, stroke);
     if (shape.radius > 0)
@@ -104,7 +105,8 @@ void WindowVisualNode::render(render::Renderer &renderer) const
     if (!isVisible())
         return;
     auto shape = m_state.shape;
-    shape.bounds = renderer.pixelAligned(shape.bounds.translated(absolutePosition()));
+    shape.bounds = renderer.pixelAligned(shape.bounds.translated(absolutePosition()),
+                                         m_state.bufferMargins);
     // Taken here, so a window nested below keeps its own corners.
     const auto corners = std::exchange(renderer.windowCorners, std::nullopt);
     if (corners) {

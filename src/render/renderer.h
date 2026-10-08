@@ -5,6 +5,7 @@
 #ifndef CUTEFISH_RENDER_RENDERER_H_
 #define CUTEFISH_RENDER_RENDERER_H_
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include <QImage>
+#include <QMargins>
 #include <QPainterPath>
 #include <QRect>
 #include <QRegion>
@@ -105,14 +107,30 @@ public:
         return outputOrigin + QPointF(std::round(origin.x()), std::round(origin.y())) / m_rasterScale;
     }
 
-    // Where a client buffer covering `logical` lands: its origin snapped, its
-    // size rounded to whole pixels on its own.
-    QRectF pixelAligned(const QRectF &logical) const
+    // Where a client buffer reaching `buffer` past the body `logical` lands: its
+    // origin snapped, its size rounded to whole pixels on its own. A body edge
+    // inside the buffer keeps only the pixels the body fills whole, since the
+    // client antialiases that edge at its fractional place.
+    QRectF pixelAligned(const QRectF &logical, const QMargins &buffer = {}) const
     {
-        return {pixelAligned(logical.topLeft()),
-                QSizeF(std::round(logical.width() * m_rasterScale),
-                       std::round(logical.height() * m_rasterScale))
-                        / m_rasterScale};
+        const qreal scale = m_rasterScale;
+        const QRectF surface = logical.marginsAdded(QMarginsF(buffer));
+        const QPointF origin = pixelAligned(surface.topLeft());
+        const QSizeF pixels(std::round(surface.width() * scale),
+                            std::round(surface.height() * scale));
+        constexpr qreal kEpsilon = 0.01;
+        const auto start = [&](int margin) {
+            return margin ? std::ceil(margin * scale - kEpsilon) : 0.0;
+        };
+        const auto end = [&](qreal extent, int margin, qreal whole) {
+            return margin ? std::floor((extent - margin) * scale + kEpsilon) : whole;
+        };
+        const qreal left = start(buffer.left());
+        const qreal top = start(buffer.top());
+        const qreal right = end(surface.width(), buffer.right(), pixels.width());
+        const qreal bottom = end(surface.height(), buffer.bottom(), pixels.height());
+        return {origin + QPointF(left, top) / scale,
+                QSizeF(std::max(0.0, right - left), std::max(0.0, bottom - top)) / scale};
     }
 
     // Binds `target` and sets up the viewport. Every draw call must sit between
