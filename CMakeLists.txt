@@ -533,6 +533,8 @@ add_library(cutefish-decoration STATIC
     src/decoration/text.h
     src/decoration/decoration_theme.cpp
     src/decoration/decoration_theme.h
+    src/decoration/overview_window_frame.cpp
+    src/decoration/overview_window_frame.h
     src/decoration/caption_button.cpp
     src/decoration/caption_button.h
     src/decoration/decoration_node.cpp
@@ -898,6 +900,8 @@ add_executable(cutefish-compositor
     src/main.cpp
     src/core/compositor_options.cpp
     src/core/compositor_options.h
+    src/core/computer_control_environment.cpp
+    src/core/computer_control_environment.h
     src/core/compositor_shell.cpp
     src/core/compositor_shell.h
 )

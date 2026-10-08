@@ -4,12 +4,9 @@
 
 #include "core/compositor_shell.h"
 
-#include <linux/sockios.h>
-#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include <algorithm>
-#include <cmath>
 #include <utility>
 
 #include <QCoreApplication>
@@ -32,13 +29,13 @@
 #include "backend/headless/headless_backend.h"
 #include "backend/input/libinput_backend.h"
 #include "backend/session/libseat_session.h"
-#include "clipboard/stored_source.h"
 #include "compositor/surface.h"
 #include "computer_control/computer_control_service.h"
 #include "computer_control/controller.h"
 #include "computer_control/permission_consent.h"
+#include "core/computer_control_environment.h"
 #include "core/logging.h"
-#include "decoration/shadow.h"
+#include "decoration/overview_window_frame.h"
 #include "decoration/window_visual_style.h"
 #include "display/callback_native_display_delegate.h"
 #include "display/display_configuration_controller.h"
@@ -52,8 +49,6 @@
 #include "scene/desk_switch_node.h"
 #include "scene/overview_node.h"
 #include "scene/slide_out_node.h"
-#include "scene/window_animation.h"
-#include "scene/window_visual_node.h"
 #include "session/session_state.h"
 #include "switcher/switcher_view.h"
 #include "wayland/idle_inhibition.h"
@@ -70,7 +65,6 @@
 #include "wayland/protocols/wp_presentation.h"
 #include "wayland/security_delegate.h"
 #include "wayland/server.h"
-#include "wayland/server_util.h"
 #include "wayland/shell_control_channel.h"
 #include "wm/demo_controller.h"
 #include "wm/desks/desk_preferences.h"
@@ -82,8 +76,6 @@
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
-#include "wm/window_state.h"
-#include "wm/wm_event.h"
 
 #ifdef CUTEFISH_ENABLE_XWAYLAND
 #include "xwayland/xwayland_server.h"
@@ -94,89 +86,6 @@ namespace cutefish::core {
 namespace {
 // After the login transition and the shell's own startup.
 constexpr int kSwitcherPreloadDelayMs = 3000;
-
-// Every overview window has the corners, the shadow and the outline of a
-// window in its normal state, the shadow of the active one.
-scene::OverviewWindowFrame overviewWindowFrame(const decoration::Theme *theme)
-{
-    scene::OverviewWindowFrame frame;
-    frame.radius = theme->visualStyle().radius;
-    frame.shadow = [theme](render::Renderer &renderer, const scene::WindowAnimation &window,
-                           const render::RoundedShape &body, double uniform, float opacity,
-                           bool moving) {
-        // Inside the body's edges on whole logical pixels: a sliver of shadow
-        // under the window rather than a gap beside it.
-        const int left = int(std::ceil(body.bounds.left()));
-        const int top = int(std::ceil(body.bounds.top()));
-        const QRect content(left, top, int(std::floor(body.bounds.right())) - left,
-                            int(std::floor(body.bounds.bottom())) - top);
-        if (content.isEmpty())
-            return;
-        // Each shadow keeps the corners of its window at full size, not the
-        // body's as it shrinks: a new radius is a new shadow texture every
-        // frame, and the few pixels more it curves lie under the body.
-        const auto paint = [&](wm::ShadowElevation elevation, int radius, float alpha) {
-            if (elevation == wm::ShadowElevation::None || alpha <= 0)
-                return;
-            radius = std::min(radius, decoration::ShadowGeometry::kMaxRadius);
-            const decoration::ShadowStyle style = theme->metrics().shadowFor(elevation);
-            const int rasterScale = int(std::ceil(renderer.rasterScale()));
-            // Below the nine-patch's least size every size is a texture of its
-            // own. In motion, a size a step of a shared ladder up stands in.
-            QSize size = content.size();
-            if (moving) {
-                const QSize least =
-                        decoration::ShadowGeometry(QSize(4096, 4096), radius, style, rasterScale)
-                                .canonicalSize();
-                const auto step = [](int value, int least) {
-                    if (value >= least || value <= 0)
-                        return value;
-                    constexpr double kRatio = 0.9;
-                    const int k = int(std::floor(std::log(double(value) / least)
-                                                 / std::log(kRatio)));
-                    return std::max(value, int(std::ceil(least * std::pow(kRatio, k))));
-                };
-                size = QSize(step(size.width(), least.width()),
-                             step(size.height(), least.height()));
-            }
-            const decoration::ShadowGeometry geometry(size, radius, style, rasterScale);
-            if (size == content.size())
-                decoration::paintShadow(renderer, geometry, content.topLeft(), alpha);
-            else
-                decoration::paintStretchedShadow(renderer, geometry, content, alpha);
-        };
-        auto own = wm::ShadowElevation::None;
-        int ownRadius = 0;
-        for (const scene::Node *child : window.children()) {
-            const auto *shadow = dynamic_cast<const decoration::ShadowNode *>(child);
-            if (shadow && shadow->isVisible()) {
-                own = shadow->elevation();
-                ownRadius = shadow->radius();
-            }
-        }
-        const int radius = theme->visualStyle().radius;
-        // The active window's own shadow is the overview's: drawn once, not
-        // two of them blended over each other all the way.
-        if (own == wm::ShadowElevation::Active && ownRadius == radius) {
-            paint(own, ownRadius, opacity);
-            return;
-        }
-        paint(own, ownRadius, opacity * float(1 - uniform));
-        paint(wm::ShadowElevation::Active, radius, opacity * float(uniform));
-    };
-    frame.outline = [theme](render::Renderer &renderer, const render::RoundedShape &body,
-                            float opacity) {
-        const decoration::WindowVisualStyle style = theme->visualStyle();
-        scene::WindowVisualState state;
-        state.shape = body;
-        state.drawOutline = true;
-        state.outlineWidthPx = style.outlineWidthPx;
-        state.outlineColor = style.activeOutline;
-        state.highlightColor = style.highlight;
-        scene::paintWindowOutline(renderer, body, state, opacity);
-    };
-    return frame;
-}
 
 // Whether `node` puts anything on the output, walked as the damage tracker does.
 bool drawsAnything(const scene::Node &node)
@@ -316,7 +225,7 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
     };
     m_overviewNode->setTextPainter(paintText);
     m_overviewBarNode->setTextPainter(paintText);
-    m_overviewNode->setWindowFrame(overviewWindowFrame(&m_decorationTheme));
+    m_overviewNode->setWindowFrame(decoration::overviewWindowFrame(&m_decorationTheme));
     wm::DesksController *desks = m_windowManager.desks();
     desks->setSwitchNode(m_deskSwitchNode);
     desks->setWindowMoveNode(m_windowMoveNode);
@@ -369,148 +278,17 @@ void CompositorShell::initComputerControl()
     m_computerControlConsent =
             std::make_unique<computer_control::PermissionConsent>(showsSystemDialogs);
 
-    computer_control::Environment environment;
-    environment.askConsent = [consent = m_computerControlConsent.get()](
-                                     const QString &agentName,
-                                     std::function<void(computer_control::ConsentResult)> answer) {
-        return consent->ask(agentName, std::move(answer));
-    };
-    // The permission prompt and the authentication dialogs are the user's to
-    // answer, so the agent neither clicks nor types into them.
-    environment.protectedAt = [this, showsSystemDialogs](const QPointF &position) {
-        wm::Window *window = m_windowManager.windowAt(position);
-        if (!window)
-            window = m_windowManager.frameAt(position);
-        return window && showsSystemDialogs(window->processId());
-    };
-    environment.protectedFocus = [this, showsSystemDialogs] {
-        wm::Window *window = m_windowManager.windowForSurface(m_seat.focusedSurface());
-        return window && showsSystemDialogs(window->processId());
-    };
-    // Wayland comes up after this, so the input method is looked up late.
-    const auto inputMethod = [this]() -> wayland::InputMethodManager * {
+    ComputerControlHosts hosts;
+    hosts.windowManager = &m_windowManager;
+    hosts.seat = &m_seat;
+    hosts.session = &m_sessionController;
+    hosts.consent = m_computerControlConsent.get();
+    hosts.inputMethod = [this]() -> wayland::InputMethodManager * {
         return m_globals ? m_globals->inputMethod() : nullptr;
     };
-    environment.textInputFocused = [inputMethod] {
-        return inputMethod() && inputMethod()->hasFocusedTextInput();
-    };
-    environment.inputMethodGrabsKeyboard = [inputMethod] {
-        return inputMethod() && inputMethod()->grabsKeyboard();
-    };
-    environment.commitText = [inputMethod](const std::string &text) {
-        return inputMethod() && inputMethod()->commitText(text);
-    };
-    environment.sessionBlocked = [this] {
-        return m_sessionController.isBlocked();
-    };
-    // Every desk's windows, as Ash's autotest API lists them
-    // (ash/autotest_private_api_utils.cc, GetAppWindowList).
-    environment.windows = [this] {
-        std::vector<computer_control::WindowInfo> windows;
-        for (wm::Window *window : m_windowManager.mruWindowTracker()->buildMruWindowList()) {
-            computer_control::WindowInfo info;
-            info.id = window->id();
-            info.applicationId = window->applicationId();
-            info.title = window->title();
-            info.bounds = window->bounds();
-            if (window->isActive())
-                info.flags |= computer_control::WindowInfo::Active;
-            if (window->state()->isMinimized())
-                info.flags |= computer_control::WindowInfo::Minimized;
-            if (window->isHidden())
-                info.flags |= computer_control::WindowInfo::Hidden;
-            if (window->isDeskHidden())
-                info.flags |= computer_control::WindowInfo::OtherDesk;
-            windows.push_back(info);
-        }
-        return windows;
-    };
-    // What the dock's click on a task does; each step can end the window.
-    environment.activateWindow = [this](quint64 id) {
-        wm::Window *window = m_windowManager.windowById(id);
-        if (!window || !wm::canIncludeWindowInMruList(window))
-            return false;
-        m_windowManager.unhideApplication(window);
-        window->setHidden(false);
-        window = m_windowManager.windowById(id);
-        if (window && window->state()->isMinimized())
-            window->restore();
-        window = m_windowManager.windowById(id);
-        if (!window)
-            return false;
-        m_windowManager.activation()->activate(window);
-        return true;
-    };
-    environment.protectedWindow = [this, showsSystemDialogs](quint64 id) {
-        wm::Window *window = m_windowManager.windowById(id);
-        return window && showsSystemDialogs(window->processId());
-    };
-    // What the close button does (commands::closeWindow).
-    environment.closeWindow = [this](quint64 id) {
-        wm::Window *window = m_windowManager.windowById(id);
-        if (!window || !wm::canIncludeWindowInMruList(window) || !window->canClose())
-            return false;
-        window->requestClose();
-        return true;
-    };
-    // A window out of view is brought back with activateWindow first, so the
-    // agent sees what it moves.
-    environment.setWindowFrame = [this](quint64 id, const QRect &frame) {
-        wm::Window *window = m_windowManager.windowById(id);
-        if (!window || !wm::canIncludeWindowInMruList(window) || window->isHidden()
-            || window->isDeskHidden() || window->state()->isMinimized())
-            return false;
-        QRect bounds = frame;
-        if (!window->isResizable()) {
-            bounds.setSize(window->bounds().size());
-        } else {
-            // No larger than the work area, as a resize by hand (WindowResizer).
-            QSize maximum = m_windowManager.workAreaFor(window).size();
-            if (const QSize limit = window->maximumOuterSize(); !limit.isEmpty())
-                maximum = maximum.isEmpty() ? limit : maximum.boundedTo(limit);
-            if (!maximum.isEmpty()) {
-                bounds.setWidth(std::min(bounds.width(), maximum.width()));
-                bounds.setHeight(std::min(bounds.height(), maximum.height()));
-            }
-        }
-        wm::WindowState *state = window->state();
-        // As Ash's tiling does: a tiled window leaves its state for the bounds.
-        if (!state->isNormal()) {
-            state->setRestoreBounds(bounds);
-            state->onEvent(wm::WMEvent(wm::WMEventType::Normal));
-        } else {
-            window->requestBounds(bounds);
-        }
-        // Placed like a window moved by hand: nothing left to restore to.
-        state->clearRestoreBounds();
-        return true;
-    };
-    // The text as wl-copy offers it, so Xwayland clients get it too.
-    environment.setClipboard = [this](const std::string &text) {
-        auto source = std::make_shared<clipboard::StoredSource>();
-        const QByteArray data = QByteArray::fromStdString(text);
-        for (const char *mime : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING",
-                                 "STRING", "TEXT"}) {
-            source->offer(mime);
-            source->payloads[mime] = data;
-        }
-        m_seat.selection()->setSource(std::move(source));
-    };
-    // SIOCOUTQ on a Unix socket counts what the peer has not read yet.
-    environment.inputRead = [this] {
-        for (compositor::Surface *surface : {m_seat.focusedSurface(), m_seat.pointerFocus()}) {
-            wl_resource *resource = surface ? wayland::getSurfaceResource(surface) : nullptr;
-            if (!resource)
-                continue;
-            int unread = 0;
-            if (ioctl(wl_client_get_fd(wl_resource_get_client(resource)), SIOCOUTQ, &unread) == 0
-                && unread > 0)
-                return false;
-        }
-        return true;
-    };
-    m_computerControl = std::make_unique<computer_control::Controller>(&m_inputManager,
-                                                                       std::move(environment));
+    hosts.showsSystemDialogs = showsSystemDialogs;
+    m_computerControl = std::make_unique<computer_control::Controller>(
+            &m_inputManager, computerControlEnvironment(std::move(hosts)));
     m_computerControlPolicy.setController(m_computerControl.get());
     QObject::connect(&m_compositor, &compositor::Compositor::outputDrawn,
                      m_computerControl.get(), &computer_control::Controller::drawn);
