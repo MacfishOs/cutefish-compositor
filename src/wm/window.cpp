@@ -6,6 +6,7 @@
 #include "display/display_manager.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QPointer>
 #include <QTimer>
@@ -186,6 +187,7 @@ void Window::onSurfaceCommit(compositor::Surface *surface)
     forEachObserver(this, m_observers, [this](WindowObserver *observer) {
         observer->onWindowContentChanged(this);
     });
+    updateSurfaceTargetBounds();
     placeSheets();
 }
 
@@ -306,6 +308,8 @@ void Window::setBounds(const QRect &bounds)
     const QRect oldBounds = m_bounds;
     m_bounds = bounds;
     updateSurfacePlacement();
+    if (m_manager)
+        m_manager->onWindowTargetBoundsChanged(this, oldBounds, bounds);
 
     forEachObserver(this, m_observers, [this, &oldBounds](WindowObserver *observer) {
         observer->onWindowBoundsChanged(this, oldBounds);
@@ -370,6 +374,19 @@ void Window::updateSurfacePlacement()
     // committed buffer's until the client resizes; see the class comment.
     const QPoint origin = frameInsets().topLeft() + m_surfaceOrigin;
     m_rootSurface->setPosition(m_node ? origin : m_bounds.topLeft() + origin);
+    updateSurfaceTargetBounds();
+}
+
+void Window::updateSurfaceTargetBounds()
+{
+    // The presentation offset is left out, as aura leaves a layer transform
+    // out of a window's bounds.
+    const scene::Node *node = surfaceNode();
+    const QRect bounds(m_bounds.topLeft() + frameInsets().topLeft() + m_surfaceOrigin,
+                       node ? node->geometry().size() : QSize());
+    const QRect oldBounds = std::exchange(m_surfaceTargetBounds, bounds);
+    if (bounds != oldBounds && m_manager)
+        m_manager->onWindowTargetBoundsChanged(this, oldBounds, bounds);
 }
 
 void Window::setMinimumSize(const QSize &size)

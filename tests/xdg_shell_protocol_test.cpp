@@ -30,6 +30,7 @@
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-dialog-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
+#include <QCoreApplication>
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
@@ -178,6 +179,7 @@ struct Client {
     int buttonReleases = 0;
     int axisEvents = 0;
     int axisStops = 0;
+    int motions = 0;
     wl_surface *pointerFocus = nullptr;
     QPointF pointerPosition;
 
@@ -279,6 +281,7 @@ struct Client {
                     static_cast<Client *>(data)->pointerFocus = nullptr;
                 },
                 [](void *data, wl_pointer *, uint32_t, wl_fixed_t x, wl_fixed_t y) {
+                    ++static_cast<Client *>(data)->motions;
                     static_cast<Client *>(data)->pointerPosition =
                             QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
                 },
@@ -1144,6 +1147,65 @@ TEST_F(XdgShellProtocolTest, ThePressThatDismissesAPopupKeepsItsRelease)
         c.sync();
         EXPECT_EQ(presses, c.buttonPresses);
         EXPECT_EQ(releases, c.buttonReleases);
+    });
+}
+
+TEST_F(XdgShellProtocolTest, AStillPointerIsMovedWhenTheResizedContentLandsUnderIt)
+{
+    QObject::connect(&windowManager, &wm::WindowManager::pointerTargetsChanged, &manager,
+                     &input::InputManager::synthesizeMotion);
+    run([&](Client &c) {
+        c.bindSeat();
+        XdgWindow *window = c.makeMappedToplevel(QSize(400, 300));
+        check([&] {
+            onlyWindow()->setBounds(QRect(200, 100, 400, 300));
+            manager.onPointerMotionAbsolute(at(1), QPointF(250, 120));
+            QCoreApplication::processEvents();
+        });
+        c.sync();
+        ASSERT_EQ(window->surface, c.pointerFocus);
+        EXPECT_EQ(QPointF(50, 20), c.pointerPosition);
+        const int motions = c.motions;
+
+        // The old contents stay where they were until the client draws the new
+        // size, so the pointer is still over the same point of them.
+        check([&] {
+            onlyWindow()->maximize();
+            QCoreApplication::processEvents();
+        });
+        c.sync();
+        EXPECT_EQ(motions, c.motions);
+        EXPECT_EQ(QPointF(50, 20), c.pointerPosition);
+
+        wl_buffer_destroy(window->buffer);
+        window->buffer = nullptr;
+        c.ackAndAttach(window, QSize(window->lastToplevel().width, window->lastToplevel().height));
+        check([&] {
+            EXPECT_EQ(kOutput, onlyWindow()->bounds());
+            QCoreApplication::processEvents();
+        });
+        c.sync();
+        EXPECT_EQ(motions + 1, c.motions);
+        EXPECT_EQ(QPointF(250, 120), c.pointerPosition);
+
+        check([&] {
+            onlyWindow()->restore();
+            QCoreApplication::processEvents();
+        });
+        c.sync();
+        EXPECT_EQ(motions + 1, c.motions);
+
+        wl_buffer_destroy(window->buffer);
+        window->buffer = nullptr;
+        c.ackAndAttach(window, QSize(window->lastToplevel().width, window->lastToplevel().height));
+        check([&] {
+            EXPECT_EQ(QRect(200, 100, 400, 300), onlyWindow()->bounds());
+            QCoreApplication::processEvents();
+        });
+        c.sync();
+        EXPECT_EQ(motions + 2, c.motions);
+        EXPECT_EQ(QPointF(50, 20), c.pointerPosition);
+        EXPECT_EQ(window->surface, c.pointerFocus);
     });
 }
 

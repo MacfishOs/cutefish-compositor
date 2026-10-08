@@ -438,6 +438,9 @@ private:
     void setDraggedInternal(bool dragged);
     void setRestoringFromDragInternal(bool restoring);
     void updateSurfacePlacement();
+    // Reports a move or resize of the root surface, in global coordinates, to
+    // the window manager.
+    void updateSurfaceTargetBounds();
     void updateNodeVisibility();
     // Applies a change of isVisible() from `wasVisible`.
     void onEffectiveVisibilityChanged(bool wasVisible);
@@ -476,6 +479,7 @@ private:
 
     QRect m_bounds;
     QPoint m_surfaceOrigin;
+    QRect m_surfaceTargetBounds;
     QPoint m_presentationOffset;
     bool m_presentationHidden = false;
     Insets m_clientExteriorInsets;

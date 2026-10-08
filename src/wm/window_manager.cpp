@@ -7,6 +7,7 @@
 #include "wm/window_visual_controller.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <QCoreApplication>
@@ -801,6 +802,25 @@ void WindowManager::onWindowVisibilityChanged(Window *window)
     if (!window->isVisible() && m_keyboardGrab == window)
         releaseKeyboardGrab();
     Q_EMIT pointerTargetsChanged();
+}
+
+void WindowManager::onWindowTargetBoundsChanged(Window *window, const QRect &oldBounds,
+                                                const QRect &newBounds)
+{
+    const scene::Node *node = window->node();
+    if (!m_seat || !hasWindow(window) || !node || !node->isEffectivelyVisible()
+        || node->isEventTargetingBlocked())
+        return;
+    // As aura's WindowEventDispatcher::OnWindowBoundsChanged: only when the
+    // pointer enters or leaves the bounds, or the bounds move under it. A
+    // resize in place leaves the surface-local location as it was.
+    const QPointF cursor = m_seat->cursorPosition();
+    const QPoint location(static_cast<int>(std::floor(cursor.x())),
+                          static_cast<int>(std::floor(cursor.y())));
+    const bool contained = newBounds.contains(location);
+    if (oldBounds.contains(location) != contained
+        || (contained && newBounds.topLeft() != oldBounds.topLeft()))
+        Q_EMIT pointerTargetsChanged();
 }
 
 void WindowManager::setKeyboardGrab(Window *window)

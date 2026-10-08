@@ -278,6 +278,10 @@ public:
     void onWindowModalChanged(Window *window);
     void onWindowModalityInputsChanged(Window *window);
     void onWindowVisibilityChanged(Window *window);
+    // The window's outer bounds or its root surface moved or resized, from
+    // `oldBounds` to `newBounds` in global coordinates.
+    void onWindowTargetBoundsChanged(Window *window, const QRect &oldBounds,
+                                     const QRect &newBounds);
 
     // --- Work-area reservations ---
 
@@ -418,7 +422,7 @@ Q_SIGNALS:
     // edge whatever else is going on.
     void pointerMoved(const QPointF &location);
     // What lies under a still pointer may have changed: a window was shown,
-    // hidden, removed or restacked.
+    // hidden, removed, restacked, or moved or resized across the pointer.
     void pointerTargetsChanged();
     // An output came, went or changed its bounds, work area or scale; windows
     // left on no output have been brought back by now.

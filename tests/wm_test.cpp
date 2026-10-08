@@ -1062,6 +1062,32 @@ TEST_F(WmTest, ActivatingAMinimizedTransientChildActivatesItsParent)
     EXPECT_EQ(parent, manager.activation()->activeWindow());
 }
 
+TEST_F(WmTest, OnlyAWindowMovingUnderOrAcrossAStillPointerRetargetsIt)
+{
+    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    input.onPointerMotionAbsolute(at(1), QPointF(150, 150));
+    int changes = 0;
+    QObject::connect(&manager, &WindowManager::pointerTargetsChanged, [&changes] {
+        ++changes;
+    });
+
+    // A resize in place leaves the pointer where it was in the window.
+    window->setBounds(QRect(100, 100, 400, 300));
+    EXPECT_EQ(0, changes);
+
+    window->setBounds(QRect(120, 100, 400, 300));
+    EXPECT_LT(0, changes);
+
+    changes = 0;
+    window->setBounds(QRect(500, 400, 400, 300));
+    EXPECT_LT(0, changes);
+
+    // Nothing under the pointer changes.
+    changes = 0;
+    window->setBounds(QRect(520, 400, 400, 300));
+    EXPECT_EQ(0, changes);
+}
+
 TEST_F(WmTest, ClickingAWindowActivatesItAndFocusesItsSurface)
 {
     Window *first = makeWindow(QRect(0, 0, 200, 200));
