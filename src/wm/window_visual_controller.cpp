@@ -40,14 +40,14 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
     using Mode = scene::WindowVisualMode;
     scene::WindowVisualState state;
     state.shape.bounds = window.presentedBounds();
+    state.surfaceOrigin = window.frameInsets().topLeft() + window.surfaceOrigin();
     // A sheet is a dialog: clipped and outlined like an application window.
     if (window.isPopup()
         || (window.role() != WindowRole::Normal && window.role() != WindowRole::Sheet)) {
         // Menus and shell panels describe their rounded body through the blur request.
         const auto *surface = window.rootSurface();
-        const QPoint origin = window.frameInsets().topLeft() + window.surfaceOrigin();
+        const QPoint origin = state.surfaceOrigin;
         const QPainterPath path = surface ? surface->backgroundBlurShape() : QPainterPath();
-        state.outlineSurfaceOrigin = origin;
         if (!path.isEmpty()) {
             state.outlinePath = path.translated(origin);
             state.outlineShape = {state.outlinePath.boundingRect(), 0};
@@ -75,7 +75,6 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
         state.mode = Mode::ServerExterior;
     const auto exterior = window.clientExteriorInsets();
     state.shape.bounds.adjust(exterior.left, exterior.top, -exterior.right, -exterior.bottom);
-    state.bufferMargins = QMargins(exterior.left, exterior.top, exterior.right, exterior.bottom);
     // Exterior pixels stay hidden even when the body has square, tiled edges.
     state.clipContent = !exterior.isNull();
     if (window.decoratedStateType() == WindowStateType::Normal) {

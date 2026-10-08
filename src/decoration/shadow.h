@@ -87,7 +87,7 @@ private:
 };
 
 void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry,
-                 const QPoint &position, float opacity = 1, const QMargins &bufferMargins = {});
+                 const QPoint &position, float opacity = 1, const QPointF &snap = {});
 
 // `geometry` stretched over `window`, a window near its size: one texture
 // stands in for many sizes in a frame of motion.

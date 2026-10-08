@@ -24,9 +24,8 @@ void paintWindowOutline(render::Renderer &renderer, const render::RoundedShape &
 {
     const qreal stroke = state.outlineWidthPx / renderer.rasterScale();
     auto inner = shape;
-    // On the client buffer's pixels, so no edge splits its stroke over two.
-    const bool unscaled = shape.bounds.size() == state.outlined().bounds.size();
-    inner.bounds = renderer.pixelAligned(shape.bounds, unscaled ? state.bufferMargins : QMargins());
+    // On whole pixels, so no edge splits its stroke over two.
+    inner.bounds = renderer.pixelsInside(shape.bounds);
     auto outer = inner;
     outer.bounds.adjust(-stroke, -stroke, stroke, stroke);
     if (shape.radius > 0)
@@ -73,9 +72,7 @@ void paintShapeOutline(render::Renderer &renderer, const WindowVisualState &stat
 QPointF clientBodySnap(const render::Renderer &renderer, const WindowVisualState &state,
                        const QPointF &position)
 {
-    if (state.outlineShape.bounds.isEmpty())
-        return {};
-    const QPointF surface = position + state.outlineSurfaceOrigin;
+    const QPointF surface = position + state.surfaceOrigin;
     return renderer.pixelAligned(surface) - surface;
 }
 
@@ -104,9 +101,10 @@ void WindowVisualNode::render(render::Renderer &renderer) const
 {
     if (!isVisible())
         return;
+    const QPointF position = absolutePosition();
+    const QPointF placed = position + clientBodySnap(renderer, m_state, position);
     auto shape = m_state.shape;
-    shape.bounds = renderer.pixelAligned(shape.bounds.translated(absolutePosition()),
-                                         m_state.bufferMargins);
+    shape.bounds = renderer.pixelsInside(shape.bounds.translated(placed));
     // Taken here, so a window nested below keeps its own corners.
     const auto corners = std::exchange(renderer.windowCorners, std::nullopt);
     if (corners) {
@@ -125,13 +123,11 @@ void WindowVisualNode::render(render::Renderer &renderer) const
     if (m_state.drawOutline && !renderer.suppressWindowOutlines && !m_state.outlinePath.isEmpty()) {
         // Rasterized where it lands, so it stays on physical pixels at any scale.
         auto state = m_state;
-        const QPointF position = absolutePosition();
-        state.outlinePath.translate(position + clientBodySnap(renderer, m_state, position));
+        state.outlinePath.translate(placed);
         paintShapeOutline(renderer, state, QTransform());
     } else if (m_state.drawOutline && !renderer.suppressWindowOutlines) {
-        const QPointF position = absolutePosition();
         auto outline = m_state.outlined();
-        outline.bounds.translate(position + clientBodySnap(renderer, m_state, position));
+        outline.bounds.translate(placed);
         paintWindowOutline(renderer, outline, m_state);
     }
 }

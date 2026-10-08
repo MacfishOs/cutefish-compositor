@@ -16,7 +16,6 @@
 #include <vector>
 
 #include <QImage>
-#include <QMargins>
 #include <QPainterPath>
 #include <QRect>
 #include <QRegion>
@@ -107,30 +106,18 @@ public:
         return outputOrigin + QPointF(std::round(origin.x()), std::round(origin.y())) / m_rasterScale;
     }
 
-    // Where a client buffer reaching `buffer` past the body `logical` lands: its
-    // origin snapped, its size rounded to whole pixels on its own. A body edge
-    // inside the buffer keeps only the pixels the body fills whole, since the
-    // client antialiases that edge at its fractional place.
-    QRectF pixelAligned(const QRectF &logical, const QMargins &buffer = {}) const
+    // The physical pixels a client body at `logical` fills whole. The client
+    // antialiases an edge that falls inside a pixel, so that pixel is left out.
+    QRectF pixelsInside(const QRectF &logical) const
     {
-        const qreal scale = m_rasterScale;
-        const QRectF surface = logical.marginsAdded(QMarginsF(buffer));
-        const QPointF origin = pixelAligned(surface.topLeft());
-        const QSizeF pixels(std::round(surface.width() * scale),
-                            std::round(surface.height() * scale));
         constexpr qreal kEpsilon = 0.01;
-        const auto start = [&](int margin) {
-            return margin ? std::ceil(margin * scale - kEpsilon) : 0.0;
-        };
-        const auto end = [&](qreal extent, int margin, qreal whole) {
-            return margin ? std::floor((extent - margin) * scale + kEpsilon) : whole;
-        };
-        const qreal left = start(buffer.left());
-        const qreal top = start(buffer.top());
-        const qreal right = end(surface.width(), buffer.right(), pixels.width());
-        const qreal bottom = end(surface.height(), buffer.bottom(), pixels.height());
-        return {origin + QPointF(left, top) / scale,
-                QSizeF(std::max(0.0, right - left), std::max(0.0, bottom - top)) / scale};
+        const QPointF outputOrigin = m_outputContext.logicalViewport.topLeft();
+        const QPointF start = (logical.topLeft() - outputOrigin) * m_rasterScale;
+        const QPointF end = (logical.bottomRight() - outputOrigin) * m_rasterScale;
+        const QPointF first(std::ceil(start.x() - kEpsilon), std::ceil(start.y() - kEpsilon));
+        const QPointF last(std::max(first.x(), std::floor(end.x() + kEpsilon)),
+                           std::max(first.y(), std::floor(end.y() + kEpsilon)));
+        return {outputOrigin + first / m_rasterScale, outputOrigin + last / m_rasterScale};
     }
 
     // Binds `target` and sets up the viewport. Every draw call must sit between

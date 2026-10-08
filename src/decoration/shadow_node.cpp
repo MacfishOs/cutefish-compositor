@@ -71,11 +71,11 @@ void ShadowNode::update(const QRect &content, wm::ShadowElevation elevation, con
     notifyChanged();
 }
 
-void ShadowNode::setBufferMargins(const QMargins &margins)
+void ShadowNode::setSurfaceOrigin(const QPoint &origin)
 {
-    if (margins == m_bufferMargins)
+    if (origin == m_surfaceOrigin)
         return;
-    m_bufferMargins = margins;
+    m_surfaceOrigin = origin;
     notifyChanged();
 }
 
@@ -88,9 +88,10 @@ void ShadowNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry
                                   int(std::ceil(renderer.rasterScale())), m_corners, m_silhouette);
     // paintShadow's target rects are already offset by the margins, so it wants
     // the window's own top-left, not the node's.
+    const QPointF surface = absoluteGeometry.topLeft() + m_surfaceOrigin;
     paintShadow(renderer, geometry,
                 absoluteGeometry.topLeft() + QPoint(m_margins.left(), m_margins.top()), 1,
-                m_bufferMargins);
+                renderer.pixelAligned(surface) - surface);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -156,6 +157,7 @@ void Shadow::updateNode()
     // sizing the shadow from what the window has actually presented, so it can
     // never hug an edge the client has not reached yet.
     QRect content = m_window->presentedBounds();
+    m_node->setSurfaceOrigin(m_window->frameInsets().topLeft() + m_window->surfaceOrigin());
     if (m_window->role() == wm::WindowRole::Dock && m_window->rootSurface()) {
         const auto region = m_window->rootSurface()->inputRegion();
         // The dock surface includes transparent space outside its rounded panel.
@@ -169,7 +171,6 @@ void Shadow::updateNode()
         return;
     }
     const auto visual = wm::WindowVisualController::evaluate(*m_window, m_theme->visualStyle());
-    m_node->setBufferMargins(visual.bufferMargins);
     // A client-drawn outline casts the shadow instead of the surface rectangle.
     if (!visual.outlinePath.isEmpty()) {
         content = visual.outlinePath.boundingRect().toAlignedRect();

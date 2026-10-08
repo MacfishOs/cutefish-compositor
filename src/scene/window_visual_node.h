@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <QMargins>
 #include <QPainterPath>
 #include <QTransform>
 
@@ -26,14 +25,12 @@ struct WindowVisualState {
     render::RoundedShape outlineShape;
     // A body of any outline; outlineShape then only bounds it.
     QPainterPath outlinePath;
-    // Where the client surface drawing that body sits; the surface is snapped
-    // to physical pixels, so its outline has to move with it.
-    QPoint outlineSurfaceOrigin;
+    // Where the client surface drawing the body sits; the surface is snapped to
+    // physical pixels, so the clip and outline have to move with it.
+    QPoint surfaceOrigin;
     render::Color outlineColor;
     render::Color highlightColor {0, 0, 0, 0};
     qreal outlineWidthPx = 0;
-    // How far the client buffer reaches past shape on each side.
-    QMargins bufferMargins;
     // Black over the body while a modal transient blocks the window; 0 is none.
     float dimOpacity = 0;
     bool clipContent = false;
@@ -54,8 +51,8 @@ void paintWindowOutline(render::Renderer &renderer, const render::RoundedShape &
 void paintShapeOutline(render::Renderer &renderer, const WindowVisualState &state,
                        const QTransform &transform, float opacity = 1);
 
-// How far a client-described outline moves with its surface onto physical
-// pixels, for a window whose node sits at `position`; zero for other outlines.
+// How far the client body moves with its surface onto physical pixels, for a
+// window whose node sits at `position`.
 QPointF clientBodySnap(const render::Renderer &renderer, const WindowVisualState &state,
                        const QPointF &position);
 
