@@ -1011,8 +1011,6 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
     if (!m_scanoutFrame.planes.empty() && !m_scanoutFrame.planes.front().isDirectScanout())
         composited = m_scanoutFrame.planes.front();
 
-    // The plan owns the acquire fences the plane properties point at, so it has
-    // to outlive the commit further down, not just the validation.
     scene::OverlayPlan plan;
     std::vector<PlaneContent> planes;
     // A plane the blend cannot reach would show untinted; the cursor's image

@@ -22,6 +22,7 @@
 #include <gbm.h>
 #include <gtest/gtest.h>
 #include <memory>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 #include <xf86drm.h>
@@ -487,7 +488,16 @@ TEST_F(ScanoutTest, AnAcquireFenceIsHandedToKmsRatherThanWaitedOn)
     const uint64_t value =
             propertyValue(m_device->commits.back().request, kPrimaryPlaneId, kInFenceFd, &found);
     EXPECT_TRUE(found);
-    EXPECT_EQ(static_cast<int>(value), fds[0]);
+    // The plane keeps its own duplicate so the frame can be committed again
+    // after the plan is gone; it must still refer to the same pipe.
+    const int handed = static_cast<int>(value);
+    EXPECT_NE(handed, fds[0]);
+    struct stat original = {};
+    struct stat duplicate = {};
+    ASSERT_EQ(::fstat(fds[0], &original), 0);
+    ASSERT_EQ(::fstat(handed, &duplicate), 0);
+    EXPECT_EQ(original.st_dev, duplicate.st_dev);
+    EXPECT_EQ(original.st_ino, duplicate.st_ino);
 }
 
 TEST_F(ScanoutTest, WithoutAnAcquireFenceNoInFencePropertyIsSet)

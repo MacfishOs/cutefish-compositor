@@ -204,7 +204,11 @@ std::vector<PlaneContent> ScanoutController::validate(const scene::OverlayPlan &
         content.modifier = modifier;
         content.displayRect = candidate.displayRect;
         content.sourceRect = candidate.sourceRect;
-        content.acquireFenceFd = candidate.acquireFence.get();
+        if (candidate.acquireFence.isValid()) {
+            content.acquireFence = std::make_shared<render::SyncFence>(candidate.acquireFence.duplicate());
+            if (!content.acquireFence->isValid())
+                return false;
+        }
         content.buffer = candidate.buffer;
         content.node = candidate.node;
         contents.push_back(std::move(content));
@@ -243,7 +247,7 @@ std::vector<PlaneContent> ScanoutController::validate(const scene::OverlayPlan &
                 const auto *plane = planeById(contents[i].planeId);
                 const auto &properties = plane->properties;
                 // Explicit acquire fences cannot silently become implicit synchronization.
-                if (contents[i].acquireFenceFd >= 0 && !properties.id("IN_FENCE_FD"))
+                if (contents[i].acquireFenceFd() >= 0 && !properties.id("IN_FENCE_FD"))
                     compatible = false;
                 if (properties.value("rotation", DRM_MODE_ROTATE_0) != DRM_MODE_ROTATE_0
                     || properties.value("alpha", 0xffff) != 0xffff)
@@ -294,9 +298,9 @@ void ScanoutController::addPlaneProperties(AtomicRequest &request, const DrmPlan
         request.add(id, properties.id("rotation"), DRM_MODE_ROTATE_0);
 
     // Validation rejects explicit-sync promotion without IN_FENCE_FD.
-    if (!off && content.acquireFenceFd >= 0)
+    if (!off && content.acquireFenceFd() >= 0)
         request.add(id, properties.id("IN_FENCE_FD"),
-                    static_cast<uint64_t>(content.acquireFenceFd));
+                    static_cast<uint64_t>(content.acquireFenceFd()));
 }
 
 std::vector<const DrmPlane *> ScanoutController::allPlanes() const

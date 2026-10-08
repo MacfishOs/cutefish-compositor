@@ -45,14 +45,17 @@ struct PlaneContent {
     uint64_t modifier = 0;
     QRect displayRect;
     QRect sourceRect;
-    // Borrowed from the candidate; KMS dups it, so it is never closed here.
-    int acquireFenceFd = -1;
+    // Owned: a frame can be committed again after the plan that produced it
+    // is gone, and KMS dups the fd on every commit.
+    std::shared_ptr<render::SyncFence> acquireFence;
     // Held for as long as KMS may be reading the buffer. Null for the
     // compositor's own framebuffer, which the GBM surface owns.
     std::shared_ptr<render::ScanoutBuffer> buffer;
     scene::SurfaceNode *node = nullptr;
 
     bool isDirectScanout() const { return buffer != nullptr; }
+
+    int acquireFenceFd() const { return acquireFence ? acquireFence->get() : -1; }
 };
 
 // Turns a scene plan into a hardware plane configuration and commits it.
