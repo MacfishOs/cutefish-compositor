@@ -309,17 +309,31 @@ void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry, con
     render::Texture *image = shadowTexture(renderer, geometry);
     if (!image)
         return;
+    // The shadow meets the window where its buffer lands, so the pixel along an
+    // edge never gets only part of the shadow's darkest row.
+    const QSize window = (geometry.paintBounds() - geometry.margins()).size();
+    const QRectF body = renderer.pixelAligned(QRectF(position, window));
+    const auto place = [](int value, int extent, qreal begin, qreal end) {
+        return value * 2 <= extent ? begin + value : end + (value - extent);
+    };
     std::vector<render::Renderer::MappedRect> slices;
     for (size_t i = 0; i < 9; ++i) {
         const QRect source = geometry.sources()[i];
         const QRect target = geometry.targets()[i];
         // The middle is the window's own.
-        if (i == 4 || source.isEmpty() || target.isEmpty()
-            || !renderer.drawsInto(target.translated(position)))
+        if (i == 4 || source.isEmpty() || target.isEmpty())
+            continue;
+        const QPointF start(place(target.left(), window.width(), body.left(), body.right()),
+                            place(target.top(), window.height(), body.top(), body.bottom()));
+        const QPointF end(
+                place(target.x() + target.width(), window.width(), body.left(), body.right()),
+                place(target.y() + target.height(), window.height(), body.top(), body.bottom()));
+        const QRectF placed(start, end);
+        if (!renderer.drawsInto(placed.toAlignedRect()))
             continue;
         // A stretched cut lies in a constant run and any other joins slices
         // drawn at one scale, so filtering across it reads what one image would.
-        slices.push_back({target.translated(position), sliceMapping(source, image->size())});
+        slices.push_back({placed, sliceMapping(source, image->size())});
     }
     renderer.drawTextureMappedRects(image, slices, opacity);
 }

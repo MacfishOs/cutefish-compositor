@@ -805,7 +805,7 @@ void EglRenderer::drawTextureMappedRects(Texture *texture, const std::vector<Map
         drawTextureQuads(glTexture, quads, count, alpha);
 }
 
-void EglRenderer::alignTextureDraw(const Texture *texture, const QRect &target,
+void EglRenderer::alignTextureDraw(const Texture *texture, const QRectF &target,
                                    const QTransform &mapping, QRectF &aligned,
                                    QTransform &texelMapping) const
 {

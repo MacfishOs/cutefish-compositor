@@ -209,7 +209,7 @@ private:
     };
     // Where a mapped draw lands and what it samples once native-density
     // texels are put on physical pixels.
-    void alignTextureDraw(const Texture *texture, const QRect &target, const QTransform &mapping,
+    void alignTextureDraw(const Texture *texture, const QRectF &target, const QTransform &mapping,
                           QRectF &aligned, QTransform &texelMapping) const;
     void textureQuad(const GlTexture &texture, const QRectF &target, const QTransform &mapping,
                      const QTransform &geometry, TextureQuad &quad) const;

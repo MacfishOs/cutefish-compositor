@@ -105,6 +105,16 @@ public:
         return outputOrigin + QPointF(std::round(origin.x()), std::round(origin.y())) / m_rasterScale;
     }
 
+    // Where a client buffer covering `logical` lands: its origin snapped, its
+    // size rounded to whole pixels on its own.
+    QRectF pixelAligned(const QRectF &logical) const
+    {
+        return {pixelAligned(logical.topLeft()),
+                QSizeF(std::round(logical.width() * m_rasterScale),
+                       std::round(logical.height() * m_rasterScale))
+                        / m_rasterScale};
+    }
+
     // Binds `target` and sets up the viewport. Every draw call must sit between
     // beginFrame() and endFrame().
     virtual bool beginFrame(RenderTarget *target) = 0;
@@ -207,7 +217,7 @@ public:
                                    const QTransform &mapping) = 0;
 
     struct MappedRect {
-        QRect target;
+        QRectF target;
         QTransform mapping;
     };
 
@@ -217,7 +227,7 @@ public:
                                         float alpha)
     {
         for (const MappedRect &rect : rects)
-            drawTextureMapped(texture, rect.target, alpha, rect.mapping);
+            drawTextureMapped(texture, rect.target.toAlignedRect(), alpha, rect.mapping);
     }
 
     // A non-empty `shape`, in the same coordinates as `bounds`, masks the blur
