@@ -2058,6 +2058,59 @@ TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAWindowComesFromImageCapture)
     });
 }
 
+TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAShellSurfaceComesFromImageCapture)
+{
+    static const struct ext_image_capture_source_v1_interface sourceImplementation = {
+            [](wl_client *, wl_resource *resource) {
+                wl_resource_destroy(resource);
+            }};
+    std::atomic<quint64> exported = 0;
+    std::atomic<int> exports = 0;
+    configureManagement = [&](wayland::WaylandCutefishWindowManagement &management) {
+        management.setCaptureSourceExporter(
+                [&](wl_client *client, uint32_t id, wm::Window *window) {
+                    ++exports;
+                    exported = window ? window->id() : 0;
+                    wl_resource *source = wl_resource_create(
+                            client, &ext_image_capture_source_v1_interface, 1, id);
+                    ASSERT_NE(source, nullptr);
+                    wl_resource_set_implementation(source, &sourceImplementation, nullptr,
+                                                   nullptr);
+                });
+    };
+
+    run([&](Client &c) {
+        ASSERT_TRUE(c.bindShell());
+        ASSERT_TRUE(c.bindManagement());
+        XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
+        dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
+        cutefish_shell_surface_v1_set_role(dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
+
+        // Before the first commit there is no window to paint.
+        auto *source = cutefish_window_management_v1_create_surface_capture_source(
+                c.management, dock->surface);
+        c.sync();
+        EXPECT_EQ(exports, 1);
+        EXPECT_EQ(exported, 0u);
+        ext_image_capture_source_v1_destroy(source);
+
+        c.map(dock, QSize(800, 60));
+        ASSERT_TRUE(awaitRole(wm::WindowRole::Dock));
+        quint64 dockId = 0;
+        check([&] {
+            dockId = windowWithRole(wm::WindowRole::Dock)->id();
+        });
+        source = cutefish_window_management_v1_create_surface_capture_source(c.management,
+                                                                             dock->surface);
+        c.sync();
+        EXPECT_EQ(exports, 2);
+        EXPECT_EQ(exported, dockId);
+        ext_image_capture_source_v1_destroy(source);
+        c.sync();
+        EXPECT_EQ(wl_display_get_error(c.display), 0);
+    });
+}
+
 TEST_F(PrivateShellProtocolTest, WithoutImageCaptureAWindowSourceOnlyStops)
 {
     run([&](Client &c) {

@@ -58,9 +58,11 @@ public:
     // logical coordinates; unset, a shadowed source covers the window bounds.
     void setShadowBounds(ShadowBounds bounds);
 
-    // The same window painted with its shadow: the source behind
-    // cutefish_window_v1.create_capture_source. Its bounds are refreshed
-    // here, so a shadow that changed with the window's state is current.
+    // The window painted with its shadow: the source behind
+    // cutefish_window_v1.create_capture_source and
+    // cutefish_shell_surface_v1.create_capture_source. Any live window has
+    // one, listed or not; its bounds are refreshed here, so a shadow that
+    // changed with the window's state is current.
     std::shared_ptr<compositor::CaptureSource> shadowedSourceFor(wm::Window *window);
 
     // List resources bound and not yet destroyed.
@@ -72,6 +74,7 @@ private:
     friend struct ForeignToplevelListEvents;
 
     static bool listable(const wm::Window *window);
+    Entry &entryFor(wm::Window *window);
     void add(wm::Window *window);
     void remove(wm::Window *window);
     void announce(Client &client, Entry &entry);

@@ -370,6 +370,35 @@ TEST_F(ForeignToplevelListTest, AShadowedSourceCoversTheShadowBounds)
     EXPECT_EQ(changes, 2);
 }
 
+TEST_F(ForeignToplevelListTest, AnUnlistedWindowStillHasAShadowedSource)
+{
+    wm::Window *app = makeWindow(QRect(0, 0, 300, 200));
+    wm::Window *popup = manager.createWindow(makeSurface(QSize(100, 40)),
+                                             {.type = wm::WindowType::Popup, .transientParent = app});
+    popup->setBounds(QRect(50, 60, 100, 40));
+    toplevels->setShadowBounds([](const wm::Window *window) {
+        return window->bounds().adjusted(-8, -8, 8, 8);
+    });
+    ASSERT_TRUE(roundtrip());
+    ASSERT_EQ(handles.size(), 1u);
+
+    auto shadowed = toplevels->shadowedSourceFor(popup);
+    ASSERT_TRUE(shadowed);
+    EXPECT_EQ(shadowed->node, popup->node());
+    EXPECT_EQ(shadowed->bounds, QRect(42, 52, 116, 56));
+    EXPECT_EQ(toplevels->shadowedSourceFor(popup), shadowed);
+    // A late list still sees only the application window.
+    bindList(registry, listName);
+    ASSERT_TRUE(roundtrip());
+    EXPECT_EQ(handles.size(), 2u);
+
+    manager.destroyWindow(popup);
+    EXPECT_FALSE(shadowed->active);
+    EXPECT_EQ(shadowed->node, nullptr);
+    toplevels->shutdown();
+    EXPECT_EQ(toplevels->shadowedSourceFor(app), nullptr);
+}
+
 TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
 {
     struct WindowRenderer : testsupport::FakeRenderer {

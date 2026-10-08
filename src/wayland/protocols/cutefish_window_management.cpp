@@ -237,11 +237,11 @@ const struct ext_image_capture_source_v1_interface kStoppedSourceImplementation 
     sourceDestroy,
 };
 
-void windowCreateCaptureSource(wl_client* client, wl_resource* resource, uint32_t id)
+void createCaptureSource(WaylandCutefishWindowManagement* management, wl_client* client,
+                         uint32_t id, wm::Window* window)
 {
-    auto* data = getUserDataAs<WindowResourceData>(resource);
-    if (data->management->captureSourceExporter()) {
-        data->management->captureSourceExporter()(client, id, resolve(resource));
+    if (management->captureSourceExporter()) {
+        management->captureSourceExporter()(client, id, window);
         return;
     }
     wl_resource* source = wl_resource_create(client, &ext_image_capture_source_v1_interface, 1, id);
@@ -250,6 +250,12 @@ void windowCreateCaptureSource(wl_client* client, wl_resource* resource, uint32_
         return;
     }
     wl_resource_set_implementation(source, &kStoppedSourceImplementation, nullptr, nullptr);
+}
+
+void windowCreateCaptureSource(wl_client* client, wl_resource* resource, uint32_t id)
+{
+    auto* data = getUserDataAs<WindowResourceData>(resource);
+    createCaptureSource(data->management, client, id, resolve(resource));
 }
 
 const struct cutefish_window_v1_interface kWindowImplementation = {
@@ -346,6 +352,18 @@ void managementSetDeskName(wl_client*, wl_resource* resource, uint32_t deskId, c
         desks->setDeskName(desk, QString::fromUtf8(name));
 }
 
+void managementCreateSurfaceCaptureSource(wl_client* client, wl_resource* resource, uint32_t id,
+                                          wl_resource* surfaceResource)
+{
+    auto* management = getUserDataAs<WaylandCutefishWindowManagement>(resource);
+    compositor::Surface* surface = surfaceFromResource(surfaceResource);
+    wm::Window* window = surface ? management->windowManager()->windowForSurface(surface) : nullptr;
+    // A subsurface resolves to its window too; only the window's own surface counts.
+    if (window && window->rootSurface() != surface)
+        window = nullptr;
+    createCaptureSource(management, client, id, window);
+}
+
 const struct cutefish_window_management_v1_interface kManagementImplementation = {
     managementDestroy,
     managementQuitApplication,
@@ -356,6 +374,7 @@ const struct cutefish_window_management_v1_interface kManagementImplementation =
     managementCreateDesk,
     managementRemoveDesk,
     managementSetDeskName,
+    managementCreateSurfaceCaptureSource,
 };
 
 void onManagementResourceDestroyed(wl_resource* resource)

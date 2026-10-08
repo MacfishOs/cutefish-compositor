@@ -120,6 +120,23 @@
       <arg name="name" type="string"/>
     </request>
 
+    <request name="create_surface_capture_source">
+      <description summary="a capture source of the shell's own window as it is shown">
+        Creates an ext_image_capture_source_v1 of the window one of the
+        shell's own surfaces produced, with what the compositor draws around
+        it: the glass, the outline, the shadow and the transparent margins
+        the shadow needs, so a still picture of the dock looks the way the
+        dock does on screen. The buffer covers the shadow bounds of what
+        casts the shadow - the rounded body of the dock, not the transparent
+        room of its surface around it - at the scale of the output that holds
+        most of the window. A surface that has no window yet gives a source
+        that cannot be captured. In every other way the source behaves like
+        the one cutefish_window_v1.create_capture_source gives.
+      </description>
+      <arg name="id" type="new_id" interface="ext_image_capture_source_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
     <event name="window">
       <description summary="a window appeared">
         A new cutefish_window_v1 object for an application window. Its state

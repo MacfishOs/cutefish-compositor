@@ -29,6 +29,8 @@ struct ForeignToplevelList::Entry {
     std::shared_ptr<compositor::CaptureSource> source;
     // The window with its shadow, for cutefish_window_v1.create_capture_source.
     std::shared_ptr<compositor::CaptureSource> shadowed;
+    // Announced to the list's clients; a shell window only has its sources.
+    bool listed = false;
     // One handle per client that saw this window; owner data points here.
     std::vector<wl_resource *> handles;
 };
@@ -103,8 +105,10 @@ void ForeignToplevelListEvents::bind(wl_client *wlClient, void *data, uint32_t v
     wl_resource_set_implementation(resource, &listImplementation, client.get(),
                                    listResourceDestroyed);
     list->m_clients.push_back(std::move(client));
-    for (auto &[window, entry] : list->m_entries)
-        list->announce(*list->m_clients.back(), *entry);
+    for (auto &[window, entry] : list->m_entries) {
+        if (entry->listed)
+            list->announce(*list->m_clients.back(), *entry);
+    }
 }
 
 ForeignToplevelList::ForeignToplevelList(wl_display *display, wm::WindowManager *manager,
@@ -158,10 +162,10 @@ bool ForeignToplevelList::listable(const wm::Window *window)
             && !window->isSystemDialog();
 }
 
-void ForeignToplevelList::add(wm::Window *window)
+ForeignToplevelList::Entry &ForeignToplevelList::entryFor(wm::Window *window)
 {
-    if (!listable(window) || m_entries.contains(window))
-        return;
+    if (const auto it = m_entries.find(window); it != m_entries.end())
+        return *it->second;
     auto entry = std::make_unique<Entry>();
     entry->window = window;
     // The window id is never reused, and the shell names windows to its
@@ -177,8 +181,17 @@ void ForeignToplevelList::add(wm::Window *window)
     m_entries.emplace(window, std::move(entry));
     updateGeometry(*raw);
     window->addObserver(this);
+    return *raw;
+}
+
+void ForeignToplevelList::add(wm::Window *window)
+{
+    if (!listable(window) || m_entries.contains(window))
+        return;
+    Entry &entry = entryFor(window);
+    entry.listed = true;
     for (auto &client : m_clients)
-        announce(*client, *raw);
+        announce(*client, entry);
 }
 
 void ForeignToplevelList::remove(wm::Window *window)
@@ -249,7 +262,7 @@ void ForeignToplevelList::updateGeometry(Entry &entry)
             Q_EMIT source.changed();
     };
     update(*entry.source, bounds);
-    update(*entry.shadowed, m_shadowBounds ? m_shadowBounds(entry.window) | bounds : bounds);
+    update(*entry.shadowed, m_shadowBounds ? m_shadowBounds(entry.window) : bounds);
 }
 
 void ForeignToplevelList::setShadowBounds(ShadowBounds bounds)
@@ -260,11 +273,11 @@ void ForeignToplevelList::setShadowBounds(ShadowBounds bounds)
 
 std::shared_ptr<compositor::CaptureSource> ForeignToplevelList::shadowedSourceFor(wm::Window *window)
 {
-    const auto it = m_entries.find(window);
-    if (it == m_entries.end())
+    if (!window || !m_global)
         return nullptr;
-    updateGeometry(*it->second);
-    return it->second->shadowed;
+    Entry &entry = entryFor(window);
+    updateGeometry(entry);
+    return entry.shadowed;
 }
 
 void ForeignToplevelList::updateAllGeometry()

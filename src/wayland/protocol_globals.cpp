@@ -200,16 +200,17 @@ bool ProtocolGlobals::registerCapture()
     });
     // The margins are fixed per shadow role, so a shadow not yet moved to the
     // window's new bounds still gives the right ones.
+    // What the shadow paints, placed from the current bounds: the shadow
+    // follows a move through an observer of its own, in no fixed order with
+    // the list's. A dock's shadow hugs its rounded body, so the room of the
+    // surface around that body stays out of the picture.
     m_toplevelList->setShadowBounds([shadows = m_deps.shadowController](const wm::Window *window) {
         const QRect bounds = window->bounds();
         const wm::WindowShadow *shadow = shadows ? shadows->shadowForWindow(window) : nullptr;
         if (!shadow || shadow->shadowBounds().isEmpty() || shadow->contentBounds().isEmpty())
             return bounds;
-        const QRect content = shadow->contentBounds();
-        const QRect painted = shadow->shadowBounds();
-        return bounds.adjusted(painted.left() - content.left(), painted.top() - content.top(),
-                               painted.right() - content.right(),
-                               painted.bottom() - content.bottom());
+        return shadow->shadowBounds().translated(bounds.topLeft()
+                                                 - shadow->contentBounds().topLeft());
     });
     return true;
 }
@@ -246,7 +247,7 @@ bool ProtocolGlobals::registerPrivateShell()
     m_windowManagement->setCaptureSourceExporter(
             [capture = m_imageCapture.get(), list = m_toplevelList.get()](
                     wl_client *client, uint32_t id, wm::Window *window) {
-                capture->exportSource(client, id, window ? list->shadowedSourceFor(window) : nullptr);
+                capture->exportSource(client, id, list->shadowedSourceFor(window));
             });
     return true;
 }
