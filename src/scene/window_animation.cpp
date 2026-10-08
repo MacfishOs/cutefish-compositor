@@ -735,7 +735,9 @@ bool WindowAnimation::drawsDirectly(bool contentChanged) const
     // has to be the frame that was on screen, not one up to kDirectRefresh back.
     if (m_style == Style::Popup)
         return false;
-    return contentChanged && m_contentChanged && m_directFrames < kDirectRefresh - 1 && settled();
+    const double period = m_framePeriod > 0 ? m_framePeriod : 1000.0 / 60;
+    return contentChanged && m_contentChanged && m_directFrames < kDirectRefresh - 1
+            && m_now() - m_textureDrawnAt < (kDirectRefresh - 0.5) * period && settled();
 }
 
 bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t begin,
@@ -1053,6 +1055,8 @@ void WindowAnimation::render(render::Renderer &renderer) const
             && (renderer.frameTime < 0 || renderer.frameTime != m_directFrameTime)) {
             m_directFrameTime = renderer.frameTime;
             m_directFrames = direct ? m_directFrames + 1 : 0;
+            if (!direct)
+                m_textureDrawnAt = m_now();
             // A first texture, or an animation's own frames, start no run.
             m_contentChanged = contentChanged && settled() && m_texture;
         }

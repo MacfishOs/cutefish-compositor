@@ -465,6 +465,53 @@ TEST_F(SnapshotReuse, ContentChangingEveryFrameSkipsTheSnapshotAllButEveryEighth
     EXPECT_EQ(drawFrames(3, true), QList<bool>({true, true, true}));
 }
 
+TEST(WindowAnimation, ChangesFarApartGoThroughTheSnapshot)
+{
+    double now = 1000;
+    scene::Scene scene;
+    SnapshotRenderer renderer;
+    renderer.framePeriod = 16;
+    auto *window = static_cast<Animation *>(scene.root()->addChild(
+            std::make_unique<Animation>([&] { return now; })));
+    window->setGeometry({100, 100, 400, 300});
+    window->finish();
+    auto *surface = static_cast<scene::SurfaceNode *>(
+            window->addChild(std::make_unique<scene::SurfaceNode>()));
+    surface->setGeometry({0, 0, 400, 300});
+    const std::vector<uint8_t> pixels(400 * 300 * 4, 255);
+    surface->setTexture(std::make_shared<testsupport::FakeTexture>(
+            QSize(400, 300), pixels.data(), 400 * 4, render::PixelFormat::Rgba8888));
+    const auto drawChangeAt = [&](double time) {
+        now = time;
+        renderer.frameTime = time;
+        surface->notifyDamage(QRect(0, 0, 400, 300));
+        const int before = renderer.captures;
+        scene.render(renderer);
+        return renderer.captures > before;
+    };
+    now = renderer.frameTime = 1000;
+    scene.render(renderer);
+    now = renderer.frameTime = 1016;
+    scene.render(renderer);
+
+    // Every change is the next frame drawn, as with a blinking caret, but each
+    // comes half a second after the last: a close, a minimize or a cross-fade
+    // must not start from a snapshot several blinks old.
+    EXPECT_TRUE(drawChangeAt(1500));
+    EXPECT_TRUE(drawChangeAt(2000));
+    EXPECT_TRUE(drawChangeAt(2500));
+    // Frame after frame, the run still skips the snapshot until it is eight
+    // frames old.
+    EXPECT_FALSE(drawChangeAt(2516));
+    EXPECT_FALSE(drawChangeAt(2532));
+    EXPECT_FALSE(drawChangeAt(2548));
+    EXPECT_FALSE(drawChangeAt(2564));
+    // A pause shorter than the run's end still ends it once the snapshot is
+    // that old.
+    EXPECT_TRUE(drawChangeAt(2640));
+    EXPECT_FALSE(drawChangeAt(2656));
+}
+
 TEST_F(SnapshotReuse, AFractionalPixelMoveRedrawsAll)
 {
     renderer.setRasterScale(1.5);

@@ -263,8 +263,9 @@ private:
     bool hasBackgroundBlurs() const;
     // A settled window whose own content changes frame after frame, as a
     // video's does, skips its texture and is drawn straight to the output, as a
-    // cc layer without a render surface is. Every kDirectRefresh-th such frame
-    // draws the texture again: a close, a minimize or a cross-fade starts from it.
+    // cc layer without a render surface is. Every kDirectRefresh-th such frame,
+    // and any frame once the texture is that many refresh intervals old, draws
+    // the texture again: a close, a minimize or a cross-fade starts from it.
     // A popup never does: its close must fade out the frame that was on screen.
     bool drawsDirectly(bool contentChanged) const;
     // Drawn as it is, unscaled and unblended.
@@ -295,6 +296,9 @@ private:
     mutable int m_directFrames = 0;
     mutable bool m_contentChanged = false;
     mutable double m_directFrameTime = -1;
+    // When a counted frame last went through the texture, on m_now(); a caret
+    // blinking twice a second changes every frame that is drawn at all.
+    mutable double m_textureDrawnAt = 0;
     mutable double m_textureScale = 0;
     mutable QRect m_textureViewport;
     mutable uint64_t m_textureRootRevision = 0;
