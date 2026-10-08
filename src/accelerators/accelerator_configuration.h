@@ -127,6 +127,9 @@ private:
     void applyOverrides();
     void updateOverrides(AcceleratorActionId id, const Accelerator &accelerator,
                          ModificationAction action);
+    bool hasOverride(AcceleratorActionId id, const Accelerator &accelerator,
+                     ModificationAction action) const;
+    void restoreDefaultOwner(const Accelerator &accelerator);
 
     AcceleratorConfigResult doRemoveAccelerator(AcceleratorActionId id,
                                                 const Accelerator &accelerator,

@@ -386,8 +386,27 @@ TEST(AcceleratorConfiguration, AddRemoveReplaceAndRestore)
     // Meta+Down is still held by maximize, so minimize's restore reports it.
     EXPECT_EQ(AcceleratorConfigResult::RestoreSuccessWithConflicts,
               configuration.restoreDefault(minimize));
+    // Restoring maximize gives the taken default back to minimize, which is
+    // what the override file, with no entry left for either, now describes.
     EXPECT_EQ(AcceleratorConfigResult::Success, configuration.restoreDefault(maximize));
     EXPECT_EQ(AcceleratorAction::ToggleMaximized, *configuration.findAcceleratorAction(metaUp));
+    EXPECT_EQ(AcceleratorAction::WindowMinimize, *configuration.findAcceleratorAction(metaDown));
+    EXPECT_FALSE(configuration.hasCustomAccelerators());
+
+    // Removing a taken default from its new owner does the same, unless the
+    // default owner had itself disabled it.
+    EXPECT_EQ(AcceleratorConfigResult::Success,
+              configuration.addUserAccelerator(maximize, metaDown));
+    EXPECT_EQ(AcceleratorConfigResult::Success,
+              configuration.removeAccelerator(maximize, metaDown));
+    EXPECT_EQ(AcceleratorAction::WindowMinimize, *configuration.findAcceleratorAction(metaDown));
+    EXPECT_FALSE(configuration.hasCustomAccelerators());
+    EXPECT_EQ(AcceleratorConfigResult::Success,
+              configuration.removeAccelerator(minimize, metaDown));
+    EXPECT_EQ(AcceleratorConfigResult::Success,
+              configuration.addUserAccelerator(maximize, metaDown));
+    EXPECT_EQ(AcceleratorConfigResult::Success,
+              configuration.removeAccelerator(maximize, metaDown));
     EXPECT_FALSE(configuration.findAcceleratorAction(metaDown));
     EXPECT_EQ(AcceleratorConfigResult::Success, configuration.restoreAllDefaults());
     EXPECT_EQ(AcceleratorAction::WindowMinimize, *configuration.findAcceleratorAction(metaDown));

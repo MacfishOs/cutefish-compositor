@@ -772,6 +772,19 @@ TEST_F(WmTest, UnmaximizingToWorkAreaSizedRestoreBoundsInsetsThem)
     EXPECT_EQ(kOutput.adjusted(10, 10, -10, -10), window->bounds());
 }
 
+TEST_F(WmTest, MinimizeAndFullscreenRoundTripsKeepWorkAreaSizedBounds)
+{
+    Window *window = makeWindow(kOutput);
+
+    window->minimize();
+    window->restore();
+    EXPECT_EQ(kOutput, window->bounds());
+
+    window->setFullscreen(true);
+    window->setFullscreen(false);
+    EXPECT_EQ(kOutput, window->bounds());
+}
+
 TEST_F(WmTest, SetBoundsIsHonouredOnlyInTheNormalState)
 {
     Window *window = makeWindow(QRect(10, 10, 300, 200));

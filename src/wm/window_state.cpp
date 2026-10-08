@@ -271,8 +271,10 @@ void WindowState::updateBoundsFromState(WindowStateType previous)
             bounds = restoreBounds();
             // The restore bounds can be as large as the work area if the window
             // was resized to it, or if the output shrank while it was
-            // maximized. Inset so the result is visibly not maximized.
-            if (previous != WindowStateType::Normal && !workArea.isEmpty()
+            // maximized. Inset so the result is visibly not maximized. Only
+            // when leaving Maximized: a minimise or fullscreen round trip
+            // brings a work-area-sized window back exactly as it was.
+            if (previous == WindowStateType::Maximized && !workArea.isEmpty()
                 && bounds.width() >= workArea.width() && bounds.height() >= workArea.height()) {
                 bounds = workArea.adjusted(kMaximizedWindowInset, kMaximizedWindowInset,
                                            -kMaximizedWindowInset, -kMaximizedWindowInset);

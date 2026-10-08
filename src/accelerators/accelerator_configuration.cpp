@@ -272,8 +272,10 @@ AcceleratorConfigResult AcceleratorConfiguration::removeAccelerator(AcceleratorA
 {
     const AcceleratorConfigResult result =
             doRemoveAccelerator(id, accelerator, /*saveOverride=*/true);
-    if (result == AcceleratorConfigResult::Success)
+    if (result == AcceleratorConfigResult::Success) {
+        restoreDefaultOwner(accelerator);
         updateAndNotifyAccelerators();
+    }
     qCDebug(cfInput) << "removeAccelerator" << id << accelerator.shortcutText() << toString(result);
     return result;
 }
@@ -305,7 +307,17 @@ AcceleratorConfigResult AcceleratorConfiguration::restoreDefault(AcceleratorActi
             return AcceleratorConfigResult::NotFound;
         m_acceleratorToId.erase(accelerator);
     }
+    const std::vector<Accelerator> released = std::move(acceleratorsForId);
     acceleratorsForId.clear();
+
+    m_overrides.erase(acceleratorActionName(static_cast<AcceleratorAction>(id)));
+
+    // Whatever this action had taken from another one goes back there; its
+    // own defaults are brought back below.
+    for (const Accelerator &accelerator : released) {
+        if (idForDefaultAccelerator(accelerator) != static_cast<AcceleratorAction>(id))
+            restoreDefaultOwner(accelerator);
+    }
 
     // Only bring back the defaults nobody else is using now. The user re-adds
     // the others by hand, which is what makes the conflict visible.
@@ -322,7 +334,6 @@ AcceleratorConfigResult AcceleratorConfiguration::restoreDefault(AcceleratorActi
         }
     }
 
-    m_overrides.erase(acceleratorActionName(static_cast<AcceleratorAction>(id)));
     updateAndNotifyAccelerators();
     qCDebug(cfInput) << "restoreDefault" << id << toString(result);
     return result;
@@ -407,6 +418,7 @@ AcceleratorConfiguration::doReplaceAccelerator(AcceleratorActionId id,
             doRemoveAccelerator(id, oldAccelerator, /*saveOverride=*/true);
     if (removed != AcceleratorConfigResult::Success)
         return removed;
+    restoreDefaultOwner(oldAccelerator);
     return doAddAccelerator(id, newAccelerator, /*saveOverride=*/true);
 }
 
@@ -543,6 +555,54 @@ void AcceleratorConfiguration::updateOverrides(AcceleratorActionId id,
         }
     }
     list.append(modificationToJson(accelerator, action));
+}
+
+bool AcceleratorConfiguration::hasOverride(AcceleratorActionId id, const Accelerator &accelerator,
+                                           ModificationAction action) const
+{
+    const auto entry = m_overrides.find(acceleratorActionName(static_cast<AcceleratorAction>(id)));
+    if (entry == m_overrides.end())
+        return false;
+    for (const QJsonValue &value : entry->second) {
+        const auto modification = modificationFromJson(value);
+        if (modification && modification->accelerator == accelerator
+            && modification->action == action)
+            return true;
+    }
+    return false;
+}
+
+// A default that was moved to another action was not recorded as removed from
+// its own, so the override file says nothing about it once the user takes it
+// away from the new owner again. The running state has to follow the file and
+// give it back, unless the user had disabled it on its own action.
+void AcceleratorConfiguration::restoreDefaultOwner(const Accelerator &accelerator)
+{
+    const auto owner = idForDefaultAccelerator(accelerator);
+    if (!owner)
+        return;
+
+    const AcceleratorActionId id = toActionId(*owner);
+    const auto accelerators = m_idToAccelerators.find(id);
+    const auto defaults = m_defaultIdToAccelerators.find(id);
+    if (accelerators == m_idToAccelerators.end() || defaults == m_defaultIdToAccelerators.end())
+        return;
+
+    Accelerator reverse(accelerator);
+    reverse.setKeyState(accelerator.keyState() == Accelerator::KeyState::Pressed
+                                ? Accelerator::KeyState::Released
+                                : Accelerator::KeyState::Pressed);
+
+    // The press/release pair was removed together, so it comes back together.
+    for (const Accelerator &candidate : defaults->second) {
+        if (candidate != accelerator && candidate != reverse)
+            continue;
+        if (m_acceleratorToId.find(candidate)
+            || hasOverride(id, candidate, ModificationAction::Remove))
+            continue;
+        accelerators->second.push_back(candidate);
+        m_acceleratorToId.insertNew(candidate, *owner);
+    }
 }
 
 bool AcceleratorConfiguration::areAcceleratorsValid()
