@@ -273,6 +273,13 @@ void InputManager::onPointerButton(Timestamp timestamp, uint32_t evdevButton, bo
     if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput()) {
         if (auto *sink = gate->secureInput())
             sink->onPointerButton(timestamp, m_pointerPosition, evdevButton, pressed);
+        // A button held across the lock still ends in the translator and the
+        // seat, as a key does: a Control+click would stay a secondary click.
+        if (!pressed) {
+            const uint32_t translated =
+                    m_seat->keyTranslator()->translateButton(evdevButton, false);
+            m_seat->updatePointerButtonState(translated, false);
+        }
         return;
     }
     if (pressed && m_displayManager && m_displayManager->desktopBounds().isEmpty())

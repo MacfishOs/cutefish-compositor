@@ -68,6 +68,8 @@ public:
     // True while the pointer holds a caption button, so the release belongs to
     // the frame wherever it lands.
     virtual bool isTrackingPress() const = 0;
+    // Lets go of a held caption button, pointer or touch, without running it.
+    virtual void cancelPress() { }
 
     // The title bar and the caption buttons in output coordinates, for the
     // window debug service. Empty for a frame that draws none.

@@ -176,6 +176,7 @@ protected:
         configuration->initialize();
         mru = std::make_unique<wm::MruWindowTracker>(&manager);
         cycle = std::make_unique<wm::WindowCycleController>(&manager, mru.get());
+        teardown.setWindowCycle(cycle.get());
         CommandContext context;
         context.windowManager = &manager;
         context.windowCycle = cycle.get();
@@ -196,6 +197,7 @@ protected:
         input.setEventSink(nullptr);
         filter.reset();
         controller.reset();
+        teardown.setWindowCycle(nullptr);
         cycle.reset();
         mru.reset();
         seat.shutdown();
@@ -901,6 +903,34 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionTheKeyNextToTheSpaceBarSwitches
     input.onKey(at(++time), KEY_LEFTMETA, false, input::KeyboardModifierLayout::Apple);
     EXPECT_FALSE(cycle->isCycling());
     EXPECT_EQ(second, manager.activation()->activeWindow());
+}
+
+TEST_F(AcceleratorTest, ACycleTheLockInterruptedIsOverAfterUnlock)
+{
+    seat.setShortcutConvention(input::ShortcutConvention::Command);
+    configuration->setConvention(input::ShortcutConvention::Command);
+    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(QRect(50, 50, 300, 200));
+    manager.activation()->activate(first);
+    manager.activation()->activate(second);
+    auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
+    RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
+    input::Keyboard keyboard(std::move(delegateOwner), &seat);
+    press(KEY_LEFTALT);
+    tap(KEY_TAB);
+    ASSERT_TRUE(cycle->isCycling());
+
+    ASSERT_TRUE(session.requestLock());
+    session.notifyFramePresented();
+    release(KEY_LEFTALT);
+    ASSERT_TRUE(session.requestUnlock());
+    session.notifyFramePresented();
+
+    EXPECT_FALSE(cycle->isCycling());
+    keyboardDelegate->keys.clear();
+    tap(KEY_A);
+    const std::vector<std::pair<uint32_t, bool>> expected = {{KEY_A, true}, {KEY_A, false}};
+    EXPECT_EQ(expected, keyboardDelegate->keys);
 }
 
 TEST_F(AcceleratorTest, UnderTheCommandConventionApplicationsGetCommandAsCtrl)

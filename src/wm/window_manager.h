@@ -148,6 +148,7 @@ public:
     // session filters keys while the application window keeps activation. It
     // lasts until the window is hidden or gone.
     void setKeyboardGrab(Window *window);
+    Window *keyboardGrab() const { return m_keyboardGrab; }
 
     TransientManager *transientManager() { return m_transientManager.get(); }
 
@@ -327,6 +328,10 @@ public:
     const std::vector<ShellSurface *> &popupGrabs() const { return m_popupGrabs; }
 
     void dismissPopupGrabs();
+
+    // Ends a window drag where it is and lets go of a held caption button.
+    // A blocked session sends their release to the lock screen instead.
+    void cancelInteractions();
 
     // Topmost visible window whose surface hierarchy contains `location`, given
     // in output coordinates. `surfaceLocation`, when non-null, receives the

@@ -22,6 +22,7 @@ class Seat;
 }
 
 namespace cutefish::wm {
+class WindowCycleController;
 class WindowManager;
 }
 
@@ -45,6 +46,10 @@ public:
     // capture manager.
     void setCaptureAbort(std::function<void()> abort);
 
+    // Cancelled with the block: the modifiers that would complete it are let
+    // go of behind the lock screen.
+    void setWindowCycle(wm::WindowCycleController *windowCycle);
+
     void onSessionBlocked() override;
     void onSessionUnblocked() override;
 
@@ -53,6 +58,7 @@ private:
 
     input::Seat *m_seat = nullptr;
     wm::WindowManager *m_windowManager = nullptr;
+    wm::WindowCycleController *m_windowCycle = nullptr;
     // The window active when the session was blocked, by id, which a window
     // closing meanwhile cannot leave dangling.
     quint64 m_activeBeforeBlock = 0;

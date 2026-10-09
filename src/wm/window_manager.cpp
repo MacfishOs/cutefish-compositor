@@ -1076,6 +1076,15 @@ void WindowManager::dismissPopupGrabs()
     }
 }
 
+void WindowManager::cancelInteractions()
+{
+    m_eventHandler->completeDrag(ToplevelEventHandler::DragResult::Success);
+    for (Window *window : m_stackingOrder) {
+        if (WindowFrame *frame = window->frame())
+            frame->cancelPress();
+    }
+}
+
 bool WindowManager::allowsActivation() const
 {
     return !m_sessionGate || m_sessionGate->allowsActivation();

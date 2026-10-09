@@ -638,6 +638,7 @@ bool CompositorShell::initWayland()
     m_sessionTeardown.setCaptureAbort([imageCapture] {
         imageCapture->failPending();
     });
+    m_sessionTeardown.setWindowCycle(m_windowCycle.get());
     QObject::connect(&m_compositor, &compositor::Compositor::outputDrawn, imageCapture,
                      [imageCapture](uint64_t generation, uint64_t aimedNs) {
                          imageCapture->drawn(generation, aimedNs);

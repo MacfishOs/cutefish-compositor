@@ -109,7 +109,7 @@ add_executable(dock_layout_test dock_layout_test.cpp)
 target_include_directories(dock_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(dock_layout_test PRIVATE cutefish-wm GTest::gtest)
 add_test(NAME dock_layout_test COMMAND dock_layout_test)
-cutefish_add_test(session_lock_test cutefish-session cutefish-wm cutefish-scene)
+cutefish_add_test(session_lock_test cutefish-session cutefish-wm cutefish-scene cutefish-decoration)
 add_executable(accelerator_test accelerator_test.cpp)
 target_include_directories(accelerator_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(accelerator_test PRIVATE cutefish-accelerators cutefish-session cutefish-wm

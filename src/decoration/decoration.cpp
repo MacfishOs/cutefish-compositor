@@ -344,7 +344,13 @@ bool Decoration::onTouchUp(input::Timestamp, int32_t id)
 
 void Decoration::onTouchCancel()
 {
-    if (m_pressedButton < 0 || !m_pressTouch)
+    if (m_pressTouch)
+        cancelPress();
+}
+
+void Decoration::cancelPress()
+{
+    if (m_pressedButton < 0)
         return;
     m_pressTouch.reset();
     m_buttons[m_pressedButton].setPressed(false);

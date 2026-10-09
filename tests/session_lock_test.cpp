@@ -19,6 +19,8 @@
 #include "clipboard/selection.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "decoration/decoration.h"
+#include "decoration/decoration_theme.h"
 #include "fake_renderer.h"
 #include "input/drag.h"
 #include "input/hit_test.h"
@@ -35,6 +37,7 @@
 #include "shm_test_util.h"
 #include "wm/activation.h"
 #include "wm/shell_surface.h"
+#include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/window_manager.h"
@@ -117,6 +120,7 @@ class ClientPointer : public input::PointerDelegate
 {
 public:
     int events = 0;
+    std::vector<std::pair<input::ButtonFlags, bool>> buttons;
 
     void onPointerDestroying(input::Pointer *) override { }
 
@@ -131,7 +135,11 @@ public:
 
     void onPointerMotion(input::Timestamp, const QPointF &) override { ++events; }
 
-    void onPointerButton(input::Timestamp, input::ButtonFlags, bool) override { ++events; }
+    void onPointerButton(input::Timestamp, input::ButtonFlags button, bool pressed) override
+    {
+        ++events;
+        buttons.emplace_back(button, pressed);
+    }
 
     void onPointerScroll(input::Timestamp, const QPointF &, bool) override { ++events; }
 
@@ -153,6 +161,9 @@ protected:
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     input::Seat seat {&compositor};
+    // Ahead of the manager: the frames of its windows hold them.
+    decoration::Theme theme;
+    decoration::DecorationProvider frames {&theme};
     wm::WindowManager manager {&compositor, &seat};
 
     session::SecureContainer secure {secureNode};
@@ -374,6 +385,100 @@ TEST_F(SessionLockTest, LockingCancelsTheDragAndTakesItsIconOutOfTheScene)
     EXPECT_FALSE(seat.drag()->active());
     EXPECT_NE(dragIcons, icon->node()->parent());
     EXPECT_FALSE(seat.cursorOverride().has_value());
+}
+
+TEST_F(SessionLockTest, AWindowMoveTheLockInterruptedDoesNotResumeAfterUnlock)
+{
+    wm::Window *window = makeWindow(QRect(100, 100, 400, 300));
+    input::InputManager input(&seat);
+    input.setBounds(scene.size());
+    input.setEventSink(&manager);
+    input.warpPointer(QPointF(150, 150));
+    input.onPointerButton({}, BTN_LEFT, true);
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 150)));
+
+    lockFully();
+    input.onPointerButton({}, BTN_LEFT, false);
+    ASSERT_TRUE(controller.requestUnlock());
+    controller.notifyFramePresented();
+
+    EXPECT_EQ(input::ButtonFlags(input::NoButton), seat.pressedButtons());
+    const QRect bounds = window->bounds();
+    input.onPointerMotion({}, QPointF(40, 30));
+    EXPECT_FALSE(manager.eventHandler()->isDragging());
+    EXPECT_EQ(bounds, window->bounds());
+    input.setEventSink(nullptr);
+}
+
+TEST_F(SessionLockTest, ACaptionButtonPressedAcrossTheLockIsLetGoOf)
+{
+    manager.setFrameProvider(&frames);
+    wm::Window *window = manager.createWindow(
+            makeSurface(QSize(400, 300)), {.requestedSize = QSize(400, 300), .decorated = true});
+    window->setBounds(QRect(100, 100, 400, 300));
+    auto *frame = static_cast<decoration::Decoration *>(window->frame());
+    ASSERT_NE(nullptr, frame);
+    ASSERT_FALSE(frame->buttons().empty());
+    input::InputManager input(&seat);
+    input.setBounds(scene.size());
+    input.setEventSink(&manager);
+    input.warpPointer(QPointF(window->bounds().topLeft()
+                              + frame->buttons().front().geometry().center()));
+    input.onPointerButton({}, BTN_LEFT, true);
+    ASSERT_TRUE(frame->isTrackingPress());
+
+    lockFully();
+    input.onPointerButton({}, BTN_LEFT, false);
+    ASSERT_TRUE(controller.requestUnlock());
+    controller.notifyFramePresented();
+
+    EXPECT_FALSE(frame->isTrackingPress());
+    input.setEventSink(nullptr);
+}
+
+TEST_F(SessionLockTest, AControlClickTheLockInterruptedLeavesNoSecondaryClickBehind)
+{
+    ASSERT_TRUE(seat.xkbTracker()->updateKeyboardLayout("us"));
+    seat.setShortcutConvention(input::ShortcutConvention::Command);
+    makeSurface({400, 300});
+    ClientPointer client;
+    input::Pointer pointer(&client, &seat);
+    input::InputManager input(&seat);
+    input.setBounds(scene.size());
+    input.onPointerMotionAbsolute({}, {20, 20});
+    input.onKey({}, KEY_LEFTCTRL, true);
+    input.onPointerButton({}, BTN_LEFT, true);
+    ASSERT_FALSE(client.buttons.empty());
+    ASSERT_EQ(std::make_pair(input::ButtonFlags(input::RightButton), true), client.buttons.back());
+
+    lockFully();
+    input.onPointerButton({}, BTN_LEFT, false);
+    input.onKey({}, KEY_LEFTCTRL, false);
+    ASSERT_TRUE(controller.requestUnlock());
+    controller.notifyFramePresented();
+
+    input.onPointerMotion({}, QPointF(1, 1));
+    client.buttons.clear();
+    input.onPointerButton({}, BTN_LEFT, true);
+    input.onPointerButton({}, BTN_LEFT, false);
+    const std::vector<std::pair<input::ButtonFlags, bool>> expected = {
+            {input::LeftButton, true}, {input::LeftButton, false}};
+    EXPECT_EQ(expected, client.buttons);
+}
+
+TEST_F(SessionLockTest, ACaptureHoldingTheKeyboardAcrossTheLockDoesNotStrandIt)
+{
+    wm::Window *application = makeWindow(QRect(100, 100, 400, 300));
+    wm::Window *capture = makeWindow(QRect(0, 0, 1000, 800));
+    manager.activation()->activate(application);
+    manager.setKeyboardGrab(capture);
+    ASSERT_EQ(capture->rootSurface(), seat.focusedSurface());
+
+    lockFully();
+    ASSERT_TRUE(controller.requestUnlock());
+    controller.notifyFramePresented();
+
+    EXPECT_NE(nullptr, seat.focusedSurface());
 }
 
 TEST_F(SessionLockTest, NoWindowMayBeActivatedWhileLocked)

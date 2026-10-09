@@ -11,6 +11,7 @@
 #include "input/seat.h"
 #include "wm/activation.h"
 #include "wm/window.h"
+#include "wm/window_cycle_controller.h"
 #include "wm/window_manager.h"
 
 namespace cutefish::session {
@@ -31,6 +32,11 @@ void SessionTeardown::setCaptureAbort(std::function<void()> abort)
     m_captureAbort = std::move(abort);
 }
 
+void SessionTeardown::setWindowCycle(wm::WindowCycleController *windowCycle)
+{
+    m_windowCycle = windowCycle;
+}
+
 void SessionTeardown::clearCursor()
 {
     // Dropping pointer focus is what detaches the client's cursor surface from
@@ -49,6 +55,9 @@ void SessionTeardown::clearCursor()
 void SessionTeardown::onSessionBlocked()
 {
     m_windowManager->dismissPopupGrabs();
+    m_windowManager->cancelInteractions();
+    if (m_windowCycle)
+        m_windowCycle->cancelCycling();
     // Cancels the drag and takes its icon out of the scene with it.
     m_seat->drag()->cancel();
     m_seat->setFocusedSurface(nullptr);
@@ -72,6 +81,10 @@ void SessionTeardown::onSessionUnblocked()
     m_seat->selection()->setIsolated(false);
     m_seat->primarySelection()->setIsolated(false);
     clearCursor();
+    // A capture left open behind the lock takes the keyboard back first, so
+    // the activation below leaves it there.
+    if (wm::Window *grab = m_windowManager->keyboardGrab())
+        m_windowManager->setKeyboardGrab(grab);
     const quint64 id = std::exchange(m_activeBeforeBlock, 0);
     if (!id)
         return;

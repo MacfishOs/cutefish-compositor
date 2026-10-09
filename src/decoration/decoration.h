@@ -70,6 +70,7 @@ public:
                          bool pressed) override;
     void onPointerLeave() override;
     bool isTrackingPress() const override { return m_pressedButton >= 0 && !m_pressTouch; }
+    void cancelPress() override;
     QRect titleBarBounds() const override;
     std::vector<QRect> captionButtonBounds() const override;
     bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF& location) override;
