@@ -279,6 +279,7 @@ void InputManager::onPointerButton(Timestamp timestamp, uint32_t evdevButton, bo
             const uint32_t translated =
                     m_seat->keyTranslator()->translateButton(evdevButton, false);
             m_seat->updatePointerButtonState(translated, false);
+            m_seat->endPointerGrabIfReleased();
         }
         return;
     }

@@ -136,6 +136,7 @@ public:
     void updateCursorPosition(const QPointF &position);
     void releasePointerButton(Timestamp timestamp, uint32_t evdevButton);
     void updatePointerButtonState(uint32_t evdevButton, bool pressed);
+    void endPointerGrabIfReleased();
 
     void consumeDragSerials() { m_dragSerials.clear(); }
 
@@ -296,7 +297,6 @@ public:
 
 private:
     void setPointerGrabSurface(compositor::Surface *surface);
-    void endPointerGrabIfReleased();
 
     // Focus and the implicit grab observe the same surfaces, so an observer is
     // only dropped once neither refers to it.

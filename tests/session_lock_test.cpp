@@ -457,6 +457,7 @@ TEST_F(SessionLockTest, AControlClickTheLockInterruptedLeavesNoSecondaryClickBeh
     ASSERT_TRUE(controller.requestUnlock());
     controller.notifyFramePresented();
 
+    EXPECT_EQ(nullptr, seat.pointerGrabSurface());
     input.onPointerMotion({}, QPointF(1, 1));
     client.buttons.clear();
     input.onPointerButton({}, BTN_LEFT, true);
