@@ -22,11 +22,7 @@ constexpr auto commandConvention = "command";
 // What xkbcommon compiles for empty rule names.
 QString defaultLayout()
 {
-    QString layout = qEnvironmentVariable("XKB_DEFAULT_LAYOUT", QStringLiteral("us"));
-    const QString variant = qEnvironmentVariable("XKB_DEFAULT_VARIANT");
-    if (!variant.isEmpty())
-        layout += QLatin1Char('-') + variant;
-    return layout;
+    return QStringLiteral("us");
 }
 
 int storedMilliseconds(const QSettings &settings, const QString &key, int fallback, int min,

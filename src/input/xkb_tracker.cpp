@@ -22,7 +22,9 @@
 namespace cutefish::input {
 
 XkbTracker::XkbTracker()
-    : m_context(xkb_context_new(XKB_CONTEXT_NO_FLAGS))
+    // Empty rule names compile xkbcommon's built-in defaults (us), never ones from the
+    // environment; the layout comes from the keyboard settings alone.
+    : m_context(xkb_context_new(XKB_CONTEXT_NO_ENVIRONMENT_NAMES))
 {
     updateKeyboardLayoutInternal(nullptr);
 }

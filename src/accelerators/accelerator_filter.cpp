@@ -11,7 +11,6 @@
 
 #include "accelerators/accelerator_filter.h"
 
-#include <cstdlib>
 #include <string>
 
 #include <xkbcommon/xkbcommon.h>
@@ -53,13 +52,9 @@ bool isSystemKey(xkb_keysym_t keysym)
 
 bool usesPositionalShortcuts(const input::XkbTracker &xkb)
 {
-    std::string layout = xkb.layoutName();
-    if (layout.empty()) {
-        // No layout was ever set, so xkbcommon compiled its defaults.
-        const char *fromEnvironment = std::getenv("XKB_DEFAULT_LAYOUT");
-        layout = fromEnvironment ? fromEnvironment : "us";
-    }
-    return layout.rfind("us", 0) != 0;
+    // No layout set means xkbcommon's default, which is us.
+    const std::string &layout = xkb.layoutName();
+    return !layout.empty() && layout.rfind("us", 0) != 0;
 }
 
 AcceleratorFilter::AcceleratorFilter(AcceleratorController *controller,
