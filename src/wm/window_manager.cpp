@@ -1048,8 +1048,9 @@ bool WindowManager::isInsidePopupGrabChain(compositor::Surface *surface) const
         surface = surface->parentSurface();
     if (!surface)
         return false;
+    // A popup opened from a grabbing one without a grab of its own is still inside.
     for (ShellSurface *popup : m_popupGrabs) {
-        if (popup->rootSurface() == surface)
+        if (popup->rootSurface() == surface || popup->hasPopupDescendant(surface))
             return true;
     }
     return false;

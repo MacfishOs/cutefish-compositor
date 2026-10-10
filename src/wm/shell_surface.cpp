@@ -1198,6 +1198,15 @@ void ShellSurface::resetConfigureState()
     m_boundsTransitionOldContentSize = QSize();
 }
 
+bool ShellSurface::hasPopupDescendant(const compositor::Surface *root) const
+{
+    for (const ShellSurface *child : m_childShells) {
+        if (child->rootSurface() == root || child->hasPopupDescendant(root))
+            return true;
+    }
+    return false;
+}
+
 void ShellSurface::addChildShell(ShellSurface *child)
 {
     if (std::find(m_childShells.begin(), m_childShells.end(), child) == m_childShells.end())

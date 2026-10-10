@@ -134,6 +134,8 @@ public:
     void clearRole();
 
     ShellSurface *popupParent() const { return m_parentShell; }
+    // Whether `root` is the surface of a popup opened from this one, at any depth.
+    bool hasPopupDescendant(const compositor::Surface *root) const;
 
     // The toplevel window a popup chain hangs off, or the window itself.
     Window *ownerWindow() const;
