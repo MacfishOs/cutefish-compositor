@@ -186,9 +186,12 @@ ForeignToplevelList::Entry &ForeignToplevelList::entryFor(wm::Window *window)
 
 void ForeignToplevelList::add(wm::Window *window)
 {
-    if (!listable(window) || m_entries.contains(window))
+    if (!listable(window))
         return;
+    // A capture source may have made the entry before the window became listable.
     Entry &entry = entryFor(window);
+    if (entry.listed)
+        return;
     entry.listed = true;
     for (auto &client : m_clients)
         announce(*client, entry);
