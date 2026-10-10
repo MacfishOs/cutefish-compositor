@@ -1098,7 +1098,9 @@ void WindowAnimation::render(render::Renderer &renderer) const
                 })) {
                 m_textureReusable = false;
                 Node::render(renderer);
-                m_running = false;
+                // Whoever waits for the end, e.g. to unmap a closed window, still hears of it.
+                if (std::exchange(m_running, false) && m_finished)
+                    m_finished();
                 return;
             }
             // A blur drawn from what the last frame left behind the window is
