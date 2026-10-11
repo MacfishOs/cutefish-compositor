@@ -12,21 +12,24 @@
 namespace cutefish::wm {
 
 class DockLayoutManager;
+class WindowManager;
 
-// Follows the dock's visibility setting into the dock layout: the shared
-// `cutefish/dock` settings file the dock writes when the user changes it.
+// Follows the dock's visibility and minimized area settings into the dock
+// layout and the stacking: the shared settings file the dock writes when the
+// user changes them.
 class DockPreferences : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit DockPreferences(DockLayoutManager &layout, QObject *parent = nullptr);
+    DockPreferences(DockLayoutManager &layout, WindowManager &manager, QObject *parent = nullptr);
 
 public Q_SLOTS:
     void reload();
 
 private:
     DockLayoutManager &m_layout;
+    WindowManager &m_manager;
     QSettings m_settings;
     QFileSystemWatcher m_watcher;
 };

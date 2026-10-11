@@ -318,6 +318,10 @@ public:
     // desk: the desk switch animation and the windows sent to another desk.
     void setDeskOverlays(std::vector<scene::Node *> overlays);
 
+    // Minimize and restore pass over the panels to meet the dock's minimized
+    // area; without it they go into the dock's icons, under the panels.
+    void setDockTransitionsAbovePanels(bool above);
+
     // --- Popup grabs ---
 
     // The chain of popups holding an explicit grab, outermost first. A pointer
@@ -492,6 +496,7 @@ private:
     std::unique_ptr<DesksController> m_desks;
     std::unique_ptr<OverviewController> m_overview;
     std::vector<scene::Node *> m_deskOverlays;
+    bool m_dockTransitionsAbovePanels = true;
     std::unique_ptr<ToplevelEventHandler> m_eventHandler;
     Placement m_placement;
     WindowModalityController m_modality;

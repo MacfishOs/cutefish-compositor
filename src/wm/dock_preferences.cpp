@@ -9,6 +9,7 @@
 
 #include "core/preferences.h"
 #include "wm/dock_layout_manager.h"
+#include "wm/window_manager.h"
 
 namespace cutefish::wm {
 
@@ -29,9 +30,11 @@ DockAutoHideBehavior behaviorFromSetting(int visibility)
 
 } // namespace
 
-DockPreferences::DockPreferences(DockLayoutManager &layout, QObject *parent)
+DockPreferences::DockPreferences(DockLayoutManager &layout, WindowManager &manager,
+                                 QObject *parent)
     : QObject(parent)
     , m_layout(layout)
+    , m_manager(manager)
     , m_settings(preferencesFile(QStringLiteral("shell")), QSettings::IniFormat)
 {
     m_settings.beginGroup(QStringLiteral("Dock"));
@@ -51,6 +54,8 @@ void DockPreferences::reload()
         m_watcher.addPath(m_settings.fileName());
     m_layout.setBehavior(
             behaviorFromSetting(m_settings.value(QStringLiteral("Visibility"), 0).toInt()));
+    m_manager.setDockTransitionsAbovePanels(
+            m_settings.value(QStringLiteral("MinimizedArea"), true).toBool());
 }
 
 } // namespace cutefish::wm

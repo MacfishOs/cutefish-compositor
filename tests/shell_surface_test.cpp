@@ -1384,6 +1384,36 @@ TEST_F(ShellSurfaceTest, PopupUsesTheSharedShadowControllerAndTransientStacking)
     EXPECT_FALSE(surface->node()->isVisible());
 }
 
+TEST_F(ShellSurfaceTest, MinimizePassesOverTheDockOnlyWithItsMinimizedArea)
+{
+    auto *dock = makeMappedToplevel(QSize(400, 60));
+    dock->window()->setRole(WindowRole::Dock);
+    dock->window()->setBounds(QRect(300, 740, 400, 60));
+    auto *shell = makeMappedToplevel(QSize(400, 300));
+    const auto position = [this](scene::Node *node) {
+        const auto &order = surfaceContainer->children();
+        return std::find(order.begin(), order.end(), node) - order.begin();
+    };
+    manager.restackScene();
+    ASSERT_LT(position(shell->window()->node()), position(dock->window()->node()));
+
+    shell->window()->setMinimizedGeometry(QRect(500, 750, 40, 30));
+
+    // Into a dock icon: under the dock.
+    manager.setDockTransitionsAbovePanels(false);
+    shell->minimize();
+    auto *animation = dynamic_cast<scene::WindowAnimation *>(shell->window()->node());
+    ASSERT_NE(nullptr, animation);
+    ASSERT_TRUE(animation->drawsAbovePanels());
+    EXPECT_LT(position(animation), position(dock->window()->node()));
+
+    shell->window()->restore();
+    manager.setDockTransitionsAbovePanels(true);
+    shell->minimize();
+    ASSERT_TRUE(animation->drawsAbovePanels());
+    EXPECT_GT(position(animation), position(dock->window()->node()));
+}
+
 TEST_F(ShellSurfaceTest, PopupClientShadowSuppressesTheSharedCompositorShadow)
 {
     ShadowController shadows(&manager, &shadowProvider, &shadowDelegate);

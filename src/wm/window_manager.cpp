@@ -683,7 +683,8 @@ void WindowManager::restackScene()
     std::vector<scene::Node *> dockTransitions;
     for (scene::Node *node : order) {
         if (auto *animation = dynamic_cast<scene::WindowAnimation *>(node);
-            animation && animation->drawsAbovePanels() && node != panelTop)
+            m_dockTransitionsAbovePanels && animation && animation->drawsAbovePanels()
+            && node != panelTop)
             dockTransitions.push_back(node);
     }
     if (!dockTransitions.empty()) {
@@ -714,6 +715,14 @@ void WindowManager::setDragOverlay(scene::Node *overlay, Window *below)
 void WindowManager::setDeskOverlays(std::vector<scene::Node *> overlays)
 {
     m_deskOverlays = std::move(overlays);
+    restackScene();
+}
+
+void WindowManager::setDockTransitionsAbovePanels(bool above)
+{
+    if (m_dockTransitionsAbovePanels == above)
+        return;
+    m_dockTransitionsAbovePanels = above;
     restackScene();
 }
 

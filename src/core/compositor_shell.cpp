@@ -176,7 +176,7 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
     , m_shadowProvider(&m_decorationTheme)
     , m_shadowController(&m_windowManager, &m_shadowProvider, &m_shadowDelegate)
     , m_dockLayout(&m_windowManager)
-    , m_dockPreferences(m_dockLayout)
+    , m_dockPreferences(m_dockLayout, m_windowManager)
     , m_secureScene(m_secureContainer)
     , m_sessionTeardown(&m_seat, &m_windowManager)
     // The session says which screen the compositor starts on; the compositor
