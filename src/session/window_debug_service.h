@@ -53,6 +53,7 @@ public slots:
     Q_SCRIPTABLE bool MoveWindow(qulonglong id, int x, int y);
     Q_SCRIPTABLE bool SetWindowBounds(qulonglong id, int x, int y, int width, int height);
     Q_SCRIPTABLE bool ActivateWindow(qulonglong id);
+    Q_SCRIPTABLE bool MinimizeWindow(qulonglong id);
 
     // The outputs' scheduling counters, one line each, read live. Empty in a
     // headless compositor.

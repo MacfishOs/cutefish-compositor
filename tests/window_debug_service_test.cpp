@@ -125,6 +125,9 @@ private slots:
         QVERIFY(QDBusReply<bool>(call(QStringLiteral("ActivateWindow"), {id})).value());
         QVERIFY(editor->isActive());
         QCOMPARE(desktop.manager.windows().back(), editor);
+
+        QVERIFY(QDBusReply<bool>(call(QStringLiteral("MinimizeWindow"), {id})).value());
+        QCOMPARE(editor->stateType(), wm::WindowStateType::Minimized);
     }
 
     void feedsInputOnlyWhenGivenOne()

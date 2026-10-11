@@ -45,6 +45,7 @@ QJsonObject describe(const wm::Window *window)
             {QStringLiteral("dragPreview"), window->isDragPreview()},
             {QStringLiteral("bounds"), rectArray(window->bounds())},
             {QStringLiteral("contentBounds"), rectArray(window->contentBounds())},
+            {QStringLiteral("minimizedGeometry"), rectArray(window->minimizedGeometry())},
     };
 
     if (const auto *animation = dynamic_cast<const scene::WindowAnimation *>(window->node())) {
@@ -156,6 +157,15 @@ bool WindowDebugService::ActivateWindow(qulonglong id)
     if (!window)
         return false;
     window->activate();
+    return true;
+}
+
+bool WindowDebugService::MinimizeWindow(qulonglong id)
+{
+    wm::Window *window = m_manager->windowById(id);
+    if (!window)
+        return false;
+    window->minimize();
     return true;
 }
 
