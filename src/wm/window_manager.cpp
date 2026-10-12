@@ -30,6 +30,7 @@
 #include "wm/resize_cursor.h"
 #include "wm/resize_handles.h"
 #include "wm/shell_surface.h"
+#include "wm/show_desktop_controller.h"
 #include "wm/stacking.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/transient_manager.h"
@@ -62,11 +63,13 @@ WindowManager::WindowManager(compositor::Compositor *compositor, input::Seat *se
     m_mruTracker = std::make_unique<MruWindowTracker>(this);
     m_desks = std::make_unique<DesksController>(this);
     m_overview = std::make_unique<OverviewController>(this);
+    m_showDesktop = std::make_unique<ShowDesktopController>(this);
 }
 
 WindowManager::~WindowManager()
 {
     m_activation.removeObserver(this);
+    m_showDesktop.reset();
     m_overview.reset();
     // Tear down through destroyWindow so activation and drags unwind cleanly.
     while (!m_stackingOrder.empty())
@@ -1362,6 +1365,18 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const QPoint
     if (Window *blocked = modalBlockedWindowAt(location)) {
         m_modality.processLocatedEvent(blocked, true);
         return true;
+    }
+
+    // A press on a window moved aside brings them all back, that one in
+    // front, and goes no further.
+    if (m_showDesktop->isActive()) {
+        Window *window = frameAt(location);
+        if (!window)
+            window = windowAt(location);
+        if (window && m_showDesktop->isMovedAside(window)) {
+            m_showDesktop->exit(window);
+            return true;
+        }
     }
 
     ResizeEdge edge = ResizeEdge::None;

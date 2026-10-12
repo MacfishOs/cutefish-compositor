@@ -1688,7 +1688,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     const QDBusReply<QString> reply = proxy.call(QStringLiteral("accelerators"));
     ASSERT_TRUE(reply.isValid());
     const QJsonArray actions = parse(reply.value()).value(QStringLiteral("actions")).toArray();
-    EXPECT_EQ(44, actions.size());
+    EXPECT_EQ(45, actions.size());
     bool sawMaximize = false;
     bool sawOverview = false;
     for (const QJsonValue &value : actions) {

@@ -21,6 +21,7 @@
 #include "wm/desks/desk_animation.h"
 #include "wm/mru_window_tracker.h"
 #include "wm/overview/overview_layout.h"
+#include "wm/show_desktop_controller.h"
 #include "wm/stacking.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -455,6 +456,9 @@ void OverviewController::activateForExit(Window *window)
 
 void OverviewController::begin()
 {
+    // The overview lays windows out from their bounds; none stays aside.
+    if (ShowDesktopController *showDesktop = m_manager->showDesktop())
+        showDesktop->exitImmediately();
     m_hovered = m_selected = m_dragged = -1;
     m_barHover = {};
     m_press.reset();

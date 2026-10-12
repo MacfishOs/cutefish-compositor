@@ -24,6 +24,7 @@
 #include "wm/desks/desk.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/overview/overview_controller.h"
+#include "wm/show_desktop_controller.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
@@ -76,6 +77,11 @@ bool canToggleOverview(const CommandContext &context)
 {
     return context.windowManager && context.windowManager->overview()
             && context.windowManager->overview()->node();
+}
+
+bool canToggleShowDesktop(const CommandContext &context)
+{
+    return context.windowManager && context.windowManager->showDesktop();
 }
 
 void cycleForwardMru(const CommandContext &context)
@@ -166,6 +172,11 @@ void closeWindow(const CommandContext &context)
 void toggleOverview(const CommandContext &context)
 {
     context.windowManager->overview()->toggle();
+}
+
+void toggleShowDesktop(const CommandContext &context)
+{
+    context.windowManager->showDesktop()->toggle();
 }
 
 void moveActiveWindowBetweenDisplays(const CommandContext &context)

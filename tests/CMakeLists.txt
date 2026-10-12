@@ -176,6 +176,7 @@ cutefish_add_test(desks_test cutefish-wm Qt6::Test)
 cutefish_add_test(overview_layout_test cutefish-wm)
 cutefish_add_test(overview_node_test cutefish-scene)
 cutefish_add_test(overview_test cutefish-wm)
+cutefish_add_test(show_desktop_test cutefish-wm)
 
 cutefish_add_test(cursor_test cutefish-cursor)
 cutefish_add_test(output_cursor_router_test cutefish-cursor)

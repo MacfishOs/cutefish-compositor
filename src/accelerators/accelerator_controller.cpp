@@ -176,6 +176,8 @@ bool AcceleratorController::canPerformAction(AcceleratorAction action,
         return commands::canCloseWindow(m_context);
     case AcceleratorAction::ToggleOverview:
         return commands::canToggleOverview(m_context);
+    case AcceleratorAction::ToggleShowDesktop:
+        return commands::canToggleShowDesktop(m_context);
 
     // The following are always enabled.
     case AcceleratorAction::DesksActivateDeskLeft:
@@ -269,6 +271,9 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
         break;
     case AcceleratorAction::ToggleOverview:
         commands::toggleOverview(m_context);
+        break;
+    case AcceleratorAction::ToggleShowDesktop:
+        commands::toggleShowDesktop(m_context);
         break;
     case AcceleratorAction::DesksActivateDeskLeft:
     case AcceleratorAction::DesksActivateDeskRight:

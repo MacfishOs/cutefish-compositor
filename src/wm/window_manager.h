@@ -52,6 +52,7 @@ namespace cutefish::wm {
 class DesksController;
 class MruWindowTracker;
 class OverviewController;
+class ShowDesktopController;
 class ShellSurface;
 class ToplevelEventHandler;
 class TransientManager;
@@ -157,6 +158,8 @@ public:
     DesksController *desks() const { return m_desks.get(); }
 
     OverviewController *overview() const { return m_overview.get(); }
+
+    ShowDesktopController *showDesktop() const { return m_showDesktop.get(); }
 
     ToplevelEventHandler *eventHandler() { return m_eventHandler.get(); }
 
@@ -495,6 +498,7 @@ private:
     std::unique_ptr<MruWindowTracker> m_mruTracker;
     std::unique_ptr<DesksController> m_desks;
     std::unique_ptr<OverviewController> m_overview;
+    std::unique_ptr<ShowDesktopController> m_showDesktop;
     std::vector<scene::Node *> m_deskOverlays;
     bool m_dockTransitionsAbovePanels = true;
     std::unique_ptr<ToplevelEventHandler> m_eventHandler;

@@ -49,6 +49,7 @@ bool canWindowSnap(const CommandContext &context);
 bool canMoveActiveWindowBetweenDisplays(const CommandContext &context);
 bool canCloseWindow(const CommandContext &context);
 bool canToggleOverview(const CommandContext &context);
+bool canToggleShowDesktop(const CommandContext &context);
 
 void cycleForwardMru(const CommandContext &context);
 void cycleBackwardMru(const CommandContext &context);
@@ -66,6 +67,8 @@ void windowSnap(const CommandContext &context, AcceleratorAction action);
 void closeWindow(const CommandContext &context);
 void moveActiveWindowBetweenDisplays(const CommandContext &context);
 void toggleOverview(const CommandContext &context);
+// Slides the application windows aside to show the desktop, or back.
+void toggleShowDesktop(const CommandContext &context);
 // Desks.
 void activateDesk(const CommandContext &context, bool activateLeft);
 void activateDeskAtIndex(const CommandContext &context, AcceleratorAction action);

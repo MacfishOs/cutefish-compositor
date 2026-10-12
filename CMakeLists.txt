@@ -494,6 +494,8 @@ add_library(cutefish-wm STATIC
     src/wm/dock_preferences.h
     src/wm/shell_surface.cpp
     src/wm/shell_surface.h
+    src/wm/show_desktop_controller.cpp
+    src/wm/show_desktop_controller.h
     src/wm/mru_window_tracker.cpp
     src/wm/mru_window_tracker.h
     src/wm/window_cycle_controller.cpp
