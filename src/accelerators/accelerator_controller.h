@@ -72,6 +72,10 @@ public:
 
     bool performActionIfEnabled(AcceleratorAction action, const Accelerator &accelerator);
 
+    // Runs `action` as a key bound to it would be, under the same restrictions,
+    // for a trigger that is not a key: a hot corner.
+    bool performActionWithoutKey(AcceleratorAction action);
+
     bool doesAcceleratorMatchAction(const Accelerator &accelerator,
                                     AcceleratorAction action) const;
 

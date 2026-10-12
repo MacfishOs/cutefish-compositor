@@ -24,6 +24,8 @@
 #include "accelerators/accelerator_delegate.h"
 #include "accelerators/accelerator_filter.h"
 #include "accelerators/accelerator_service.h"
+#include "accelerators/hot_corner_controller.h"
+#include "accelerators/hot_corner_settings.h"
 #include "backend/drm/drm_backend.h"
 #include "backend/drm/drm_output.h"
 #include "backend/headless/headless_backend.h"
@@ -352,6 +354,44 @@ void CompositorShell::initAccelerators()
             m_acceleratorConfiguration.get(), m_acceleratorController.get(),
             m_seat.xkbTracker());
     m_acceleratorService->registerService();
+
+    // The greeter has no hot corners.
+    if (!m_options.login) {
+        m_hotCorners = std::make_unique<accelerators::HotCornerController>(
+                &m_seat, [this](accelerators::AcceleratorAction action) {
+                    return m_acceleratorController->performActionWithoutKey(action);
+                });
+        m_hotCornerSettings = std::make_unique<accelerators::HotCornerSettings>();
+        m_hotCornerSettings->setModifierSource([this] {
+            return m_hotCorners->heldModifiers();
+        });
+        m_hotCornerSettings->registerService();
+        const auto applyBindings = [this] {
+            for (const auto corner :
+                 {accelerators::HotCorner::TopLeft, accelerators::HotCorner::TopRight,
+                  accelerators::HotCorner::BottomLeft, accelerators::HotCorner::BottomRight})
+                m_hotCorners->setBinding(corner, m_hotCornerSettings->binding(corner));
+        };
+        const auto applyOutputs = [this] {
+            std::vector<QRect> outputs;
+            for (const wm::WindowManager::OutputArea &area : m_windowManager.outputAreas())
+                outputs.push_back(area.bounds);
+            m_hotCorners->setOutputs(outputs);
+        };
+        applyBindings();
+        applyOutputs();
+        QObject *context = m_hotCornerSettings.get();
+        QObject::connect(m_hotCornerSettings.get(), &accelerators::HotCornerSettings::changed,
+                         context, applyBindings);
+        QObject::connect(&m_windowManager, &wm::WindowManager::outputsChanged, context,
+                         applyOutputs);
+        QObject::connect(&m_inputManager, &input::InputManager::pointerMoved, context,
+                         [this](const QPointF &position) {
+                             m_hotCorners->onPointerMoved(position,
+                                                          m_inputManager.isPointerButtonHeld()
+                                                                  || m_seat.drag()->busy());
+                         });
+    }
 
     // Quit's last resort for a process that closed its windows but keeps
     // running. AppRuntime checks the process is the user's before signalling.

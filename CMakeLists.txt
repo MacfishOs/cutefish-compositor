@@ -663,6 +663,10 @@ add_library(cutefish-accelerators STATIC
     src/accelerators/accelerator_service.cpp
     src/accelerators/accelerator_service.h
     src/accelerators/accelerator_table.h
+    src/accelerators/hot_corner_controller.cpp
+    src/accelerators/hot_corner_controller.h
+    src/accelerators/hot_corner_settings.cpp
+    src/accelerators/hot_corner_settings.h
 )
 target_include_directories(cutefish-accelerators PUBLIC src)
 target_link_libraries(cutefish-accelerators PUBLIC cutefish-wm cutefish-session Qt6::DBus PkgConfig::Xkbcommon)

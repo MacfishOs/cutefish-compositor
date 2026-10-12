@@ -58,6 +58,7 @@
 #include "wm/desks/desks_controller.h"
 #include "wm/mru_window_tracker.h"
 #include "wm/overview/overview_controller.h"
+#include "wm/show_desktop_controller.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_cycle_controller.h"
@@ -643,6 +644,22 @@ TEST_F(AcceleratorTest, WindowActionsApplyToTheActiveWindow)
     });
     chord({KEY_LEFTALT}, KEY_F4);
     EXPECT_EQ(1, closes);
+}
+
+TEST_F(AcceleratorTest, ActionsRunWithoutAKeyUnderTheSameRestrictions)
+{
+    // A hot corner runs an action with no key behind it.
+    makeWindow(QRect(100, 100, 300, 200));
+    wm::ShowDesktopController *showDesktop = manager.showDesktop();
+    EXPECT_TRUE(controller->performActionWithoutKey(AcceleratorAction::ToggleShowDesktop));
+    EXPECT_TRUE(showDesktop->isActive());
+    EXPECT_TRUE(controller->performActionWithoutKey(AcceleratorAction::ToggleShowDesktop));
+    EXPECT_FALSE(showDesktop->isActive());
+
+    ASSERT_TRUE(session.requestLock());
+    session.notifyFramePresented();
+    EXPECT_FALSE(controller->performActionWithoutKey(AcceleratorAction::ToggleShowDesktop));
+    EXPECT_FALSE(showDesktop->isActive());
 }
 
 TEST_F(AcceleratorTest, WindowActionsLeaveTheShellsOwnWindowsAlone)

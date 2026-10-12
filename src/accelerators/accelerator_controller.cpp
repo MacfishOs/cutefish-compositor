@@ -116,6 +116,13 @@ bool AcceleratorController::performActionIfEnabled(AcceleratorAction action,
     return true;
 }
 
+bool AcceleratorController::performActionWithoutKey(AcceleratorAction action)
+{
+    if (acceleratorProcessingRestriction(action) != Restriction::None)
+        return false;
+    return performActionIfEnabled(action, Accelerator());
+}
+
 bool AcceleratorController::doesAcceleratorMatchAction(const Accelerator &accelerator,
                                                        AcceleratorAction action) const
 {

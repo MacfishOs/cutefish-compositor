@@ -189,6 +189,7 @@ void InputManager::dispatchMotion(Timestamp timestamp, const RelativeMotion *rel
         updateFallbackCursor();
         return;
     }
+    Q_EMIT pointerMoved(m_pointerPosition);
     // The cursor tracks the physical pointer even while the sink consumes the
     // event; only client dispatch is suppressed.
     m_seat->beginPointerMotion();
@@ -270,6 +271,10 @@ void InputManager::onPointerMotionNormalized(Timestamp timestamp, const QPointF 
 void InputManager::onPointerButton(Timestamp timestamp, uint32_t evdevButton, bool pressed)
 {
     emit userActivity();
+    if (pressed)
+        m_heldButtons.insert(evdevButton);
+    else
+        m_heldButtons.erase(evdevButton);
     if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput()) {
         if (auto *sink = gate->secureInput())
             sink->onPointerButton(timestamp, m_pointerPosition, evdevButton, pressed);

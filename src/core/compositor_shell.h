@@ -88,6 +88,8 @@ class AcceleratorController;
 class AcceleratorFilter;
 class AcceleratorService;
 class DBusAcceleratorDelegate;
+class HotCornerController;
+class HotCornerSettings;
 } // namespace accelerators
 
 namespace switcher {
@@ -285,6 +287,9 @@ private:
     std::unique_ptr<accelerators::AcceleratorController> m_acceleratorController;
     std::unique_ptr<accelerators::AcceleratorFilter> m_acceleratorFilter;
     std::unique_ptr<accelerators::AcceleratorService> m_acceleratorService;
+    // The settings go first, and with them the connections feeding the corners.
+    std::unique_ptr<accelerators::HotCornerController> m_hotCorners;
+    std::unique_ptr<accelerators::HotCornerSettings> m_hotCornerSettings;
     // In front of the whole chain, so the key reaches neither a shortcut nor a client.
     std::unique_ptr<session::PowerButton> m_powerButton;
     // How the session quits every application before it ends.

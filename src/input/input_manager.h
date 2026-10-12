@@ -90,6 +90,10 @@ public:
 
     QPointF pointerPosition() const { return m_pointerPosition; }
 
+    // Whether a pointer button is down, whoever took its press: a window
+    // move consumes it before the seat sees it.
+    bool isPointerButtonHeld() const { return !m_heldButtons.empty(); }
+
     // Places the pointer without generating an event. Used at startup to put it
     // in the middle of the output.
     void warpPointer(const QPointF &position);
@@ -146,6 +150,9 @@ public:
 
 Q_SIGNALS:
     void userActivity();
+    // Every pointer move while the desktop has the input, clamped to the
+    // layout, before any sink, drag or grab sees it.
+    void pointerMoved(const QPointF &position);
 
 private:
     void onSurfaceFocused(compositor::Surface *, compositor::Surface *) override { }
@@ -177,6 +184,7 @@ private:
     // whatever convention is in force by then.
     std::map<uint32_t, uint32_t> m_positionalKeys;
     bool m_motionConsumed = false;
+    std::set<uint32_t> m_heldButtons;
     bool m_synthesizePending = false;
     QSize m_bounds;
     QList<QRect> m_topology;
