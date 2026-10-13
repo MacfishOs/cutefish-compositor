@@ -41,12 +41,12 @@ bool WmShadowControllerDelegate::shouldShowShadowForWindow(const Window *window)
         return false;
     }
 
-    // Anything but Normal is tiled against the work area or the output and owns
-    // no exterior space to cast into: maximized, snapped and fullscreen. A
-    // window being dragged out of one of those owns its shadow again as soon as
-    // its content has caught up; a shadow around the tiled content it still has
-    // would be a band across the bottom of the work area, over the dock.
-    return window->decoratedStateType() == WindowStateType::Normal;
+    // Maximized and fullscreen fill the work area or the output and own no
+    // exterior space to cast into. A window being dragged out of one of those
+    // owns its shadow again as soon as its content has caught up; a shadow
+    // around the full-size content it still has would be a band across the
+    // bottom of the work area, over the dock.
+    return isRoundedStateType(window->decoratedStateType());
 }
 
 ShadowElevation WmShadowControllerDelegate::elevationForWindow(const Window *window)

@@ -87,7 +87,7 @@ bool Decoration::isActive() const
 
 bool Decoration::hasRoundedCorners() const
 {
-    return m_window && m_window->decoratedStateType() == wm::WindowStateType::Normal;
+    return m_window && wm::isRoundedStateType(m_window->decoratedStateType());
 }
 
 QString Decoration::title() const

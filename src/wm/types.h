@@ -32,6 +32,13 @@ constexpr bool isSnappedStateType(WindowStateType type)
     return type == WindowStateType::PrimarySnapped || type == WindowStateType::SecondarySnapped;
 }
 
+// A snapped window keeps the floating look: rounded corners, outline and
+// shadow. Only maximized and fullscreen windows are square.
+constexpr bool isRoundedStateType(WindowStateType type)
+{
+    return type == WindowStateType::Normal || isSnappedStateType(type);
+}
+
 // What a window is for. Everything but Normal is a surface the trusted shell
 // claimed through cutefish_shell_v1; the window manager only ever sees the
 // adapted concept, never the protocol object.

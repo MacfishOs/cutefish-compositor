@@ -436,11 +436,20 @@ TEST_F(WindowVisualPixelTest, FloatingExteriorsRestoreAfterTiledStates)
                 else
                     window->snapSecondary();
                 auto state = wm::WindowVisualController::evaluate(*window);
-                EXPECT_EQ(state.shape.radius, 0);
-                EXPECT_FALSE(state.drawOutline);
-                EXPECT_EQ(state.clipContent, exterior);
-                EXPECT_EQ(model.shadowController.shadowForWindow(window)->elevation(),
-                          wm::ShadowElevation::None);
+                if (tiled >= 2) {
+                    // Snapped keeps the floating look.
+                    EXPECT_GT(state.shape.radius, 0);
+                    EXPECT_TRUE(state.drawOutline);
+                    EXPECT_TRUE(state.clipContent);
+                    EXPECT_NE(model.shadowController.shadowForWindow(window)->elevation(),
+                              wm::ShadowElevation::None);
+                } else {
+                    EXPECT_EQ(state.shape.radius, 0);
+                    EXPECT_FALSE(state.drawOutline);
+                    EXPECT_EQ(state.clipContent, exterior);
+                    EXPECT_EQ(model.shadowController.shadowForWindow(window)->elevation(),
+                              wm::ShadowElevation::None);
+                }
                 if (tiled == 1)
                     window->setFullscreen(false);
                 window->restore();
