@@ -169,6 +169,27 @@ bool WindowDebugService::MinimizeWindow(qulonglong id)
     return true;
 }
 
+bool WindowDebugService::SnapWindow(qulonglong id, bool primary)
+{
+    wm::Window *window = m_manager->windowById(id);
+    if (!window)
+        return false;
+    if (primary)
+        window->snapPrimary();
+    else
+        window->snapSecondary();
+    return true;
+}
+
+bool WindowDebugService::RestoreWindow(qulonglong id)
+{
+    wm::Window *window = m_manager->windowById(id);
+    if (!window)
+        return false;
+    window->restore();
+    return true;
+}
+
 QStringList WindowDebugService::OutputStats() const
 {
     return m_outputStats ? m_outputStats() : QStringList();

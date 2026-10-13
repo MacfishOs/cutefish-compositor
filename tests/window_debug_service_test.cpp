@@ -126,6 +126,11 @@ private slots:
         QVERIFY(editor->isActive());
         QCOMPARE(desktop.manager.windows().back(), editor);
 
+        QVERIFY(QDBusReply<bool>(call(QStringLiteral("SnapWindow"), {id, false})).value());
+        QCOMPARE(editor->stateType(), wm::WindowStateType::SecondarySnapped);
+        QVERIFY(QDBusReply<bool>(call(QStringLiteral("RestoreWindow"), {id})).value());
+        QCOMPARE(editor->stateType(), wm::WindowStateType::Normal);
+
         QVERIFY(QDBusReply<bool>(call(QStringLiteral("MinimizeWindow"), {id})).value());
         QCOMPARE(editor->stateType(), wm::WindowStateType::Minimized);
     }
