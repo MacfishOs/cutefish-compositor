@@ -42,7 +42,8 @@ enum class StackingLayer {
     Dock = 7,
     Notification = 8,
     Osd = 9,
-    Capture = 10,
+    Picker = 10,
+    Capture = 11,
 };
 
 // A panel whose behavior is WindowsCanCover drops into the normal layer.

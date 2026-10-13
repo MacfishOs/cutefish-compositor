@@ -70,6 +70,9 @@ enum class AcceleratorAction : uint32_t {
     StartCaptureMode,
     StopScreenRecording,
 
+    // The clipboard history, performed by the shell.
+    ToggleClipboardHistory,
+
     // Device keys, performed by the shell, which shows the new level.
     VolumeMuteToggle,
     VolumeDown,

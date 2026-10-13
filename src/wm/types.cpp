@@ -46,6 +46,8 @@ const char* toString(WindowRole role)
         return "osd";
     case WindowRole::Sheet:
         return "sheet";
+    case WindowRole::Picker:
+        return "picker";
     }
     return "unknown";
 }

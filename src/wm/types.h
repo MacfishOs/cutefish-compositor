@@ -48,6 +48,8 @@ enum class WindowRole {
     Osd,
     // A shell dialog hanging from an application window, window-modal for it.
     Sheet,
+    // A chooser, such as the clipboard history; only borrows the keyboard.
+    Picker,
 };
 
 // Whether a window may take the keyboard. A Panel or Dock still receives

@@ -39,9 +39,9 @@ bool Activation::canActivate(const Window *window) const
     // Shown by a key the focused window has to keep hearing the rest of.
     if (window->role() == WindowRole::Osd)
         return false;
-    // The capture interface only borrows the keyboard: see
+    // The capture interface and pickers only borrow the keyboard: see
     // WindowManager::setKeyboardGrab().
-    if (window->role() == WindowRole::Capture)
+    if (window->role() == WindowRole::Capture || window->role() == WindowRole::Picker)
         return false;
     // The window it was pulled out of keeps the keyboard until the drop.
     if (window->isDragPreview())

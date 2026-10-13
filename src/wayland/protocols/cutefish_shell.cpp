@@ -54,6 +54,8 @@ std::optional<WindowRole> roleFromWayland(uint32_t role)
         return WindowRole::Osd;
     case CUTEFISH_SHELL_SURFACE_V1_ROLE_SHEET:
         return WindowRole::Sheet;
+    case CUTEFISH_SHELL_SURFACE_V1_ROLE_PICKER:
+        return WindowRole::Picker;
     default:
         return std::nullopt;
     }
@@ -167,7 +169,8 @@ public:
         wm::Window* window = m_manager->windowForSurface(m_surface);
         if (!window || window->rootSurface() != m_surface)
             return;
-        if (window->role() == wm::WindowRole::Capture)
+        if (window->role() == wm::WindowRole::Capture
+            || window->role() == wm::WindowRole::Picker)
             m_manager->setKeyboardGrab(window);
         else
             m_manager->activation()->activate(window);
@@ -487,10 +490,16 @@ void shellGetDrag(wl_client* client, wl_resource* resource, uint32_t id)
                                                           dragResource));
 }
 
+void shellSendPaste(wl_client*, wl_resource* resource)
+{
+    getUserDataAs<WaylandCutefishShell>(resource)->windowManager()->sendPaste();
+}
+
 const struct cutefish_shell_v1_interface kShellImplementation = {
     shellDestroy,
     shellGetShellSurface,
     shellGetDrag,
+    shellSendPaste,
 };
 
 void bindShell(wl_client* client, void* data, uint32_t version, uint32_t id)

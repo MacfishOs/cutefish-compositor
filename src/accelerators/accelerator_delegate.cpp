@@ -59,6 +59,14 @@ void DBusAcceleratorDelegate::stopScreenRecording()
     callScreenshot(QStringLiteral("stopRecording"));
 }
 
+void DBusAcceleratorDelegate::toggleClipboardHistory()
+{
+    QDBusMessage message = QDBusMessage::createMethodCall(
+            QStringLiteral("com.cutefish.ClipboardHistory"), QStringLiteral("/ClipboardHistory"),
+            QStringLiteral("com.cutefish.ClipboardHistory"), QStringLiteral("toggle"));
+    QDBusConnection::sessionBus().asyncCall(message);
+}
+
 void DBusAcceleratorDelegate::volumeDown()
 {
     callOsd(QStringLiteral("volumeDown"));

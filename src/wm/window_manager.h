@@ -18,6 +18,7 @@
 #include <QRect>
 #include <QSize>
 #include <QString>
+#include <QTimer>
 
 #include "decoration/window_visual_style.h"
 #include "input/event_sink.h"
@@ -150,6 +151,13 @@ public:
     // lasts until the window is hidden or gone.
     void setKeyboardGrab(Window *window);
     Window *keyboardGrab() const { return m_keyboardGrab; }
+
+    // Sends the paste shortcut to the application window holding the keyboard:
+    // Ctrl+Shift+V to a terminal, Ctrl+V elsewhere. Keys and buttons the user
+    // still holds, such as the Return that chose what to paste, are waited for
+    // up to kPasteWaitMs. Nothing while the session is blocked.
+    void sendPaste();
+    static constexpr int kPasteWaitMs = 2000;
 
     TransientManager *transientManager() { return m_transientManager.get(); }
 
@@ -494,6 +502,8 @@ private:
 
     Activation m_activation;
     Window *m_keyboardGrab = nullptr;
+    QTimer *m_pasteTimer = nullptr;
+    std::chrono::steady_clock::time_point m_pasteDeadline;
     std::unique_ptr<TransientManager> m_transientManager;
     std::unique_ptr<MruWindowTracker> m_mruTracker;
     std::unique_ptr<DesksController> m_desks;

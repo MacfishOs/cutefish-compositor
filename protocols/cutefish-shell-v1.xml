@@ -4,8 +4,8 @@
   <description summary="private shell surface roles for cutefish-shell">
     This protocol lets the trusted Cutefish shell process describe what its
     surfaces are for: a desktop background, a panel, a dock, the launcher, a
-    notification banner, the on-screen display or the screen capture
-    interface.
+    notification banner, the on-screen display, a picker or the screen
+    capture interface.
 
     It is an *extension* of an ordinary wl_surface, not a replacement for
     xdg-shell. The shell keeps creating xdg_toplevel objects through
@@ -60,6 +60,22 @@
       </description>
       <arg name="id" type="new_id" interface="cutefish_shell_drag_v1"/>
     </request>
+
+    <request name="send_paste">
+      <description summary="paste into the window holding the keyboard">
+        Sends the paste shortcut to the window that holds keyboard focus:
+        Ctrl+Shift+V to a terminal, Ctrl+V to any other application. The keys
+        reach the client as it sees keys, so the shortcut convention does not
+        rewrite them.
+
+        Requests are handled in order, so a selection set and a picker hidden
+        before this request are in place when the keys arrive.
+
+        Keys and pointer buttons still held, such as the key that chose what
+        to paste, are waited for, up to two seconds. Ignored while the session
+        is locked and when the focused window is not an application's.
+      </description>
+    </request>
   </interface>
 
   <interface name="cutefish_shell_surface_v1" version="1">
@@ -98,6 +114,11 @@
         it is stacked right above that window, kept centred on it as the window
         moves or either of them resizes, shown and hidden with it and kept on
         its desk. Its position is the compositor's.
+
+        A picker surface, like a capture surface, only borrows the keyboard
+        and never becomes the active window. It is stacked above the osd and
+        below capture surfaces. It gives the keyboard back when it is hidden,
+        when a press lands outside it, or when another window is activated.
       </description>
       <entry name="desktop" value="0" summary="the desktop background, below everything"/>
       <entry name="panel" value="1" summary="a panel such as the status bar"/>
@@ -110,6 +131,8 @@
              summary="the on-screen display of a volume or brightness change"/>
       <entry name="sheet" value="7"
              summary="a dialog hanging from an application window, see set_parent"/>
+      <entry name="picker" value="8"
+             summary="a chooser that borrows the keyboard, such as the clipboard history"/>
     </enum>
 
     <enum name="panel_behavior">

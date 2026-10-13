@@ -218,6 +218,10 @@ public:
     // input method forwards.
     void dispatchKeyToClients(Timestamp timestamp, uint32_t evdevCode, bool pressed);
 
+    // Presses `codes` in order and releases them in reverse, as keys clients
+    // see: past the compositor's shortcuts and the KeyTranslator.
+    void tapKeys(Timestamp timestamp, const std::vector<uint32_t> &codes);
+
     bool keySuppressed(uint32_t code) const { return m_suppressedKeys.contains(code); }
 
     void suppressKey(uint32_t code) { m_suppressedKeys.insert(code); }

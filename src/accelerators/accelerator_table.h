@@ -95,6 +95,9 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_Print, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
         {true, XKB_KEY_Escape, ControlDown | MetaDown, AcceleratorAction::StopScreenRecording},
 
+        // Clipboard history.
+        {true, XKB_KEY_v, MetaDown, AcceleratorAction::ToggleClipboardHistory},
+
         // Device keys.
         {true, XKB_KEY_XF86AudioMute, NoModifier, AcceleratorAction::VolumeMuteToggle},
         {true, XKB_KEY_XF86AudioLowerVolume, NoModifier, AcceleratorAction::VolumeDown},
@@ -171,6 +174,9 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_Print, ShiftDown, AcceleratorAction::TakeScreenshot},
         {true, XKB_KEY_Print, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
         {true, XKB_KEY_Escape, ControlDown | MetaDown, AcceleratorAction::StopScreenRecording},
+
+        // Clipboard history.
+        {true, XKB_KEY_v, ControlDown | MetaDown, AcceleratorAction::ToggleClipboardHistory},
 
         // Device keys.
         {true, XKB_KEY_XF86AudioMute, NoModifier, AcceleratorAction::VolumeMuteToggle},

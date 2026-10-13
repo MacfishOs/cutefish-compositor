@@ -8,6 +8,7 @@
 // and ash/wm/window_cycle/window_cycle_controller_unittest.cc, rewritten
 // against the Cutefish abstractions. No DRM, no GL, no Wayland client.
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -91,6 +92,7 @@ public:
     }
     void startCaptureMode() override { captures.push_back("capture-mode"); }
     void stopScreenRecording() override { captures.push_back("stop-recording"); }
+    void toggleClipboardHistory() override { ++clipboardHistoryToggles; }
     void volumeDown() override { levels.push_back("volume-down"); }
     void volumeUp() override { levels.push_back("volume-up"); }
     void toggleMute() override { levels.push_back("mute"); }
@@ -101,6 +103,7 @@ public:
     void keyboardBrightnessUp() override { levels.push_back("keyboard-brightness-up"); }
 
     int appListToggles = 0;
+    int clipboardHistoryToggles = 0;
     std::vector<std::string> captures;
     std::vector<std::string> levels;
 };
@@ -1068,6 +1071,108 @@ TEST_F(AcceleratorTest, ScreenCaptureKeysGoToTheShellUnderBothConventions)
     }
 }
 
+TEST_F(AcceleratorTest, TheClipboardHistoryKeyGoesToTheShellUnderBothConventions)
+{
+    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    manager.activation()->activate(window);
+    auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
+    RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
+    input::Keyboard keyboard(std::move(delegateOwner), &seat);
+
+    chord({KEY_LEFTMETA}, KEY_V);
+    EXPECT_EQ(1, delegate.clipboardHistoryToggles);
+
+    // Control+Command+V, with Alt where Command is on a PC keyboard; Command+V
+    // stays the application's paste.
+    seat.setShortcutConvention(input::ShortcutConvention::Command);
+    configuration->setConvention(input::ShortcutConvention::Command);
+    keyboardDelegate->keys.clear();
+    chord({KEY_LEFTCTRL, KEY_LEFTALT}, KEY_V);
+    EXPECT_EQ(2, delegate.clipboardHistoryToggles);
+    for (const auto &[code, pressed] : keyboardDelegate->keys)
+        EXPECT_NE(static_cast<uint32_t>(KEY_V), code);
+    keyboardDelegate->keys.clear();
+    chord({KEY_LEFTALT}, KEY_V);
+    EXPECT_EQ(2, delegate.clipboardHistoryToggles);
+    const std::vector<std::pair<uint32_t, bool>> paste = {
+            {KEY_LEFTCTRL, true}, {KEY_V, true}, {KEY_V, false}, {KEY_LEFTCTRL, false}};
+    EXPECT_EQ(paste, keyboardDelegate->keys);
+}
+
+TEST_F(AcceleratorTest, SendPasteTypesTheApplicationsPasteShortcut)
+{
+    auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
+    RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
+    input::Keyboard keyboard(std::move(delegateOwner), &seat);
+    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    manager.activation()->activate(window);
+
+    // Under the Command convention too: the keys go out as clients see them.
+    seat.setShortcutConvention(input::ShortcutConvention::Command);
+    configuration->setConvention(input::ShortcutConvention::Command);
+    manager.sendPaste();
+    const std::vector<std::pair<uint32_t, bool>> paste = {
+            {KEY_LEFTCTRL, true}, {KEY_V, true}, {KEY_V, false}, {KEY_LEFTCTRL, false}};
+    EXPECT_EQ(paste, keyboardDelegate->keys);
+
+    keyboardDelegate->keys.clear();
+    wm::Window *terminal = manager.createWindow(
+            makeSurface({300, 200}),
+            {.requestedSize = {300, 200}, .applicationId = QStringLiteral("cutefish-terminal")});
+    manager.activation()->activate(terminal);
+    manager.sendPaste();
+    const std::vector<std::pair<uint32_t, bool>> terminalPaste = {
+            {KEY_LEFTCTRL, true}, {KEY_LEFTSHIFT, true}, {KEY_V, true},
+            {KEY_V, false},       {KEY_LEFTSHIFT, false}, {KEY_LEFTCTRL, false}};
+    EXPECT_EQ(terminalPaste, keyboardDelegate->keys);
+
+    // A held key, such as the Return that picked the entry, is waited for.
+    press(KEY_ENTER);
+    keyboardDelegate->keys.clear();
+    manager.sendPaste();
+    EXPECT_TRUE(keyboardDelegate->keys.empty());
+    release(KEY_ENTER);
+    keyboardDelegate->keys.clear();
+    QTest::qWait(100);
+    EXPECT_EQ(terminalPaste, keyboardDelegate->keys);
+
+    // Nothing to the desktop, or while locked.
+
+    wm::Window *desktop = makeWindow(QRect(0, 0, 800, 600));
+    desktop->setRole(wm::WindowRole::Desktop);
+    manager.activation()->activate(desktop);
+    ASSERT_EQ(desktop, manager.activation()->activeWindow());
+    keyboardDelegate->keys.clear();
+    manager.sendPaste();
+    EXPECT_TRUE(keyboardDelegate->keys.empty());
+
+    manager.activation()->activate(window);
+    ASSERT_TRUE(session.requestLock());
+    session.notifyFramePresented();
+    ASSERT_EQ(session::SessionState::Locked, session.state());
+    keyboardDelegate->keys.clear();
+    manager.sendPaste();
+    EXPECT_TRUE(keyboardDelegate->keys.empty());
+}
+
+TEST_F(AcceleratorTest, APickerBorrowsTheKeyboardUntilAnotherWindowIsActivated)
+{
+    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    manager.activation()->activate(window);
+    wm::Window *picker = makeWindow(QRect(200, 150, 400, 300));
+    picker->setRole(wm::WindowRole::Picker);
+    EXPECT_FALSE(manager.activation()->canActivate(picker));
+
+    manager.setKeyboardGrab(picker);
+    EXPECT_EQ(picker->rootSurface(), seat.focusedSurface());
+    EXPECT_EQ(window, manager.activation()->activeWindow());
+
+    wm::Window *other = makeWindow(QRect(0, 0, 200, 100));
+    manager.activation()->activate(other);
+    EXPECT_EQ(nullptr, manager.keyboardGrab());
+    EXPECT_EQ(other->rootSurface(), seat.focusedSurface());
+}
+
 TEST_F(AcceleratorTest, DeskKeysAddSwitchSendAndRemoveDesksUnderBothConventions)
 {
     wm::DesksController *desks = manager.desks();
@@ -1705,7 +1810,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     const QDBusReply<QString> reply = proxy.call(QStringLiteral("accelerators"));
     ASSERT_TRUE(reply.isValid());
     const QJsonArray actions = parse(reply.value()).value(QStringLiteral("actions")).toArray();
-    EXPECT_EQ(45, actions.size());
+    EXPECT_EQ(46, actions.size());
     bool sawMaximize = false;
     bool sawOverview = false;
     for (const QJsonValue &value : actions) {

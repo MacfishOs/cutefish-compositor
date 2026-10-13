@@ -27,6 +27,9 @@ public:
     virtual void startCaptureMode() = 0;
     virtual void stopScreenRecording() = 0;
 
+    // com.cutefish.ClipboardHistory.toggle: shows or hides the picker.
+    virtual void toggleClipboardHistory() = 0;
+
     // com.cutefish.Osd: changes the level and shows it.
     virtual void volumeDown() = 0;
     virtual void volumeUp() = 0;
@@ -47,6 +50,7 @@ public:
     void takePartialScreenshot(bool toClipboard) override;
     void startCaptureMode() override;
     void stopScreenRecording() override;
+    void toggleClipboardHistory() override;
     void volumeDown() override;
     void volumeUp() override;
     void toggleMute() override;

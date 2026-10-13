@@ -214,6 +214,7 @@ bool AcceleratorController::canPerformAction(AcceleratorAction action,
     case AcceleratorAction::TakePartialScreenshotToClipboard:
     case AcceleratorAction::StartCaptureMode:
     case AcceleratorAction::StopScreenRecording:
+    case AcceleratorAction::ToggleClipboardHistory:
     case AcceleratorAction::VolumeMuteToggle:
     case AcceleratorAction::VolumeDown:
     case AcceleratorAction::VolumeUp:
@@ -324,6 +325,9 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
         break;
     case AcceleratorAction::StopScreenRecording:
         commands::stopScreenRecording(m_context);
+        break;
+    case AcceleratorAction::ToggleClipboardHistory:
+        commands::toggleClipboardHistory(m_context);
         break;
     case AcceleratorAction::VolumeMuteToggle:
         commands::volumeMuteToggle(m_context);

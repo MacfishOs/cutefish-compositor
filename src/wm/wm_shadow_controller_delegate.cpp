@@ -32,6 +32,7 @@ bool WmShadowControllerDelegate::shouldShowShadowForWindow(const Window *window)
     case WindowRole::Notification:
     case WindowRole::Osd:
     case WindowRole::Sheet:
+    case WindowRole::Picker:
         return true;
     case WindowRole::Desktop:
     case WindowRole::Panel:
@@ -54,7 +55,8 @@ ShadowElevation WmShadowControllerDelegate::elevationForWindow(const Window *win
         return ShadowElevation::MenuOrTooltip;
     if (window->role() == WindowRole::Dock)
         return ShadowElevation::Dock;
-    if (window->role() == WindowRole::Notification || window->role() == WindowRole::Osd)
+    if (window->role() == WindowRole::Notification || window->role() == WindowRole::Osd
+        || window->role() == WindowRole::Picker)
         return ShadowElevation::Popup;
     // A window being moved or resized reads as lifted off the desktop, so it
     // keeps the active elevation even if something else holds the keyboard.

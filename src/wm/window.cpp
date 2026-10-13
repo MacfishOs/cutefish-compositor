@@ -85,6 +85,7 @@ scene::WindowAnimation::Style animationStyleFor(WindowRole role)
         return scene::WindowAnimation::Style::Launcher;
     case WindowRole::Desktop:
     case WindowRole::Osd:
+    case WindowRole::Picker:
         return scene::WindowAnimation::Style::Fade;
     case WindowRole::Panel:
     case WindowRole::Dock:

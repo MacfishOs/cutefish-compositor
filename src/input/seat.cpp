@@ -704,6 +704,14 @@ void Seat::deliverKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
     dispatchKeyToClients(timestamp, evdevCode, pressed);
 }
 
+void Seat::tapKeys(Timestamp timestamp, const std::vector<uint32_t> &codes)
+{
+    for (uint32_t code : codes)
+        deliverKey(timestamp, code, true);
+    for (auto it = codes.rbegin(); it != codes.rend(); ++it)
+        deliverKey(timestamp, *it, false);
+}
+
 void Seat::dispatchKeyToClients(Timestamp timestamp, uint32_t evdevCode, bool pressed)
 {
     if (m_wasShutdown)

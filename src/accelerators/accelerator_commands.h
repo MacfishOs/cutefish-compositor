@@ -83,6 +83,8 @@ void takeScreenshot(const CommandContext &context, bool toClipboard);
 void takePartialScreenshot(const CommandContext &context, bool toClipboard);
 void startCaptureMode(const CommandContext &context);
 void stopScreenRecording(const CommandContext &context);
+// So does the clipboard history.
+void toggleClipboardHistory(const CommandContext &context);
 // The levels belong to the shell too, which shows the change.
 void volumeDown(const CommandContext &context);
 void volumeUp(const CommandContext &context);

@@ -7,8 +7,13 @@
 #include "wm/window_visual_controller.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <optional>
 #include <utility>
+
+#include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <QCoreApplication>
 #include <QStringList>
@@ -19,6 +24,7 @@
 #include "core/logging.h"
 #include "display/display_manager.h"
 #include "input/hit_test.h"
+#include "input/key_translator.h"
 #include "input/seat.h"
 #include "input/session_gate.h"
 #include "scene/node.h"
@@ -845,6 +851,44 @@ void WindowManager::setKeyboardGrab(Window *window)
         m_seat->setFocusedSurface(window->rootSurface(), true);
 }
 
+void WindowManager::sendPaste()
+{
+    if (!m_pasteTimer) {
+        m_pasteTimer = new QTimer(this);
+        m_pasteTimer->setInterval(20);
+        connect(m_pasteTimer, &QTimer::timeout, this, &WindowManager::sendPaste);
+    }
+    if (!m_pasteTimer->isActive())
+        m_pasteDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kPasteWaitMs);
+
+    if (!m_seat || !allowsActivation() || std::chrono::steady_clock::now() > m_pasteDeadline) {
+        m_pasteTimer->stop();
+        return;
+    }
+    // Held keys would join the shortcut: Shift turns Ctrl+V into another one.
+    if (!m_seat->pressedKeys().empty() || m_seat->pressedButtons() != input::NoButton) {
+        m_pasteTimer->start();
+        return;
+    }
+    m_pasteTimer->stop();
+
+    const Window *window = m_seat->focusedSurface() && !m_seat->focusIsBorrowed()
+            ? windowForSurface(m_seat->focusedSurface())
+            : nullptr;
+    if (!window || window->role() != WindowRole::Normal)
+        return;
+
+    // As Ash's SyntheticCtrlV: V where the layout has it, else where a Latin
+    // layout has it, which is where toolkits look for the shortcut's letter.
+    const std::optional<input::KeyStroke> stroke =
+            m_seat->clientXkbTracker()->keyStroke(XKB_KEY_v);
+    std::vector<uint32_t> codes {KEY_LEFTCTRL};
+    if (input::isTerminal(window->applicationId()))
+        codes.push_back(KEY_LEFTSHIFT);
+    codes.push_back(stroke && stroke->modifiers.empty() ? stroke->key : KEY_V);
+    m_seat->tapKeys(std::chrono::steady_clock::now(), codes);
+}
+
 void WindowManager::activateForPress(Window *window)
 {
     // A press through the capture interface, as while it counts down, takes
@@ -1549,6 +1593,10 @@ bool WindowManager::onKey(input::Timestamp, uint32_t evdevCode, bool pressed)
 void WindowManager::onWindowActivated(Window *gainedActive, Window *lostActive)
 {
     Q_UNUSED(lostActive);
+    // A picker gives the keyboard up to whatever is activated while it is up,
+    // an application started from the dock for one.
+    if (m_keyboardGrab && m_keyboardGrab->role() == WindowRole::Picker)
+        m_keyboardGrab = nullptr;
     if (m_seat && !m_keyboardGrab)
         m_seat->setFocusedSurface(gainedActive ? gainedActive->rootSurface() : nullptr);
     Q_EMIT activeWindowChanged(gainedActive);

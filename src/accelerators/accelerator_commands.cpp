@@ -256,6 +256,11 @@ void stopScreenRecording(const CommandContext &context)
     context.delegate->stopScreenRecording();
 }
 
+void toggleClipboardHistory(const CommandContext &context)
+{
+    context.delegate->toggleClipboardHistory();
+}
+
 void volumeDown(const CommandContext &context)
 {
     context.delegate->volumeDown();

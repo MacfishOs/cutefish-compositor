@@ -898,8 +898,9 @@ void ShellSurface::mapToplevel()
         m_window->state()->setRestoreBounds(bounds);
     }
 
-    // The capture interface is never activated; mapping it takes the keyboard.
-    if (m_window->role() == WindowRole::Capture)
+    // The capture interface and pickers are never activated; mapping them
+    // takes the keyboard.
+    if (m_window->role() == WindowRole::Capture || m_window->role() == WindowRole::Picker)
         m_manager->setKeyboardGrab(m_window);
     else if (!m_window->state()->isMinimized())
         m_manager->activation()->activate(m_window);
