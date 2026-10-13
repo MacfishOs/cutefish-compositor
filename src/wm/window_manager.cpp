@@ -1268,7 +1268,17 @@ Window *WindowManager::frameAt(const QPointF &location, FrameArea *area) const
         if (!window->isVisible())
             continue;
 
+        // Moved aside, or sliding: the frame's pixels are elsewhere than its bounds.
+        const QPoint drawn = location.toPoint() - window->presentationOffset();
         WindowFrame *frame = window->frame();
+        if (!window->presentationOffset().isNull()) {
+            if ((frame && frame->inputBounds().contains(drawn))
+                || (window->bounds().contains(drawn)
+                    && (!window->visualNode() || window->visualNode()->acceptsInput(location))))
+                return nullptr;
+            continue;
+        }
+
         if (frame && frame->inputBounds().contains(location.toPoint())) {
             const FrameArea hitArea = frame->areaAt(location);
             if (hitArea != FrameArea::None) {
@@ -1306,17 +1316,36 @@ Window *WindowManager::resizeHandleAt(const QPointF &location, bool touch, Resiz
             continue;
 
         // Checked before the window's own area: the handles reach a pixel in.
-        const ResizeEdge hit = serverResizeEdgeAt(*window, m_visualStyle, location, touch);
+        const bool inPlace = window->presentationOffset().isNull();
+        const ResizeEdge hit = inPlace ? serverResizeEdgeAt(*window, m_visualStyle, location, touch)
+                                       : ResizeEdge::None;
         if (hit != ResizeEdge::None) {
             *edge = hit;
             return window;
         }
-        if (WindowFrame *frame = window->frame();
-            frame && frame->inputBounds().contains(location.toPoint()))
+        const QPoint drawn = location.toPoint() - window->presentationOffset();
+        if (WindowFrame *frame = window->frame(); frame && frame->inputBounds().contains(drawn))
             return nullptr;
-        if (window->bounds().contains(location.toPoint())
+        if (window->bounds().contains(drawn)
             && (!window->visualNode() || window->visualNode()->acceptsInput(location)))
             return nullptr;
+    }
+    return nullptr;
+}
+
+Window *WindowManager::drawnWindowAt(const QPointF &location) const
+{
+    for (auto it = m_stackingOrder.rbegin(); it != m_stackingOrder.rend(); ++it) {
+        Window *window = *it;
+        if (!window->isVisible())
+            continue;
+
+        const QPoint drawn = location.toPoint() - window->presentationOffset();
+        if (WindowFrame *frame = window->frame(); frame && frame->inputBounds().contains(drawn))
+            return window;
+        if (window->bounds().contains(drawn)
+            && (!window->visualNode() || window->visualNode()->acceptsInput(location)))
+            return window;
     }
     return nullptr;
 }
@@ -1458,9 +1487,7 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const QPoint
     // A press on a window moved aside brings them all back, that one in
     // front, and goes no further.
     if (m_showDesktop->isActive()) {
-        Window *window = frameAt(location);
-        if (!window)
-            window = windowAt(location);
+        Window *window = drawnWindowAt(location);
         if (window && m_showDesktop->isMovedAside(window)) {
             m_showDesktop->exit(window);
             return true;

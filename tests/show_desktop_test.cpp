@@ -203,6 +203,34 @@ TEST_F(ShowDesktopTest, ADialogGoesWithItsWindow)
     EXPECT_EQ(dialog->presentationOffset(), window->presentationOffset());
 }
 
+TEST_F(ShowDesktopTest, ASheetGoesWithItsWindow)
+{
+    Window *window = makeWindow(QRect(500, 100, 400, 300));
+    Window *sheet = makeWindow(QRect(550, 100, 300, 150));
+    sheet->setRole(WindowRole::Sheet);
+    sheet->setTransientParent(window);
+    showDesktop->enter();
+    finishSlide();
+    EXPECT_TRUE(showDesktop->isMovedAside(sheet));
+    EXPECT_EQ(sheet->presentationOffset(), window->presentationOffset());
+}
+
+TEST_F(ShowDesktopTest, WhereAWindowWasIsDesktop)
+{
+    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    window->rootSurface()->setServerResize(true);
+    const QPointF outsideRight(window->bounds().right() + 2, window->bounds().center().y());
+    ResizeEdge edge = ResizeEdge::None;
+    ASSERT_EQ(window, manager.resizeHandleAt(outsideRight, false, &edge));
+    showDesktop->enter();
+    finishSlide();
+
+    // Its handles went with it.
+    EXPECT_EQ(nullptr, manager.resizeHandleAt(outsideRight, false, &edge));
+    click(outsideRight);
+    EXPECT_TRUE(showDesktop->isActive());
+}
+
 TEST_F(ShowDesktopTest, MinimizingOrClosingWhileAsideReleasesTheWindow)
 {
     Window *minimized = makeWindow(QRect(100, 100, 300, 200));

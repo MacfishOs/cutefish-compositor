@@ -362,12 +362,14 @@ public:
 
     // The topmost window whose server-side frame owns `location`, and which
     // part of it. Null when the point belongs to a client, to nothing, or to a
-    // window under one that already covers the point.
+    // window under one that already covers the point. A window drawn away from
+    // its bounds (Window::presentationOffset) covers where it is drawn and owns
+    // no frame actions there.
     Window *frameAt(const QPointF &location, FrameArea *area = nullptr) const;
 
     // The topmost window whose server resize handles own `location`, and the
     // edge they grab; see cutefish_window_hints_v1.set_server_resize. A touch
-    // gets wider handles.
+    // gets wider handles. A window drawn away from its bounds has none.
     Window *resizeHandleAt(const QPointF &location, bool touch, ResizeEdge *edge) const;
 
     // Whether this window is still managed. Callbacks are re-entrant, so a
@@ -481,6 +483,8 @@ private:
     bool isPopupSurface(compositor::Surface *surface) const;
     // A popup under `location` takes client input over any window handle.
     bool isPopupAt(const QPointF &location) const;
+    // The topmost visible window drawn at `location`, frame included.
+    Window *drawnWindowAt(const QPointF &location) const;
     // The frame currently holding a pressed caption button, if any.
     Window *windowTrackingFramePress() const;
     void setFrameHover(Window *window);

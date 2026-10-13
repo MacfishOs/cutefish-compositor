@@ -22,11 +22,13 @@ double easeOut(double t)
     return 1 - std::pow(1 - t, 3);
 }
 
-// Moved aside: the application windows on screen, dialogs included, but not
-// the shell's own or popups, which belong to the window they open from.
+// Moved aside: the application windows on screen, dialogs and sheets
+// included, but not the shell's own or popups, which belong to the window they
+// open from.
 bool isMovable(const Window *window)
 {
-    return window->isVisible() && !window->isShellWindow() && !window->isPopup();
+    return window->isVisible() && !window->isPopup()
+            && (!window->isShellWindow() || window->role() == WindowRole::Sheet);
 }
 
 const Window *transientRoot(const Window *window)
