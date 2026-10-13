@@ -336,7 +336,8 @@ public:
     // --- Popup grabs ---
 
     // The chain of popups holding an explicit grab, outermost first. A pointer
-    // press outside the chain dismisses all of it and is not delivered.
+    // press outside the chain dismisses all of it and is not delivered, except
+    // on the status bar the chain hangs from (see isPopupGrabMenuBar()).
     void pushPopupGrab(ShellSurface *popup);
     void removePopupGrab(ShellSurface *popup);
 
@@ -461,6 +462,16 @@ private:
     // Emits outputsChanged() when outputAreas() differs from the last time.
     void notifyOutputsChanged();
     bool isInsidePopupGrabChain(compositor::Surface *surface) const;
+    // The window the outermost grabbing popup hangs from.
+    Window *popupGrabRoot() const;
+    // The status bar the grabbing popups hang from. It switches between its
+    // panels and menus, or closes them, itself, as a menu bar does.
+    bool isPopupGrabMenuBar(const Window *window) const;
+    // While grabbing popups hang from a window that never takes the keyboard,
+    // the status bar or the dock, that window borrows it, as Ash reroutes keys
+    // to a tray bubble: the client hands them to its popups, and the
+    // application keeps activation.
+    void updatePopupKeyboard();
     bool isCaptureWindow(const Window *window) const;
     // The window a pointer event at `location` is aimed at, frames included,
     // when a modal transient blocks it.
@@ -502,6 +513,8 @@ private:
 
     Activation m_activation;
     Window *m_keyboardGrab = nullptr;
+    // The window updatePopupKeyboard() lent the keyboard to.
+    Window *m_popupKeyboardRoot = nullptr;
     QTimer *m_pasteTimer = nullptr;
     std::chrono::steady_clock::time_point m_pasteDeadline;
     std::unique_ptr<TransientManager> m_transientManager;

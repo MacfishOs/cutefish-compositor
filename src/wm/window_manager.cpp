@@ -564,6 +564,8 @@ void WindowManager::destroyWindow(Window *window)
     m_eventHandler->onWindowRemoving(window);
     m_desks->onWindowRemoving(window);
     m_transientManager->windowDestroying(window);
+    if (m_popupKeyboardRoot == window)
+        m_popupKeyboardRoot = nullptr;
     const bool grabbed = m_keyboardGrab == window;
     if (grabbed)
         m_keyboardGrab = nullptr;
@@ -907,6 +909,7 @@ void WindowManager::activateForPress(Window *window)
 void WindowManager::releaseKeyboardGrab()
 {
     m_keyboardGrab = nullptr;
+    m_popupKeyboardRoot = nullptr;
     Window *active = m_activation.activeWindow();
     if (m_seat)
         m_seat->setFocusedSurface(active ? active->rootSurface() : nullptr);
@@ -1090,12 +1093,14 @@ void WindowManager::pushPopupGrab(ShellSurface *popup)
         return;
     }
     m_popupGrabs.push_back(popup);
+    updatePopupKeyboard();
 }
 
 void WindowManager::removePopupGrab(ShellSurface *popup)
 {
     m_popupGrabs.erase(std::remove(m_popupGrabs.begin(), m_popupGrabs.end(), popup),
                        m_popupGrabs.end());
+    updatePopupKeyboard();
 }
 
 bool WindowManager::isInsidePopupGrabChain(compositor::Surface *surface) const
@@ -1110,6 +1115,43 @@ bool WindowManager::isInsidePopupGrabChain(compositor::Surface *surface) const
             return true;
     }
     return false;
+}
+
+Window *WindowManager::popupGrabRoot() const
+{
+    if (m_popupGrabs.empty())
+        return nullptr;
+    const ShellSurface *root = m_popupGrabs.front();
+    while (root->popupParent())
+        root = root->popupParent();
+    return root->window();
+}
+
+bool WindowManager::isPopupGrabMenuBar(const Window *window) const
+{
+    return window && window->role() == WindowRole::Panel && popupGrabRoot() == window;
+}
+
+void WindowManager::updatePopupKeyboard()
+{
+    Window *root = popupGrabRoot();
+    if (root && root->focusPolicy() != FocusPolicy::NoFocus)
+        root = nullptr;
+    if (root == m_popupKeyboardRoot)
+        return;
+
+    const bool lent = m_popupKeyboardRoot && m_keyboardGrab == m_popupKeyboardRoot;
+    m_popupKeyboardRoot = nullptr;
+    // Lent from the grab request on, not from the map: a popup that replaces
+    // another in the same request batch keeps the client focused throughout,
+    // and Qt closes every popup of an application that loses the keyboard.
+    if (root && (!m_keyboardGrab || lent)) {
+        setKeyboardGrab(root);
+        if (m_keyboardGrab == root)
+            m_popupKeyboardRoot = root;
+    } else if (lent) {
+        releaseKeyboardGrab();
+    }
 }
 
 bool WindowManager::isCaptureWindow(const Window *window) const
@@ -1131,6 +1173,7 @@ void WindowManager::dismissPopupGrabs()
         m_popupGrabs.pop_back();
         innermost->close();
     }
+    updatePopupKeyboard();
 }
 
 void WindowManager::cancelInteractions()
@@ -1399,7 +1442,8 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const QPoint
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
         Window *target = windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)) {
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)
+            && !isPopupGrabMenuBar(target)) {
             // The press belongs to the grab, not to whatever is underneath.
             dismissPopupGrabs();
             return true;
@@ -1472,7 +1516,8 @@ bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const QP
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
         Window *target = windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)) {
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)
+            && !isPopupGrabMenuBar(target)) {
             dismissPopupGrabs();
             return true;
         }
@@ -1593,9 +1638,10 @@ bool WindowManager::onKey(input::Timestamp, uint32_t evdevCode, bool pressed)
 void WindowManager::onWindowActivated(Window *gainedActive, Window *lostActive)
 {
     Q_UNUSED(lostActive);
-    // A picker gives the keyboard up to whatever is activated while it is up,
-    // an application started from the dock for one.
-    if (m_keyboardGrab && m_keyboardGrab->role() == WindowRole::Picker)
+    // A picker or a popup gives the keyboard up to whatever is activated while
+    // it is up, an application started from the dock for one.
+    if (m_keyboardGrab
+        && (m_keyboardGrab->role() == WindowRole::Picker || m_keyboardGrab == m_popupKeyboardRoot))
         m_keyboardGrab = nullptr;
     if (m_seat && !m_keyboardGrab)
         m_seat->setFocusedSurface(gainedActive ? gainedActive->rootSurface() : nullptr);

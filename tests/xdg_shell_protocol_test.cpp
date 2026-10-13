@@ -1562,6 +1562,9 @@ TEST_F(XdgShellProtocolTest, APopupWithAGrabIsDismissedByAPressOutsideIt)
 
         check([&] {
             EXPECT_EQ(1u, windowManager.popupGrabs().size());
+            // An application's popup leaves the keyboard with the application.
+            EXPECT_EQ(compositor.surfaces()[0], seat.focusedSurface());
+            EXPECT_FALSE(seat.focusIsBorrowed());
             // Well outside the popup, and outside the parent too.
             manager.onPointerMotionAbsolute(at(1), QPointF(700, 500));
             manager.onPointerButton(at(2), BTN_LEFT, true);
@@ -1571,6 +1574,83 @@ TEST_F(XdgShellProtocolTest, APopupWithAGrabIsDismissedByAPressOutsideIt)
         EXPECT_EQ(1, popup->popupDones);
         check([&] {
             EXPECT_TRUE(windowManager.popupGrabs().empty());
+        });
+    });
+}
+
+TEST_F(XdgShellProtocolTest, AStatusBarPopupBorrowsTheKeyboardAndLeavesTheBarItsPresses)
+{
+    run([&](Client &c) {
+        c.bindSeat();
+        XdgWindow *application = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *bar = c.makeMappedToplevel(QSize(800, 30));
+        wm::Window *applicationWindow = nullptr;
+        compositor::Surface *applicationSurface = nullptr;
+        compositor::Surface *barSurface = nullptr;
+        check([&] {
+            ASSERT_EQ(2u, compositor.surfaces().size());
+            applicationSurface = compositor.surfaces()[0];
+            barSurface = compositor.surfaces()[1];
+            applicationWindow = windowManager.windowForSurface(applicationSurface);
+            wm::Window *barWindow = windowManager.windowForSurface(compositor.surfaces()[1]);
+            applicationWindow->setBounds(QRect(100, 100, 400, 300));
+            barWindow->setBounds(QRect(0, 0, 800, 30));
+            barWindow->setRole(wm::WindowRole::Panel);
+            barWindow->setFocusPolicy(wm::FocusPolicy::NoFocus);
+            windowManager.activation()->activate(applicationWindow);
+            EXPECT_EQ(applicationSurface, seat.focusedSurface());
+        });
+        c.sync();
+
+        XdgWindow *popup = c.makeXdgSurface();
+        xdg_positioner *positioner = xdg_wm_base_create_positioner(c.wmBase);
+        xdg_positioner_set_size(positioner, 100, 80);
+        xdg_positioner_set_anchor_rect(positioner, 600, 30, 1, 1);
+        popup->popup = xdg_surface_get_popup(popup->xdgSurface, bar->xdgSurface, positioner);
+        xdg_popup_add_listener(popup->popup, &popupListener, popup);
+        xdg_popup_grab(popup->popup, c.seat, c.lastEnterSerial);
+        xdg_positioner_destroy(positioner);
+        c.sync();
+        // From the grab on, before the popup maps: the client hands the keys on.
+        check([&] {
+            EXPECT_EQ(barSurface, seat.focusedSurface());
+            EXPECT_TRUE(seat.focusIsBorrowed());
+        });
+        c.ackAndAttach(popup, QSize(100, 80));
+
+        const int pressesBefore = c.buttonPresses;
+        check([&] {
+            EXPECT_EQ(barSurface, seat.focusedSurface());
+            EXPECT_EQ(applicationWindow, windowManager.activation()->activeWindow());
+
+            // On the bar, beside the popup: the bar gets it, the popup stays.
+            manager.onPointerMotionAbsolute(at(1), QPointF(100, 10));
+            manager.onPointerButton(at(2), BTN_LEFT, true);
+            manager.onPointerButton(at(3), BTN_LEFT, false);
+        });
+        c.sync();
+
+        EXPECT_EQ(0, popup->popupDones);
+        EXPECT_EQ(pressesBefore + 1, c.buttonPresses);
+        check([&] {
+            EXPECT_EQ(1u, windowManager.popupGrabs().size());
+            EXPECT_EQ(barSurface, seat.focusedSurface());
+
+            // Anywhere else the press only dismisses the popup.
+            manager.onPointerMotionAbsolute(at(4), QPointF(300, 250));
+            manager.onPointerButton(at(5), BTN_LEFT, true);
+            manager.onPointerButton(at(6), BTN_LEFT, false);
+        });
+        c.sync();
+
+        EXPECT_EQ(1, popup->popupDones);
+        EXPECT_EQ(pressesBefore + 1, c.buttonPresses);
+
+        c.destroyWindowObjects(popup);
+        c.sync();
+        check([&] {
+            EXPECT_EQ(applicationSurface, seat.focusedSurface());
+            EXPECT_FALSE(seat.focusIsBorrowed());
         });
     });
 }
