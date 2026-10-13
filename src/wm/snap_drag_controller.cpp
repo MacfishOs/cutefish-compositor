@@ -19,13 +19,13 @@ namespace cutefish::wm {
 namespace {
 
 // How long the pointer has to stay against the top edge before the drag turns
-// into a maximize. Upstream: kDwellTime.
-constexpr int kDwellMs = 400;
+// into a maximize. Half of upstream's kDwellTime, so the top answers sooner.
+constexpr int kDwellMs = 200;
 
 // Moving this far restarts the countdown, so a window dragged across the top
-// of the screen does not maximize on the way past. Upstream:
-// kSnapDragDwellTimeResetThreshold.
-constexpr int kDwellResetThreshold = 8;
+// of the screen does not maximize on the way past. Twice upstream's
+// kSnapDragDwellTimeResetThreshold, so a hand's jitter does not restart it.
+constexpr int kDwellResetThreshold = 16;
 
 } // namespace
 
