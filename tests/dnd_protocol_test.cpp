@@ -920,3 +920,48 @@ TEST(DndProtocol, TheShellsUntakenDragSlidesItsIconHome)
     wl_surface_destroy(icon);
     h.seat.setDragIconContainer(nullptr);
 }
+
+TEST(DndProtocol, TheShellsDragObjectGoneMidDragSendsNothingHome)
+{
+    ShellHarness sh;
+    auto &h = sh.h;
+    scene::Node icons(QStringLiteral("icons"));
+    h.seat.setDragIconContainer(&icons);
+    auto &a = sh.addShell();
+    map(h, a, 0);
+    ShellDrag drag(h, a);
+    cutefish_shell_drag_v1_set_returns_home(drag.object, 1);
+    cutefish_shell_drag_v1_set_icon_opacity(drag.object, wl_fixed_from_double(0.5));
+
+    h.focus(a);
+    h.seat.onPointerMotion({}, {10, 10});
+    h.seat.onPointerButton({}, {10, 10}, BTN_LEFT, true);
+    h.sync(a);
+    auto *icon = wl_compositor_create_surface(a.compositor);
+    auto *source = a.source({{"text/plain", "icon"}});
+    wl_data_source_set_actions(source, 2);
+    wl_data_device_start_drag(a.devices.front(), source, a.surface, icon, a.buttonSerial);
+    h.sync(a);
+    auto *surface = wayland::surfaceFromResource(wl_client_get_object(
+            a.serverClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(icon))));
+    auto pool = testsupport::makePool(32 * 32 * 4);
+    auto buffer = pool->createBuffer({32, 32}, 0, 128, render::PixelFormat::Bgra8888, nullptr);
+    surface->attach(buffer, {});
+    surface->commit();
+    const std::vector<uint8_t> pixels(32 * 32 * 4);
+    surface->node()->setTexture(std::make_shared<testsupport::FakeTexture>(
+            QSize(32, 32), pixels.data(), 128, render::PixelFormat::Bgra8888));
+    h.seat.onPointerMotion({}, {300, 250});
+
+    // Nobody would let go of an icon sent home now, so none is.
+    cutefish_shell_drag_v1_destroy(std::exchange(drag.object, nullptr));
+    h.sync(a);
+    ASSERT_TRUE(h.seat.drag()->active());
+    EXPECT_FLOAT_EQ(1.0f, surface->node()->alpha());
+    h.seat.onPointerButton({}, {300, 250}, BTN_LEFT, false);
+    h.sync(a);
+    EXPECT_FALSE(h.seat.drag()->active());
+    EXPECT_TRUE(icons.children().empty());
+    wl_surface_destroy(icon);
+    h.seat.setDragIconContainer(nullptr);
+}

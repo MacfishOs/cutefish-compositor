@@ -323,6 +323,12 @@ public:
     {
         if (m_holdsReturn && m_drag)
             m_drag->releaseReturn();
+        // Gone mid-drag: nobody would release the icon sent home, nor restore the rest.
+        if (m_following && m_drag && m_drag->active()) {
+            m_drag->setReturnsHome(false);
+            m_drag->setIconOpacity(1);
+            m_drag->setPlainIdleCursor(false);
+        }
     }
 
     void setIconOpacity(float opacity)
@@ -371,6 +377,8 @@ private:
         connect(m_drag, &input::DragController::ended, this, [this] {
             const bool returning = m_drag->isReturning();
             disconnect(m_drag, nullptr, this, nullptr);
+            // A later drag is not this one: settings no longer reach it.
+            m_following = false;
             if (!m_released)
                 cutefish_shell_drag_v1_send_cancelled(m_resource);
             m_holdsReturn = returning;

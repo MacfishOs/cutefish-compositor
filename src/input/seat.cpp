@@ -52,8 +52,9 @@ void Seat::shutdown()
 {
     if (m_wasShutdown)
         return;
-    m_drag.cancel();
+    // First, so the drag cancelled here leaves no icon sliding home.
     m_wasShutdown = true;
+    m_drag.cancel();
     m_primarySelection.setRecipient(nullptr);
     m_primarySelection.setSource(nullptr);
     m_selection.setRecipient(nullptr);
