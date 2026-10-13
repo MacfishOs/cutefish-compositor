@@ -7,6 +7,7 @@
 
 #include "clipboard_test_util.h"
 #include "cursor/cursor.h"
+#include "fake_renderer.h"
 #include "input/input_manager.h"
 #include "scene/surface_node.h"
 #include "shm_test_util.h"
@@ -98,6 +99,9 @@ struct ShellDrag {
             },
             [](void *data, cutefish_shell_drag_v1 *) {
                 static_cast<ShellDrag *>(data)->events.push_back("cancelled");
+            },
+            [](void *data, cutefish_shell_drag_v1 *) {
+                static_cast<ShellDrag *>(data)->events.push_back("returned");
             }};
         cutefish_shell_drag_v1_add_listener(object, &listener, this);
         cutefish_shell_v1_destroy(shell);
@@ -105,7 +109,11 @@ struct ShellDrag {
         h.sync(c);
     }
 
-    ~ShellDrag() { cutefish_shell_drag_v1_destroy(object); }
+    ~ShellDrag()
+    {
+        if (object)
+            cutefish_shell_drag_v1_destroy(object);
+    }
 };
 
 // The trusted shell, with cutefish_shell_v1.
@@ -787,6 +795,9 @@ TEST(DndProtocol, TheShellFollowsItsDragDimsTheIconAndHearsTheDropFirst)
     EXPECT_EQ(1u, a.cancelled);
     EXPECT_EQ(0, std::count(drag.events.begin(), drag.events.end(), "cancelled"));
     EXPECT_FLOAT_EQ(1.0f, surface->node()->alpha());
+    // Not asked to return: the icon goes where the drag ended.
+    EXPECT_TRUE(icons.children().empty());
+    EXPECT_EQ(0, std::count(drag.events.begin(), drag.events.end(), "returned"));
 
     // One drag only: the next one is not followed.
     const size_t heard = drag.events.size();
@@ -823,13 +834,89 @@ TEST(DndProtocol, TheShellIgnoresOtherClientsDragsAndHearsEscapeAsACancel)
     h.sync(a);
     EXPECT_TRUE(drag.events.empty());
 
+    cutefish_shell_drag_v1_set_returns_home(drag.object, 1);
     start(h, a);
     h.seat.onPointerMotion({}, {40, 300});
     h.seat.onKey({}, KEY_ESC, true);
     h.seat.onKey({}, KEY_ESC, false);
     h.sync(a);
-    ASSERT_FALSE(drag.events.empty());
-    EXPECT_EQ("cancelled", drag.events.back());
+    ASSERT_GE(drag.events.size(), 2u);
+    // Without an icon there is nothing to slide, and it is home at once.
+    EXPECT_EQ("cancelled", drag.events.end()[-2]);
+    EXPECT_EQ("returned", drag.events.back());
     EXPECT_EQ(0, std::count(drag.events.begin(), drag.events.end(), "dropped"));
     EXPECT_EQ(QPointF(40, 300), drag.location);
+}
+
+// Ash's DragDropController::StartCanceledAnimation: a drop nothing takes
+// sends the drag image back to where the drag started.
+TEST(DndProtocol, TheShellsUntakenDragSlidesItsIconHome)
+{
+    ShellHarness sh;
+    auto &h = sh.h;
+    scene::Node icons(QStringLiteral("icons"));
+    h.seat.setDragIconContainer(&icons);
+    auto &a = sh.addShell();
+    map(h, a, 0);
+    ShellDrag drag(h, a);
+    cutefish_shell_drag_v1_set_returns_home(drag.object, 1);
+    cutefish_shell_drag_v1_set_icon_opacity(drag.object, wl_fixed_from_double(0.5));
+
+    h.focus(a);
+    h.seat.onPointerMotion({}, {10, 10});
+    h.seat.onPointerButton({}, {10, 10}, BTN_LEFT, true);
+    h.sync(a);
+    auto *icon = wl_compositor_create_surface(a.compositor);
+    auto *source = a.source({{"text/plain", "icon"}});
+    wl_data_source_set_actions(source, 2);
+    wl_data_device_start_drag(a.devices.front(), source, a.surface, icon, a.buttonSerial);
+    h.sync(a);
+    auto *surface = wayland::surfaceFromResource(wl_client_get_object(
+            a.serverClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(icon))));
+    auto pool = testsupport::makePool(32 * 32 * 4);
+    auto buffer = pool->createBuffer({32, 32}, 0, 128, render::PixelFormat::Bgra8888, nullptr);
+    surface->attach(buffer, {-7, -9});
+    surface->commit();
+    const std::vector<uint8_t> pixels(32 * 32 * 4);
+    surface->node()->setTexture(std::make_shared<testsupport::FakeTexture>(
+            QSize(32, 32), pixels.data(), 128, render::PixelFormat::Bgra8888));
+    h.seat.onPointerMotion({}, {300, 250});
+    EXPECT_EQ(QPoint(293, 241), surface->position());
+    // The slot the shell keeps for it, not where the drag happened to start.
+    cutefish_shell_drag_v1_set_home(drag.object, wl_fixed_from_int(40), wl_fixed_from_int(30));
+    h.sync(a);
+
+    h.seat.onPointerButton({}, {300, 250}, BTN_LEFT, false);
+    h.sync(a);
+    EXPECT_FALSE(h.seat.drag()->active());
+    EXPECT_EQ("dropped", drag.events.back());
+    ASSERT_EQ(1u, icons.children().size());
+    auto *home = static_cast<scene::SurfaceNode *>(icons.children().front());
+    EXPECT_NE(surface->node(), home);
+    EXPECT_EQ(QPoint(293, 241), home->position());
+    EXPECT_FLOAT_EQ(0.5f, home->alpha());
+
+    h.compositor.frameStarted(1000);
+    EXPECT_EQ(QPoint(293, 241), home->position());
+    h.compositor.frameStarted(1125);
+    EXPECT_GT(home->position().x(), 33);
+    EXPECT_LT(home->position().x(), 293);
+    EXPECT_GT(home->alpha(), 0.5f);
+    h.sync(a);
+    EXPECT_EQ("dropped", drag.events.back());
+
+    h.compositor.frameStarted(1250);
+    h.sync(a);
+    EXPECT_EQ("returned", drag.events.back());
+    // Home, and held there until the shell lets go.
+    ASSERT_EQ(1u, icons.children().size());
+    EXPECT_EQ(QPoint(33, 21), home->position());
+    EXPECT_FLOAT_EQ(1.0f, home->alpha());
+    h.compositor.frameStarted(1300);
+    EXPECT_EQ(QPoint(33, 21), home->position());
+    cutefish_shell_drag_v1_destroy(std::exchange(drag.object, nullptr));
+    h.sync(a);
+    EXPECT_TRUE(icons.children().empty());
+    wl_surface_destroy(icon);
+    h.seat.setDragIconContainer(nullptr);
 }

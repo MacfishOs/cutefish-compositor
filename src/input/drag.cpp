@@ -13,14 +13,19 @@
 #include <unistd.h>
 #include <utility>
 
+#include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "input/hit_test.h"
 #include "input/seat.h"
+#include "scene/motion.h"
 #include "scene/surface_node.h"
 
 namespace cutefish::input {
 
 namespace {
+
+// ash's kCancelAnimationDuration.
+constexpr double kReturnDurationMs = 250;
 
 void setSubtreeAlpha(scene::Node *node, float alpha)
 {
@@ -163,7 +168,9 @@ DragController::DragController(Seat *seat)
 
 DragController::~DragController()
 {
+    m_returnsHome = false;
     cancel();
+    releaseReturn();
 }
 
 void DragController::start(compositor::Surface *origin, compositor::Surface *icon,
@@ -215,6 +222,7 @@ bool DragController::begin(compositor::Surface *origin, compositor::Surface *ico
                            std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
                            const QPointF &location)
 {
+    releaseReturn();
     const auto generation = ++m_generation;
     m_seat->consumeDragSerials();
     m_origin = origin;
@@ -222,6 +230,7 @@ bool DragController::begin(compositor::Surface *origin, compositor::Surface *ico
     m_source = std::move(source);
     m_actions = actions;
     m_location = location;
+    m_home = location;
     origin->addSurfaceObserver(this);
     if (m_source) {
         m_source->markUsed();
@@ -389,6 +398,7 @@ void DragController::detach()
         origin->removeSurfaceObserver(this);
     m_iconOpacity = 1.0f;
     m_plainIdleCursor = false;
+    m_returnsHome = false;
     if (icon) {
         setSubtreeAlpha(icon->node(), 1.0f);
         icon->removeSurfaceObserver(this);
@@ -473,6 +483,8 @@ void DragController::end(bool released)
 {
     if (!active())
         return;
+    const bool returns = m_returnsHome && !m_seat->wasShutdown();
+    auto home = returns ? takeIconForReturn() : nullptr;
     auto *window = std::exchange(m_windowDelegate, nullptr);
     m_finishing = true;
     auto source = std::exchange(m_source, nullptr);
@@ -493,7 +505,12 @@ void DragController::end(bool released)
     m_finishing = false;
     if (window)
         window->dragEnded(released);
+    if (returns)
+        startReturn(std::move(home));
     emit ended();
+    // Nothing to slide back: home at once, after the end.
+    if (m_returning && !m_returnNode)
+        finishReturn();
 }
 
 void DragController::setWindowDelegate(DragWindowDelegate *delegate)
@@ -512,6 +529,85 @@ void DragController::setPlainIdleCursor(bool plain)
     m_plainIdleCursor = plain;
     if (!m_selected || !m_selected->canDrop())
         setCursor(idleCursor());
+}
+
+void DragController::setReturnsHome(bool returns)
+{
+    if (active() && !m_external)
+        m_returnsHome = returns;
+}
+
+void DragController::setHome(const QPointF &home)
+{
+    if (active() && !m_external)
+        m_home = home;
+}
+
+std::unique_ptr<scene::SurfaceNode> DragController::takeIconForReturn() const
+{
+    scene::SurfaceNode *icon = m_icon ? m_icon->node() : nullptr;
+    if (!icon || !icon->texture() || !m_seat->dragIconContainer())
+        return nullptr;
+    auto node = std::make_unique<scene::SurfaceNode>(QStringLiteral("drag-return"));
+    node->setGeometry(icon->geometry());
+    node->setTextureMapping(icon->textureMapping());
+    node->setAlpha(m_iconOpacity);
+    node->setTexture(icon->takeTexture());
+    return node;
+}
+
+void DragController::startReturn(std::unique_ptr<scene::SurfaceNode> node)
+{
+    m_returning = true;
+    if (!node)
+        return;
+    m_returnFrom = node->position();
+    // The icon keeps its offset from the pointer position.
+    m_returnTo = m_returnFrom + (m_home - m_location).toPoint();
+    m_returnOpacity = node->alpha();
+    m_returnStarted = -1;
+    m_returnNode = static_cast<scene::SurfaceNode *>(
+            m_seat->dragIconContainer()->addChild(std::move(node)));
+    if (compositor::Compositor *compositor = m_seat->compositor()) {
+        m_returnFrames = connect(compositor, &compositor::Compositor::frameStarted, this,
+                                 &DragController::advanceReturn);
+        compositor->scheduleRepaint();
+    }
+}
+
+void DragController::advanceReturn(double frameTimeMs)
+{
+    if (!m_returning || !m_returnNode)
+        return;
+    if (m_returnStarted < 0)
+        m_returnStarted = frameTimeMs;
+    const double t = std::clamp((frameTimeMs - m_returnStarted) / kReturnDurationMs, 0.0, 1.0);
+    const auto &curve = scene::motion::kAccel20Decel100;
+    const double eased = scene::motion::cubicBezier(curve.x1, curve.y1, curve.x2, curve.y2, t);
+    m_returnNode->setPosition(m_returnFrom + (m_returnTo - m_returnFrom) * eased);
+    m_returnNode->setAlpha(m_returnOpacity + (1.0f - m_returnOpacity) * float(eased));
+    if (t >= 1)
+        finishReturn();
+    else
+        m_seat->compositor()->scheduleRepaint();
+}
+
+void DragController::finishReturn()
+{
+    if (!m_returning)
+        return;
+    m_returning = false;
+    disconnect(m_returnFrames);
+    emit returned();
+}
+
+void DragController::releaseReturn()
+{
+    finishReturn();
+    if (auto *node = std::exchange(m_returnNode, nullptr)) {
+        if (scene::Node *parent = node->parent())
+            parent->removeChild(node);
+    }
 }
 
 void DragController::notifyWindowTarget()

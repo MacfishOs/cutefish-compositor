@@ -20,6 +20,10 @@
 #include "input/cursor_shape.h"
 #include "input/types.h"
 
+namespace cutefish::scene {
+class SurfaceNode;
+}
+
 namespace cutefish::input {
 
 class Seat;
@@ -127,6 +131,21 @@ public:
     // the default pointer rather than no-drop.
     void setPlainIdleCursor(bool plain);
 
+    // For the running drag only: ended with nothing taking the data, by a
+    // cancel or a release, its icon slides back to where the drag started,
+    // as ash's cancel animation does.
+    void setReturnsHome(bool returns);
+    // Where the pointer position goes back to; where the drag started otherwise.
+    void setHome(const QPointF& home);
+
+    // The ended drag's icon is on its way back; returned() follows.
+    bool isReturning() const { return m_returning; }
+
+    // A returned icon waits where it arrived, so whoever draws it there next
+    // can take over without a frame showing neither; this lets it go, and
+    // ends a return still on its way.
+    void releaseReturn();
+
     void start(compositor::Surface* origin, compositor::Surface* icon,
                std::shared_ptr<clipboard::DataSource> source, uint32_t actions, ButtonFlags button);
     // A drag that follows touch point `touchId` from `location` and drops where
@@ -167,6 +186,8 @@ Q_SIGNALS:
     void left();
     // The drag was let go, before the source hears how the drop went.
     void released();
+    // The icon of a drag that returns home is back, or had none to slide.
+    void returned();
     void dropped(DragOffer* offer);
     void ended();
 
@@ -184,6 +205,11 @@ private:
     // The cursor over nothing that takes the drop.
     CursorShape idleCursor() const;
     void notifyWindowTarget();
+    // The icon's content, moved to a node of its own before the icon goes.
+    std::unique_ptr<scene::SurfaceNode> takeIconForReturn() const;
+    void startReturn(std::unique_ptr<scene::SurfaceNode> node);
+    void advanceReturn(double frameTimeMs);
+    void finishReturn();
     Seat* m_seat;
     compositor::Surface* m_origin = nullptr;
     compositor::Surface* m_icon = nullptr;
@@ -195,6 +221,15 @@ private:
     uint32_t m_actions = 0;
     float m_iconOpacity = 1.0f;
     bool m_plainIdleCursor = false;
+    bool m_returnsHome = false;
+    QPointF m_home;
+    bool m_returning = false;
+    scene::SurfaceNode* m_returnNode = nullptr;
+    QPoint m_returnFrom;
+    QPoint m_returnTo;
+    float m_returnOpacity = 1.0f;
+    double m_returnStarted = -1;
+    QMetaObject::Connection m_returnFrames;
     ButtonFlags m_button = NoButton;
     std::optional<int32_t> m_touchId;
     DragWindowDelegate* m_windowDelegate = nullptr;

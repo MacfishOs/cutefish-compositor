@@ -223,8 +223,8 @@
     <description summary="where a drag of the shell's goes and how it ends">
       Reports the pointer of one drag in global coordinates, wherever it is
       and whatever surface is under it, and tells a drop from a cancel.
-      After dropped or cancelled no more events are sent, and the object
-      should be destroyed.
+      After dropped or cancelled only returned may follow, and the object
+      should then be destroyed.
 
       Where the shell's drag may go is the shell's to say: while the drag is
       over nothing that takes the drop, the pointer keeps its default shape
@@ -232,7 +232,10 @@
     </description>
 
     <request name="destroy" type="destructor">
-      <description summary="stop following the drag"/>
+      <description summary="stop following the drag">
+        Also lets go of an icon that is sliding back or waits where it
+        arrived; see returned.
+      </description>
     </request>
 
     <request name="set_icon_opacity">
@@ -241,6 +244,28 @@
         and may be sent before that drag starts.
       </description>
       <arg name="opacity" type="fixed"/>
+    </request>
+
+    <request name="set_returns_home">
+      <description summary="whether an untaken drag's icon goes back">
+        Nonzero makes the drag icon slide back to where it was when the drag
+        started if the drag ends with nothing taking the data: cancelled, or
+        let go over nothing that accepts it. The returned event tells when it
+        is back. Zero, the initial value, lets the icon go where the drag
+        ends. What counts is the value when the drag ends; it may be sent
+        before the drag starts.
+      </description>
+      <arg name="returns" type="uint"/>
+    </request>
+
+    <request name="set_home">
+      <description summary="where a returning drag goes back to">
+        The point, in global logical coordinates, the drag's pointer
+        position goes back to when its icon returns; the icon keeps its
+        offset from it. Until this is sent, it is where the drag started.
+      </description>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
     </request>
 
     <event name="motion">
@@ -264,6 +289,18 @@
     <event name="cancelled">
       <description summary="the drag ended without a drop">
         Escape, or the drag's source or origin surface went away.
+      </description>
+    </event>
+
+    <event name="returned">
+      <description summary="the icon is back where the drag started">
+        Sent after dropped or cancelled when the drag ended with nothing
+        taking the data while set_returns_home was nonzero, once the icon
+        has slid back; at once when the drag had no icon to slide.
+
+        The icon then stays where it arrived until this object is destroyed,
+        so the client can destroy it once a frame of its own shows the icon
+        there, and no frame shows both or neither.
       </description>
     </event>
   </interface>

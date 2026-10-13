@@ -316,11 +316,31 @@ public:
             follow();
     }
 
+    ~CutefishShellDrag() override
+    {
+        if (m_holdsReturn && m_drag)
+            m_drag->releaseReturn();
+    }
+
     void setIconOpacity(float opacity)
     {
         m_iconOpacity = opacity;
         if (m_following && m_drag)
             m_drag->setIconOpacity(opacity);
+    }
+
+    void setReturnsHome(bool returns)
+    {
+        m_returnsHome = returns;
+        if (m_following && m_drag)
+            m_drag->setReturnsHome(returns);
+    }
+
+    void setHome(const QPointF& home)
+    {
+        m_home = home;
+        if (m_following && m_drag)
+            m_drag->setHome(home);
     }
 
 private:
@@ -346,12 +366,23 @@ private:
                                                 wl_fixed_from_double(location.y()));
         });
         connect(m_drag, &input::DragController::ended, this, [this] {
+            const bool returning = m_drag->isReturning();
             disconnect(m_drag, nullptr, this, nullptr);
             if (!m_released)
                 cutefish_shell_drag_v1_send_cancelled(m_resource);
+            m_holdsReturn = returning;
+            if (returning) {
+                connect(m_drag, &input::DragController::returned, this, [this] {
+                    disconnect(m_drag, nullptr, this, nullptr);
+                    cutefish_shell_drag_v1_send_returned(m_resource);
+                });
+            }
         });
 
         m_drag->setPlainIdleCursor(true);
+        m_drag->setReturnsHome(m_returnsHome);
+        if (m_home)
+            m_drag->setHome(*m_home);
         if (m_iconOpacity)
             m_drag->setIconOpacity(*m_iconOpacity);
         sendMotion(m_drag->location());
@@ -367,6 +398,11 @@ private:
     wl_resource* m_resource = nullptr;
     QMetaObject::Connection m_startedConnection;
     std::optional<float> m_iconOpacity;
+    bool m_returnsHome = false;
+    std::optional<QPointF> m_home;
+    // The icon of the drag followed is coming back, or waits at home for
+    // this object to go.
+    bool m_holdsReturn = false;
     bool m_following = false;
     bool m_released = false;
 };
@@ -382,9 +418,22 @@ void dragSetIconOpacity(wl_client*, wl_resource* resource, wl_fixed_t opacity)
             static_cast<float>(wl_fixed_to_double(opacity)));
 }
 
+void dragSetReturnsHome(wl_client*, wl_resource* resource, uint32_t returns)
+{
+    getUserDataAs<CutefishShellDrag>(resource)->setReturnsHome(returns != 0);
+}
+
+void dragSetHome(wl_client*, wl_resource* resource, wl_fixed_t x, wl_fixed_t y)
+{
+    getUserDataAs<CutefishShellDrag>(resource)->setHome(
+            QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y)));
+}
+
 const struct cutefish_shell_drag_v1_interface kDragImplementation = {
     dragDestroy,
     dragSetIconOpacity,
+    dragSetReturnsHome,
+    dragSetHome,
 };
 
 void shellDestroy(wl_client*, wl_resource* resource)
