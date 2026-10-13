@@ -16,8 +16,21 @@
 #include "compositor/surface.h"
 #include "input/hit_test.h"
 #include "input/seat.h"
+#include "scene/surface_node.h"
 
 namespace cutefish::input {
+
+namespace {
+
+void setSubtreeAlpha(scene::Node *node, float alpha)
+{
+    if (auto *surface = dynamic_cast<scene::SurfaceNode *>(node))
+        surface->setAlpha(alpha);
+    for (scene::Node *child : node->children())
+        setSubtreeAlpha(child, alpha);
+}
+
+} // namespace
 
 DragOffer::DragOffer(std::shared_ptr<clipboard::DataSource> source, uint32_t sourceActions,
                      bool legacy)
@@ -334,6 +347,12 @@ void DragController::motion(Timestamp timestamp, const QPointF &location)
         return;
     m_location = location;
     updateIcon();
+    {
+        const auto generation = m_generation;
+        emit locationChanged(location);
+        if (generation != m_generation || !active())
+            return;
+    }
     if (m_windowDelegate) {
         const auto generation = m_generation;
         m_windowDelegate->dragMoved(location);
@@ -368,7 +387,10 @@ void DragController::detach()
     m_touchId.reset();
     if (origin)
         origin->removeSurfaceObserver(this);
+    m_iconOpacity = 1.0f;
+    m_plainIdleCursor = false;
     if (icon) {
+        setSubtreeAlpha(icon->node(), 1.0f);
         icon->removeSurfaceObserver(this);
         icon->setHasRole(false);
         icon->reparentNode(nullptr);
@@ -393,6 +415,12 @@ void DragController::drop()
 {
     if (!active())
         return;
+    {
+        const auto generation = m_generation;
+        emit released();
+        if (generation != m_generation || !active())
+            return;
+    }
     std::shared_ptr<DragOffer> selected;
     for (auto &weak : m_offers) {
         if (auto offer = weak.lock(); offer && offer.get() == m_selected)
@@ -477,6 +505,15 @@ void DragController::setWindowDelegate(DragWindowDelegate *delegate)
         setCursor(idleCursor());
 }
 
+void DragController::setPlainIdleCursor(bool plain)
+{
+    if (!active() || m_external)
+        return;
+    m_plainIdleCursor = plain;
+    if (!m_selected || !m_selected->canDrop())
+        setCursor(idleCursor());
+}
+
 void DragController::notifyWindowTarget()
 {
     if (m_windowDelegate)
@@ -485,7 +522,9 @@ void DragController::notifyWindowTarget()
 
 CursorShape DragController::idleCursor() const
 {
-    return m_windowDelegate ? CursorShape::Grabbing : CursorShape::NoDrop;
+    if (m_windowDelegate)
+        return CursorShape::Grabbing;
+    return m_plainIdleCursor ? CursorShape::Default : CursorShape::NoDrop;
 }
 
 uint32_t DragController::modifierAction() const
@@ -517,10 +556,21 @@ bool DragController::key(uint32_t code, bool pressed)
     return true;
 }
 
+void DragController::setIconOpacity(float opacity)
+{
+    if (!active())
+        return;
+    m_iconOpacity = std::clamp(opacity, 0.0f, 1.0f);
+    updateIcon();
+}
+
 void DragController::updateIcon()
 {
-    if (m_icon)
-        m_icon->setPosition(m_location.toPoint() + m_icon->offset());
+    if (!m_icon)
+        return;
+    m_icon->setPosition(m_location.toPoint() + m_icon->offset());
+    // Subsurfaces can be added to the icon at any commit.
+    setSubtreeAlpha(m_icon->node(), m_iconOpacity);
 }
 
 void DragController::onSurfaceDestroying(compositor::Surface *surface)

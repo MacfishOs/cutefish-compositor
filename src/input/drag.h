@@ -117,6 +117,16 @@ public:
 
     const std::shared_ptr<clipboard::DataSource>& source() const { return m_source; }
 
+    // Where the drag is, in output coordinates.
+    QPointF location() const { return m_location; }
+
+    // For the running drag only, the icon and its subsurfaces included.
+    void setIconOpacity(float opacity);
+
+    // For the running drag only: over nothing that takes the drop it shows
+    // the default pointer rather than no-drop.
+    void setPlainIdleCursor(bool plain);
+
     void start(compositor::Surface* origin, compositor::Surface* icon,
                std::shared_ptr<clipboard::DataSource> source, uint32_t actions, ButtonFlags button);
     // A drag that follows touch point `touchId` from `location` and drops where
@@ -152,7 +162,11 @@ Q_SIGNALS:
     void started();
     void entered(compositor::Surface* surface, const QPointF& location);
     void moved(Timestamp timestamp, const QPointF& location);
+    // Wherever the drag goes, over a target or not; `moved` is target-local.
+    void locationChanged(const QPointF& location);
     void left();
+    // The drag was let go, before the source hears how the drop went.
+    void released();
     void dropped(DragOffer* offer);
     void ended();
 
@@ -179,6 +193,8 @@ private:
     std::vector<std::weak_ptr<DragOffer>> m_offers;
     QPointer<DragOffer> m_selected;
     uint32_t m_actions = 0;
+    float m_iconOpacity = 1.0f;
+    bool m_plainIdleCursor = false;
     ButtonFlags m_button = NoButton;
     std::optional<int32_t> m_touchId;
     DragWindowDelegate* m_windowDelegate = nullptr;

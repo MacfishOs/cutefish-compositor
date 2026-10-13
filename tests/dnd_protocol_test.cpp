@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <cutefish-shell-v1-client-protocol.h>
 #include <linux/input-event-codes.h>
 
 #include "clipboard_test_util.h"
@@ -9,6 +10,9 @@
 #include "input/input_manager.h"
 #include "scene/surface_node.h"
 #include "shm_test_util.h"
+#include "wayland/privileged_client.h"
+#include "wayland/protocols/cutefish_shell.h"
+#include "wm/window_manager.h"
 
 using namespace clipboard_test;
 
@@ -53,6 +57,80 @@ void accept(Harness &h, Client &b, uint32_t actions = 3, uint32_t preferred = 2)
         wl_data_offer_set_actions(b.dragOffer, actions, preferred);
     h.sync(b);
 }
+
+// A cutefish_shell_drag_v1 and what it heard, in order.
+struct ShellDrag {
+    cutefish_shell_drag_v1 *object = nullptr;
+    Client *client = nullptr;
+    std::vector<std::string> events;
+    QPointF location;
+    // How many cancels the client's data source had seen when the drop came.
+    size_t cancelsAtDrop = 0;
+
+    ShellDrag(Harness &h, Client &c)
+        : client(&c)
+    {
+        cutefish_shell_v1 *shell = nullptr;
+        auto *registry = wl_display_get_registry(c.display);
+        static const wl_registry_listener registryListener = {
+            [](void *data, wl_registry *registry, uint32_t name, const char *interface,
+               uint32_t) {
+                if (std::string(interface) == "cutefish_shell_v1")
+                    *static_cast<cutefish_shell_v1 **>(data) = static_cast<cutefish_shell_v1 *>(
+                            wl_registry_bind(registry, name, &cutefish_shell_v1_interface, 1));
+            },
+            [](void *, wl_registry *, uint32_t) {}};
+        wl_registry_add_listener(registry, &registryListener, &shell);
+        h.sync(c);
+        EXPECT_NE(nullptr, shell);
+        object = cutefish_shell_v1_get_drag(shell);
+        static const cutefish_shell_drag_v1_listener listener = {
+            [](void *data, cutefish_shell_drag_v1 *, wl_fixed_t x, wl_fixed_t y) {
+                auto *drag = static_cast<ShellDrag *>(data);
+                drag->events.push_back("motion");
+                drag->location = QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+            },
+            [](void *data, cutefish_shell_drag_v1 *, wl_fixed_t x, wl_fixed_t y) {
+                auto *drag = static_cast<ShellDrag *>(data);
+                drag->events.push_back("dropped");
+                drag->location = QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+                drag->cancelsAtDrop = drag->client->cancelled;
+            },
+            [](void *data, cutefish_shell_drag_v1 *) {
+                static_cast<ShellDrag *>(data)->events.push_back("cancelled");
+            }};
+        cutefish_shell_drag_v1_add_listener(object, &listener, this);
+        cutefish_shell_v1_destroy(shell);
+        wl_registry_destroy(registry);
+        h.sync(c);
+    }
+
+    ~ShellDrag() { cutefish_shell_drag_v1_destroy(object); }
+};
+
+// The trusted shell, with cutefish_shell_v1.
+struct ShellHarness {
+    Harness h;
+    wayland::PrivilegedClients privileged {h.server.display()};
+    wm::WindowManager windowManager {&h.compositor, &h.seat};
+    wayland::WaylandCutefishShell shell {&windowManager, &privileged};
+
+    ShellHarness() { wayland::createCutefishShellGlobal(h.server.display(), &shell); }
+
+    // The trusted connection goes before the registry that knows it.
+    ~ShellHarness()
+    {
+        h.clients.clear();
+        wl_display_destroy_clients(h.server.display());
+    }
+
+    Client &addShell()
+    {
+        return h.addClient(true, 3, [this](int fd) {
+            return privileged.adoptShellConnection(fd);
+        });
+    }
+};
 
 } // namespace
 
@@ -658,4 +736,100 @@ TEST(DndProtocol, PointerFocusLeavesForTheDragAndReturnsAfterTheDrop)
     EXPECT_EQ(2u, a.pointerEnters);
     EXPECT_EQ(1u, a.pointerLeaves);
     EXPECT_EQ(buttons + 2, a.pointerButtons);
+}
+
+TEST(DndProtocol, TheShellFollowsItsDragDimsTheIconAndHearsTheDropFirst)
+{
+    ShellHarness sh;
+    auto &h = sh.h;
+    scene::Node icons(QStringLiteral("icons"));
+    h.seat.setDragIconContainer(&icons);
+    auto &a = sh.addShell();
+    map(h, a, 0);
+    ShellDrag drag(h, a);
+    cutefish_shell_drag_v1_set_icon_opacity(drag.object, wl_fixed_from_double(0.5));
+
+    h.focus(a);
+    h.seat.onPointerMotion({}, {10, 10});
+    h.seat.onPointerButton({}, {10, 10}, BTN_LEFT, true);
+    h.sync(a);
+    auto *icon = wl_compositor_create_surface(a.compositor);
+    auto *source = a.source({{"text/plain", "icon"}});
+    wl_data_source_set_actions(source, 2);
+    wl_data_device_start_drag(a.devices.front(), source, a.surface, icon, a.buttonSerial);
+    h.sync(a);
+    ASSERT_TRUE(h.seat.drag()->active());
+    auto *surface = wayland::surfaceFromResource(wl_client_get_object(
+            a.serverClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(icon))));
+    ASSERT_FALSE(drag.events.empty());
+    EXPECT_EQ("motion", drag.events.back());
+    EXPECT_EQ(QPointF(10, 10), drag.location);
+    EXPECT_FLOAT_EQ(0.5f, surface->node()->alpha());
+
+    // Off every surface, where nothing would tell the shell where the drag is.
+    h.seat.onPointerMotion({}, {300, 250});
+    h.sync(a);
+    EXPECT_EQ(QPointF(300, 250), drag.location);
+    // Nothing takes the drop here, and the pointer does not say so.
+    EXPECT_EQ(input::CursorShape::Default, h.seat.cursorOverride());
+    cutefish_shell_drag_v1_set_icon_opacity(drag.object, wl_fixed_from_double(1));
+    h.sync(a);
+    EXPECT_FLOAT_EQ(1.0f, surface->node()->alpha());
+    cutefish_shell_drag_v1_set_icon_opacity(drag.object, wl_fixed_from_double(0.5));
+    h.sync(a);
+
+    h.seat.onPointerButton({}, {300, 250}, BTN_LEFT, false);
+    h.sync(a);
+    EXPECT_FALSE(h.seat.drag()->active());
+    ASSERT_EQ("dropped", drag.events.back());
+    EXPECT_EQ(QPointF(300, 250), drag.location);
+    EXPECT_EQ(0u, drag.cancelsAtDrop);
+    EXPECT_EQ(1u, a.cancelled);
+    EXPECT_EQ(0, std::count(drag.events.begin(), drag.events.end(), "cancelled"));
+    EXPECT_FLOAT_EQ(1.0f, surface->node()->alpha());
+
+    // One drag only: the next one is not followed.
+    const size_t heard = drag.events.size();
+    start(h, a);
+    h.seat.onPointerMotion({}, {20, 20});
+    h.seat.onKey({}, KEY_ESC, true);
+    h.seat.onKey({}, KEY_ESC, false);
+    h.sync(a);
+    EXPECT_EQ(heard, drag.events.size());
+    wl_surface_destroy(icon);
+    h.seat.setDragIconContainer(nullptr);
+}
+
+TEST(DndProtocol, TheShellIgnoresOtherClientsDragsAndHearsEscapeAsACancel)
+{
+    ShellHarness sh;
+    auto &h = sh.h;
+    auto &a = sh.addShell();
+    auto &b = h.addClient();
+    map(h, a, 0);
+    map(h, b, 150);
+    ShellDrag drag(h, a);
+
+    h.seat.onPointerMotion({}, {160, 10});
+    h.seat.onPointerButton({}, {160, 10}, BTN_LEFT, true);
+    h.sync(b);
+    wl_data_device_start_drag(b.devices.front(), b.source({{"text/plain", "b"}}), b.surface,
+                              nullptr, b.buttonSerial);
+    h.sync(b);
+    ASSERT_TRUE(h.seat.drag()->active());
+    h.seat.onPointerMotion({}, {170, 20});
+    EXPECT_EQ(input::CursorShape::NoDrop, h.seat.cursorOverride());
+    h.seat.onPointerButton({}, {170, 20}, BTN_LEFT, false);
+    h.sync(a);
+    EXPECT_TRUE(drag.events.empty());
+
+    start(h, a);
+    h.seat.onPointerMotion({}, {40, 300});
+    h.seat.onKey({}, KEY_ESC, true);
+    h.seat.onKey({}, KEY_ESC, false);
+    h.sync(a);
+    ASSERT_FALSE(drag.events.empty());
+    EXPECT_EQ("cancelled", drag.events.back());
+    EXPECT_EQ(0, std::count(drag.events.begin(), drag.events.end(), "dropped"));
+    EXPECT_EQ(QPointF(40, 300), drag.location);
 }

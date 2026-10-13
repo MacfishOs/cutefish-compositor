@@ -10,10 +10,15 @@
 #include <memory>
 #include <optional>
 
+#include <QObject>
+#include <QPointer>
+
 #include "compositor/surface.h"
 #include "compositor/surface_observer.h"
 #include "core/logging.h"
 #include "display/display_manager.h"
+#include "input/drag.h"
+#include "input/seat.h"
 #include "wayland/privileged_client.h"
 #include "wayland/server_util.h"
 #include "wm/activation.h"
@@ -296,6 +301,92 @@ const struct cutefish_shell_surface_v1_interface kShellSurfaceImplementation = {
     shellSurfaceSetParent,
 };
 
+// The user data of a cutefish_shell_drag_v1. It follows one drag of its own
+// client: the one in progress when it is created, or else the next one.
+class CutefishShellDrag : public QObject
+{
+public:
+    CutefishShellDrag(input::DragController* drag, wl_resource* resource)
+        : m_drag(drag)
+        , m_resource(resource)
+    {
+        m_startedConnection = connect(m_drag, &input::DragController::started, this,
+                                      &CutefishShellDrag::follow);
+        if (m_drag->active())
+            follow();
+    }
+
+    void setIconOpacity(float opacity)
+    {
+        m_iconOpacity = opacity;
+        if (m_following && m_drag)
+            m_drag->setIconOpacity(opacity);
+    }
+
+private:
+    bool ownsDrag() const
+    {
+        wl_resource* origin = getSurfaceResource(m_drag->origin());
+        return origin && wl_resource_get_client(origin) == wl_resource_get_client(m_resource);
+    }
+
+    void follow()
+    {
+        if (m_following || !m_drag || !m_drag->active() || m_drag->isExternal() || !ownsDrag())
+            return;
+        m_following = true;
+        disconnect(m_startedConnection);
+
+        connect(m_drag, &input::DragController::locationChanged, this,
+                &CutefishShellDrag::sendMotion);
+        connect(m_drag, &input::DragController::released, this, [this] {
+            m_released = true;
+            const QPointF location = m_drag->location();
+            cutefish_shell_drag_v1_send_dropped(m_resource, wl_fixed_from_double(location.x()),
+                                                wl_fixed_from_double(location.y()));
+        });
+        connect(m_drag, &input::DragController::ended, this, [this] {
+            disconnect(m_drag, nullptr, this, nullptr);
+            if (!m_released)
+                cutefish_shell_drag_v1_send_cancelled(m_resource);
+        });
+
+        m_drag->setPlainIdleCursor(true);
+        if (m_iconOpacity)
+            m_drag->setIconOpacity(*m_iconOpacity);
+        sendMotion(m_drag->location());
+    }
+
+    void sendMotion(const QPointF& location)
+    {
+        cutefish_shell_drag_v1_send_motion(m_resource, wl_fixed_from_double(location.x()),
+                                           wl_fixed_from_double(location.y()));
+    }
+
+    QPointer<input::DragController> m_drag;
+    wl_resource* m_resource = nullptr;
+    QMetaObject::Connection m_startedConnection;
+    std::optional<float> m_iconOpacity;
+    bool m_following = false;
+    bool m_released = false;
+};
+
+void dragDestroy(wl_client*, wl_resource* resource)
+{
+    wl_resource_destroy(resource);
+}
+
+void dragSetIconOpacity(wl_client*, wl_resource* resource, wl_fixed_t opacity)
+{
+    getUserDataAs<CutefishShellDrag>(resource)->setIconOpacity(
+            static_cast<float>(wl_fixed_to_double(opacity)));
+}
+
+const struct cutefish_shell_drag_v1_interface kDragImplementation = {
+    dragDestroy,
+    dragSetIconOpacity,
+};
+
 void shellDestroy(wl_client*, wl_resource* resource)
 {
     wl_resource_destroy(resource);
@@ -333,9 +424,24 @@ void shellGetShellSurface(wl_client* client, wl_resource* resource, uint32_t id,
     setImplementation(shellSurfaceResource, &kShellSurfaceImplementation, std::move(shellSurface));
 }
 
+void shellGetDrag(wl_client* client, wl_resource* resource, uint32_t id)
+{
+    auto* shell = getUserDataAs<WaylandCutefishShell>(resource);
+    wl_resource* dragResource = wl_resource_create(client, &cutefish_shell_drag_v1_interface,
+                                                   wl_resource_get_version(resource), id);
+    if (!dragResource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    setImplementation(dragResource, &kDragImplementation,
+                      std::make_unique<CutefishShellDrag>(shell->windowManager()->seat()->drag(),
+                                                          dragResource));
+}
+
 const struct cutefish_shell_v1_interface kShellImplementation = {
     shellDestroy,
     shellGetShellSurface,
+    shellGetDrag,
 };
 
 void bindShell(wl_client* client, void* data, uint32_t version, uint32_t id)

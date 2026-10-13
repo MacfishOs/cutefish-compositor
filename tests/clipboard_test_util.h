@@ -83,12 +83,15 @@ struct Client {
 
     std::vector<Write> writes;
 
-    explicit Client(wayland::Server& server, uint32_t version = 3)
+    // `connect` turns the server end of the socket into a wl_client, as the
+    // privileged shell connection is made; wl_client_create when empty.
+    explicit Client(wayland::Server& server, uint32_t version = 3,
+                    const std::function<wl_client*(int)>& connect = {})
         : version(version)
     {
         int fds[2];
         EXPECT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds));
-        serverClient = wl_client_create(server.display(), fds[0]);
+        serverClient = connect ? connect(fds[0]) : wl_client_create(server.display(), fds[0]);
         if (!serverClient) {
             close(fds[1]);
             throw std::runtime_error("wl_client_create failed");
@@ -400,9 +403,10 @@ public:
         }
     }
 
-    Client& addClient(bool device = true, uint32_t version = 3)
+    Client& addClient(bool device = true, uint32_t version = 3,
+                      const std::function<wl_client*(int)>& connect = {})
     {
-        clients.push_back(std::make_unique<Client>(server, version));
+        clients.push_back(std::make_unique<Client>(server, version, connect));
         auto& c = *clients.back();
         sync(c);
         c.initialize(device);

@@ -199,7 +199,8 @@ cutefish_add_test(hardware_cursor_test cutefish-fake-drm cutefish-cursor cutefis
 cutefish_add_test(window_hints_protocol_test cutefish-wayland-shell PkgConfig::WaylandClient)
 cutefish_add_test(surface_blur_protocol_test cutefish-wayland-shell PkgConfig::WaylandClient)
 
-cutefish_add_test(dnd_protocol_test cutefish-cursor cutefish-wayland-input PkgConfig::WaylandClient)
+cutefish_add_test(dnd_protocol_test cutefish-cursor cutefish-wayland-input
+    cutefish-wayland-private-shell PkgConfig::WaylandClient)
 
 cutefish_add_test(data_control_protocol_test cutefish-wayland-input cutefish-wayland-private-shell
     cutefish-wayland-shell PkgConfig::WaylandClient)

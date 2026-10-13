@@ -50,6 +50,16 @@
       <arg name="id" type="new_id" interface="cutefish_shell_surface_v1"/>
       <arg name="surface" type="object" interface="wl_surface"/>
     </request>
+
+    <request name="get_drag">
+      <description summary="follow a drag this client starts">
+        Creates a cutefish_shell_drag_v1 that follows the drag-and-drop
+        operation this client has in progress, or else the next one it starts
+        with wl_data_device.start_drag. Drags started by other clients are
+        never followed.
+      </description>
+      <arg name="id" type="new_id" interface="cutefish_shell_drag_v1"/>
+    </request>
   </interface>
 
   <interface name="cutefish_shell_surface_v1" version="1">
@@ -207,5 +217,54 @@
       <arg name="id_hi" type="uint"/>
       <arg name="id_lo" type="uint"/>
     </request>
+  </interface>
+
+  <interface name="cutefish_shell_drag_v1" version="1">
+    <description summary="where a drag of the shell's goes and how it ends">
+      Reports the pointer of one drag in global coordinates, wherever it is
+      and whatever surface is under it, and tells a drop from a cancel.
+      After dropped or cancelled no more events are sent, and the object
+      should be destroyed.
+
+      Where the shell's drag may go is the shell's to say: while the drag is
+      over nothing that takes the drop, the pointer keeps its default shape
+      rather than showing that it cannot drop there.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop following the drag"/>
+    </request>
+
+    <request name="set_icon_opacity">
+      <description summary="how opaque the drag icon is drawn">
+        From 0 to 1. It holds for the rest of the drag the object follows,
+        and may be sent before that drag starts.
+      </description>
+      <arg name="opacity" type="fixed"/>
+    </request>
+
+    <event name="motion">
+      <description summary="the drag moved">
+        Sent when the drag starts and whenever its pointer moves, in global
+        logical coordinates.
+      </description>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </event>
+
+    <event name="dropped">
+      <description summary="the drag was let go">
+        Sent where the drag was let go, whether or not a target takes the
+        data, and before any wl_data_source event about the drop.
+      </description>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </event>
+
+    <event name="cancelled">
+      <description summary="the drag ended without a drop">
+        Escape, or the drag's source or origin surface went away.
+      </description>
+    </event>
   </interface>
 </protocol>
