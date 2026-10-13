@@ -335,7 +335,7 @@ TEST_F(OverviewTest, ThePanelsGiveWayAsItComesIn)
     // Off the top edge with the overview's progress.
     ASSERT_TRUE(overview->enter());
     paint();
-    layout.advance(double(now) + scene::OverviewNode::kRestDurationMs / 2);
+    layout.advance(double(now) + scene::OverviewNode::kTransitionDurationMs / 2);
     EXPECT_GT(0, panel->presentationOffset().y());
     EXPECT_LT(-30, panel->presentationOffset().y());
     EXPECT_FALSE(panel->isPresentationHidden());

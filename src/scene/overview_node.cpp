@@ -357,15 +357,14 @@ double OverviewNode::target() const
 motion::Tween OverviewNode::tweenTo(double now, double from, double target,
                                     double velocity) const
 {
-    // Ease-in-out with its start bent to the fingers' speed: a slow release
-    // speeds up gently, a fast one only slows down. ACCEL_20_DECEL_100 bent the
-    // same way surges to four times the average speed right after the release.
-    // Less of the way takes less time, though more than its share, so a short
-    // way back is not a snap.
-    const bool fromRest = velocity * (target - from) <= 0;
-    const double whole = fromRest ? kRestDurationMs : kShowDurationMs;
-    const double duration = whole * std::sqrt(std::min(std::abs(target - from), 1.0));
-    return motion::Tween(now, from, target, duration, velocity, motion::kEaseInOut);
+    // The start bent to the fingers' speed: a slow release speeds up gently, a
+    // fast one only slows down. ACCEL_20_DECEL_100 bent the same way surges to
+    // four times the average speed right after the release. Less of the way
+    // takes less time, though more than its share, so a short way back is not
+    // a snap.
+    const double duration =
+            kTransitionDurationMs * std::sqrt(std::min(std::abs(target - from), 1.0));
+    return motion::Tween(now, from, target, duration, velocity, motion::kQuickStart);
 }
 
 void OverviewNode::settle(double now, double from, double target, double velocity)

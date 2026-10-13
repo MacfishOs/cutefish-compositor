@@ -134,19 +134,22 @@ TEST(MotionTest, TweenLeavesAtItsStartVelocity)
     EXPECT_TRUE(tween.isFinished(300));
 }
 
-TEST(MotionTest, ATweenOnEaseInOutSetsOffAsGentlyAsItLands)
+TEST(MotionTest, ATweenOnQuickStartIsUnderWayAtOnceWithoutLunging)
 {
-    const Tween tween(0, 0, 1, 400, 0, kEaseInOut);
+    // 2.5 a second on average over 400 ms.
+    const Tween tween(0, 0, 1, 400, 0, kQuickStart);
     EXPECT_NEAR(0, tween.velocity(0), 1e-6);
-    // The curve is symmetric about its middle.
-    EXPECT_NEAR(0.5, tween.value(200), 1e-9);
-    EXPECT_NEAR(tween.value(100), 1 - tween.value(300), 1e-9);
-    EXPECT_LT(tween.velocity(20), tween.velocity(100));
-    EXPECT_LT(tween.velocity(380), tween.velocity(300));
+    EXPECT_GT(tween.value(60), 0.1);
+    EXPECT_GT(tween.value(200), 0.7);
+    double fastest = 0;
+    for (double time = 0; time < 400; time += 1)
+        fastest = std::max(fastest, tween.velocity(time));
+    EXPECT_LT(fastest, 1.9 * 2.5);
+    EXPECT_LT(tween.velocity(380), tween.velocity(200));
     EXPECT_TRUE(tween.isFinished(400));
 
     // Bent to leave at a speed, it still slows into its landing.
-    const Tween moving(0, 0, 1, 400, 4, kEaseInOut);
+    const Tween moving(0, 0, 1, 400, 4, kQuickStart);
     EXPECT_NEAR(4, moving.velocity(0), 1e-6);
     for (const double time : {20.0, 200.0, 380.0}) {
         const double numeric =
@@ -155,6 +158,13 @@ TEST(MotionTest, ATweenOnEaseInOutSetsOffAsGentlyAsItLands)
     }
     EXPECT_LT(moving.velocity(380), moving.velocity(200));
     EXPECT_LT(moving.velocity(380), 0.5);
+
+    // Bent to a slow start, it speeds up to under twice the average.
+    const Tween slow(0, 0, 1, 400, 1, kQuickStart);
+    fastest = 0;
+    for (double time = 0; time < 400; time += 1)
+        fastest = std::max(fastest, slow.velocity(time));
+    EXPECT_LT(fastest, 2 * 2.5);
 }
 
 TEST(MotionTest, AFastStartShortensTheTweenAndABackwardOneIsDropped)

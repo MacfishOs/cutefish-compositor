@@ -162,7 +162,7 @@ TEST(OverviewNode, AtZeroItCoversNothingAndDrawsNothing)
     EXPECT_EQ(2, kinds.count(QStringLiteral("fill")));
 }
 
-TEST(OverviewNode, TheShortcutGlidesInAndLandsOnTime)
+TEST(OverviewNode, TheShortcutSetsOffAtOnceAndLandsOnTime)
 {
     Fixture f;
     const qint64 start = f.now;
@@ -170,16 +170,19 @@ TEST(OverviewNode, TheShortcutGlidesInAndLandsOnTime)
     EXPECT_TRUE(f.node->isActive());
     EXPECT_TRUE(f.node->occludesOutput(f.renderer));
     double last = 0;
-    while (f.now - start < qint64(Node::kRestDurationMs)) {
+    while (f.now - start < qint64(Node::kTransitionDurationMs)) {
         f.now += 4;
         f.paint();
         const double progress = f.node->progress(double(f.now));
         EXPECT_GE(progress, last);
         EXPECT_LE(progress, 1);
         last = progress;
-        // From rest it sets off gently: a tenth of the time covers under 3%.
-        if (f.now - start == qint64(Node::kRestDurationMs / 10))
-            EXPECT_LT(progress, 0.03);
+        // From rest it gets going at once with no jump: the first frame
+        // covers under 1%, an eighth of the time over a tenth of the way.
+        if (f.now - start == 4)
+            EXPECT_LT(progress, 0.01);
+        if (f.now - start == 32)
+            EXPECT_GT(progress, 0.1);
     }
     // No tail creeping in after its time.
     EXPECT_EQ(1, last);
@@ -314,10 +317,10 @@ TEST(OverviewNode, ReleasedItCarriesOnAtTheFingersSpeed)
     }
     EXPECT_EQ(1, f.node->endTracking(double(f.now)));
     const double now = double(f.now);
-    const double speed = (f.node->progress(now + 0.1) - f.node->progress(now)) * 10000;
+    const double speed = (f.node->progress(now + 0.01) - f.node->progress(now)) * 100000;
     EXPECT_NEAR(0.4, speed, 0.02);
     // On the quick curve: the rest of the way within the shorter time.
-    f.now += qint64(Node::kShowDurationMs);
+    f.now += qint64(Node::kTransitionDurationMs);
     f.paint();
     EXPECT_EQ(QList<double>({1}), f.finished);
     f.settle();
@@ -335,7 +338,7 @@ TEST(OverviewNode, ASlowReleaseSpeedsUpGentlyInsteadOfLunging)
     ASSERT_EQ(1, f.node->endTracking(double(f.now)));
     const double start = double(f.now);
     const double from = f.node->progress(start);
-    const double duration = Node::kShowDurationMs * std::sqrt(1 - from);
+    const double duration = Node::kTransitionDurationMs * std::sqrt(1 - from);
     const double average = (1 - from) / duration * 1000;
     double fastest = 0;
     for (double t = start; t < start + duration; t += 1)

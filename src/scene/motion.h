@@ -73,8 +73,9 @@ struct TimingCurve {
 };
 // gfx::Tween::ACCEL_20_DECEL_100: off at once, a long soft landing.
 inline constexpr TimingCurve kAccel20Decel100 {0.2, 0, 0, 1};
-// CSS ease-in-out: as gentle to set off as to land.
-inline constexpr TimingCurve kEaseInOut {0.42, 0, 0.58, 1};
+// Under way within a few frames and landing softly, below twice its average
+// speed from rest or bent to a slower start, so it never lunges.
+inline constexpr TimingCurve kQuickStart {0.2, 0, 0.4, 1};
 
 // A timed move on a timing curve whose start is bent to leave at a given
 // speed, so a release or a turn carries on without a kink. It never
