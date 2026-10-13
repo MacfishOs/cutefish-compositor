@@ -56,6 +56,9 @@ QJsonObject describe(const wm::Window *window)
     const wm::Insets exterior = window->clientExteriorInsets();
     object.insert(QStringLiteral("clientExteriorInsets"),
                   QJsonArray {exterior.left, exterior.top, exterior.right, exterior.bottom});
+    const wm::Insets input = window->clientInputInsets();
+    object.insert(QStringLiteral("clientInputInsets"),
+                  QJsonArray {input.left, input.top, input.right, input.bottom});
 
     if (const wm::WindowFrame *frame = window->frame()) {
         object.insert(QStringLiteral("titleBar"), rectArray(frame->titleBarBounds()));

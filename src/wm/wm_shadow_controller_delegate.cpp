@@ -22,6 +22,11 @@ bool WmShadowControllerDelegate::shouldShowShadowForWindow(const Window *window)
         && window->hasClientExteriorDecoration())
         return false;
 
+    // A popup whose geometry is its whole surface but whose input region leaves
+    // a band on every edge draws its own shadow in that band.
+    if (window->isPopup() && !window->isDecorated() && window->hasClientInputMargin())
+        return false;
+
     if (window->isPopup())
         return true;
 

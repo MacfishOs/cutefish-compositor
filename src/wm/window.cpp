@@ -563,6 +563,16 @@ void Window::setClientExteriorInsets(const Insets &insets)
     });
 }
 
+void Window::setClientInputInsets(const Insets &insets)
+{
+    if (insets == m_clientInputInsets)
+        return;
+    m_clientInputInsets = insets;
+    forEachObserver(this, m_observers, [this](WindowObserver *observer) {
+        observer->onWindowClientDecorationChanged(this);
+    });
+}
+
 void Window::setMinimizedSnapshot(const QImage &snapshot)
 {
     if (snapshot.isNull() && m_minimizedSnapshot.isNull())

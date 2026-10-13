@@ -1005,8 +1005,10 @@ void ShellSurface::updateSurfaceOrigin()
 
 void ShellSurface::updateClientExteriorInsets()
 {
-    if (m_window)
+    if (m_window) {
         m_window->setClientExteriorInsets(clientExteriorInsets());
+        m_window->setClientInputInsets(clientInputInsets());
+    }
 }
 
 Insets ShellSurface::clientExteriorInsets() const
@@ -1032,6 +1034,19 @@ Insets ShellSurface::clientExteriorInsets() const
     return Insets {std::max(0, m_geometry.left()), std::max(0, m_geometry.top()),
                    std::max(0, content.width() - (m_geometry.left() + m_geometry.width())),
                    std::max(0, content.height() - (m_geometry.top() + m_geometry.height()))};
+}
+
+Insets ShellSurface::clientInputInsets() const
+{
+    // No input region means the whole surface takes input.
+    if (!m_surface || !m_surface->inputRegion())
+        return Insets();
+    const QSize content = m_surface->contentSize();
+    const QRect input = m_surface->inputRegion()->boundingRect().intersected(QRect(QPoint(), content));
+    if (content.isEmpty() || input.isEmpty())
+        return Insets();
+    return Insets {input.left(), input.top(), content.width() - (input.left() + input.width()),
+                   content.height() - (input.top() + input.height())};
 }
 
 QPoint ShellSurface::surfaceOriginForWindow() const

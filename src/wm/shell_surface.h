@@ -334,6 +334,8 @@ private:
     void updateClientExteriorInsets();
     // What the buffer covers outside the declared window geometry.
     Insets clientExteriorInsets() const;
+    // What the surface covers outside its committed input region.
+    Insets clientInputInsets() const;
     void updateWindowBoundsFromClient();
     void updateSizeConstraints();
     QSize configureBounds() const;

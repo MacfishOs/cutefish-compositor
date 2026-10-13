@@ -286,6 +286,35 @@ TEST_F(ShadowControllerTest, ExteriorClientDecorationGetsCompositorShadowAroundB
     EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
 }
 
+// A menu that paints its own shadow may declare its whole surface as window
+// geometry and only keep the shadow band out of its input region.
+TEST_F(ShadowControllerTest, PopupWithInputMarginDrawsItsOwnShadow)
+{
+    ShellSurface *parent = makeToplevel({400, 300}, false);
+    surfaces.push_back(compositor.createSurface());
+    shells.push_back(std::make_unique<ShellSurface>(&manager, surfaces.back().get()));
+    ShellSurface *popup = shells.back().get();
+    ASSERT_TRUE(popup->setPopup(parent, QRect(10, 20, 120, 90)));
+    popup->setGeometry(QRect(0, 0, 120, 90));
+    attach(popup->rootSurface(), {120, 90});
+    popup->rootSurface()->commit();
+    Window *window = popup->window();
+    ASSERT_TRUE(window);
+    EXPECT_EQ(window->clientExteriorInsets(), Insets());
+    EXPECT_EQ(elevationOf(window), ShadowElevation::MenuOrTooltip);
+
+    popup->rootSurface()->setInputRegion(QRegion(4, 4, 112, 82));
+    popup->rootSurface()->commit();
+    EXPECT_EQ(window->clientInputInsets(), (Insets {4, 4, 4, 4}));
+    EXPECT_EQ(elevationOf(window), ShadowElevation::None);
+
+    // An input region flush with any edge is not a surrounding band.
+    popup->rootSurface()->setInputRegion(QRegion(0, 4, 116, 82));
+    popup->rootSurface()->commit();
+    EXPECT_FALSE(window->hasClientInputMargin());
+    EXPECT_EQ(elevationOf(window), ShadowElevation::MenuOrTooltip);
+}
+
 // When the compositor drew the frame it owns the space around it, whatever the
 // client's window geometry still says about its own exterior.
 TEST_F(ShadowControllerTest, ServerSideDecorationOverridesClientExterior)

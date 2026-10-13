@@ -271,6 +271,20 @@ public:
         return m_clientExteriorInsets.left > 0 && m_clientExteriorInsets.top > 0;
     }
 
+    // How far the committed input region stays inside the surface on each
+    // edge. A client that declares its whole surface as window geometry but
+    // leaves a band on every edge out of its input region paints its own
+    // exterior there, the way a menu with a self-drawn shadow does.
+    Insets clientInputInsets() const { return m_clientInputInsets; }
+
+    void setClientInputInsets(const Insets &insets);
+
+    bool hasClientInputMargin() const
+    {
+        return m_clientInputInsets.left > 0 && m_clientInputInsets.top > 0
+                && m_clientInputInsets.right > 0 && m_clientInputInsets.bottom > 0;
+    }
+
     // --- Server-side decoration ---
 
     // Gives the window a frame, or takes it away, from the window manager's
@@ -483,6 +497,7 @@ private:
     QPoint m_presentationOffset;
     bool m_presentationHidden = false;
     Insets m_clientExteriorInsets;
+    Insets m_clientInputInsets;
     QSize m_minimumSize {1, 1};
     QSize m_maximumSize;
     bool m_resizable = true;
