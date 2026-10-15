@@ -4,6 +4,7 @@
 
 #include "auth/auth_controller.h"
 #include "auth/auth_ui.h"
+#include "auth/auth_view.h"
 #include "compositor/compositor.h"
 #include "core/preferences.h"
 #include "fake_backend.h"
@@ -14,9 +15,7 @@
 #include "session/secure_container.h"
 #include "session/session_controller.h"
 #include <QFile>
-#include <QGuiApplication>
-#include <QQuickItem>
-#include <QQuickWindow>
+#include <QCoreApplication>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -24,7 +23,44 @@
 #include <cmath>
 #include <linux/input-event-codes.h>
 #include <tuple>
+
+#include "ui/embedded_window.h"
+#include "ui/text_field.h"
+#include "ui/view.h"
 using namespace cutefish;
+
+namespace {
+
+ui::TextField *focusedField(const auth::AuthUi &ui)
+{
+    return dynamic_cast<ui::TextField *>(ui.focusView());
+}
+
+QString fieldText(const auth::AuthUi &ui)
+{
+    const ui::TextField *field = focusedField(ui);
+    return field ? QString::fromStdString(field->text()) : QString();
+}
+
+ui::View *findView(ui::View *view, const std::string &name)
+{
+    if (!view || view->name() == name)
+        return view;
+    for (const auto &child : view->children()) {
+        if (ui::View *found = findView(child.get(), name))
+            return found;
+    }
+    return nullptr;
+}
+
+// The view's rect in panel coordinates.
+QRectF panelRect(const ui::View *view)
+{
+    const ui::PointF origin = view->mapToWindow({0, 0});
+    return QRectF(origin.x, origin.y, view->geometry().width, view->geometry().height);
+}
+
+} // namespace
 
 class AuthUiTest : public QObject
 {
@@ -98,7 +134,6 @@ private slots:
         ui.refresh();
         auto *window = ui.window();
         QVERIFY(window);
-        QVERIFY(!window->handle());
         QVERIFY(!root.isVisible());
         QVERIFY(!ui.renderImage().isNull());
         QCOMPARE(backend.startCount, 0);
@@ -106,19 +141,18 @@ private slots:
         ui.refresh();
         QCOMPARE(ui.window(), window);
         QCOMPARE(backend.startCount, 1);
-        auto *field = window->activeFocusItem();
+        auto *field = focusedField(ui);
         QVERIFY(field);
-        field->setProperty("text", QStringLiteral("abcdefghij"));
+        field->setText("abcdefghij");
         input.onKey({}, KEY_BACKSPACE, true);
-        QCOMPARE(field->property("text").toString().size(), 9);
-        QTRY_VERIFY_WITH_TIMEOUT(field->property("text").toString().size() < 9, 1000);
+        QCOMPARE(fieldText(ui).size(), 9);
+        QTRY_VERIFY_WITH_TIMEOUT(fieldText(ui).size() < 9, 1000);
         input.onKey({}, KEY_BACKSPACE, false);
-        const QString remaining = field->property("text").toString();
+        const QString remaining = fieldText(ui);
         QTest::qWait(120);
-        QCOMPARE(field->property("text").toString(), remaining);
+        QCOMPARE(fieldText(ui), remaining);
         QSignalSpy cursors(&ui, &auth::AuthUi::cursorShapeChanged);
-        const QPointF fieldCenter =
-                field->mapToScene(QPointF(field->width() / 2, field->height() / 2))
+        const QPointF fieldCenter = ui.fieldBounds().center()
                 + secure.authContainer()->children().front()->absolutePosition();
         ui.onPointerMotion({}, fieldCenter);
         QVERIFY(!cursors.isEmpty());
@@ -128,9 +162,9 @@ private slots:
         input.onKey({}, KEY_BACKSPACE, true);
         controller.notifyFramePresented();
         QVERIFY(controller.requestUnlock());
-        const QString beforeUnlock = field->property("text").toString();
+        const QString beforeUnlock = fieldText(ui);
         QTest::qWait(600);
-        QCOMPARE(field->property("text").toString(), beforeUnlock);
+        QCOMPARE(fieldText(ui), beforeUnlock);
         input.onKey({}, KEY_BACKSPACE, false);
         seat.shutdown();
     }
@@ -190,7 +224,7 @@ private slots:
         QVERIFY(ui.window());
         QVERIFY(!ui.renderImage().isNull());
         // Nothing wakes the compositor for a hidden panel, not even the caret.
-        QVERIFY(!ui.window()->activeFocusItem());
+        QVERIFY(!ui.window()->hasKeyboardFocus());
         QTest::qWait(100);
         QVERIFY(!ui.isRefreshPending());
         QVERIFY(controller.requestLock());
@@ -198,8 +232,8 @@ private slots:
         // Locked, it waits for input or a scene change instead of polling.
         QTest::qWait(100);
         QVERIFY(!ui.isRefreshPending());
-        QVERIFY(ui.window()->activeFocusItem());
-        QVERIFY(ui.window()->activeFocusItem()->property("cursorVisible").toBool());
+        QVERIFY(ui.window()->hasKeyboardFocus());
+        QVERIFY(focusedField(ui));
         ui.controller()->authenticate(QStringLiteral("valid"));
         backend.succeed();
         controller.notifyFramePresented();
@@ -213,7 +247,7 @@ private slots:
         QVERIFY(!ui.isRefreshPending());
         QVERIFY(ui.isPanelDrawn());
         QVERIFY(ui.window());
-        QVERIFY(!ui.window()->activeFocusItem());
+        QVERIFY(!ui.window()->hasKeyboardFocus());
         QCOMPARE(ui.controller()->state(), auth::AuthController::Idle);
     }
 
@@ -251,8 +285,6 @@ private slots:
         controller.notifyFramePresented();
         ui.refresh();
         QVERIFY(ui.window());
-        QVERIFY(!ui.window()->isVisible());
-        QVERIFY(!ui.window()->handle());
         const QImage image = ui.renderImage();
         QVERIFY(!image.isNull());
         bool painted = false;
@@ -301,7 +333,7 @@ private slots:
         QVERIFY(controller.requestLock());
         controller.notifyFramePresented();
         ui.refresh();
-        auto *field = ui.window()->activeFocusItem();
+        auto *field = focusedField(ui);
         QVERIFY(field);
         const auto submit = [&](int key) {
             input.onKey({}, key, true);
@@ -311,17 +343,17 @@ private slots:
         };
         submit(KEY_A);
         QCOMPARE(backend.authenticateCount, 1);
-        QCOMPARE(field->property("text").toString(), QStringLiteral("a"));
+        QCOMPARE(field->text(), std::string("a"));
         QVERIFY(!field->isEnabled());
         backend.reject();
-        QCOMPARE(field->property("text").toString(), QString());
+        QCOMPARE(field->text(), std::string());
         QVERIFY(field->isEnabled());
-        QVERIFY(field->hasActiveFocus());
+        QVERIFY(field->hasFocus());
         submit(KEY_B);
         QCOMPARE(backend.lastSecret, QStringLiteral("b"));
         backend.succeed();
         QCOMPARE(controller.state(), session::SessionState::Unlocking);
-        QCOMPARE(field->property("text").toString(), QStringLiteral("b"));
+        QCOMPARE(field->text(), std::string("b"));
         QVERIFY(!field->isEnabled());
         seat.shutdown();
     }
@@ -360,87 +392,68 @@ private slots:
 
     void choiceMenuClosesOnAPressElsewhere()
     {
-        QTemporaryDir files;
-        QFile qml(files.filePath(QStringLiteral("menu.qml")));
-        QVERIFY(qml.open(QIODevice::WriteOnly));
-        qml.write("import QtQuick\n"
-                  "import \"qrc:/auth\"\n"
-                  "Item {\n"
-                  "    function focusPassword() {}\n"
-                  "    property alias menuOpen: menu.open\n"
-                  "    ChoiceMenu {\n"
-                  "        id: menu\n"
-                  "        x: 100; y: 300; width: 160\n"
-                  "        names: [\"Cutefish\", \"Plasma\"]\n"
-                  "        currentIndex: 0\n"
-                  "    }\n"
-                  "}\n");
-        qml.close();
         scene::Node root;
         session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
+        session::SessionController controller(&secure, nullptr, session::SessionState::Login);
         controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
         FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend, QUrl::fromLocalFile(qml.fileName()));
-        QVERIFY(controller.requestLock());
-        controller.notifyFramePresented();
+        auth::AuthUi ui(&controller, nullptr, &backend);
         ui.refresh();
-        QVERIFY(ui.window());
-        // The menu's overlay sits next to it under the content item.
-        QQuickItem *screen = nullptr;
-        for (auto *item : ui.window()->contentItem()->childItems()) {
-            if (item->property("menuOpen").isValid())
-                screen = item;
-        }
-        QVERIFY(screen);
+        ui.controller()->setSessions({{QStringLiteral("cutefish-wayland"), QStringLiteral("Cutefish"), {}, {}},
+                                      {QStringLiteral("plasma"), QStringLiteral("Plasma"), {}, {}}});
+        ui.window()->updateLayout();
+        ui::View *screen = ui.window()->contentView();
+        ui::View *button = findView(screen, "session-menu-button");
+        ui::View *list = findView(screen, "session-menu-list");
+        QVERIFY(button && list);
+        QVERIFY(!list->isVisible());
         const QPointF panel = secure.authContainer()->children().front()->absolutePosition();
         const auto click = [&](QPointF point) {
             ui.onPointerMotion({}, panel + point);
             ui.onPointerButton({}, panel + point, BTN_LEFT, true);
             ui.onPointerButton({}, panel + point, BTN_LEFT, false);
         };
-        click({180, 315});
-        QVERIFY(screen->property("menuOpen").toBool());
+        const QPointF onButton = panelRect(button).center();
+        click(onButton);
+        QVERIFY(list->isVisible());
+        // The panel is as tall as the output and the menu is at its bottom:
+        // the list opens upward rather than being cut off.
+        ui.window()->updateLayout();
+        QVERIFY(panelRect(list).bottom() <= panelRect(button).top());
         // Elsewhere closes it; on the button it toggles as before.
         click({20, 20});
-        QVERIFY(!screen->property("menuOpen").toBool());
-        click({180, 315});
-        QVERIFY(screen->property("menuOpen").toBool());
-        click({180, 315});
-        QVERIFY(!screen->property("menuOpen").toBool());
+        QVERIFY(!list->isVisible());
+        click(onButton);
+        QVERIFY(list->isVisible());
+        click(onButton);
+        QVERIFY(!list->isVisible());
+        // A row picks its session and closes the list.
+        click(onButton);
+        ui.window()->updateLayout();
+        const QRectF rows = panelRect(list);
+        click(QPointF(rows.center().x(), rows.top() + 6 + 30 + 15));
+        QVERIFY(!list->isVisible());
+        QCOMPARE(ui.controller()->sessionIndex(), 1);
     }
 
-    void roundedRectangleIsOnePathOnDevicePixels()
+    void passwordPillIsOnWholeDevicePixels()
     {
-        // Half a device pixel off the grid at 1.5, where the software renderer's
-        // own rounded Rectangle seams through the middle and steps at the corners.
-        QTemporaryDir files;
-        QFile qml(files.filePath(QStringLiteral("pill.qml")));
-        QVERIFY(qml.open(QIODevice::WriteOnly));
-        qml.write("import QtQuick\n"
-                  "import Cutefish.Auth\n"
-                  "Item {\n"
-                  "    function focusPassword() {}\n"
-                  "    RoundedRectangle {\n"
-                  "        x: 20; y: 20.5; width: 120; height: 38; radius: 19\n"
-                  "        color: Qt.rgba(1, 1, 1, 0.25)\n"
-                  "        border.width: 1\n"
-                  "        border.color: Qt.rgba(1, 1, 1, 0.5)\n"
-                  "    }\n"
-                  "}\n");
-        qml.close();
+        // The field lands half a device pixel off the grid at 1.5, where an
+        // unsnapped rounded rect would draw its border heavier on one side.
         scene::Node root;
         session::SecureContainer secure(&root);
         session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600), 1.5}});
+        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 601), 1.5}});
         FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend, QUrl::fromLocalFile(qml.fileName()));
+        auth::AuthUi ui(&controller, nullptr, &backend);
         ui.refresh();
         const QImage image = ui.renderImage();
         QVERIFY(!image.isNull());
-        const int centre = 120;
+        const QRectF field = ui.fieldBounds();
+        QCOMPARE(std::fmod(field.top() * 1.5, 1.0), 0.5);
+        const int centre = qRound(field.center().x() * 1.5);
         int top = -1, bottom = -1;
-        for (int y = 0; y < image.height(); ++y) {
+        for (int y = qRound(field.top() * 1.5) - 3; y < qRound(field.bottom() * 1.5) + 3; ++y) {
             if (qAlpha(image.pixel(centre, y)) != 0) {
                 bottom = y;
                 if (top < 0)
@@ -451,10 +464,7 @@ private slots:
         // Whole device pixels on both sides: the border is as heavy at the bottom as at the top.
         QCOMPARE(image.pixel(centre, bottom), image.pixel(centre, top));
         QVERIFY(image.pixel(centre, top) != image.pixel(centre, top + 1));
-        // The fill is one colour everywhere inside, the rounded ends included.
         const QRgb fill = image.pixel(centre, (top + bottom) / 2);
-        for (int x = 32; x < 208; ++x)
-            QCOMPARE(image.pixel(x, (top + bottom) / 2), fill);
         for (int y = top + 1; y < bottom; ++y)
             QCOMPARE(image.pixel(centre, y), fill);
     }
@@ -488,7 +498,6 @@ private slots:
         ui.refresh();
         QVERIFY(!ui.renderImage().isNull());
         QCOMPARE(ui.window(), window);
-        QVERIFY(!window->handle());
     }
 
     void panelTextureFollowsTheImageSize()
@@ -578,17 +587,16 @@ private slots:
         QCOMPARE(controller.state(), session::SessionState::Active);
     }
 
-    void failedQmlLeavesShieldOnEveryOutput()
+    void lockingCoversEveryOutput()
     {
         scene::Node root;
         session::SecureContainer secure(&root);
         session::SessionController controller(&secure);
         controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
         FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend, QUrl(QStringLiteral("qrc:/missing.qml")));
+        auth::AuthUi ui(&controller, nullptr, &backend);
         controller.requestLock();
         ui.refresh();
-        QVERIFY(!ui.window());
         QVERIFY(root.isVisible());
         controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)},
                                {QStringLiteral("two"), QRect(800, 0, 640, 480)}});
@@ -607,7 +615,7 @@ private slots:
         QCOMPARE(secure.shieldContainer()->children().size(), size_t(1));
     }
 
-    void failedQmlStillTakesThePassword()
+    void typedPasswordIsEditedAndRetriedAfterARejection()
     {
         scene::Node root;
         session::SecureContainer secure(&root);
@@ -619,20 +627,9 @@ private slots:
         seat.setSessionGate(&controller);
         input::InputManager input(&seat);
         FakeBackend backend;
-        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend,
-                        QUrl(QStringLiteral("qrc:/missing.qml")));
+        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
         QVERIFY(controller.requestLock());
         ui.refresh();
-        QVERIFY(!ui.window());
-        const auto drawn = [&] {
-            const QImage image = ui.renderImage();
-            int opaque = 0;
-            for (int y = 0; y < image.height(); ++y)
-                for (int x = 0; x < image.width(); ++x)
-                    opaque += qAlpha(image.pixel(x, y)) > 0;
-            return opaque;
-        };
-        QVERIFY(drawn() > 0);
         const auto type = [&](std::initializer_list<uint32_t> keys) {
             for (uint32_t key : keys) {
                 input.onKey({}, key, true);
@@ -641,13 +638,18 @@ private slots:
         };
         const quint64 empty = ui.imageGeneration();
         type({KEY_P, KEY_W, KEY_D, KEY_X, KEY_BACKSPACE});
-        QVERIFY(drawn() > 0);
+        QCOMPARE(fieldText(ui), QStringLiteral("pwd"));
+        QVERIFY(!ui.renderImage().isNull());
         QVERIFY(ui.imageGeneration() > empty);
         type({KEY_ENTER});
         QCOMPARE(backend.authenticateCount, 1);
         QCOMPARE(backend.lastSecret, QStringLiteral("pwd"));
+        const QRectF field = ui.fieldBounds();
         backend.reject();
         QVERIFY(ui.controller()->failed());
+        // The field shakes, and comes back to rest where it was.
+        QTRY_VERIFY_WITH_TIMEOUT((ui.renderImage(), ui.fieldBounds() != field), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT((ui.renderImage(), ui.fieldBounds()), field, 2000);
         // A rejection clears the field, so the next attempt starts empty.
         type({KEY_O, KEY_K, KEY_ENTER});
         QCOMPARE(backend.authenticateCount, 2);
@@ -655,6 +657,39 @@ private slots:
         backend.succeed();
         controller.notifyFramePresented();
         QTRY_COMPARE(controller.state(), session::SessionState::Unlocking);
+        seat.shutdown();
+    }
+
+    void submitButtonAsksForAPointingHand()
+    {
+        scene::Node root;
+        session::SecureContainer secure(&root);
+        session::SessionController controller(&secure);
+        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
+        scene::Node applications;
+        compositor::Compositor compositor(&applications);
+        input::Seat seat(&compositor);
+        seat.setSessionGate(&controller);
+        input::InputManager input(&seat);
+        FakeBackend backend;
+        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
+        QVERIFY(controller.requestLock());
+        ui.refresh();
+        QSignalSpy cursors(&ui, &auth::AuthUi::cursorShapeChanged);
+        const QPointF panel = secure.authContainer()->children().front()->absolutePosition();
+        const QRectF field = ui.fieldBounds();
+        const QPointF go = panel + QPointF(field.right() - 4 - 12, field.center().y());
+        // Nothing to submit: the button takes no pointer.
+        ui.onPointerMotion({}, go);
+        QVERIFY(cursors.isEmpty() || cursors.last().at(0).value<Qt::CursorShape>() == Qt::ArrowCursor);
+        input.onKey({}, KEY_A, true);
+        input.onKey({}, KEY_A, false);
+        ui.onPointerMotion({}, go + QPointF(1, 0));
+        QCOMPARE(cursors.last().at(0).value<Qt::CursorShape>(), Qt::PointingHandCursor);
+        ui.onPointerButton({}, go, BTN_LEFT, true);
+        ui.onPointerButton({}, go, BTN_LEFT, false);
+        QCOMPARE(backend.authenticateCount, 1);
+        QCOMPARE(backend.lastSecret, QStringLiteral("a"));
         seat.shutdown();
     }
 
@@ -699,7 +734,6 @@ private slots:
         auth::AuthUi ui(&controller, nullptr, &backend);
         ui.refresh();
         QVERIFY(!ui.renderImage().isNull());
-        QVERIFY(!ui.window()->handle());
         QCOMPARE(ui.controller()->mode(), auth::AuthController::Login);
         ui.controller()->authenticate(QStringLiteral("valid"));
         backend.succeed();
@@ -711,8 +745,7 @@ private slots:
 
 int main(int argc, char **argv)
 {
-    auth::AuthUi::configurePlatform();
-    QGuiApplication app(argc, argv);
+    QCoreApplication app(argc, argv);
     QTemporaryDir configuration;
     qputenv("XDG_CONFIG_HOME", configuration.path().toUtf8());
     AuthUiTest test;

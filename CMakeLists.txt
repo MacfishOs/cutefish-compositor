@@ -21,8 +21,9 @@ include(GNUInstallDirs)
 option(BUILD_TESTING "Build the test suite" OFF)
 include(CTest)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Quick Network Concurrent)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Network Concurrent)
 find_package(PkgConfig REQUIRED)
+find_package(CutefishToolkit REQUIRED)
 pkg_check_modules(TitleText REQUIRED IMPORTED_TARGET harfbuzz freetype2 fontconfig icu-uc icu-i18n)
 pkg_check_modules(WaylandServer REQUIRED IMPORTED_TARGET wayland-server>=1.23)
 pkg_check_modules(Libseat REQUIRED IMPORTED_TARGET libseat)
@@ -848,34 +849,37 @@ target_link_libraries(cutefish-backend PUBLIC cutefish-output-scheduler)
 add_library(cutefish-display-runtime STATIC src/display/display_runtime.cpp)
 target_link_libraries(cutefish-display-runtime PUBLIC cutefish-backend cutefish-wayland-shell
     cutefish-wm cutefish-display cutefish-wayland-input cutefish-cursor)
+# The toolkit's application inside the compositor, for the panels it draws itself.
+add_library(cutefish-toolkit-host STATIC
+    src/toolkit/toolkit_host.cpp src/toolkit/toolkit_host.h)
+target_include_directories(cutefish-toolkit-host PUBLIC src)
+target_link_libraries(cutefish-toolkit-host PUBLIC Cutefish::Toolkit cutefish-render)
+
 find_library(PAM_LIBRARY pam REQUIRED)
 add_executable(cutefish-auth-helper src/auth/auth_helper.cpp)
 target_link_libraries(cutefish-auth-helper PRIVATE ${PAM_LIBRARY})
 install(TARGETS cutefish-auth-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 install(FILES data/cutefish-auth DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/pam.d)
-qt_add_resources(AUTH_RESOURCES src/auth/auth_qml.qrc)
 add_library(cutefish-auth STATIC
     src/auth/auth_ui.cpp src/auth/auth_ui.h
+    src/auth/auth_view.cpp src/auth/auth_view.h
     src/auth/auth_controller.cpp src/auth/auth_controller.h src/auth/auth_backend.h
     src/auth/pam_backend.cpp src/auth/pam_backend.h
     src/auth/greetd_backend.cpp src/auth/greetd_backend.h
-    src/auth/login_sessions.cpp src/auth/login_sessions.h
-    src/auth/rounded_rectangle.cpp src/auth/rounded_rectangle.h
-    src/auth/avatar_provider.cpp src/auth/avatar_provider.h
-    src/auth/fallback_panel.cpp src/auth/fallback_panel.h ${AUTH_RESOURCES})
+    src/auth/login_sessions.cpp src/auth/login_sessions.h)
 target_include_directories(cutefish-auth PUBLIC src)
-target_link_libraries(cutefish-auth PUBLIC cutefish-session Qt6::Quick Qt6::Network Qt6::DBus)
+target_link_libraries(cutefish-auth PUBLIC cutefish-session cutefish-toolkit-host Qt6::Network
+    Qt6::DBus)
 target_compile_definitions(cutefish-auth PRIVATE
     CUTEFISH_AUTH_HELPER="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-auth-helper")
 
 # The application switcher's list, drawn by the compositor as the lock screen is.
-qt_add_resources(SWITCHER_RESOURCES src/switcher/switcher_qml.qrc)
 add_library(cutefish-switcher STATIC
     src/switcher/application_info.cpp src/switcher/application_info.h
-    src/switcher/switcher_view.cpp src/switcher/switcher_view.h ${SWITCHER_RESOURCES})
+    src/switcher/switcher_view.cpp src/switcher/switcher_view.h)
 target_include_directories(cutefish-switcher PUBLIC src)
 target_link_libraries(cutefish-switcher PUBLIC cutefish-wm cutefish-decoration cutefish-scene
-    Qt6::Quick)
+    cutefish-toolkit-host)
 
 # The synthetic display: outputs and a presentation clock with no hardware.
 add_library(cutefish-headless STATIC

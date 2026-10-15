@@ -1,0 +1,85 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef CUTEFISH_TOOLKIT_TOOLKIT_HOST_H_
+#define CUTEFISH_TOOLKIT_TOOLKIT_HOST_H_
+
+#include <memory>
+
+#include <QImage>
+#include <QRegion>
+
+namespace cutefish::render {
+class Renderer;
+class Texture;
+} // namespace cutefish::render
+
+namespace cutefish::ui {
+class Application;
+class EmbeddedWindow;
+} // namespace cutefish::ui
+
+namespace cutefish::toolkit {
+
+// The toolkit's application for the panels the compositor draws itself: one
+// per process, on the embedded platform, its loop run from Qt's through the
+// loop's descriptor. Created on first use and kept for the process's life.
+ui::Application &application();
+
+// Whether panels may draw on the GPU at all; on unless a test compares the
+// CPU path.
+void setGpuRenderingAllowed(bool allowed);
+
+// Destroys a window that may have rendered on the GPU, with the context its
+// GL objects live on current.
+void destroyWindow(std::unique_ptr<ui::EmbeddedWindow> &window);
+
+// What a scene node draws a toolkit window with. On a GL renderer Skia draws
+// the window straight into a texture of the renderer's context; elsewhere,
+// or when that fails (no context, a lost one), the window is rendered on the
+// CPU and only what changed is uploaded.
+class PanelTexture
+{
+public:
+    explicit PanelTexture(ui::EmbeddedWindow *window);
+    ~PanelTexture();
+
+    // Renders on the CPU into image() when anything changed since. Returns
+    // whether the pixels changed.
+    bool renderImage();
+    // The CPU frame, for tests and for an output that is not drawn on the GPU.
+    const QImage &image() const { return m_image; }
+
+    // In a node's paint: the window as a texture of `renderer`, rendered
+    // first when `dirty` or when the texture is not up to date; null when
+    // there is nothing to draw.
+    render::Texture *texture(render::Renderer &renderer, bool dirty);
+    // Frees the texture and, once, every GL object the toolkit holds.
+    void releaseRenderResources();
+    // Whether the last texture() drew on the GPU.
+    bool lastFrameOnGpu() const { return m_lastOnGpu; }
+
+private:
+    render::Texture *gpuTexture(render::Renderer &renderer, bool dirty);
+    render::Texture *cpuTexture(render::Renderer &renderer, bool dirty);
+
+    ui::EmbeddedWindow *m_window;
+    QImage m_image;
+    // Changed since the CPU texture was last uploaded, in image pixels.
+    QRegion m_pendingUpload;
+    std::unique_ptr<render::Texture> m_cpuTexture;
+    std::unique_ptr<render::Texture> m_gpuTexture;
+    // The GPU texture holds the window's latest frame; a CPU render since
+    // leaves it behind.
+    bool m_gpuCurrent = false;
+    // A GPU frame since image() was drawn: the next CPU frame is copied whole.
+    bool m_imageBehind = false;
+    bool m_lastOnGpu = false;
+    // A renderer whose textures are not GL ones: never asked again.
+    const render::Renderer *m_cpuRenderer = nullptr;
+};
+
+} // namespace cutefish::toolkit
+
+#endif // CUTEFISH_TOOLKIT_TOOLKIT_HOST_H_

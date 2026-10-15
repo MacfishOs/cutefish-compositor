@@ -9,15 +9,11 @@
 #include "session/session_state.h"
 #include <QImage>
 #include <QObject>
-#include <QPointer>
 #include <QTimer>
-#include <QUrl>
+#include <ctime>
+#include <optional>
 #include <functional>
 #include <memory>
-class QQmlEngine;
-class QQuickRenderControl;
-class QQuickWindow;
-class QQuickItem;
 
 namespace cutefish::input {
 class XkbTracker;
@@ -25,11 +21,21 @@ class XkbTracker;
 
 namespace cutefish::render {
 class Renderer;
+class Texture;
+} // namespace cutefish::render
+
+namespace cutefish::toolkit {
+class PanelTexture;
 }
 
 namespace cutefish::scene {
 class Node;
 }
+
+namespace cutefish::ui {
+class EmbeddedWindow;
+class View;
+} // namespace cutefish::ui
 
 namespace cutefish::session {
 class SessionController;
@@ -38,16 +44,15 @@ class SessionController;
 namespace cutefish::auth {
 class AuthBackend;
 class AuthController;
-class FallbackPanel;
+class AuthScreen;
 
 class AuthUi : public QObject, public input::EventSink, public session::SessionObserver
 {
     Q_OBJECT
 public:
     AuthUi(session::SessionController *session, const input::XkbTracker *xkb,
-           AuthBackend *backend = nullptr, const QUrl &source = QUrl(), QObject *parent = nullptr);
+           AuthBackend *backend = nullptr, QObject *parent = nullptr);
     ~AuthUi() override;
-    static void configurePlatform();
     void onSessionStateChanged(session::SessionState state) override;
     void onSessionOutputsChanged() override;
     bool onKey(input::Timestamp, uint32_t code, bool pressed) override;
@@ -55,15 +60,20 @@ public:
     bool onPointerButton(input::Timestamp, const QPointF &position, uint32_t button,
                          bool pressed) override;
 
-    QQuickWindow *window() const { return m_window.get(); }
+    // The panel's toolkit window, made with the controller on the first
+    // refresh with an output.
+    ui::EmbeddedWindow *window() const { return m_window.get(); }
+    AuthScreen *screen() const { return m_screen; }
+    // The view that has the keyboard, for tests.
+    ui::View *focusView() const;
 
     AuthController *controller() const { return m_controller.get(); }
 
     // Whether a refresh() is queued. Nothing queues one while the panel is idle.
     bool isRefreshPending() const { return m_refresh.isActive(); }
 
-    // The panel has been rendered at least once, so the next frame can show it.
-    bool isPanelDrawn() const { return !m_image.isNull(); }
+    // The panel has its size for the output, so the next frame can show it.
+    bool isPanelDrawn() const { return m_window && m_sized; }
 
     // Changes whenever renderImage() draws the panel anew.
     quint64 imageGeneration() const { return m_imageGeneration; }
@@ -82,8 +92,15 @@ public:
     // The password field in panel coordinates, for the backdrop blur behind it.
     QRectF fieldBounds() const;
 
+    // The panel rendered on the CPU, when it changed.
     QImage renderImage();
+    // In the panel node's paint: the panel as a texture of the renderer,
+    // drawn on the GPU where the renderer allows.
+    render::Texture *panelTexture(render::Renderer &renderer);
+    void releaseRenderResources();
     void refresh();
+    // Seconds since the epoch the clock shows instead of the time, for tests.
+    void setClockForTesting(std::time_t now);
 signals:
     void cursorShapeChanged(Qt::CursorShape shape);
 
@@ -99,12 +116,11 @@ private:
     session::SessionController *m_session;
     const input::XkbTracker *m_xkb;
     AuthBackend *m_injectedBackend;
-    QUrl m_source;
     QTimer m_refresh;
     QTimer m_repeatTimer;
     input::KeyRepeatSettings m_keyRepeat;
     uint32_t m_repeatCode = 0;
-    QPointer<QQuickItem> m_repeatFocus;
+    ui::View *m_repeatFocus = nullptr;
     QPointF m_pointerPosition;
     std::function<QPointF()> m_pointerLocator;
     QString m_panelOutput;
@@ -112,14 +128,16 @@ private:
     bool m_started = false;
     std::unique_ptr<AuthBackend> m_backend;
     std::unique_ptr<AuthController> m_controller;
-    std::unique_ptr<QQmlEngine> m_engine;
-    std::unique_ptr<QQuickRenderControl> m_control;
-    std::unique_ptr<QQuickWindow> m_window;
-    QQuickItem *m_root = nullptr;
-    std::unique_ptr<FallbackPanel> m_fallback;
+    std::unique_ptr<ui::EmbeddedWindow> m_window;
+    std::unique_ptr<toolkit::PanelTexture> m_panel;
+    AuthScreen *m_screen = nullptr;
+    // The cursor the panel's views ask for, shown while the session is blocked.
+    Qt::CursorShape m_viewCursor = Qt::ArrowCursor;
+    std::optional<std::time_t> m_clockForTesting;
+    double m_scale = 1;
+    bool m_sized = false;
     scene::Node *m_node = nullptr;
-    QImage m_image;
-    Qt::MouseButtons m_buttons;
+    bool m_pointerInside = false;
     bool m_attempted = false;
     bool m_authenticated = false;
     bool m_focused = false;

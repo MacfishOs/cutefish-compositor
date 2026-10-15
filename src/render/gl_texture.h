@@ -38,6 +38,9 @@ public:
 
     uint32_t target() const { return m_target; }
 
+    // The context the texture belongs to; null for one deleted on whatever is current.
+    const std::shared_ptr<EglContext> &context() const { return m_context; }
+
 protected:
     std::shared_ptr<EglContext> m_context;
 

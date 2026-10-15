@@ -8,10 +8,8 @@
 #include <unistd.h>
 
 #include <QCoreApplication>
-#include <QGuiApplication>
 #include <QSocketNotifier>
 
-#include "auth/auth_ui.h"
 #include "core/compositor_options.h"
 #include "core/compositor_shell.h"
 #include "core/logging.h"
@@ -45,12 +43,11 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     const cutefish::ScopedFd signalFdOwner(createSignalFd());
     const int signalFd = signalFdOwner.get();
-    cutefish::auth::AuthUi::configurePlatform();
     // Nothing here runs on a GMainLoop, and Qt's glib dispatcher reads the
     // clock for every source on every iteration: two thirds of a frame's
     // clock_gettime calls, each a syscall on a machine without a usable TSC.
     cutefish::setPrivateEnvironment("QT_NO_GLIB", "1");
-    QGuiApplication app(argc, argv);
+    QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("cutefish-compositor"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
 

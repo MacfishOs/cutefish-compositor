@@ -8,22 +8,28 @@
 #include <deque>
 #include <memory>
 #include <utility>
+#include <vector>
 
-#include <QCache>
-#include <QHash>
 #include <QImage>
 #include <QObject>
 #include <QRect>
 #include <QTimer>
-#include <QVariantList>
 
 #include "switcher/application_info.h"
 #include "wm/window_cycle_controller.h"
 
-class QQmlEngine;
-class QQuickItem;
-class QQuickRenderControl;
-class QQuickWindow;
+namespace cutefish::render {
+class Renderer;
+class Texture;
+} // namespace cutefish::render
+
+namespace cutefish::toolkit {
+class PanelTexture;
+}
+
+namespace cutefish::ui {
+class EmbeddedWindow;
+}
 
 namespace cutefish::decoration {
 class ShadowNode;
@@ -40,25 +46,13 @@ class WindowManager;
 
 namespace cutefish::switcher {
 
-// Application icons rendered at the size the list draws them. An SVG icon
-// takes a few milliseconds to rasterize, so they are made ahead of the list.
-class IconCache
-{
-public:
-    // The icon named by a theme name or an absolute path, `pixels` square.
-    QImage image(const QString &name, int pixels);
-    void clear() { m_images.clear(); }
-
-private:
-    // Costed in bytes; a session's worth of applications at two scales fits.
-    QCache<QString, QImage> m_images {8 * 1024 * 1024};
-};
+class SwitcherContent;
 
 // The application switcher's list: a row of application icons on a glass
 // panel, centred on the output being switched on, with the selected one's
-// name under it. Drawn by the compositor itself, as the lock screen is: QML
-// rendered offscreen into an image the panel node composites over the
-// backdrop blur. Upstream: WindowCycleView.
+// name under it. Drawn by the compositor itself, as the lock screen is: a
+// toolkit view tree rendered into an image the panel node composites over
+// the backdrop blur. Upstream: WindowCycleView.
 class SwitcherView : public QObject, public wm::WindowCycleView
 {
     Q_OBJECT
@@ -86,8 +80,8 @@ public:
                  const decoration::Theme *theme, QObject *parent = nullptr);
     ~SwitcherView() override;
 
-    // Builds the QML scene ahead of the first switch, which would otherwise
-    // pay for the engine, the fonts and the icon theme while the list appears.
+    // Builds the view tree ahead of the first switch, which would otherwise
+    // pay for the fonts and the icon theme while the list appears.
     // From then on the application of every window that maps is looked up and
     // its icon rendered, one window at a time while the compositor is idle.
     void preload();
@@ -103,8 +97,12 @@ public:
     bool windowCycleViewContains(const QPointF &location) const override;
     int windowCycleEntryAt(const QPointF &location) const override;
 
-    // The panel's contents, rendered anew when they changed.
+    // The panel's contents, rendered anew on the CPU when they changed.
     QImage renderImage();
+    // In the panel node's paint: its contents as a texture of the renderer,
+    // drawn on the GPU where the renderer allows.
+    render::Texture *panelTexture(render::Renderer &renderer);
+    void releaseRenderResources();
     quint64 imageGeneration() const { return m_imageGeneration; }
     QRect bounds() const { return m_bounds; }
     // The selected entry's own glass, in global logical coordinates; empty
@@ -114,17 +112,17 @@ public:
     const decoration::Theme *theme() const { return m_theme; }
 
 private:
-    bool ensureScene();
+    void ensureWindow();
     void markDirty();
     // The logical bounds and scale of the output named `output`.
     std::pair<QRect, double> outputFor(const QString &output) const;
-    // Sizes the image and the scene for `entries` centred on `area`.
-    void layout(const QVariantList &entries, int selected, const QRect &area, double scale);
-    void render();
-    // The row's top in the panel, centred as the QML centres it.
+    // Sizes the image and the views for `entries` centred on `area`.
+    void layout(const std::vector<ApplicationInfo> &entries, int selected, const QRect &area,
+                double scale);
+    // The row's top in the panel, centred in it.
     qreal rowY() const { return (m_bounds.height() - m_cellSize) / 2; }
-    // The icon size cells have at full size, in device pixels: what Image
-    // asks the provider for.
+    // The icon size cells have at full size, in device pixels: icons are made
+    // once at it and scaled into shrunken cells.
     static int iconPixels(double scale);
     void followIconTheme();
     void warmNext();
@@ -132,18 +130,15 @@ private:
     wm::WindowManager *m_manager;
     const decoration::Theme *m_theme;
     ApplicationInfoCache m_applications;
-    // Before the engine, whose icon provider reads it.
-    IconCache m_icons;
     QString m_iconTheme;
     std::deque<quint64> m_warmQueue;
     QTimer m_warmTimer;
-    std::unique_ptr<QQmlEngine> m_engine;
-    std::unique_ptr<QQuickRenderControl> m_control;
-    std::unique_ptr<QQuickWindow> m_window;
-    QQuickItem *m_root = nullptr;
+    std::unique_ptr<ui::EmbeddedWindow> m_window;
+    std::unique_ptr<toolkit::PanelTexture> m_panelTexture;
+    SwitcherContent *m_content = nullptr;
+    double m_scale = 1;
     decoration::ShadowNode *m_shadow = nullptr;
     scene::Node *m_panel = nullptr;
-    QImage m_image;
     QRect m_bounds;
     qreal m_rowX = 0;
     qreal m_cellSize = kCellSize;
@@ -151,7 +146,6 @@ private:
     int m_selected = -1;
     bool m_shown = false;
     bool m_dirty = false;
-    bool m_rendering = false;
     quint64 m_imageGeneration = 0;
 };
 

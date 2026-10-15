@@ -7,7 +7,6 @@
 #include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QThread>
-#include <QQuickWindow>
 #include <QTest>
 
 #include "compositor/compositor.h"
@@ -177,6 +176,8 @@ private slots:
         QVERIFY(shadow->isVisible());
         QVERIFY(shadow->elevation() != wm::ShadowElevation::None);
         QVERIFY(shadow->absoluteGeometry().contains(view.bounds()));
+        // The glass's own corner: a tighter one shows past it as a dark crescent.
+        QCOMPARE(shadow->radius(), switcher::SwitcherView::kRadius);
     }
 
     void shrinksTheCellsToFitTheOutput()
@@ -197,10 +198,7 @@ int main(int argc, char **argv)
     // The test's desktop entries come first; the system's icon themes stay.
     QTemporaryDir data;
     qputenv("XDG_DATA_HOME", data.path().toUtf8());
-    // How the compositor runs Qt: offscreen, with the software scene graph.
     qputenv("QT_QPA_PLATFORM", "offscreen");
-    qputenv("QT_QUICK_BACKEND", "software");
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     QGuiApplication app(argc, argv);
     SwitcherViewTest test;
     return QTest::qExec(&test, argc, argv);

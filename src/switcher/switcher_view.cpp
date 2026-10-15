@@ -8,20 +8,7 @@
 #include <cmath>
 #include <numeric>
 
-#include <QCoreApplication>
-#include <QIcon>
-#include <QQmlComponent>
-#include <QQmlEngine>
-#include <QQuickImageProvider>
-#include <QQuickItem>
-#include <QQuickRenderControl>
-#include <QQuickRenderTarget>
-#include <QQuickWindow>
-#include <QDir>
 #include <QSettings>
-#include <QStandardPaths>
-#include <QUrl>
-#include <QVariantMap>
 
 #include "core/logging.h"
 #include "core/preferences.h"
@@ -33,54 +20,29 @@
 #include "render/renderer.h"
 #include "scene/node.h"
 #include "scene/window_visual_node.h"
+#include "toolkit/toolkit_host.h"
+#include "ui/embedded_window.h"
+#include "ui/icon_image.h"
+#include "ui/label.h"
+#include "ui/theme.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
-
-static void initializeSwitcherResources()
-{
-    Q_INIT_RESOURCE(switcher_qml);
-}
 
 namespace cutefish::switcher {
 
 namespace {
 
-// The list's icons, from the view's cache.
-class IconProvider final : public QQuickImageProvider
+void setApplicationIconTheme(const QString &name)
 {
-public:
-    explicit IconProvider(IconCache *icons)
-        : QQuickImageProvider(QQuickImageProvider::Image)
-        , m_icons(icons)
-    {
-    }
+    ui::Theme theme = ui::Theme::current();
+    theme.iconTheme = name.toStdString();
+    ui::Theme::setCurrent(theme);
+}
 
-    QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override
-    {
-        const QString name = QUrl::fromPercentEncoding(id.toUtf8());
-        const QImage image =
-                m_icons->image(name, requestedSize.isValid() ? requestedSize.width() : 128);
-        if (size)
-            *size = image.size();
-        return image;
-    }
-
-private:
-    IconCache *m_icons;
-};
-
-// The offscreen platform the compositor runs on searches no icon theme at all.
-void initializeIconThemes()
+void preloadApplicationIcon(const QString &name, int pixels)
 {
-    QStringList paths;
-    for (const QString &directory :
-         QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation)) {
-        paths.append(directory + QLatin1String("/icons"));
-    }
-    paths.append(QDir::homePath() + QLatin1String("/.icons"));
-    QIcon::setThemeSearchPaths(paths);
-    QIcon::setFallbackThemeName(QStringLiteral("hicolor"));
-    QIcon::setFallbackSearchPaths({QStringLiteral("/usr/share/pixmaps")});
+    if (!ui::IconImage::preload(name.toStdString(), pixels))
+        ui::IconImage::preload(kFallbackIcon.toStdString(), pixels);
 }
 
 // Frosted enough that a busy wallpaper under the icons and the name calms to
@@ -149,24 +111,14 @@ public:
         return absoluteGeometry().adjusted(-1, -1, 1, 1);
     }
 
-    void releaseRenderResources() override { m_texture.reset(); }
+    void releaseRenderResources() override { m_view->releaseRenderResources(); }
 
 protected:
     void paint(render::Renderer &renderer, const QRect &bounds) const override
     {
-        const QImage source = m_view->renderImage();
-        if (source.isNull())
+        render::Texture *texture = m_view->panelTexture(renderer);
+        if (!texture)
             return;
-        if (!m_texture || m_uploaded != m_view->imageGeneration()) {
-            // The list grows and shrinks with the applications it shows.
-            if (!m_texture || m_texture->size() != source.size()
-                || !renderer.updateTexture(m_texture.get(), source.constBits(),
-                                           source.bytesPerLine(), render::PixelFormat::Rgba8888))
-                m_texture = renderer.createTexture(source.size(), source.constBits(),
-                                                   source.bytesPerLine(),
-                                                   render::PixelFormat::Rgba8888);
-            m_uploaded = m_view->imageGeneration();
-        }
         const decoration::Theme *theme = m_view->theme();
         const bool darkMode = theme && theme->darkMode();
         renderer.drawBackgroundBlur(bounds, SwitcherView::kRadius, bounds, panelGlass(darkMode));
@@ -174,8 +126,7 @@ protected:
             renderer.drawBackgroundBlur(selection, m_view->selectionRadius(), bounds,
                                         selectionGlass(darkMode));
         }
-        if (m_texture)
-            renderer.drawTextureMapped(m_texture.get(), bounds, 1.0f, QTransform());
+        renderer.drawTextureMapped(texture, bounds, 1.0f, QTransform());
         if (!theme)
             return;
         // The same edge the shell's glass surfaces get.
@@ -191,24 +142,126 @@ protected:
 
 private:
     SwitcherView *m_view;
-    mutable std::unique_ptr<render::Texture> m_texture;
-    mutable quint64 m_uploaded = 0;
 };
 
 } // namespace
 
-QImage IconCache::image(const QString &name, int pixels)
+// An application's icon, made at the size a full cell shows it and scaled
+// smoothly into the cell it is in.
+class ApplicationIcon final : public ui::IconImage
 {
-    const QString key = name + QLatin1Char('@') + QString::number(pixels);
-    if (const QImage *cached = m_images.object(key))
-        return *cached;
-    QIcon icon = name.startsWith(QLatin1Char('/')) ? QIcon(name) : QIcon::fromTheme(name);
-    if (icon.isNull())
-        icon = QIcon::fromTheme(kFallbackIcon);
-    const QImage image = icon.pixmap(QSize(pixels, pixels)).toImage();
-    m_images.insert(key, new QImage(image), std::max<qsizetype>(1, image.sizeInBytes()));
-    return image;
-}
+public:
+    ApplicationIcon() { setFallbackName(kFallbackIcon.toStdString()); }
+
+    void setIcon(const QString &name, int pixels)
+    {
+        setName(name.toStdString());
+        setPixels(pixels);
+    }
+};
+
+// The row of applications being switched through, most recently used first,
+// with the selected one's name under its icon. The compositor draws the
+// glass, the selection's included, and the edge; this is only what goes on
+// them.
+class SwitcherContent final : public ui::View
+{
+public:
+    SwitcherContent()
+    {
+        m_name = addChild<ui::Label>();
+        m_name->setFontSize(11);
+        m_name->setWeight(600);
+        m_name->setElide(ui::Label::Elide::Right);
+    }
+
+    void setEntries(const std::vector<ApplicationInfo> &entries, int iconPixels)
+    {
+        // A count, not the list: switching between as many applications again
+        // keeps every cell and only changes what it shows.
+        while (m_icons.size() > entries.size()) {
+            takeChild(m_icons.back());
+            m_icons.pop_back();
+        }
+        while (m_icons.size() < entries.size())
+            m_icons.push_back(addChild<ApplicationIcon>());
+        raiseChild(m_name);
+        m_names.clear();
+        for (size_t i = 0; i < entries.size(); ++i) {
+            m_icons[i]->setIcon(entries[i].icon, iconPixels);
+            m_names.push_back(entries[i].name.toStdString());
+        }
+        updateName();
+        requestLayout();
+    }
+
+    void setSelected(int index)
+    {
+        if (index == m_selected)
+            return;
+        m_selected = index;
+        updateName();
+        requestLayout();
+    }
+
+    void setMetrics(qreal rowX, qreal cellSize, qreal iconSize, qreal padding)
+    {
+        m_rowX = rowX;
+        m_cellSize = cellSize;
+        m_iconSize = iconSize;
+        m_padding = padding;
+        requestLayout();
+    }
+
+    void setDarkMode(bool dark)
+    {
+        m_name->setColor(dark ? ui::Color {255, 255, 255, 255}.withAlpha(0.92)
+                              : ui::Color {0, 0, 0, 255}.withAlpha(0.85));
+    }
+
+protected:
+    void layout() override
+    {
+        const qreal width = geometry().width;
+        // Centred, whatever snapping did to the panel's height.
+        const qreal rowY = (geometry().height - m_cellSize) / 2;
+        for (size_t i = 0; i < m_icons.size(); ++i) {
+            m_icons[i]->setGeometry({m_rowX + qreal(i) * m_cellSize + (m_cellSize - m_iconSize) / 2,
+                                     rowY + (m_cellSize - m_iconSize) / 2, m_iconSize, m_iconSize});
+        }
+        if (!m_name->isVisible())
+            return;
+        // Centred under its icon, kept inside the panel at the ends of the row.
+        const ui::SizeF hint = m_name->sizeHint();
+        const qreal nameWidth = std::min(hint.width, width - 2 * m_padding);
+        const qreal centre = m_rowX + (m_selected + 0.5) * m_cellSize;
+        const qreal x = std::max(m_padding,
+                                 std::min(centre - nameWidth / 2, width - m_padding - nameWidth));
+        // Its middle a little under half way down from the selection to the
+        // panel's edge, scaled with the cells.
+        const qreal y = rowY + (m_cellSize + m_iconSize) / 2 + m_cellSize * 10.5 / 108
+                - hint.height / 2;
+        m_name->setGeometry({x, y, nameWidth, hint.height});
+    }
+
+private:
+    void updateName()
+    {
+        const bool shown = m_selected >= 0 && m_selected < int(m_names.size());
+        // Only the selected application's name is shown, so only it is laid out.
+        m_name->setText(shown ? m_names[size_t(m_selected)] : std::string());
+        m_name->setVisible(shown);
+    }
+
+    std::vector<ApplicationIcon *> m_icons;
+    std::vector<std::string> m_names;
+    ui::Label *m_name = nullptr;
+    int m_selected = -1;
+    qreal m_rowX = 0;
+    qreal m_cellSize = SwitcherView::kCellSize;
+    qreal m_iconSize = SwitcherView::kCellSize * SwitcherView::kIconRatio;
+    qreal m_padding = SwitcherView::kPadding;
+};
 
 SwitcherView::SwitcherView(scene::Node *container, wm::WindowManager *manager,
                            const decoration::Theme *theme, QObject *parent)
@@ -216,7 +269,6 @@ SwitcherView::SwitcherView(scene::Node *container, wm::WindowManager *manager,
     , m_manager(manager)
     , m_theme(theme)
 {
-    initializeSwitcherResources();
     if (m_theme) {
         m_shadow = static_cast<decoration::ShadowNode *>(
                 container->addChild(std::make_unique<decoration::ShadowNode>(m_theme)));
@@ -229,41 +281,27 @@ SwitcherView::SwitcherView(scene::Node *container, wm::WindowManager *manager,
     m_warmTimer.callOnTimeout(this, &SwitcherView::warmNext);
 }
 
-SwitcherView::~SwitcherView() = default;
-
-bool SwitcherView::ensureScene()
+SwitcherView::~SwitcherView()
 {
-    if (m_root)
-        return true;
-    initializeIconThemes();
-    m_engine = std::make_unique<QQmlEngine>();
-    m_engine->addImageProvider(QStringLiteral("appicon"), new IconProvider(&m_icons));
-    m_control = std::make_unique<QQuickRenderControl>();
-    m_window = std::make_unique<QQuickWindow>(m_control.get());
-    m_window->setColor(Qt::transparent);
-    connect(m_control.get(), &QQuickRenderControl::renderRequested, this, &SwitcherView::markDirty);
-    connect(m_control.get(), &QQuickRenderControl::sceneChanged, this, &SwitcherView::markDirty);
-    QQmlComponent component(m_engine.get(), QUrl(QStringLiteral("qrc:/switcher/Switcher.qml")));
-    QObject *object = component.create();
-    m_root = qobject_cast<QQuickItem *>(object);
-    if (!m_root) {
-        qCWarning(cfCompositor) << "The application switcher did not load:"
-                                << component.errorString();
-        delete object;
-        return false;
-    }
-    m_root->setParent(m_window->contentItem());
-    m_root->setParentItem(m_window->contentItem());
-    m_root->setProperty("padding", kPadding);
-    m_root->setProperty("iconSourceSize", kCellSize * kIconRatio);
-    return true;
+    m_panelTexture.reset();
+    toolkit::destroyWindow(m_window);
+}
+
+void SwitcherView::ensureWindow()
+{
+    if (m_window)
+        return;
+    toolkit::application();
+    m_window = std::make_unique<ui::EmbeddedWindow>();
+    auto content = std::make_unique<SwitcherContent>();
+    m_content = content.get();
+    m_window->setContentView(std::move(content));
+    m_window->onRenderRequested = [this] { markDirty(); };
+    m_panelTexture = std::make_unique<toolkit::PanelTexture>(m_window.get());
 }
 
 void SwitcherView::markDirty()
 {
-    // Rendering itself reports changes; those are already in the image.
-    if (m_rendering)
-        return;
     m_dirty = true;
     if (m_shown)
         m_panel->notifyChanged();
@@ -271,15 +309,12 @@ void SwitcherView::markDirty()
 
 void SwitcherView::preload()
 {
-    if (!ensureScene())
-        return;
+    ensureWindow();
     // Drawing a name and an icon once loads the fonts and the icon theme, which
-    // cost far more than the engine on the first switch.
+    // cost far more than the views on the first switch.
     const auto [area, scale] = outputFor(QString());
-    layout({QVariantMap {{QStringLiteral("name"), QStringLiteral("Aa")},
-                         {QStringLiteral("icon"), kFallbackIcon}}},
-           0, area, scale);
-    render();
+    layout({{QStringLiteral("Aa"), kFallbackIcon}}, 0, area, scale);
+    m_panelTexture->renderImage();
 
     for (wm::Window *window : m_manager->windows())
         m_warmQueue.push_back(window->id());
@@ -306,8 +341,7 @@ void SwitcherView::followIconTheme()
     if (theme == m_iconTheme)
         return;
     m_iconTheme = theme;
-    QIcon::setThemeName(theme);
-    m_icons.clear();
+    setApplicationIconTheme(theme);
 }
 
 void SwitcherView::warmNext()
@@ -321,7 +355,7 @@ void SwitcherView::warmNext()
         m_applications.refresh();
         const ApplicationInfo info =
                 m_applications.lookup(window->applicationId(), window->title());
-        m_icons.image(info.icon, iconPixels(outputFor(QString()).second));
+        preloadApplicationIcon(info.icon, iconPixels(outputFor(QString()).second));
     }
     // One window per turn of the event loop, so no frame waits for many.
     if (!m_warmQueue.empty())
@@ -344,15 +378,11 @@ std::pair<QRect, double> SwitcherView::outputFor(const QString &output) const
 void SwitcherView::showWindowCycle(const std::vector<wm::Window *> &entries, int selected,
                                    const QString &output)
 {
-    if (!ensureScene())
-        return;
+    ensureWindow();
     m_applications.refresh();
-    QVariantList list;
-    for (wm::Window *window : entries) {
-        const ApplicationInfo info = m_applications.lookup(window->applicationId(), window->title());
-        list.append(QVariantMap {{QStringLiteral("name"), info.name},
-                                 {QStringLiteral("icon"), info.icon}});
-    }
+    std::vector<ApplicationInfo> list;
+    for (wm::Window *window : entries)
+        list.push_back(m_applications.lookup(window->applicationId(), window->title()));
     const auto [area, scale] = outputFor(output);
     layout(list, selected, area, scale);
 
@@ -361,17 +391,17 @@ void SwitcherView::showWindowCycle(const std::vector<wm::Window *> &entries, int
     m_panel->setVisible(true);
     if (m_shadow) {
         // Lifted like a window: on a flat colour as light as the glass, the
-        // shadow is all that draws the panel's edge. Shadows refuse a larger
-        // radius than they cache; under a blur this wide the corner is the same.
-        m_shadow->update(m_bounds, wm::ShadowElevation::Active, decoration::Corners(),
-                         std::min(kRadius, decoration::ShadowGeometry::kMaxRadius));
+        // shadow is all that draws the panel's edge. Its corner has to be the
+        // glass's, or the shadow's tighter one shows past it.
+        static_assert(kRadius <= decoration::ShadowGeometry::kMaxRadius);
+        m_shadow->update(m_bounds, wm::ShadowElevation::Active, decoration::Corners(), kRadius);
         m_shadow->setVisible(true);
     }
     m_panel->notifyChanged();
 }
 
-void SwitcherView::layout(const QVariantList &entries, int selected, const QRect &area,
-                          double scale)
+void SwitcherView::layout(const std::vector<ApplicationInfo> &entries, int selected,
+                          const QRect &area, double scale)
 {
     // Following the session's icon theme, which may have changed since.
     followIconTheme();
@@ -388,35 +418,21 @@ void SwitcherView::layout(const QVariantList &entries, int selected, const QRect
                           snapDown(area.y() + (area.height() - size.height()) / 2.0, step));
     m_bounds = QRect(position, size);
 
-    const QSize pixels(qRound(size.width() * scale), qRound(size.height() * scale));
-    if (m_image.size() != pixels || m_image.devicePixelRatio() != scale) {
-        m_window->setRenderTarget({});
-        // The upload's format, so no frame converts it.
-        m_image = QImage(pixels, QImage::Format_RGBA8888_Premultiplied);
-        m_image.setDevicePixelRatio(scale);
-        m_image.fill(Qt::transparent);
-        m_window->setGeometry(QRect(QPoint(), size));
-        QQuickRenderTarget target = QQuickRenderTarget::fromPaintDevice(&m_image);
-        target.setDevicePixelRatio(scale);
-        m_window->setRenderTarget(target);
-        // A window never shown gets no resize event, so nothing sizes its content item.
-        m_window->contentItem()->setSize(size);
-    }
-    m_root->setSize(size);
-    m_root->setProperty("darkMode", m_theme && m_theme->darkMode());
-    m_root->setProperty("rowX", m_rowX);
-    m_root->setProperty("cellSize", m_cellSize);
-    m_root->setProperty("iconSize", m_cellSize * kIconRatio);
-    m_root->setProperty("entries", entries);
-    m_root->setProperty("selectedIndex", selected);
+    m_scale = scale;
+    m_window->setScale(scale);
+    m_window->setSize({qreal(size.width()), qreal(size.height())});
+    m_content->setDarkMode(m_theme && m_theme->darkMode());
+    m_content->setMetrics(m_rowX, m_cellSize, m_cellSize * kIconRatio, kPadding);
+    m_content->setEntries(entries, iconPixels(scale));
+    m_content->setSelected(selected);
     m_selected = selected;
     m_dirty = true;
 }
 
 void SwitcherView::selectWindowCycleEntry(int index)
 {
-    if (m_root)
-        m_root->setProperty("selectedIndex", index);
+    if (m_content)
+        m_content->setSelected(index);
     m_selected = index;
     // The selection's glass is the node's, not the image's.
     if (m_shown)
@@ -460,23 +476,29 @@ int SwitcherView::windowCycleEntryAt(const QPointF &location) const
 
 QImage SwitcherView::renderImage()
 {
-    if (!m_shown || !m_root || m_image.isNull())
+    if (!m_shown || !m_window)
         return {};
-    if (m_dirty)
-        render();
-    return m_image;
+    if (m_dirty || m_panelTexture->image().isNull()) {
+        m_dirty = false;
+        if (m_panelTexture->renderImage())
+            ++m_imageGeneration;
+    }
+    return m_panelTexture->image();
 }
 
-void SwitcherView::render()
+render::Texture *SwitcherView::panelTexture(render::Renderer &renderer)
 {
-    m_rendering = true;
+    if (!m_shown || !m_window)
+        return nullptr;
+    const bool dirty = m_dirty;
     m_dirty = false;
-    // The software renderer repaints only what changed, over what is there.
-    m_control->polishItems();
-    m_control->sync();
-    m_control->render();
-    m_rendering = false;
-    ++m_imageGeneration;
+    return m_panelTexture->texture(renderer, dirty);
+}
+
+void SwitcherView::releaseRenderResources()
+{
+    if (m_panelTexture)
+        m_panelTexture->releaseRenderResources();
 }
 
 } // namespace cutefish::switcher

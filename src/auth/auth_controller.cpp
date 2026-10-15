@@ -47,11 +47,8 @@ QString accountIcon(const QString &userName)
             home.isEmpty() ? QString() : home + QStringLiteral("/.face.icon"),
     };
     for (const QString &path : candidates) {
-        if (!path.isEmpty() && QFileInfo::exists(path)) {
-            // Through the provider, which crops it to a circle; Qt Quick cannot
-            // do that without a shader.
-            return QStringLiteral("image://cutefish-avatar/") + path;
-        }
+        if (!path.isEmpty() && QFileInfo::exists(path))
+            return path;
     }
     return QString();
 }
