@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 
 #include "core/logging.h"
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -41,7 +42,7 @@ bool drmFormatHasAlpha(uint32_t format)
 } // namespace
 
 EglImageTexture::EglImageTexture(std::shared_ptr<EglContext> context, EGLImageKHR image,
-                                 uint32_t name, const QSize &size, PixelFormat format)
+                                 uint32_t name, const base::Size &size, PixelFormat format)
     : GlTexture(name, size, format, GL_TEXTURE_EXTERNAL_OES, std::move(context))
     , m_image(image)
 {
@@ -51,7 +52,7 @@ EglImageTexture::~EglImageTexture()
 {
     ScopedEglCurrent current(*m_context);
     if (!current.valid())
-        qFatal("Cannot make EGL context current for image retirement");
+        CF_FATAL(cfRender) << "Cannot make EGL context current for image retirement";
     auto destroyImage =
             reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
     if (m_image != EGL_NO_IMAGE_KHR && destroyImage)
@@ -62,7 +63,7 @@ EglDmaBufImporter::EglDmaBufImporter(std::shared_ptr<EglContext> context, gbm_de
     : m_context(std::move(context))
 {
     if (!m_context->supports("EGL_EXT_image_dma_buf_import")) {
-        qCInfo(cfRender) << "EGL_EXT_image_dma_buf_import is missing; no linux-dmabuf";
+        CF_INFO(cfRender) << "EGL_EXT_image_dma_buf_import is missing; no linux-dmabuf";
         return;
     }
 
@@ -86,7 +87,7 @@ EglDmaBufImporter::EglDmaBufImporter(std::shared_ptr<EglContext> context, gbm_de
                                                     DRM_FORMAT_ABGR8888, DRM_FORMAT_XBGR8888};
         for (uint32_t format : kImplicitFormats)
             m_dmaBufFormats.emplace(format, std::vector<uint64_t> {});
-        qCInfo(cfRender) << "EGL cannot enumerate dmabuf modifiers; implicit modifiers only";
+        CF_INFO(cfRender) << "EGL cannot enumerate dmabuf modifiers; implicit modifiers only";
         return;
     }
 
@@ -116,7 +117,7 @@ EglDmaBufImporter::EglDmaBufImporter(std::shared_ptr<EglContext> context, gbm_de
                                 std::vector<uint64_t>(modifiers.begin(), modifiers.end()));
     }
 
-    qCInfo(cfRender, "EGL can import %zu DMA-BUF formats", m_dmaBufFormats.size());
+    CF_INFO(cfRender).printf("EGL can import %zu DMA-BUF formats", m_dmaBufFormats.size());
 }
 
 EGLImageKHR EglDmaBufImporter::createImage(const DmaBufAttributes &attributes) const
@@ -179,7 +180,7 @@ EGLImageKHR EglDmaBufImporter::createImage(const DmaBufAttributes &attributes) c
     EGLImageKHR image = createImage(m_context->display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
                                     static_cast<EGLClientBuffer>(nullptr), attribs.data());
     if (image == EGL_NO_IMAGE_KHR)
-        qCWarning(cfRender, "eglCreateImageKHR failed for a DMA-BUF: 0x%04x", eglGetError());
+        CF_WARNING(cfRender).printf("eglCreateImageKHR failed for a DMA-BUF: 0x%04x", eglGetError());
     return image;
 }
 
@@ -205,7 +206,7 @@ std::shared_ptr<Texture> EglDmaBufImporter::import(const DmaBufAttributes &attri
     glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
 
     if (error != GL_NO_ERROR) {
-        qCWarning(cfRender, "glEGLImageTargetTexture2DOES failed: 0x%04x", error);
+        CF_WARNING(cfRender).printf("glEGLImageTargetTexture2DOES failed: 0x%04x", error);
         glDeleteTextures(1, &name);
         auto destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
                 eglGetProcAddress("eglDestroyImageKHR"));

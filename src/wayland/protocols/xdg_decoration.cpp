@@ -134,7 +134,7 @@ private:
         self->m_toplevel = nullptr;
         if (self->m_clientGone)
             return;
-        qCWarning(cfWayland) << "xdg_toplevel destroyed before its decoration object";
+        CF_WARNING(cfWayland) << "xdg_toplevel destroyed before its decoration object";
         wl_resource_post_error(self->m_resource, ZXDG_TOPLEVEL_DECORATION_V1_ERROR_ORPHANED,
                                "the xdg_toplevel was destroyed before its decoration object");
     }

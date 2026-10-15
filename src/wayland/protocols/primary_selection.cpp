@@ -10,7 +10,6 @@
 #include "primary-selection-unstable-v1-server-protocol.h"
 #include "wayland/protocols/wl_seat.h"
 #include "wayland/server_util.h"
-#include <QPointer>
 #include <unistd.h>
 
 namespace cutefish::wayland {
@@ -79,23 +78,27 @@ void receive(wl_client *, wl_resource *resource, const char *mime, int fd)
 }
 const struct zwp_primary_selection_offer_v1_interface offerImpl = {receive, destroy};
 
-struct Device : QObject {
+struct Device {
     wl_resource *resource;
     bool focused = false;
-    QPointer<clipboard::SelectionController> controller, authorization;
+    base::WeakPtr<clipboard::SelectionController> controller, authorization;
     std::shared_ptr<bool> lifetime = std::make_shared<bool>(true);
+    base::Subscription selectionChanged;
+    base::Subscription recipientChanged;
 
     Device(wl_resource *resource, input::Seat *seat)
         : resource(resource)
     {
         if (!seat)
             return;
-        controller = seat->primarySelection();
-        authorization = seat->selection();
-        connect(controller, &clipboard::SelectionController::selectionChanged, this, [this] {
+        controller = seat->primarySelection() ? seat->primarySelection()->weakPtr() : nullptr;
+        authorization = seat->selection() ? seat->selection()->weakPtr() : nullptr;
+        if (!controller)
+            return;
+        selectionChanged = controller->selectionChanged.connect([this] {
             deliver();
         });
-        connect(controller, &clipboard::SelectionController::recipientChanged, this, [this] {
+        recipientChanged = controller->recipientChanged.connect([this] {
             deliver();
         });
     }
@@ -116,7 +119,7 @@ struct Device : QObject {
                 wl_client_post_no_memory(client);
                 return;
             }
-            auto data = std::make_unique<Offer>(controller, lifetime);
+            auto data = std::make_unique<Offer>(controller.get(), lifetime);
             auto formats = data->data.formats();
             setImplementation(offer, &offerImpl, std::move(data));
             zwp_primary_selection_device_v1_send_data_offer(resource, offer);

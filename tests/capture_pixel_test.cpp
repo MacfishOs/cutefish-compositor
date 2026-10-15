@@ -6,8 +6,36 @@
 #include <gtest/gtest.h>
 
 #include "egl_test_util.h"
+#include "base/geometry.h"
+#include "ui/bitmap.h"
 
 using namespace cutefish;
+
+namespace {
+
+constexpr uint32_t kRed = 0xffff0000;
+constexpr uint32_t kGreen = 0xff00ff00;
+constexpr uint32_t kBlue = 0xff0000ff;
+constexpr uint32_t kBlack = 0xff000000;
+
+// The pixel at (x, y) of `image` turned clockwise by `quarters` right angles.
+uint32_t turnedPixel(const ui::Bitmap &image, int quarters, int x, int y)
+{
+    const int width = image.width();
+    const int height = image.height();
+    switch (quarters % 4) {
+    case 1:
+        return image.pixel(y, height - 1 - x);
+    case 2:
+        return image.pixel(width - 1 - x, height - 1 - y);
+    case 3:
+        return image.pixel(width - 1 - y, x);
+    default:
+        return image.pixel(x, y);
+    }
+}
+
+} // namespace
 
 TEST(CapturePixels, IndependentTargetAndRepeatedFrames)
 {
@@ -17,9 +45,9 @@ TEST(CapturePixels, IndependentTargetAndRepeatedFrames)
     auto surface = eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attrs);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(64, 48));
+                                                            nullptr, base::Size(64, 48));
     render::TargetRetirement retire {renderer.get(), target.get()};
-    renderer->setOutputContext({"test", QRect(100, 50, 64, 48), {64, 48}, 1, 0, 1});
+    renderer->setOutputContext({"test", base::Rect(100, 50, 64, 48), {64, 48}, 1, 0, 1});
     ASSERT_TRUE(renderer->beginFrame(target.get()));
     renderer->clear({1, 0, 0, 1});
     render::PresentationSubmission submission;
@@ -36,9 +64,9 @@ TEST(CapturePixels, IndependentTargetAndRepeatedFrames)
             renderer->clear({0, 0, 1, 1});
             renderer->fillRect({100 + frame, 50, 4, 4}, {0, 1, 0, 1});
         });
-        ASSERT_EQ(image.size(), QSize(64, 48));
-        EXPECT_EQ(image.pixelColor(frame, 0), QColor(Qt::green));
-        EXPECT_EQ(image.pixelColor(frame, 47), QColor(Qt::blue));
+        ASSERT_EQ(image.size(), base::Size(64, 48));
+        EXPECT_EQ(image.pixel(frame, 0), kGreen);
+        EXPECT_EQ(image.pixel(frame, 47), kBlue);
         EXPECT_EQ(renderer->presentationSubmission, &submission);
         EXPECT_FALSE(renderer->capturing);
         EXPECT_TRUE(glIsEnabled(GL_SCISSOR_TEST));
@@ -72,24 +100,23 @@ TEST(CapturePixels, NativeLetterboxAndTransform)
     auto surface = eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attrs);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(64, 48));
+                                                            nullptr, base::Size(64, 48));
     render::TargetRetirement retire {renderer.get(), target.get()};
     for (uint32_t transform = 0; transform < 4; ++transform) {
-        const QSize logical = transform & 1 ? QSize(32, 48) : QSize(48, 32);
+        const base::Size logical = transform & 1 ? base::Size(32, 48) : base::Size(48, 32);
         renderer->setOutputContext(
-                {"test", QRect(QPoint(), logical), {64, 48}, 1, transform, 1, QRect(8, 8, 48, 32)});
+                {"test", base::Rect(base::Point(), logical), {64, 48}, 1, transform, 1, base::Rect(8, 8, 48, 32)});
         ASSERT_TRUE(renderer->beginFrame(target.get()));
         const auto image = renderer->captureFrame([&] {
             renderer->clear({0, 0, 0, 1});
-            renderer->fillRect(QRect(QPoint(), logical), {0, 1, 0, 1});
-            renderer->fillRect(QRect(0, 0, 3, 3), {1, 0, 0, 1});
+            renderer->fillRect(base::Rect(base::Point(), logical), {0, 1, 0, 1});
+            renderer->fillRect(base::Rect(0, 0, 3, 3), {1, 0, 0, 1});
         });
-        ASSERT_EQ(image.size(), QSize(64, 48));
-        EXPECT_EQ(image.pixelColor(0, 0), QColor(Qt::black));
-        const auto upright = image.transformed(QTransform().rotate(90 * int(transform)));
-        EXPECT_EQ(upright.pixelColor(8, 8), QColor(Qt::red));
-        EXPECT_EQ(upright.pixelColor(12, 12), QColor(Qt::green));
-        EXPECT_EQ(image.pixelColor(56, 40), QColor(Qt::black));
+        ASSERT_EQ(image.size(), base::Size(64, 48));
+        EXPECT_EQ(image.pixel(0, 0), kBlack);
+        EXPECT_EQ(turnedPixel(image, int(transform), 8, 8), kRed);
+        EXPECT_EQ(turnedPixel(image, int(transform), 12, 12), kGreen);
+        EXPECT_EQ(image.pixel(56, 40), kBlack);
     }
     renderer->cancelFrame();
 }
@@ -102,9 +129,9 @@ TEST(CapturePixels, AReadbackCollectedLaterMatchesTheWaitingCapture)
     auto surface = eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attrs);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(64, 48));
+                                                            nullptr, base::Size(64, 48));
     render::TargetRetirement retire {renderer.get(), target.get()};
-    const render::OutputRenderContext output {"test", QRect(100, 50, 64, 48), {64, 48}, 1, 1, 1};
+    const render::OutputRenderContext output {"test", base::Rect(100, 50, 64, 48), {64, 48}, 1, 1, 1};
     renderer->setOutputContext(output);
     ASSERT_TRUE(renderer->beginFrame(target.get()));
     const auto paint = [&] {
@@ -117,11 +144,11 @@ TEST(CapturePixels, AReadbackCollectedLaterMatchesTheWaitingCapture)
     ASSERT_NE(frame, nullptr);
     glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &packBuffer);
     EXPECT_EQ(packBuffer, 0);
-    const render::OutputRenderContext window {"test", QRect(105, 52, 30, 20), {45, 30}, 1.5, 0, 1};
+    const render::OutputRenderContext window {"test", base::Rect(105, 52, 30, 20), {45, 30}, 1.5, 0, 1};
     const auto image = renderer->captureImageLater(window, {45, 30}, paint);
     ASSERT_NE(image, nullptr);
-    const QImage expectedFrame = renderer->captureFrame(paint);
-    const QImage expectedImage = renderer->captureImage(window, {45, 30}, paint);
+    const ui::Bitmap expectedFrame = renderer->captureFrame(paint);
+    const ui::Bitmap expectedImage = renderer->captureImage(window, {45, 30}, paint);
     renderer->cancelFrame();
     ASSERT_FALSE(expectedFrame.isNull());
     EXPECT_EQ(frame->take(), expectedFrame);
@@ -139,25 +166,25 @@ TEST(CapturePixels, ACopiedOutputFrameMatchesThePaintedCapture)
     auto surface = eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attrs);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(64, 48));
+                                                            nullptr, base::Size(64, 48));
     render::TargetRetirement retire {renderer.get(), target.get()};
     for (uint32_t transform = 0; transform < 4; ++transform) {
-        const QSize logical = transform & 1 ? QSize(32, 48) : QSize(48, 32);
+        const base::Size logical = transform & 1 ? base::Size(32, 48) : base::Size(48, 32);
         renderer->setOutputContext(
-                {"test", QRect(QPoint(), logical), {64, 48}, 1, transform, 1, QRect(8, 8, 48, 32)});
+                {"test", base::Rect(base::Point(), logical), {64, 48}, 1, transform, 1, base::Rect(8, 8, 48, 32)});
         ASSERT_TRUE(renderer->beginFrame(target.get()));
         const auto paint = [&] {
             renderer->clear({0, 0, 0, 1});
-            renderer->fillRect(QRect(QPoint(), logical), {0, 1, 0, 1});
-            renderer->fillRect(QRect(0, 0, 3, 5), {1, 0, 0, 1});
+            renderer->fillRect(base::Rect(base::Point(), logical), {0, 1, 0, 1});
+            renderer->fillRect(base::Rect(0, 0, 3, 5), {1, 0, 0, 1});
         };
         paint();
         EXPECT_FALSE(renderer->copyOutputFrame({64, 48}));
         // A partial repaint leaves its scissor on; the copy takes the whole frame.
         glEnable(GL_SCISSOR_TEST);
         glScissor(20, 20, 2, 2);
-        const QImage expected = renderer->captureFrame(paint);
-        const QImage copied = renderer->captureFrame([&] {
+        const ui::Bitmap expected = renderer->captureFrame(paint);
+        const ui::Bitmap copied = renderer->captureFrame([&] {
             EXPECT_FALSE(renderer->copyOutputFrame({32, 48}));
             EXPECT_TRUE(renderer->copyOutputFrame({64, 48}));
         });

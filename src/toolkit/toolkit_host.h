@@ -7,8 +7,8 @@
 
 #include <memory>
 
-#include <QImage>
-#include <QRegion>
+#include "base/region.h"
+#include "ui/bitmap.h"
 
 namespace cutefish::render {
 class Renderer;
@@ -23,8 +23,8 @@ class EmbeddedWindow;
 namespace cutefish::toolkit {
 
 // The toolkit's application for the panels the compositor draws itself: one
-// per process, on the embedded platform, its loop run from Qt's through the
-// loop's descriptor. Created on first use and kept for the process's life.
+// per process, on the embedded platform and the main loop. Created on first
+// use and kept for the process's life.
 ui::Application &application();
 
 // Whether panels may draw on the GPU at all; on unless a test compares the
@@ -49,7 +49,7 @@ public:
     // whether the pixels changed.
     bool renderImage();
     // The CPU frame, for tests and for an output that is not drawn on the GPU.
-    const QImage &image() const { return m_image; }
+    const ui::Bitmap &image() const { return m_image; }
 
     // In a node's paint: the window as a texture of `renderer`, rendered
     // first when `dirty` or when the texture is not up to date; null when
@@ -65,9 +65,11 @@ private:
     render::Texture *cpuTexture(render::Renderer &renderer, bool dirty);
 
     ui::EmbeddedWindow *m_window;
-    QImage m_image;
+    ui::Bitmap m_image;
+    // The window scale image() was drawn at.
+    double m_imageScale = 0;
     // Changed since the CPU texture was last uploaded, in image pixels.
-    QRegion m_pendingUpload;
+    base::Region m_pendingUpload;
     std::unique_ptr<render::Texture> m_cpuTexture;
     std::unique_ptr<render::Texture> m_gpuTexture;
     // The GPU texture holds the window's latest frame; a CPU render since

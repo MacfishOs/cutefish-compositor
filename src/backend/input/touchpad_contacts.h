@@ -5,9 +5,8 @@
 #ifndef CUTEFISH_BACKEND_INPUT_TOUCHPAD_CONTACTS_H_
 #define CUTEFISH_BACKEND_INPUT_TOUCHPAD_CONTACTS_H_
 
+#include "base/geometry.h"
 #include "input/touchpad_click.h"
-
-#include <QSizeF>
 
 #include <cstdint>
 #include <memory>
@@ -33,14 +32,14 @@ public:
     // Whether the pad itself is pressed down, which a tap is not.
     bool clicked() const;
 
-    QSizeF size() const { return m_size; }
+    base::SizeF size() const { return m_size; }
     int fd() const { return m_fd; }
 
 private:
     explicit TouchpadContacts(int fd) : m_fd(fd) { }
 
     bool readSlots(uint32_t code, std::vector<int32_t> *values) const;
-    QPointF millimetres(int32_t x, int32_t y) const;
+    base::PointF millimetres(int32_t x, int32_t y) const;
 
     int m_fd = -1;
     int m_slotCount = 0;
@@ -49,11 +48,11 @@ private:
     double m_resolutionX = 0;
     double m_resolutionY = 0;
     bool m_hasToolType = false;
-    QSizeF m_size;
+    base::SizeF m_size;
 
     struct Slot {
         int32_t trackingId = -1;
-        QPointF origin;
+        base::PointF origin;
         input::Timestamp downTime;
     };
     std::vector<Slot> m_slots;

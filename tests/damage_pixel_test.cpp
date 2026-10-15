@@ -10,6 +10,8 @@
 #include "scene/scene.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "base/geometry.h"
+#include "ui/bitmap.h"
 
 using namespace cutefish;
 
@@ -17,7 +19,7 @@ TEST(DamagePixels, PartialFramesMatchCompleteCaptureAcrossScaleAndRotation)
 {
     auto renderer = render::EglRendererTestAccess::create();
     ASSERT_TRUE(renderer);
-    const QSize size(100, 100);
+    const base::Size size(100, 100);
     const EGLint attributes[] = {EGL_WIDTH, 100, EGL_HEIGHT, 100, EGL_NONE};
     const auto surface =
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
@@ -33,7 +35,7 @@ TEST(DamagePixels, PartialFramesMatchCompleteCaptureAcrossScaleAndRotation)
             auto *glass = scene.root()->addChild(
                     std::make_unique<scene::ColorNode>(render::Color {0, 1, 0, 0.5}));
             glass->setGeometry({-30, 20, 40, 40});
-            render::OutputRenderContext context {"test", QRect(-40, 10, 100, 100), size, scale,
+            render::OutputRenderContext context {"test", base::Rect(-40, 10, 100, 100), size, scale,
                                                  rotation};
             renderer->setOutputContext(context);
             ASSERT_TRUE(renderer->beginFrame(target.get()));
@@ -49,10 +51,9 @@ TEST(DamagePixels, PartialFramesMatchCompleteCaptureAcrossScaleAndRotation)
                 render::EglRendererTestAccess::applyRepaint(*renderer, physical);
                 renderer->clear(scene.background());
                 scene.root()->render(*renderer);
-                QImage partial(size, QImage::Format_RGBA8888_Premultiplied);
+                ui::Bitmap partial(size, ui::Bitmap::Format::Rgba8888Premultiplied);
                 glReadPixels(0, 0, 100, 100, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-                partial = partial.mirrored(false, true)
-                                  .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
                 const auto complete = renderer->captureFrame([&] {
                     scene.render(*renderer);
                 });
@@ -75,10 +76,10 @@ TEST(DamagePixels, MissingBufferAgeForcesCompleteRepaint)
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(20, 20));
-    renderer->setOutputContext({"test", QRect(0, 0, 20, 20), {20, 20}, 1});
+                                                            nullptr, base::Size(20, 20));
+    renderer->setOutputContext({"test", base::Rect(0, 0, 20, 20), {20, 20}, 1});
     ASSERT_TRUE(renderer->beginFrame(target.get()));
-    renderer->prepareDamage(QRect(2, 2, 1, 1), {});
+    renderer->prepareDamage(base::Rect(2, 2, 1, 1), {});
     renderer->clear({0, 0, 1, 1});
     uint8_t pixel[4];
     glReadPixels(19, 19, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
@@ -97,14 +98,14 @@ TEST(DamagePixels, FilteredTextureDamageMatchesFullFrame)
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(100, 100));
+                                                            nullptr, base::Size(100, 100));
     for (double scale : {1.25, 1.5, 1.75, 2.0}) {
         scene::Scene scene;
         scene.setSize({100, 100});
         auto *node = static_cast<scene::SurfaceNode *>(
                 scene.root()->addChild(std::make_unique<scene::SurfaceNode>()));
         node->setGeometry({3, 5, 32, 32});
-        render::OutputRenderContext context {"test", QRect(0, 0, 100, 100), {100, 100}, scale};
+        render::OutputRenderContext context {"test", base::Rect(0, 0, 100, 100), {100, 100}, scale};
         renderer->setOutputContext(context);
         ASSERT_TRUE(renderer->beginFrame(target.get()));
         std::vector<uint8_t> pixels(32 * 32 * 4, 255);
@@ -117,16 +118,15 @@ TEST(DamagePixels, FilteredTextureDamageMatchesFullFrame)
             pixels[(y * 32 + x) * 4 + 1] = 0;
             ASSERT_TRUE(renderer->updateTexture(texture.get(), pixels.data(), 128,
                                                 render::PixelFormat::Rgba8888));
-            node->notifyDamage(QRect(x, y, 1, 1));
+            node->notifyDamage(base::Rect(x, y, 1, 1));
             const auto damage = tracker.update(*scene.root(), context.logicalViewport);
             render::EglRendererTestAccess::applyRepaint(
                     *renderer, render::physicalDamage(damage, context, {100, 100}));
             renderer->clear(scene.background());
             scene.root()->render(*renderer);
-            QImage partial({100, 100}, QImage::Format_RGBA8888_Premultiplied);
+            ui::Bitmap partial(100, 100, ui::Bitmap::Format::Rgba8888Premultiplied);
             glReadPixels(0, 0, 100, 100, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-            partial = partial.mirrored(false, true)
-                              .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
             const auto complete = renderer->captureFrame([&] {
                 scene.render(*renderer);
             });
@@ -148,33 +148,32 @@ TEST(DamagePixels, MovingNativeDensitySurfaceLeavesNoColumnBehind)
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(100, 100));
+                                                            nullptr, base::Size(100, 100));
     for (double scale : {1.25, 1.5, 1.75}) {
         for (uint32_t rotation = 0; rotation < 4; ++rotation) {
             scene::Scene scene;
             scene.setSize({100, 100});
             auto *node = static_cast<scene::SurfaceNode *>(
                     scene.root()->addChild(std::make_unique<scene::SurfaceNode>()));
-            const QSize logical(33, 25);
-            const QSize device(qRound(logical.width() * scale), qRound(logical.height() * scale));
+            const base::Size logical(33, 25);
+            const base::Size device(base::roundToInt(logical.width() * scale), base::roundToInt(logical.height() * scale));
             std::vector<uint8_t> pixels(device.width() * device.height() * 4, 255);
-            render::OutputRenderContext context {"test", QRect(0, 0, 100, 100), {100, 100},
+            render::OutputRenderContext context {"test", base::Rect(0, 0, 100, 100), {100, 100},
                                                  scale, rotation};
             renderer->setOutputContext(context);
             ASSERT_TRUE(renderer->beginFrame(target.get()));
             node->setTexture(renderer->createTexture(device, pixels.data()));
             scene::DamageTracker tracker;
             for (int frame = 0; frame < 8; ++frame) {
-                node->setGeometry({QPoint(3 + frame, 5 + frame), logical});
+                node->setGeometry({base::Point(3 + frame, 5 + frame), logical});
                 const auto damage = tracker.update(*scene.root(), context.logicalViewport);
                 render::EglRendererTestAccess::applyRepaint(
                         *renderer, render::physicalDamage(damage, context, {100, 100}));
                 renderer->clear(scene.background());
                 scene.root()->render(*renderer);
-                QImage partial({100, 100}, QImage::Format_RGBA8888_Premultiplied);
+                ui::Bitmap partial(100, 100, ui::Bitmap::Format::Rgba8888Premultiplied);
                 glReadPixels(0, 0, 100, 100, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-                partial = partial.mirrored(false, true)
-                                  .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
                 const auto complete = renderer->captureFrame([&] {
                     scene.render(*renderer);
                 });
@@ -196,7 +195,7 @@ TEST(DamagePixels, BlurInputHaloMatchesCompleteFrame)
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                            nullptr, QSize(400, 400));
+                                                            nullptr, base::Size(400, 400));
     for (double scale : {1.0, 1.25, 1.5}) {
         scene::Scene scene;
         scene.setSize({400, 400});
@@ -206,7 +205,7 @@ TEST(DamagePixels, BlurInputHaloMatchesCompleteFrame)
                 scene.root()->addChild(std::make_unique<scene::SurfaceNode>()));
         blur->setGeometry({150, 150, 32, 32});
         blur->setBackgroundBlur({0, 0, 32, 32}, 30);
-        render::OutputRenderContext context {"test", QRect(0, 0, 400, 400), {400, 400}, scale};
+        render::OutputRenderContext context {"test", base::Rect(0, 0, 400, 400), {400, 400}, scale};
         renderer->setOutputContext(context);
         ASSERT_TRUE(renderer->beginFrame(target.get()));
         std::vector<uint8_t> pixels(32 * 32 * 4, 0);
@@ -223,10 +222,9 @@ TEST(DamagePixels, BlurInputHaloMatchesCompleteFrame)
             render::EglRendererTestAccess::applyRepaint(*renderer, physical);
             renderer->clear(scene.background());
             scene.root()->render(*renderer);
-            QImage partial({400, 400}, QImage::Format_RGBA8888_Premultiplied);
+            ui::Bitmap partial(400, 400, ui::Bitmap::Format::Rgba8888Premultiplied);
             glReadPixels(0, 0, 400, 400, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-            partial = partial.mirrored(false, true)
-                              .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
             const auto complete = renderer->captureFrame([&] {
                 scene.render(*renderer);
             });
@@ -241,7 +239,7 @@ TEST(DamagePixels, ARepaintReachingABlurRedrawsItFromAllItReads)
 {
     auto renderer = render::EglRendererTestAccess::create();
     ASSERT_TRUE(renderer);
-    const QSize size(400, 400);
+    const base::Size size(400, 400);
     const EGLint attributes[] = {EGL_WIDTH, 400, EGL_HEIGHT, 400, EGL_NONE};
     const auto surface =
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
@@ -263,7 +261,7 @@ TEST(DamagePixels, ARepaintReachingABlurRedrawsItFromAllItReads)
             std::make_unique<scene::ColorNode>(render::Color {1, 0, 0, 1}));
     auto *right = scene.root()->addChild(
             std::make_unique<scene::ColorNode>(render::Color {0, 0, 1, 1}));
-    const render::OutputRenderContext context {"test", QRect(QPoint(), size), size, 1};
+    const render::OutputRenderContext context {"test", base::Rect(base::Point(), size), size, 1};
     renderer->setOutputContext(context);
     ASSERT_TRUE(renderer->beginFrame(target.get()));
     std::vector<uint8_t> pixels(32 * 32 * 4, 0);
@@ -273,8 +271,8 @@ TEST(DamagePixels, ARepaintReachingABlurRedrawsItFromAllItReads)
         left->setGeometry({20, 170 + frame * 4, 10, 10});
         right->setGeometry({370, 170 - frame * 4, 10, 10});
         const auto damage = tracker.update(*scene.root(), context.logicalViewport);
-        const QRect physical = render::physicalDamage(damage, context, size);
-        const QRect repaint = render::coverSamples(physical, tracker.samples(), context, size);
+        const base::Rect physical = render::physicalDamage(damage, context, size);
+        const base::Rect repaint = render::coverSamples(physical, tracker.samples(), context, size);
         if (frame) {
             EXPECT_NE(repaint, physical);
             EXPECT_LT(repaint.width() * repaint.height(), size.width() * size.height());
@@ -282,10 +280,9 @@ TEST(DamagePixels, ARepaintReachingABlurRedrawsItFromAllItReads)
         render::EglRendererTestAccess::applyRepaint(*renderer, repaint);
         renderer->clear(scene.background());
         scene.root()->render(*renderer);
-        QImage partial(size, QImage::Format_RGBA8888_Premultiplied);
+        ui::Bitmap partial(size, ui::Bitmap::Format::Rgba8888Premultiplied);
         glReadPixels(0, 0, 400, 400, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-        partial = partial.mirrored(false, true)
-                          .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
         const auto complete = renderer->captureFrame([&] {
             scene.render(*renderer);
         });
@@ -301,7 +298,7 @@ TEST(DamagePixels, AKeptBlurMatchesTheCompleteFrame)
 {
     auto renderer = render::EglRendererTestAccess::create();
     ASSERT_TRUE(renderer);
-    const QSize size(400, 400);
+    const base::Size size(400, 400);
     const EGLint attributes[] = {EGL_WIDTH, 400, EGL_HEIGHT, 400, EGL_NONE};
     const auto surface =
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
@@ -322,7 +319,7 @@ TEST(DamagePixels, AKeptBlurMatchesTheCompleteFrame)
             blur->setBackgroundBlur({0, 0, 64, 48}, 12, glass);
             auto *above = scene.root()->addChild(
                     std::make_unique<scene::ColorNode>(render::Color {1, 0, 0, 1}));
-            const render::OutputRenderContext context {"test", QRect(QPoint(), size), size,
+            const render::OutputRenderContext context {"test", base::Rect(base::Point(), size), size,
                                                        scale};
             renderer->setOutputContext(context);
             ASSERT_TRUE(renderer->beginFrame(target.get()));
@@ -338,8 +335,8 @@ TEST(DamagePixels, AKeptBlurMatchesTheCompleteFrame)
                 strip->setGeometry({frame == 3 ? 170 : 160, 110, 12, 100});
                 above->setGeometry({155 + frame * 6, 160, 8, 8});
                 const auto damage = tracker.update(*scene.root(), context.logicalViewport, scale);
-                const QRect physical = render::physicalDamage(damage, context, size);
-                const QRect repaint = render::coverSamples(physical, tracker.samples(kept),
+                const base::Rect physical = render::physicalDamage(damage, context, size);
+                const base::Rect repaint = render::coverSamples(physical, tracker.samples(kept),
                                                            context, size);
                 if (frame == 2 || frame == 5)
                     EXPECT_EQ(repaint, physical) << "scale=" << scale << " frame=" << frame;
@@ -352,10 +349,9 @@ TEST(DamagePixels, AKeptBlurMatchesTheCompleteFrame)
                     renderer->clear(scene.background());
                     scene.root()->render(*renderer);
                 }
-                QImage partial(size, QImage::Format_RGBA8888_Premultiplied);
+                ui::Bitmap partial(size, ui::Bitmap::Format::Rgba8888Premultiplied);
                 glReadPixels(0, 0, 400, 400, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-                partial = partial.mirrored(false, true)
-                                  .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
                 const auto complete = renderer->captureFrame([&] {
                     scene.render(*renderer);
                 });
@@ -363,11 +359,9 @@ TEST(DamagePixels, AKeptBlurMatchesTheCompleteFrame)
                 int worst = 0;
                 for (int y = 0; y < size.height(); ++y) {
                     for (int x = 0; x < size.width(); ++x) {
-                        const QRgb p = partial.pixel(x, y), c = complete.pixel(x, y);
-                        worst = std::max({worst, std::abs(qRed(p) - qRed(c)),
-                                          std::abs(qGreen(p) - qGreen(c)),
-                                          std::abs(qBlue(p) - qBlue(c)),
-                                          std::abs(qAlpha(p) - qAlpha(c))});
+                        const uint32_t p = partial.pixel(x, y), c = complete.pixel(x, y);
+                        for (int shift = 0; shift < 32; shift += 8)
+                            worst = std::max(worst, std::abs(int(p >> shift & 0xff) - int(c >> shift & 0xff)));
                     }
                 }
                 EXPECT_LE(worst, glassy ? 1 : 0)
@@ -386,14 +380,14 @@ TEST(DamagePixels, AWindowSnapshotNeverBlursWhatAPartialRepaintLeftBehind)
 {
     auto renderer = render::EglRendererTestAccess::create();
     ASSERT_TRUE(renderer);
-    const QSize size(400, 400);
+    const base::Size size(400, 400);
     const EGLint attributes[] = {EGL_WIDTH, 400, EGL_HEIGHT, 400, EGL_NONE};
     const auto surface =
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
                                                             nullptr, size);
-    const render::OutputRenderContext context {"test", QRect(QPoint(), size), size, 1};
+    const render::OutputRenderContext context {"test", base::Rect(base::Point(), size), size, 1};
     const auto snapshot = [&](bool partial) {
         scene::Scene scene;
         scene.setSize(size);
@@ -412,7 +406,7 @@ TEST(DamagePixels, AWindowSnapshotNeverBlursWhatAPartialRepaintLeftBehind)
         auto *moving = scene.root()->addChild(
                 std::make_unique<scene::ColorNode>(render::Color {1, 0, 0, 1}));
         renderer->setOutputContext(context);
-        QImage image;
+        ui::Bitmap image;
         if (!renderer->beginFrame(target.get()))
             return image;
         const std::vector<uint8_t> pixels(120 * 120 * 4, 96);
@@ -437,7 +431,7 @@ TEST(DamagePixels, AWindowSnapshotNeverBlursWhatAPartialRepaintLeftBehind)
         window->start(scene::WindowAnimation::Type::Minimize, window->geometry(),
                       {300, 380, 20, 20});
         window->requestSnapshot(
-                [&](const QImage &preview) {
+                [&](const ui::Bitmap &preview) {
                     image = preview;
                 },
                 1000);
@@ -445,8 +439,8 @@ TEST(DamagePixels, AWindowSnapshotNeverBlursWhatAPartialRepaintLeftBehind)
         renderer->cancelFrame();
         return image;
     };
-    const QImage partial = snapshot(true);
-    const QImage complete = snapshot(false);
+    const ui::Bitmap partial = snapshot(true);
+    const ui::Bitmap complete = snapshot(false);
     ASSERT_FALSE(complete.isNull());
     EXPECT_EQ(partial, complete);
     renderer->releaseTarget(target.get());
@@ -458,14 +452,14 @@ TEST(DamagePixels, AWindowSnapshotDrawnByACaptureServesTheNextFrame)
 {
     auto renderer = render::EglRendererTestAccess::create();
     ASSERT_TRUE(renderer);
-    const QSize size(200, 200);
+    const base::Size size(200, 200);
     const EGLint attributes[] = {EGL_WIDTH, 200, EGL_HEIGHT, 200, EGL_NONE};
     const auto surface =
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(surface, EGL_NO_SURFACE);
     auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
                                                             nullptr, size);
-    const render::OutputRenderContext context {"test", QRect(QPoint(), size), size, 1};
+    const render::OutputRenderContext context {"test", base::Rect(base::Point(), size), size, 1};
     scene::Scene scene;
     scene.setSize(size);
     auto *window = static_cast<scene::WindowAnimation *>(
@@ -489,7 +483,7 @@ TEST(DamagePixels, AWindowSnapshotDrawnByACaptureServesTheNextFrame)
         }
         ASSERT_TRUE(renderer->updateTexture(texture.get(), pixels.data(), 400,
                                             render::PixelFormat::Rgba8888));
-        content->notifyDamage(QRect(x, 20, 1, 10));
+        content->notifyDamage(base::Rect(x, 20, 1, 10));
         const auto captured = renderer->captureFrame([&] {
             scene.render(*renderer);
         });
@@ -498,11 +492,11 @@ TEST(DamagePixels, AWindowSnapshotDrawnByACaptureServesTheNextFrame)
                 *renderer, render::physicalDamage(damage, context, size));
         renderer->clear(scene.background());
         scene.root()->render(*renderer);
-        QImage partial(size, QImage::Format_RGBA8888_Premultiplied);
+        ui::Bitmap partial(size, ui::Bitmap::Format::Rgba8888Premultiplied);
         glReadPixels(0, 0, 200, 200, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-        partial = partial.mirrored(false, true).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
         EXPECT_EQ(partial, captured) << "frame=" << frame;
-        EXPECT_EQ(partial.pixelColor(40 + x, 40 + 25), QColor(0, 0, 255)) << "frame=" << frame;
+        EXPECT_EQ(partial.pixel(40 + x, 40 + 25), 0xff0000ffu) << "frame=" << frame;
     }
     renderer->cancelFrame();
     renderer->releaseTarget(target.get());

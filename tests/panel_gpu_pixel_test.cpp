@@ -8,14 +8,14 @@
 #include <GLES3/gl3.h>
 #include <gtest/gtest.h>
 
-#include <QGuiApplication>
-
 #include "auth/auth_controller.h"
 #include "auth/auth_view.h"
+#include "base/geometry.h"
 #include "egl_test_util.h"
 #include "fake_backend.h"
 #include "render/gl_texture.h"
 #include "toolkit/toolkit_host.h"
+#include "ui/bitmap.h"
 #include "ui/embedded_window.h"
 
 using namespace cutefish;
@@ -23,7 +23,7 @@ using namespace cutefish::render;
 
 namespace {
 
-constexpr QSize kLogical(480, 600);
+constexpr base::Size kLogical(480, 600);
 
 class PanelGpuPixels : public testing::TestWithParam<double>
 {
@@ -32,7 +32,8 @@ protected:
     {
         renderer = EglRendererTestAccess::create();
         ASSERT_TRUE(renderer);
-        native = QSize(qRound(kLogical.width() * scale()), qRound(kLogical.height() * scale()));
+        native = base::Size(base::roundToInt(kLogical.width() * scale()),
+                            base::roundToInt(kLogical.height() * scale()));
         const EGLint attributes[] = {EGL_WIDTH, native.width(), EGL_HEIGHT, native.height(),
                                      EGL_NONE};
         const auto surface =
@@ -72,36 +73,42 @@ protected:
 
     // The panel's texture drawn 1:1 over transparency, as the output's frame
     // captures it.
-    QImage drawn(bool dirty)
+    ui::Bitmap drawn(bool dirty)
     {
-        renderer->setOutputContext({QStringLiteral("out"), QRect(QPoint(), kLogical), native,
+        renderer->setOutputContext({"out", base::Rect(kLogical), native,
                                     scale(), 0, ++frame});
         EXPECT_TRUE(renderer->beginFrame(target.get()));
-        const QImage image = renderer->captureFrame([&] {
+        const ui::Bitmap image = renderer->captureFrame([&] {
             renderer->clear({0, 0, 0, 0});
             Texture *texture = panel->texture(*renderer, dirty);
             EXPECT_TRUE(texture);
             if (texture)
-                renderer->drawTextureMapped(texture, QRect(QPoint(), kLogical), 1.0f, QTransform());
+                renderer->drawTextureMapped(texture, base::Rect(kLogical), 1.0f, base::AffineTransform());
         });
         renderer->cancelFrame();
-        return image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+        return image.converted(ui::Bitmap::Format::Rgba8888Premultiplied);
+    }
+
+    // The panel's last CPU frame.
+    ui::Bitmap cpuFrame() const
+    {
+        return panel->image().converted(ui::Bitmap::Format::Rgba8888Premultiplied);
     }
 
     struct Difference {
         int worst = 0;
         int over2 = 0;
-        QRect where;
+        base::Rect where;
     };
 
     // Over the whole image, or only inside or outside `region` (device pixels).
-    static Difference difference(const QImage &a, const QImage &b, const QRect &region = {},
+    static Difference difference(const ui::Bitmap &a, const ui::Bitmap &b, const base::Rect &region = {},
                                  bool inside = false)
     {
         Difference result;
         for (int y = 0; y < a.height(); ++y) {
-            const uchar *left = a.constScanLine(y);
-            const uchar *right = b.constScanLine(y);
+            const uint8_t *left = a.constScanLine(y);
+            const uint8_t *right = b.constScanLine(y);
             for (int x = 0; x < a.width(); ++x) {
                 if (!region.isEmpty() && region.contains(x, y) != inside)
                     continue;
@@ -111,7 +118,7 @@ protected:
                 result.worst = std::max(result.worst, pixel);
                 if (pixel > 2) {
                     ++result.over2;
-                    result.where |= QRect(x, y, 1, 1);
+                    result.where |= base::Rect(x, y, 1, 1);
                 }
             }
         }
@@ -120,7 +127,7 @@ protected:
 
     std::unique_ptr<EglRenderer> renderer;
     std::unique_ptr<EglRenderTarget> target;
-    QSize native;
+    base::Size native;
     uint64_t frame = 0;
     FakeBackend backend;
     std::unique_ptr<auth::AuthController> controller;
@@ -136,12 +143,12 @@ TEST_P(PanelGpuPixels, MatchesTheCpuFrameWholeAndAfterAChange)
 {
     window->setKeyboardFocus(true);
     window->updateLayout();
-    const QRectF field = view->fieldBounds();
-    const QRect button = QRectF((field.right() - 28) * scale(), (field.top() + 4) * scale(),
-                                24 * scale(), 24 * scale())
-                                 .toAlignedRect()
-                                 .adjusted(-1, -1, 1, 1);
-    const auto expectClose = [&](const QImage &cpu, const QImage &gpu, int buttonLevels) {
+    const base::RectF field = view->fieldBounds();
+    const base::Rect button = base::RectF((field.right() - 28) * scale(), (field.top() + 4) * scale(),
+                                          24 * scale(), 24 * scale())
+                                      .toEnclosingRect()
+                                      .adjusted(-1, -1, 1, 1);
+    const auto expectClose = [&](const ui::Bitmap &cpu, const ui::Bitmap &gpu, int buttonLevels) {
         const Difference rest = difference(cpu, gpu, button, false);
         EXPECT_LE(rest.worst, 2) << rest.over2 << " pixels over 2 in " << rest.where.x() << ","
                                  << rest.where.y() << " " << rest.where.width() << "x"
@@ -150,8 +157,8 @@ TEST_P(PanelGpuPixels, MatchesTheCpuFrameWholeAndAfterAChange)
     };
 
     ASSERT_TRUE(panel->renderImage());
-    const QImage cpu = panel->image().convertToFormat(QImage::Format_RGBA8888_Premultiplied);
-    const QImage gpu = drawn(true);
+    const ui::Bitmap cpu = cpuFrame();
+    const ui::Bitmap gpu = drawn(true);
     ASSERT_TRUE(panel->lastFrameOnGpu());
     ASSERT_EQ(cpu.size(), gpu.size());
     expectClose(cpu, gpu, 32);
@@ -162,22 +169,14 @@ TEST_P(PanelGpuPixels, MatchesTheCpuFrameWholeAndAfterAChange)
     key.text = "a";
     window->key(key, true);
     window->key(key, false);
-    const QImage typed = drawn(true);
+    const ui::Bitmap typed = drawn(true);
     ASSERT_TRUE(panel->lastFrameOnGpu());
     EXPECT_GT(difference(gpu, typed, button, false).worst, 32);
     // The CPU frame after GPU ones, as a fallback would take it, is the same.
     panel->renderImage();
-    expectClose(panel->image().convertToFormat(QImage::Format_RGBA8888_Premultiplied), typed, 255);
+    expectClose(cpuFrame(), typed, 255);
 }
 
 INSTANTIATE_TEST_SUITE_P(Scales, PanelGpuPixels, testing::Values(1.0, 1.5, 1.75, 2.0));
 
 } // namespace
-
-int main(int argc, char **argv)
-{
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-    QGuiApplication app(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

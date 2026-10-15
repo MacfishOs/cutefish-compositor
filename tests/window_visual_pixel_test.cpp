@@ -5,6 +5,7 @@
 #include <GLES3/gl3.h>
 #include <gtest/gtest.h>
 
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/sub_surface.h"
 #include "compositor/surface.h"
@@ -24,8 +25,10 @@
 #include "wm/window_manager.h"
 #include "wm/window_visual_controller.h"
 #include "wm/wm_shadow_controller_delegate.h"
+#include "ui/path.h"
 
 using namespace cutefish;
+using cutefish::base::roundToInt;
 using Mode = scene::WindowVisualMode;
 
 namespace {
@@ -57,17 +60,18 @@ struct WindowScene {
         return surfaces.back().get();
     }
 
-    void attach(compositor::Surface *surface, QSize size, render::Color color, QRect body = {})
+    void attach(compositor::Surface *surface, base::Size size, render::Color color,
+                base::Rect body = {})
     {
         std::vector<uint8_t> bytes(size.width() * size.height() * 4);
         for (size_t i = 0; i < bytes.size(); i += 4) {
-            const QPoint position((i / 4) % size.width(), (i / 4) / size.width());
+            const base::Point position(int(i / 4) % size.width(), int(i / 4) / size.width());
             if (!body.isEmpty() && !body.contains(position))
                 continue;
-            bytes[i] = qRound(color.r * color.a * 255);
-            bytes[i + 1] = qRound(color.g * color.a * 255);
-            bytes[i + 2] = qRound(color.b * color.a * 255);
-            bytes[i + 3] = qRound(color.a * 255);
+            bytes[i] = roundToInt(color.r * color.a * 255);
+            bytes[i + 1] = roundToInt(color.g * color.a * 255);
+            bytes[i + 2] = roundToInt(color.b * color.a * 255);
+            bytes[i + 3] = roundToInt(color.a * 255);
         }
         const int fd = testsupport::makeMemfd(bytes.size());
         ASSERT_GE(fd, 0);
@@ -76,11 +80,11 @@ struct WindowScene {
         buffers.push_back(pool->createBuffer(size, 0, size.width() * 4,
                                              render::PixelFormat::Rgba8888, nullptr));
         surface->attach(buffers.back(), {});
-        surface->damage({QPoint(), size});
+        surface->damage(base::Rect(base::Point(), size));
         surface->commit();
     }
 
-    wm::Window *window(Mode mode, render::Color color, QSize size = {160, 120},
+    wm::Window *window(Mode mode, render::Color color, base::Size size = {160, 120},
                        bool exterior = false)
     {
         auto *root = surface();
@@ -96,7 +100,7 @@ struct WindowScene {
         auto *window = shell->window();
         EXPECT_NE(window, nullptr);
         if (window) {
-            window->setBounds({QPoint(80, 80), window->bounds().size()});
+            window->setBounds({base::Point(80, 80), window->bounds().size()});
             window->activate();
             static_cast<scene::WindowAnimation *>(window->node())->finish();
         }
@@ -121,7 +125,7 @@ protected:
                 eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attrs);
         ASSERT_NE(surface, EGL_NO_SURFACE);
         target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface, nullptr,
-                                                           QSize(width, height));
+                                                           base::Size(width, height));
         ASSERT_TRUE(renderer->beginFrame(target.get()));
     }
 
@@ -164,7 +168,7 @@ TEST_F(WindowVisualPixelTest, ContinuousClipMatchesRasterSilhouette)
         renderer->clear({0, 0, 0, 0});
         const render::RoundedShape shape {{20, 20, 100, 80}, 20};
         renderer->pushRoundedClip(shape);
-        renderer->fillRect(shape.bounds.toAlignedRect(), {1, 1, 1, 1});
+        renderer->fillRect(shape.bounds.toEnclosingRect(), {1, 1, 1, 1});
         renderer->popRoundedClip();
         const auto image = pixels();
 
@@ -195,7 +199,7 @@ TEST_F(WindowVisualPixelTest, CircularClipMatchesRasterSilhouette)
         renderer->clear({0, 0, 0, 0});
         const render::RoundedShape shape {{20, 20, 100, 80}, 20};
         renderer->pushRoundedClip(shape);
-        renderer->fillRect(shape.bounds.toAlignedRect(), {1, 1, 1, 1});
+        renderer->fillRect(shape.bounds.toEnclosingRect(), {1, 1, 1, 1});
         renderer->popRoundedClip();
         const auto image = pixels();
 
@@ -236,12 +240,12 @@ TEST_F(WindowVisualPixelTest, OwnershipAndOnePhysicalHairlineAtEveryScale)
                     const auto state = wm::WindowVisualController::evaluate(*window);
                     EXPECT_EQ(state.mode, mode);
                     const auto bounds = state.shape.bounds.translated(window->bounds().topLeft());
-                    const int l = qRound(bounds.x() * scale), t = qRound(bounds.y() * scale);
-                    const int r = qRound((bounds.x() + bounds.width()) * scale);
-                    const int b = qRound((bounds.y() + bounds.height()) * scale);
+                    const int l = roundToInt(bounds.x() * scale), t = roundToInt(bounds.y() * scale);
+                    const int r = roundToInt((bounds.x() + bounds.width()) * scale);
+                    const int b = roundToInt((bounds.y() + bounds.height()) * scale);
                     const int x = (l + r) / 2, y = (t + b) / 2;
                     const auto blend = [](const render::Color &color, float background) {
-                        return qRound(255 * (color.r * color.a + background * (1 - color.a)));
+                        return roundToInt(255 * (color.r * color.a + background * (1 - color.a)));
                     };
                     const auto &highlight = state.highlightColor;
                     // The highlight is the outermost physical pixel of the shape; fractional
@@ -267,7 +271,8 @@ TEST_F(WindowVisualPixelTest, OwnershipAndOnePhysicalHairlineAtEveryScale)
                     // All four corners expose the desktop plus exterior shadow, never square client
                     // pixels.
                     for (auto corner :
-                         {QPoint(l, t), QPoint(r - 1, t), QPoint(l, b - 1), QPoint(r - 1, b - 1)})
+                         {base::Point(l, t), base::Point(r - 1, t), base::Point(l, b - 1),
+                          base::Point(r - 1, b - 1)})
                         EXPECT_LT(pixel(image, corner.x(), corner.y()), desktop * 255 + 1);
                     EXPECT_NEAR(pixel(image, x, y), client * 255, 1);
                     if (mode == Mode::ServerExterior) {
@@ -288,9 +293,9 @@ TEST_F(WindowVisualPixelTest, CsdExteriorIsClippedWhileHeaderBarAndResizeInputSu
     auto *window = model.window(Mode::ServerExterior, {1, 0, 0, 1}, {160, 120}, true);
     ASSERT_NE(window, nullptr);
     EXPECT_FALSE(window->isDecorated());
-    EXPECT_EQ(window->surfaceOrigin(), QPoint(-8, -8));
+    EXPECT_EQ(window->surfaceOrigin(), base::Point(-8, -8));
     EXPECT_EQ(window->clientExteriorInsets(), (wm::Insets {8, 8, 8, 8}));
-    EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds, QRectF(0, 0, 144, 104));
+    EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds, base::RectF(0, 0, 144, 104));
     renderer->setRasterScale(1);
     paint(model, window);
     const auto image = pixels();
@@ -300,11 +305,11 @@ TEST_F(WindowVisualPixelTest, CsdExteriorIsClippedWhileHeaderBarAndResizeInputSu
     EXPECT_EQ(pixel(image, 150, 120), 255);
     EXPECT_EQ(pixel(image, 80, 80), 0);
 
-    QPointF local;
+    base::PointF local;
     EXPECT_EQ(input::findTargetSurface(&model.compositor, {76, 120}, &local),
               window->rootSurface());
-    EXPECT_EQ(local, QPointF(4, 48));
-    window->rootSurface()->setInputRegion(QRegion(8, 8, 144, 104));
+    EXPECT_EQ(local, base::PointF(4, 48));
+    window->rootSurface()->setInputRegion(base::Region(base::Rect(8, 8, 144, 104)));
     window->rootSurface()->commit();
     EXPECT_EQ(input::findTargetSurface(&model.compositor, {76, 120}, &local), nullptr);
     EXPECT_EQ(input::findTargetSurface(&model.compositor, {150, 84}, &local),
@@ -325,22 +330,25 @@ TEST_F(WindowVisualPixelTest, ResizeGeometryAndBufferCommitsKeepRoundedCorners)
                 EXPECT_EQ(visual->state().shape.bounds, state.shape.bounds);
                 EXPECT_EQ(visual->state().shape.radius, 14);
                 const auto bounds =
-                        state.shape.bounds.translated(window->bounds().topLeft()).toAlignedRect();
+                        state.shape.bounds.translated(window->bounds().topLeft()).toEnclosingRect();
                 const auto image = pixels();
-                for (const auto corner : {bounds.topLeft(), bounds.topRight(), bounds.bottomLeft(),
-                                          bounds.bottomRight()})
+                for (const auto corner :
+                     {bounds.topLeft(), base::Point(bounds.right() - 1, bounds.y()),
+                      base::Point(bounds.x(), bounds.bottom() - 1),
+                      base::Point(bounds.right() - 1, bounds.bottom() - 1)})
                     EXPECT_LT(pixel(image, corner.x(), corner.y()), 128);
             };
             renderer->setRasterScale(1);
             verify();
-            for (const QSize size : {QSize(200, 160), QSize(120, 80), QSize(180, 140)}) {
-                window->setBounds(QRect(QPoint(80, 80), size));
+            for (const base::Size size :
+                 {base::Size(200, 160), base::Size(120, 80), base::Size(180, 140)}) {
+                window->setBounds(base::Rect(base::Point(80, 80), size));
                 verify();
                 const int margin = exterior ? 8 : 0;
-                shell->setGeometry(QRect(QPoint(margin, margin), size));
+                shell->setGeometry(base::Rect(base::Point(margin, margin), size));
                 window->rootSurface()->commit();
                 verify();
-                model.attach(window->rootSurface(), size + QSize(2 * margin, 2 * margin),
+                model.attach(window->rootSurface(), size + base::Size(2 * margin, 2 * margin),
                              {1, 0, 0, 1});
                 verify();
             }
@@ -353,13 +361,13 @@ TEST_F(WindowVisualPixelTest, CsdResizeGeometryAheadOfBufferKeepsShadowAgainstPa
     WindowScene model;
     auto *window = model.window(Mode::ServerExterior, {1, 0, 0, 1}, {160, 120}, true);
     auto *shell = model.shells.front().get();
-    const QRect body(8, 8, 144, 104);
+    const base::Rect body(8, 8, 144, 104);
     model.attach(window->rootSurface(), {160, 120}, {1, 0, 0, 1}, body);
     const auto initial = wm::WindowVisualController::evaluate(*window).shape.bounds;
-    const auto start = window->bounds().bottomRight();
+    const auto start = window->bounds().bottomRight() - base::Point(1, 1);
     ASSERT_TRUE(
             model.manager.eventHandler()->beginResize(window, wm::ResizeEdge::BottomRight, start));
-    model.manager.eventHandler()->onPointerMotion(start + QPoint(40, 30));
+    model.manager.eventHandler()->onPointerMotion(start + base::Point(40, 30));
     shell->setGeometry({8, 8, 184, 134});
     window->rootSurface()->commit();
     EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds, initial);
@@ -370,7 +378,7 @@ TEST_F(WindowVisualPixelTest, CsdResizeGeometryAheadOfBufferKeepsShadowAgainstPa
     EXPECT_GT(pixel(image, corner.x() + 143, corner.y() + 50, 3), 240);
     EXPECT_GT(pixel(image, corner.x() + 70, corner.y() + 103, 3), 240);
     model.attach(window->rootSurface(), {200, 150}, {1, 0, 0, 1}, {8, 8, 184, 134});
-    EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds.size(), QSizeF(184, 134));
+    EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds.size(), base::SizeF(184, 134));
     model.manager.eventHandler()->completeDrag(wm::ToplevelEventHandler::DragResult::Success);
 }
 
@@ -384,22 +392,23 @@ TEST_F(WindowVisualPixelTest, CsdResizePinsBodyAndShadowWhenGeometryAndBufferArr
         shell->setConfigureCallback([&](const wm::ShellSurface::ConfigureState &) {
             return ++serial;
         });
-        const QPoint fixed = window->bounds().bottomRight();
-        const QPoint start = window->bounds().topLeft();
+        const base::Point fixed = window->bounds().bottomRight();
+        const base::Point start = window->bounds().topLeft();
         ASSERT_TRUE(
                 model.manager.eventHandler()->beginResize(window, wm::ResizeEdge::TopLeft, start));
-        model.manager.eventHandler()->onPointerMotion(start - QPoint(40, 30));
+        model.manager.eventHandler()->onPointerMotion(start - base::Point(40, 30));
         ASSERT_TRUE(shell->acknowledgeConfigure(serial));
-        const auto verify = [&](QSize size) {
+        const auto verify = [&](base::Size size) {
             const auto state = wm::WindowVisualController::evaluate(*window);
-            const QRect body =
-                    state.shape.bounds.translated(window->bounds().topLeft()).toAlignedRect();
+            const base::Rect body =
+                    state.shape.bounds.translated(window->bounds().topLeft()).toEnclosingRect();
             EXPECT_EQ(body.size(), size);
             EXPECT_EQ(body.bottomRight(), fixed);
             auto *shadow =
                     static_cast<decoration::ShadowNode *>(window->node()->children().front());
-            EXPECT_EQ(shadow->geometry() - shadow->margins(), state.shape.bounds.toAlignedRect());
-            EXPECT_EQ(window->rootSurface()->node()->absolutePosition() + QPoint(8, 8),
+            EXPECT_EQ(shadow->geometry().marginsRemoved(shadow->margins()),
+                      state.shape.bounds.toEnclosingRect());
+            EXPECT_EQ(window->rootSurface()->node()->absolutePosition() + base::Point(8, 8),
                       body.topLeft());
         };
         if (geometryFirst) {
@@ -473,18 +482,19 @@ TEST_F(WindowVisualPixelTest, TransparentContentOpaqueFrameAndShadowOutsideAllFo
             renderer->setRasterScale(scale);
             paint(model, window);
             const auto image = pixels();
-            const QRectF bounds =
+            const base::RectF bounds =
                     wm::WindowVisualController::evaluate(*window).shape.bounds.translated(
                             window->bounds().topLeft());
-            const int l = qRound(bounds.x() * scale), t = qRound(bounds.y() * scale);
-            const int r = qRound((bounds.x() + bounds.width()) * scale);
-            const int b = qRound((bounds.y() + bounds.height()) * scale);
+            const int l = roundToInt(bounds.x() * scale), t = roundToInt(bounds.y() * scale);
+            const int r = roundToInt((bounds.x() + bounds.width()) * scale);
+            const int b = roundToInt((bounds.y() + bounds.height()) * scale);
             const int x = (l + r) / 2, y = (t + b) / 2;
             EXPECT_NEAR(pixel(image, x, y, 3), 128, 1);
             EXPECT_EQ(pixel(image, x, y, 1), 0);
             EXPECT_GT(pixel(image, l - 2, y, 3), 0);
             for (auto corner :
-                 {QPoint(l, t), QPoint(r - 1, t), QPoint(l, b - 1), QPoint(r - 1, b - 1)}) {
+                 {base::Point(l, t), base::Point(r - 1, t), base::Point(l, b - 1),
+                  base::Point(r - 1, b - 1)}) {
                 EXPECT_EQ(pixel(image, corner.x(), corner.y()), 0);
                 EXPECT_LT(pixel(image, corner.x(), corner.y(), 3), 100);
             }
@@ -512,10 +522,10 @@ TEST_F(WindowVisualPixelTest, SubsurfacesShareWindowClipButPopupsAndResizeMargin
     auto image = pixels();
     EXPECT_EQ(pixel(image, 80, 80, 1), 0);
     EXPECT_EQ(pixel(image, 90, 90, 1), 255);
-    QPointF local;
+    base::PointF local;
     EXPECT_EQ(input::findTargetSurface(&model.compositor, {80, 80}, &local), child);
     EXPECT_EQ(input::findTargetSurface(&model.compositor, {90, 90}, &local), child);
-    EXPECT_EQ(local, QPointF(15, 15));
+    EXPECT_EQ(local, base::PointF(15, 15));
     auto *body = window->visualNode();
     ASSERT_EQ(window->node()->children().size(), 2u);
     EXPECT_EQ(window->node()->children().front()->name(), "shadow");
@@ -552,8 +562,8 @@ TEST_F(WindowVisualPixelTest, BlurredShellSurfacesAndPopupsOutlineTheirRoundedBo
     EXPECT_EQ(state.mode, Mode::PreserveClient);
     EXPECT_TRUE(state.drawOutline);
     EXPECT_FALSE(state.clipContent);
-    EXPECT_EQ(state.shape.bounds, QRectF(window->presentedBounds()));
-    EXPECT_EQ(state.outlineShape.bounds, QRectF(10, 20, 100, 60));
+    EXPECT_EQ(state.shape.bounds, base::RectF(window->presentedBounds()));
+    EXPECT_EQ(state.outlineShape.bounds, base::RectF(10, 20, 100, 60));
     EXPECT_EQ(state.outlineShape.radius, 18);
     EXPECT_FLOAT_EQ(state.outlineColor.a, decoration::WindowVisualStyle().dockOutline.a);
     EXPECT_FLOAT_EQ(state.highlightColor.a, decoration::WindowVisualStyle().dockHighlight.a);
@@ -561,14 +571,14 @@ TEST_F(WindowVisualPixelTest, BlurredShellSurfacesAndPopupsOutlineTheirRoundedBo
     paint(model, window);
     auto image = pixels();
     const auto blend = [](const render::Color &color, float background) {
-        return qRound(255 * (color.r * color.a + background * (1 - color.a)));
+        return roundToInt(255 * (color.r * color.a + background * (1 - color.a)));
     };
     EXPECT_NEAR(pixel(image, 89, 130), blend(state.outlineColor, 0.5f), 1);
     EXPECT_NEAR(pixel(image, 90, 130), blend(state.highlightColor, 0.5f), 1);
     EXPECT_NEAR(pixel(image, 91, 130), 128, 1);
     EXPECT_NEAR(pixel(image, 85, 130), 128, 1);
     // Damage has to reach the outline outside the body.
-    EXPECT_TRUE(window->visualNode()->absolutePaintBounds().contains(QRect(89, 99, 102, 62)));
+    EXPECT_TRUE(window->visualNode()->absolutePaintBounds().contains(base::Rect(89, 99, 102, 62)));
 
     // A glass rim is the edge, so the outline goes transparent and keeps its shape.
     render::GlassParams glass;
@@ -578,7 +588,7 @@ TEST_F(WindowVisualPixelTest, BlurredShellSurfacesAndPopupsOutlineTheirRoundedBo
     surface->commit();
     state = wm::WindowVisualController::evaluate(*window, style);
     EXPECT_TRUE(state.drawOutline);
-    EXPECT_EQ(state.outlineShape.bounds, QRectF(10, 20, 100, 60));
+    EXPECT_EQ(state.outlineShape.bounds, base::RectF(10, 20, 100, 60));
     EXPECT_FLOAT_EQ(state.outlineColor.a, 0);
     EXPECT_FLOAT_EQ(state.highlightColor.a, 0);
     surface->setGlass({});
@@ -597,7 +607,7 @@ TEST_F(WindowVisualPixelTest, BlurredShellSurfacesAndPopupsOutlineTheirRoundedBo
     ASSERT_NE(popup.window(), nullptr);
     state = wm::WindowVisualController::evaluate(*popup.window(), style);
     EXPECT_TRUE(state.drawOutline);
-    EXPECT_EQ(state.outlineShape.bounds, QRectF(0, 0, 30, 30));
+    EXPECT_EQ(state.outlineShape.bounds, base::RectF(0, 0, 30, 30));
     EXPECT_EQ(state.outlineShape.radius, 15);
     EXPECT_FLOAT_EQ(state.outlineColor.a, decoration::WindowVisualStyle().shellOutline.a);
 }
@@ -621,7 +631,7 @@ TEST_F(WindowVisualPixelTest, FillMappedTextureBlurNestedClipsAndOffscreenOffset
                 else if (operation == 2) {
                     const uint8_t rgba[] = {255, 0, 0, 255};
                     auto texture = renderer->createTexture({1, 1}, rgba);
-                    QTransform mapping;
+                    base::AffineTransform mapping;
                     mapping.rotate(90);
                     renderer->drawTextureMapped(texture.get(), {0, 0, 300, 300}, 1, mapping);
                 } else {
@@ -633,11 +643,12 @@ TEST_F(WindowVisualPixelTest, FillMappedTextureBlurNestedClipsAndOffscreenOffset
             renderer->clear({0, 0, 0, 0});
             renderer->drawTexture(capture.get(), {27, 29, 200, 160}, 1);
             const auto image = pixels();
-            EXPECT_EQ(pixel(image, qRound(51 * scale), qRound(53 * scale), 3), 0);
-            EXPECT_EQ(pixel(image, qRound(40 * scale), qRound(80 * scale), 3), 0);
-            EXPECT_EQ(pixel(image, qRound(100 * scale), qRound(100 * scale), 3), 255);
+            EXPECT_EQ(pixel(image, roundToInt(51 * scale), roundToInt(53 * scale), 3), 0);
+            EXPECT_EQ(pixel(image, roundToInt(40 * scale), roundToInt(80 * scale), 3), 0);
+            EXPECT_EQ(pixel(image, roundToInt(100 * scale), roundToInt(100 * scale), 3), 255);
             EXPECT_EQ(
-                    pixel(image, qRound(100 * scale), qRound(100 * scale), operation == 3 ? 2 : 0),
+                    pixel(image, roundToInt(100 * scale), roundToInt(100 * scale),
+                          operation == 3 ? 2 : 0),
                     255);
         }
     }
@@ -649,7 +660,7 @@ TEST_F(WindowVisualPixelTest, CornerCoverageMatchesIndependentAreaSamplingAndHai
         for (double offset : {0., 0.3}) {
             renderer->setRasterScale(scale);
             const render::RoundedShape shape {{40 + offset, 40 + offset, 160, 120}, 14};
-            const QRectF device(shape.bounds.topLeft() * scale, shape.bounds.size() * scale);
+            const base::RectF device = shape.bounds.scaled(scale);
             const render::RoundedShape outer {device, 14 * scale};
             for (double stroke : {0., 0.5, 1.}) {
                 const bool outline = stroke > 0;
@@ -694,7 +705,7 @@ TEST_F(WindowVisualPixelTest, CornerCoverageMatchesIndependentAreaSamplingAndHai
                         for (int sx = 0; sx < samples; ++sx) {
                             const double innerTop = insetTop(x + (sx + .5) / samples);
                             for (int sy = 0; sy < samples; ++sy) {
-                                const QPointF p(x + (sx + .5) / samples, y + (sy + .5) / samples);
+                                const base::PointF p(x + (sx + .5) / samples, y + (sy + .5) / samples);
                                 covered += outer.contains(p) && (!outline || p.y() < innerTop);
                             }
                         }
@@ -707,7 +718,7 @@ TEST_F(WindowVisualPixelTest, CornerCoverageMatchesIndependentAreaSamplingAndHai
                 if (outline) {
                     int total = 0;
                     for (int y = top - 2; y <= top + 3; ++y)
-                        total += pixel(image, qRound(device.center().x()), y, 3);
+                        total += pixel(image, roundToInt(device.center().x()), y, 3);
                     EXPECT_NEAR(total, 255 * stroke, 2);
                 }
             }
@@ -724,13 +735,13 @@ TEST_F(WindowVisualPixelTest, ShapedPopupBlursOutlinesAndShadowsItsOwnOutline)
         auto *popupSurface = model.surface();
         wm::ShellSurface popup(&model.manager, popupSurface);
         ASSERT_TRUE(popup.setPopup(model.shells.front().get(), {20, 20, 120, 70}));
-        QPainterPath shape;
-        shape.addRoundedRect(QRectF(0, 0, 120, 60), 8, 8);
-        QPainterPath arrow;
+        ui::Path shape;
+        shape.addRoundedRect(ui::RectF {0, 0, 120, 60}, 8, 8);
+        ui::Path arrow;
         arrow.moveTo(40, 59);
         arrow.lineTo(60, 59);
         arrow.lineTo(50, 69);
-        arrow.closeSubpath();
+        arrow.close();
         shape = shape.united(arrow);
         popupSurface->setBackgroundBlur({0, 0, 120, 70}, 8);
         popupSurface->setBackgroundBlurShape(shape);
@@ -742,20 +753,20 @@ TEST_F(WindowVisualPixelTest, ShapedPopupBlursOutlinesAndShadowsItsOwnOutline)
                 wm::WindowVisualController::evaluate(*window, model.manager.visualStyle());
         ASSERT_TRUE(state.drawOutline);
         EXPECT_FALSE(state.outlinePath.isEmpty());
-        EXPECT_EQ(state.outlineShape.bounds.toAlignedRect(), QRect(0, 0, 120, 69));
+        EXPECT_EQ(state.outlineShape.bounds.toEnclosingRect(), base::Rect(0, 0, 120, 69));
 
         decoration::ShadowNode *shadow = nullptr;
         for (auto *child : window->node()->children()) {
-            if (child->name() == QStringLiteral("shadow"))
+            if (child->name() == "shadow")
                 shadow = static_cast<decoration::ShadowNode *>(child);
         }
         ASSERT_NE(shadow, nullptr);
         EXPECT_FALSE(shadow->silhouette().isEmpty());
 
         model.compositor.updateTextures(*renderer);
-        const QPoint origin = window->node()->absolutePosition();
-        const auto device = [&](qreal x, qreal y) {
-            return QPoint(int((origin.x() + x) * scale), int((origin.y() + y) * scale));
+        const base::Point origin = window->node()->absolutePosition();
+        const auto device = [&](double x, double y) {
+            return base::Point(int((origin.x() + x) * scale), int((origin.y() + y) * scale));
         };
         renderer->clear({1, 1, 1, 1});
         // Dark patches: blurred away inside the shape, untouched outside it.
@@ -780,17 +791,18 @@ TEST_F(WindowVisualPixelTest, OutlineBlendsOnceWithClientColor)
         renderer->setRasterScale(scale);
         const render::RoundedShape shape {{40, 40, 160, 120}, 14};
         for (float client : {0.f, 1.f}) {
-            for (qreal stroke : {0.5, 1.0}) {
+            for (double stroke : {0.5, 1.0}) {
                 renderer->clear({client, client, client, 1});
                 const auto color = decoration::WindowVisualStyle().activeOutline;
                 renderer->drawRoundedOutline(shape, color, stroke);
                 const auto image = pixels();
-                const qreal coverage = color.a * stroke;
-                const int expected = qRound(255 * (color.r * coverage + client * (1 - coverage)));
-                for (const auto &point : {QPoint(qRound(40 * scale), qRound(100 * scale)),
-                                          QPoint(qRound(200 * scale) - 1, qRound(100 * scale)),
-                                          QPoint(qRound(120 * scale), qRound(40 * scale)),
-                                          QPoint(qRound(120 * scale), qRound(160 * scale) - 1)}) {
+                const double coverage = color.a * stroke;
+                const int expected = roundToInt(255 * (color.r * coverage + client * (1 - coverage)));
+                for (const auto &point :
+                     {base::Point(roundToInt(40 * scale), roundToInt(100 * scale)),
+                      base::Point(roundToInt(200 * scale) - 1, roundToInt(100 * scale)),
+                      base::Point(roundToInt(120 * scale), roundToInt(40 * scale)),
+                      base::Point(roundToInt(120 * scale), roundToInt(160 * scale) - 1)}) {
                     EXPECT_NEAR(pixel(image, point.x(), point.y()), expected, 1);
                 }
             }
@@ -802,34 +814,34 @@ TEST_F(WindowVisualPixelTest, AnimationUsesOnePhysicalOutlineAndClipsSquareOldSn
 {
     for (double scale : {1., 1.25, 1.5, 1.75, 2.}) {
         renderer->setRasterScale(scale);
-        qint64 now = 0;
+        int64_t now = 0;
         scene::WindowAnimation animation([&] {
             return now;
         });
-        const QRect from(10, 10, 240, 180), to(40, 40, 160, 120);
+        const base::Rect from(10, 10, 240, 180), to(40, 40, 160, 120);
         animation.setGeometry(from);
         auto visual = std::make_unique<scene::WindowVisualNode>();
         auto *body = visual.get();
         scene::WindowVisualState state;
         state.mode = Mode::ServerExterior;
-        state.shape.bounds = {QPoint(), from.size()};
+        state.shape.bounds = base::RectF(base::Rect(from.size()));
         body->setState(state);
         auto fill = std::make_unique<scene::ColorNode>(render::Color {1, 0, 0, 1});
         auto *content = fill.get();
-        fill->setGeometry({QPoint(), from.size()});
+        fill->setGeometry(base::Rect(from.size()));
         body->addChild(std::move(fill));
         animation.addChild(std::move(visual));
         animation.finish();
         animation.render(*renderer);
         animation.setGeometry(to);
         animation.start(scene::WindowAnimation::Type::Bounds, from, to);
-        state.shape = {{QPoint(), to.size()}, 14};
+        state.shape = {base::RectF(base::Rect(to.size())), 14};
         state.clipContent = state.drawOutline = true;
         state.outlineWidthPx = 1.0;
         const render::Color outline {1, 1, 1, 0.14f};
         state.outlineColor = outline;
         body->setState(state);
-        content->setGeometry({QPoint(), to.size()});
+        content->setGeometry(base::Rect(to.size()));
         content->setColor({0, 1, 0, 1});
         const double outlineChannel = 255 * outline.a;
         for (int elapsed : {0, 100, 400}) {
@@ -842,7 +854,7 @@ TEST_F(WindowVisualPixelTest, AnimationUsesOnePhysicalOutlineAndClipsSquareOldSn
                     double(elapsed)
                             / scene::WindowAnimation::duration(scene::WindowAnimation::Type::Bounds,
                                                                from, to));
-            const int x = qRound(sample.bounds.center().x() * scale);
+            const int x = roundToInt(sample.bounds.center().x() * scale);
             const int y = std::floor(sample.bounds.y() * scale);
             const int left = std::floor(sample.bounds.x() * scale);
             // The square corners round off and the outline fades in as the
@@ -891,10 +903,10 @@ TEST_F(WindowVisualPixelTest, DrawingDirectlyMatchesTheSnapshotAtEveryScale)
         auto *window = model.window(Mode::ServerFrame, {0.2f, 0.4f, 0.8f, 1});
         ASSERT_NE(window, nullptr);
         // A fractional device position, where a resampled snapshot would show.
-        window->setBounds({QPoint(81, 83), window->bounds().size()});
+        window->setBounds({base::Point(81, 83), window->bounds().size()});
         // One-pixel stripes, which any resampling blurs.
         const auto stripes = [&] {
-            const QSize size(160, 120);
+            const base::Size size(160, 120);
             std::vector<uint8_t> bytes(size.width() * size.height() * 4, 255);
             for (int y = 0; y < size.height(); ++y)
                 for (int x = 0; x < size.width(); x += 2)
@@ -906,7 +918,7 @@ TEST_F(WindowVisualPixelTest, DrawingDirectlyMatchesTheSnapshotAtEveryScale)
             model.buffers.push_back(pool->createBuffer(size, 0, size.width() * 4,
                                                        render::PixelFormat::Rgba8888, nullptr));
             window->rootSurface()->attach(model.buffers.back(), {});
-            window->rootSurface()->damage({QPoint(), size});
+            window->rootSurface()->damage(base::Rect(base::Point(), size));
             window->rootSurface()->commit();
         };
         paint(model, window);
@@ -963,7 +975,7 @@ TEST_F(WindowVisualPixelTest, ConfigureAcknowledgementAndOldBufferKeepPresentedS
     const auto original = pixels();
     const auto shape = wm::WindowVisualController::evaluate(*window).shape.bounds;
     const auto requested = window->bounds();
-    window->requestBounds({requested.topLeft(), requested.size() + QSize(40, 20)});
+    window->requestBounds({requested.topLeft(), requested.size() + base::Size(40, 20)});
     const auto future = window->bounds();
     ASSERT_GT(serial, 0u);
     ASSERT_TRUE(shell->acknowledgeConfigure(serial));
@@ -975,8 +987,8 @@ TEST_F(WindowVisualPixelTest, ConfigureAcknowledgementAndOldBufferKeepPresentedS
     model.attach(window->rootSurface(), {200, 140}, {0, 1, 0, 1});
     paint(model, window);
     EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds.size(),
-              QSizeF(future.size()));
-    EXPECT_EQ(window->contentBounds().size(), QSize(200, 140));
+              base::SizeF(future.size()));
+    EXPECT_EQ(window->contentBounds().size(), base::Size(200, 140));
 }
 
 TEST_F(WindowVisualPixelTest, ShapedGlassPopupOutlineMeetsSnappedBodyAtFractionalScale)
@@ -990,8 +1002,8 @@ TEST_F(WindowVisualPixelTest, ShapedGlassPopupOutlineMeetsSnappedBodyAtFractiona
         auto *popupSurface = model.surface();
         wm::ShellSurface popup(&model.manager, popupSurface);
         ASSERT_TRUE(popup.setPopup(model.shells.front().get(), {x, 21, 120, 70}));
-        QPainterPath shape;
-        shape.addRoundedRect(QRectF(0, 0, 120, 60), 8, 8);
+        ui::Path shape;
+        shape.addRoundedRect(ui::RectF {0, 0, 120, 60}, 8, 8);
         popupSurface->setBackgroundBlur({0, 0, 120, 60}, 8);
         popupSurface->setBackgroundBlurShape(shape);
         render::GlassParams glass;
@@ -1005,15 +1017,15 @@ TEST_F(WindowVisualPixelTest, ShapedGlassPopupOutlineMeetsSnappedBodyAtFractiona
         ASSERT_NE(window, nullptr);
         static_cast<scene::WindowAnimation *>(window->node())->finish();
         model.compositor.updateTextures(*renderer);
-        const QPoint origin = window->node()->absolutePosition();
+        const base::Point origin = window->node()->absolutePosition();
         renderer->clear({1, 1, 1, 1});
         window->node()->render(*renderer);
         const auto image = pixels();
 
         // The body starts where the surface is snapped; the hairline is the
         // one pixel outside it, darker than the shadow beyond.
-        const int left = qRound(origin.x() * scale);
-        const int top = qRound(origin.y() * scale);
+        const int left = roundToInt(origin.x() * scale);
+        const int top = roundToInt(origin.y() * scale);
         const int row = int((origin.y() + 30) * scale);
         const int column = int((origin.x() + 60) * scale);
         EXPECT_GE(pixel(image, left, row), 245) << x;

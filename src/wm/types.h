@@ -5,7 +5,9 @@
 #ifndef CUTEFISH_WM_TYPES_H_
 #define CUTEFISH_WM_TYPES_H_
 
-#include <QRect>
+#include <cstdint>
+
+#include "base/geometry.h"
 
 namespace cutefish::wm {
 
@@ -140,34 +142,42 @@ struct Insets {
     bool isNull() const { return left == 0 && top == 0 && right == 0 && bottom == 0; }
 
     // Outer rect -> client area.
-    QRect inset(const QRect& rect) const
+    base::Rect inset(const base::Rect& rect) const
     {
         return rect.adjusted(left, top, -right, -bottom);
     }
 
     // Client area -> outer rect.
-    QRect outset(const QRect& rect) const
+    base::Rect outset(const base::Rect& rect) const
     {
         return rect.adjusted(-left, -top, right, bottom);
     }
 
-    QSize outset(const QSize& size) const
+    base::Size outset(const base::Size& size) const
     {
-        return QSize(size.width() + left + right, size.height() + top + bottom);
+        return base::Size(size.width() + left + right, size.height() + top + bottom);
     }
 
-    QSize inset(const QSize& size) const
+    base::Size inset(const base::Size& size) const
     {
-        return QSize(size.width() - left - right, size.height() - top - bottom);
+        return base::Size(size.width() - left - right, size.height() - top - bottom);
     }
 
-    QPoint topLeft() const { return QPoint(left, top); }
+    base::Point topLeft() const { return base::Point(left, top); }
 
     friend bool operator==(const Insets& a, const Insets& b)
     {
         return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
     }
 };
+
+// The pixel in the middle of `rect`, the one above and left of the middle for
+// an even size; placement and hit testing pick the middle this way.
+inline base::Point centerPixel(const base::Rect& rect)
+{
+    return base::Point(int((int64_t(rect.x()) * 2 + rect.width() - 1) / 2),
+                       int((int64_t(rect.y()) * 2 + rect.height() - 1) / 2));
+}
 
 const char* toString(WindowStateType type);
 const char* toString(WindowRole role);

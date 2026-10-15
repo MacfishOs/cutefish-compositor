@@ -5,11 +5,9 @@
 #ifndef CUTEFISH_RENDER_CURSOR_SINK_H_
 #define CUTEFISH_RENDER_CURSOR_SINK_H_
 
-#include <QPoint>
-#include <QPointF>
-#include <QSize>
 
 #include <cstdint>
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -18,9 +16,9 @@ namespace cutefish::render {
 struct CursorImage {
     // Premultiplied ARGB32, which is the plane's ARGB8888 in memory.
     const uint8_t* pixels = nullptr;
-    QSize size;
+    base::Size size;
     int stride = 0;
-    QPoint hotspot;
+    base::Point hotspot;
 };
 
 // Somewhere the cursor can be shown without compositing it, normally a KMS
@@ -42,7 +40,7 @@ public:
     // Where the hotspot lands: in logical desktop coordinates for the cursor's
     // own sink, which maps them onto each output, and in output pixels for an
     // output. Fractions are kept until the output rounds them.
-    virtual void moveCursor(const QPointF& position) = 0;
+    virtual void moveCursor(const base::PointF& position) = 0;
 };
 
 } // namespace cutefish::render

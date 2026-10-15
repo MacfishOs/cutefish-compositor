@@ -82,18 +82,18 @@ ScopedFd createFormatTable(const std::vector<DmaBufFeedbackFormat>& table)
     ScopedFd fd(memfd_create("cutefish-dmabuf-format-table",
                              MFD_CLOEXEC | MFD_ALLOW_SEALING));
     if (!fd.isValid()) {
-        qCWarning(cfWayland) << "memfd_create failed for the dmabuf format table";
+        CF_WARNING(cfWayland) << "memfd_create failed for the dmabuf format table";
         return ScopedFd();
     }
 
     if (ftruncate(fd.get(), static_cast<off_t>(size)) != 0) {
-        qCWarning(cfWayland) << "ftruncate failed for the dmabuf format table";
+        CF_WARNING(cfWayland) << "ftruncate failed for the dmabuf format table";
         return ScopedFd();
     }
 
     void* data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get(), 0);
     if (data == MAP_FAILED) {
-        qCWarning(cfWayland) << "mmap failed for the dmabuf format table";
+        CF_WARNING(cfWayland) << "mmap failed for the dmabuf format table";
         return ScopedFd();
     }
     std::memcpy(data, table.data(), size);
@@ -102,7 +102,7 @@ ScopedFd createFormatTable(const std::vector<DmaBufFeedbackFormat>& table)
     if (fcntl(fd.get(), F_ADD_SEALS,
               F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE)
         != 0) {
-        qCWarning(cfWayland) << "Failed to seal the dmabuf format table";
+        CF_WARNING(cfWayland) << "Failed to seal the dmabuf format table";
         return ScopedFd();
     }
 

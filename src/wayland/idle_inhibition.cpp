@@ -4,25 +4,21 @@
 
 #include "wayland/idle_inhibition.h"
 
-namespace cutefish::wayland {
-IdleInhibition::IdleInhibition(QObject *parent)
-    : QObject(parent)
-{
-}
+#include <cassert>
 
-IdleInhibition::~IdleInhibition() = default;
+namespace cutefish::wayland {
 
 void IdleInhibition::acquire()
 {
     if (++m_count == 1 && !m_ignored)
-        Q_EMIT inhibitedChanged();
+        inhibitedChanged();
 }
 
 void IdleInhibition::release()
 {
-    Q_ASSERT(m_count);
+    assert(m_count);
     if (--m_count == 0 && !m_ignored)
-        Q_EMIT inhibitedChanged();
+        inhibitedChanged();
 }
 
 void IdleInhibition::setIgnored(bool ignored)
@@ -30,6 +26,6 @@ void IdleInhibition::setIgnored(bool ignored)
     const bool wasInhibited = inhibited();
     m_ignored = ignored;
     if (inhibited() != wasInhibited)
-        Q_EMIT inhibitedChanged();
+        inhibitedChanged();
 }
 } // namespace cutefish::wayland

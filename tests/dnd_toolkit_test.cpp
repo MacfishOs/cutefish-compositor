@@ -3,18 +3,20 @@
 // found in the LICENSE file.
 
 #include <linux/input-event-codes.h>
-#include <signal.h>
 #include <sys/stat.h>
 
-#include <QProcess>
-#include <QProcessEnvironment>
-#include <QTemporaryDir>
-#include <QTimer>
+#include <string>
+#include <vector>
 
+#include "base/geometry.h"
+#include "base/process.h"
+#include "base/timer.h"
 #include "clipboard_test_util.h"
 #include "compositor/output.h"
 #include "input/input_manager.h"
+#include "process_test_util.h"
 #include "scene/surface_node.h"
+#include "temporary_directory.h"
 #include "wayland/protocols/wl_output.h"
 #include "wayland/protocols/wl_shm.h"
 #include "wayland/protocols/wl_subcompositor.h"
@@ -29,42 +31,23 @@ using namespace clipboard_test;
 
 namespace {
 
-class Child : public QProcess
+// Killed and waited for when it goes.
+class Child : public base::Process
 {
 public:
-    QByteArray output;
-
-    ~Child() override
-    {
-        if (state() != NotRunning) {
-            kill();
-            waitForFinished(2000);
-        }
-    }
-
-    bool saw(const char* marker)
-    {
-        output += readAllStandardOutput();
-        return output.contains(marker);
-    }
+    bool saw(const char* marker) const { return test::contains(standardOutput(), marker); }
 };
 
 void matrix(bool sourceGtk, bool destinationGtk)
 {
-    QTemporaryDir runtime;
+    test::TemporaryDirectory runtime;
     ASSERT_TRUE(runtime.isValid());
-    chmod(runtime.path().toLocal8Bit().constData(), 0700);
+    chmod(runtime.path().c_str(), 0700);
 
-    struct RestoreRuntime {
-        QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
-
-        ~RestoreRuntime() { qputenv("XDG_RUNTIME_DIR", previous); }
-    } restoreRuntime;
-
-    qputenv("XDG_RUNTIME_DIR", runtime.path().toLocal8Bit());
+    const test::ScopedEnvironmentVariable runtimeVariable("XDG_RUNTIME_DIR", runtime.path());
     Harness h;
     wm::WindowManager wm(&h.compositor, &h.seat);
-    wm.setOutputBounds(QRect(0, 0, 800, 600));
+    wm.setOutputBounds(base::Rect(0, 0, 800, 600));
     wayland::WaylandXdgShell xdg(&h.compositor, &wm, &h.seat, h.server.serialTracker());
 
     struct DestroyClients {
@@ -74,59 +57,57 @@ void matrix(bool sourceGtk, bool destinationGtk)
     } cleanup {h.server.display()};
 
     compositor::Output output;
-    output.pixelSize = QSize(800, 600);
+    output.pixelSize = base::Size(800, 600);
     wayland::createSubcompositorGlobal(h.server.display());
     wayland::createShmGlobal(h.server.display(), &h.compositor);
     wayland::createOutputGlobal(h.server.display(), &output);
     wayland::createXdgShellGlobal(h.server.display(), &xdg);
     wayland::createXdgDecorationGlobal(h.server.display());
-    ASSERT_TRUE(h.server.addSocket(QStringLiteral("dnd-test")));
+    ASSERT_TRUE(h.server.addSocket("dnd-test"));
     ASSERT_TRUE(h.server.start());
-    QTimer frames;
-    QObject::connect(&frames, &QTimer::timeout, &frames, [&] {
+    base::Timer frames;
+    frames.onTimeout = [&] {
         h.compositor.frameSubmitted();
         h.compositor.frameDrawn(wayland::nowInMilliseconds());
-    });
-    frames.start(5);
-    Child source, destination;
-    auto start = [&](Child& process, bool gtk, const QString& title) {
-        auto env = QProcessEnvironment::systemEnvironment();
-        for (const auto* name : {"DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
-                                 "QT_QPA_PLATFORMTHEME", "QT_QUICK_BACKEND", "LD_PRELOAD"})
-            env.remove(QString::fromLatin1(name));
-        env.insert("QT_QPA_PLATFORM", "wayland");
-        env.insert("GDK_BACKEND", "wayland");
-        env.insert("WAYLAND_DISPLAY", h.server.socketName());
-        env.insert("XDG_RUNTIME_DIR", runtime.path());
-        process.setProcessEnvironment(env);
-        process.start(gtk ? QStringLiteral("/usr/bin/python3") : QStringLiteral(QT_DND_CLIENT),
-                      gtk ? QStringList {QStringLiteral(GTK_DND_CLIENT), title}
-                          : QStringList {title});
     };
-    auto window = [&](const QString& title) -> wm::Window* {
+    frames.start(std::chrono::milliseconds(5));
+    Child source, destination;
+    auto start = [&](Child& process, bool gtk, const std::string& title) {
+        process.setEnvironment(test::environmentWith(
+            {"DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
+             "QT_QUICK_BACKEND", "LD_PRELOAD"},
+            {{"QT_QPA_PLATFORM", "wayland"},
+             {"GDK_BACKEND", "wayland"},
+             {"WAYLAND_DISPLAY", h.server.socketName()},
+             {"XDG_RUNTIME_DIR", runtime.path()}}));
+        process.start(gtk ? "/usr/bin/python3" : QT_DND_CLIENT,
+                      gtk ? std::vector<std::string> {GTK_DND_CLIENT, title}
+                          : std::vector<std::string> {title});
+    };
+    auto window = [&](const std::string& title) -> wm::Window* {
         for (const auto& w : wm.windows())
             if (w->title() == title)
                 return w;
         return nullptr;
     };
-    start(source, sourceGtk, QStringLiteral("dnd-source"));
+    start(source, sourceGtk, "dnd-source");
     ASSERT_TRUE(h.until(
         [&] {
             return window("dnd-source") != nullptr;
         },
         5000))
-        << source.readAllStandardError().constData();
-    start(destination, destinationGtk, QStringLiteral("dnd-destination"));
+        << source.standardError();
+    start(destination, destinationGtk, "dnd-destination");
     ASSERT_TRUE(h.until(
         [&] {
             return window("dnd-destination") != nullptr;
         },
         5000))
-        << destination.readAllStandardError().constData();
+        << destination.standardError();
     auto* sourceWindow = window("dnd-source");
     auto* destinationWindow = window("dnd-destination");
-    sourceWindow->setBounds(QRect(QPoint(20, 20), sourceWindow->bounds().size()));
-    destinationWindow->setBounds(QRect(QPoint(360, 20), destinationWindow->bounds().size()));
+    sourceWindow->setBounds(base::Rect(base::Point(20, 20), sourceWindow->bounds().size()));
+    destinationWindow->setBounds(base::Rect(base::Point(360, 20), destinationWindow->bounds().size()));
     ASSERT_TRUE(h.until([&] {
         return sourceWindow->rootSurface()->isMapped() &&
             destinationWindow->rootSurface()->isMapped() &&
@@ -139,36 +120,42 @@ void matrix(bool sourceGtk, bool destinationGtk)
     input::InputManager input(&h.seat);
     input.setEventSink(&wm);
     input.setBounds({800, 600});
-    const QPointF startPosition = sourceWindow->surfaceNode()->absolutePosition() + QPoint(60, 85);
-    const QPointF endPosition =
-        destinationWindow->surfaceNode()->absolutePosition() + QPoint(60, 85);
+    const base::PointF startPosition = sourceWindow->surfaceNode()->absolutePosition() + base::Point(60, 85);
+    const base::PointF endPosition =
+        destinationWindow->surfaceNode()->absolutePosition() + base::Point(60, 85);
     input.onPointerMotionAbsolute({}, startPosition);
     input.onPointerButton({}, BTN_LEFT, true);
     for (int i = 0; i < 5; ++i)
         h.pump();
-    input.onPointerMotionAbsolute({}, startPosition + QPoint(25, 15));
+    input.onPointerMotionAbsolute({}, startPosition + base::PointF(25, 15));
     ASSERT_TRUE(h.until(
         [&] {
             return h.seat.drag()->active();
         },
         5000))
-        << source.readAllStandardError().constData();
+        << source.standardError();
     input.onPointerMotionAbsolute({}, endPosition);
-    for (int i = 0; i < 30; ++i)
-        h.pump();
+    // A release before the destination has answered the enter with an accepted
+    // type and action is a cancel, however long a busy machine takes to answer.
+    ASSERT_TRUE(h.until(
+        [&] {
+            return h.seat.drag()->targetAcceptsDrop();
+        },
+        5000))
+        << destination.standardOutput() << destination.standardError();
     input.onPointerButton({}, BTN_LEFT, false);
     EXPECT_TRUE(h.until(
         [&] {
             return destination.saw("PASS");
         },
         5000))
-        << destination.output.constData() << destination.readAllStandardError().constData();
+        << destination.standardOutput() << destination.standardError();
     EXPECT_TRUE(h.until(
         [&] {
             return source.saw("FINISHED");
         },
         5000))
-        << source.output.constData() << source.readAllStandardError().constData();
+        << source.standardOutput() << source.standardError();
     EXPECT_FALSE(h.seat.drag()->active());
     EXPECT_EQ(input::NoButton, h.seat.pressedButtons());
     wl_display_destroy_clients(h.server.display());
@@ -178,20 +165,14 @@ void matrix(bool sourceGtk, bool destinationGtk)
 // data names it, which is how an application pulls a tab out into a window.
 TEST(DndToolkit, QtCarriesADetachedWindowWithTheDrag)
 {
-    QTemporaryDir runtime;
+    test::TemporaryDirectory runtime;
     ASSERT_TRUE(runtime.isValid());
-    chmod(runtime.path().toLocal8Bit().constData(), 0700);
+    chmod(runtime.path().c_str(), 0700);
 
-    struct RestoreRuntime {
-        QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
-
-        ~RestoreRuntime() { qputenv("XDG_RUNTIME_DIR", previous); }
-    } restoreRuntime;
-
-    qputenv("XDG_RUNTIME_DIR", runtime.path().toLocal8Bit());
+    const test::ScopedEnvironmentVariable runtimeVariable("XDG_RUNTIME_DIR", runtime.path());
     Harness h;
     wm::WindowManager wm(&h.compositor, &h.seat);
-    wm.setOutputBounds(QRect(0, 0, 800, 600));
+    wm.setOutputBounds(base::Rect(0, 0, 800, 600));
     wayland::WaylandXdgShell xdg(&h.compositor, &wm, &h.seat, h.server.serialTracker());
 
     struct DestroyClients {
@@ -201,34 +182,32 @@ TEST(DndToolkit, QtCarriesADetachedWindowWithTheDrag)
     } cleanup {h.server.display()};
 
     compositor::Output output;
-    output.pixelSize = QSize(800, 600);
+    output.pixelSize = base::Size(800, 600);
     wayland::createSubcompositorGlobal(h.server.display());
     wayland::createShmGlobal(h.server.display(), &h.compositor);
     wayland::createOutputGlobal(h.server.display(), &output);
     wayland::createXdgShellGlobal(h.server.display(), &xdg);
     wayland::createXdgDecorationGlobal(h.server.display());
     wayland::createXdgToplevelDragGlobal(h.server.display(), &wm);
-    ASSERT_TRUE(h.server.addSocket(QStringLiteral("dnd-test")));
+    ASSERT_TRUE(h.server.addSocket("dnd-test"));
     ASSERT_TRUE(h.server.start());
-    QTimer frames;
-    QObject::connect(&frames, &QTimer::timeout, &frames, [&] {
+    base::Timer frames;
+    frames.onTimeout = [&] {
         h.compositor.frameSubmitted();
         h.compositor.frameDrawn(wayland::nowInMilliseconds());
-    });
-    frames.start(5);
+    };
+    frames.start(std::chrono::milliseconds(5));
 
     Child client;
-    auto env = QProcessEnvironment::systemEnvironment();
-    for (const auto* name : {"DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
-                             "QT_QPA_PLATFORMTHEME", "QT_QUICK_BACKEND", "LD_PRELOAD"})
-        env.remove(QString::fromLatin1(name));
-    env.insert("QT_QPA_PLATFORM", "wayland");
-    env.insert("WAYLAND_DISPLAY", h.server.socketName());
-    env.insert("XDG_RUNTIME_DIR", runtime.path());
-    client.setProcessEnvironment(env);
-    client.start(QStringLiteral(QT_DND_CLIENT), {QStringLiteral("tab-source")});
+    client.setEnvironment(test::environmentWith(
+        {"DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
+         "QT_QUICK_BACKEND", "LD_PRELOAD"},
+        {{"QT_QPA_PLATFORM", "wayland"},
+         {"WAYLAND_DISPLAY", h.server.socketName()},
+         {"XDG_RUNTIME_DIR", runtime.path()}}));
+    client.start(QT_DND_CLIENT, {"tab-source"});
 
-    auto window = [&](const QString& title) -> wm::Window* {
+    auto window = [&](const std::string& title) -> wm::Window* {
         for (const auto& w : wm.windows())
             if (w->title() == title)
                 return w;
@@ -239,9 +218,9 @@ TEST(DndToolkit, QtCarriesADetachedWindowWithTheDrag)
             return window("tab-source") != nullptr;
         },
         5000))
-        << client.readAllStandardError().constData();
+        << client.standardError();
     auto* sourceWindow = window("tab-source");
-    sourceWindow->setBounds(QRect(QPoint(20, 20), sourceWindow->bounds().size()));
+    sourceWindow->setBounds(base::Rect(base::Point(20, 20), sourceWindow->bounds().size()));
     ASSERT_TRUE(h.until([&] {
         return sourceWindow->rootSurface()->isMapped()
             && sourceWindow->surfaceNode()->absolutePosition()
@@ -252,27 +231,27 @@ TEST(DndToolkit, QtCarriesADetachedWindowWithTheDrag)
     input::InputManager input(&h.seat);
     input.setEventSink(&wm);
     input.setBounds({800, 600});
-    const QPointF startPosition = sourceWindow->surfaceNode()->absolutePosition() + QPoint(60, 85);
+    const base::PointF startPosition = sourceWindow->surfaceNode()->absolutePosition() + base::Point(60, 85);
     input.onPointerMotionAbsolute({}, startPosition);
     input.onPointerButton({}, BTN_LEFT, true);
     for (int i = 0; i < 5; ++i)
         h.pump();
-    const QPointF grabbed = startPosition + QPoint(25, 15);
+    const base::PointF grabbed = startPosition + base::PointF(25, 15);
     input.onPointerMotionAbsolute({}, grabbed);
     ASSERT_TRUE(h.until(
         [&] {
             return h.seat.drag()->active() && window("tab-detached") != nullptr;
         },
         5000))
-        << client.readAllStandardError().constData();
+        << client.standardError();
 
     // It maps with the pointer at its offset, and moves with the pointer.
     wm::Window* detached = window("tab-detached");
-    EXPECT_EQ(grabbed.toPoint() - QPoint(10, 10), detached->contentBounds().topLeft());
-    input.onPointerMotionAbsolute({}, QPointF(500, 300));
+    EXPECT_EQ(grabbed.toPoint() - base::Point(10, 10), detached->contentBounds().topLeft());
+    input.onPointerMotionAbsolute({}, base::PointF(500, 300));
     for (int i = 0; i < 5; ++i)
         h.pump();
-    EXPECT_EQ(QPoint(490, 290), detached->contentBounds().topLeft());
+    EXPECT_EQ(base::Point(490, 290), detached->contentBounds().topLeft());
 
     // Let go over nothing that takes it: a drop all the same, and the window stays.
     input.onPointerButton({}, BTN_LEFT, false);
@@ -281,11 +260,11 @@ TEST(DndToolkit, QtCarriesADetachedWindowWithTheDrag)
             return client.saw("DROPPED");
         },
         5000))
-        << client.output.constData() << client.readAllStandardError().constData();
+        << client.standardOutput() << client.standardError();
     EXPECT_FALSE(h.seat.drag()->active());
     EXPECT_FALSE(wm.eventHandler()->isDragging());
     ASSERT_EQ(detached, window("tab-detached"));
-    EXPECT_EQ(QPoint(490, 290), detached->contentBounds().topLeft());
+    EXPECT_EQ(base::Point(490, 290), detached->contentBounds().topLeft());
     wl_display_destroy_clients(h.server.display());
 }
 
@@ -309,12 +288,4 @@ TEST(DndToolkit, QtToQt)
 TEST(DndToolkit, GtkToGtk)
 {
     matrix(true, true);
-}
-
-int main(int argc, char** argv)
-{
-    QCoreApplication app(argc, argv);
-    signal(SIGPIPE, SIG_IGN);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

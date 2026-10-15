@@ -9,20 +9,22 @@
 #include <gtest/gtest.h>
 
 #include "egl_test_util.h"
+#include "pixel_test_util.h"
 #include "scene/overview_node.h"
 #include "scene/scene.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "base/geometry.h"
 
 using namespace cutefish;
 using namespace cutefish::render;
 
 namespace {
 
-constexpr QRect kViewport(0, 0, 32, 16);
-constexpr QSize kNative(64, 32);
-constexpr QRect kWindow(0, 0, 16, 16);
-constexpr QRectF kPlace(16, 4, 8, 8);
+const base::Rect kViewport(0, 0, 32, 16);
+constexpr base::Size kNative(64, 32);
+const base::Rect kWindow(0, 0, 16, 16);
+const base::RectF kPlace(16, 4, 8, 8);
 
 class OverviewPixels : public testing::Test
 {
@@ -38,14 +40,14 @@ protected:
         ASSERT_NE(surface, EGL_NO_SURFACE);
         target = std::make_unique<EglRenderTarget>(renderer->eglDisplay(), surface, nullptr,
                                                    kNative);
-        renderer->setOutputContext({QStringLiteral("out"), kViewport, kNative, 2, 0, 1});
+        renderer->setOutputContext({"out", kViewport, kNative, 2, 0, 1});
         ASSERT_TRUE(renderer->beginFrame(target.get()));
 
         scene.setSize(kViewport.size());
         desktop->setGeometry(kViewport);
         window->setGeometry(kWindow);
         window->addChild(std::make_unique<scene::ColorNode>(Color {1, 0, 0, 1}))
-                ->setGeometry(QRect(QPoint(), kWindow.size()));
+                ->setGeometry(base::Rect(base::Point(), kWindow.size()));
         window->finish();
         node->setGeometry(kViewport);
         node->setBackdrop({desktop});
@@ -63,26 +65,22 @@ protected:
         renderer.reset();
     }
 
-    QImage paint()
+    ui::Bitmap paint()
     {
-        renderer->setOutputContext({QStringLiteral("out"), kViewport, kNative, 2, 0, 1});
+        renderer->setOutputContext({"out", kViewport, kNative, 2, 0, 1});
         renderer->frameTime = double(now);
         renderer->clear({1, 0, 1, 1});
         container->render(*renderer);
-        QImage image(kNative, QImage::Format_RGBA8888);
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glReadPixels(0, 0, kNative.width(), kNative.height(), GL_RGBA, GL_UNSIGNED_BYTE,
-                     image.bits());
-        return image.mirrored(false, true);
+        return test::readFramebuffer(kNative).mirrored(false, true);
     }
 
     // Logical coordinates to the pixel at their centre.
-    static QPoint pixel(double x, double y) { return QPoint(int(x * 2), int(y * 2)); }
+    static base::Point pixel(double x, double y) { return base::Point(int(x * 2), int(y * 2)); }
 
-    qint64 now = 1000;
+    int64_t now = 1000;
     scene::Scene scene;
     scene::Node *container =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::ColorNode *desktop = static_cast<scene::ColorNode *>(
             container->addChild(std::make_unique<scene::ColorNode>(Color {0, 0, 1, 1})));
     scene::WindowAnimation *window = static_cast<scene::WindowAnimation *>(
@@ -101,29 +99,29 @@ protected:
 
 TEST_F(OverviewPixels, AtRestTheDeskIsAsItIs)
 {
-    const QImage image = paint();
+    const ui::Bitmap image = paint();
     ASSERT_FALSE(image.isNull());
-    EXPECT_EQ(QColor(Qt::red), image.pixelColor(pixel(8, 8)));
-    EXPECT_EQ(QColor(Qt::blue), image.pixelColor(pixel(28, 8)));
+    EXPECT_EQ(test::kRed, test::pixelAt(image, pixel(8, 8)));
+    EXPECT_EQ(test::kBlue, test::pixelAt(image, pixel(28, 8)));
 }
 
 TEST_F(OverviewPixels, TheWindowIsAtItsPlaceOverTheDimmedDesktop)
 {
     node->jumpTo(1);
-    const QImage image = paint();
+    const ui::Bitmap image = paint();
     ASSERT_FALSE(image.isNull());
     // Its place, edge to edge.
-    EXPECT_EQ(QColor(Qt::red), image.pixelColor(pixel(20, 8)));
-    EXPECT_EQ(QColor(Qt::red), image.pixelColor(QPoint(32, 8)));
-    EXPECT_EQ(QColor(Qt::red), image.pixelColor(QPoint(47, 23)));
+    EXPECT_EQ(test::kRed, test::pixelAt(image, pixel(20, 8)));
+    EXPECT_EQ(test::kRed, image.pixel(32, 8));
+    EXPECT_EQ(test::kRed, image.pixel(47, 23));
     // Where it was, and around its place, the desktop dimmed.
-    const QColor dimmed = image.pixelColor(pixel(4, 4));
-    EXPECT_EQ(0, dimmed.red());
-    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), dimmed.blue(), 2);
-    EXPECT_EQ(dimmed, image.pixelColor(QPoint(31, 8)));
-    EXPECT_EQ(dimmed, image.pixelColor(QPoint(48, 8)));
-    EXPECT_EQ(dimmed, image.pixelColor(QPoint(40, 7)));
-    EXPECT_EQ(dimmed, image.pixelColor(QPoint(40, 24)));
+    const uint32_t dimmed = test::pixelAt(image, pixel(4, 4));
+    EXPECT_EQ(0, test::red(dimmed));
+    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), test::blue(dimmed), 2);
+    EXPECT_EQ(dimmed, image.pixel(31, 8));
+    EXPECT_EQ(dimmed, image.pixel(48, 8));
+    EXPECT_EQ(dimmed, image.pixel(40, 7));
+    EXPECT_EQ(dimmed, image.pixel(40, 24));
 }
 
 TEST_F(OverviewPixels, HalfwayTheWindowIsHalfwayThere)
@@ -133,10 +131,10 @@ TEST_F(OverviewPixels, HalfwayTheWindowIsHalfwayThere)
     while (node->progress(double(now)) < 0.5)
         ++now;
     const double progress = node->progress(double(now));
-    const QRectF rect = node->presentedRect(0, progress, double(now));
-    const QImage image = paint();
-    EXPECT_EQ(QColor(Qt::red), image.pixelColor(pixel(rect.center().x(), rect.center().y())));
-    EXPECT_NE(QColor(Qt::red), image.pixelColor(pixel(rect.right() + 1, rect.center().y())));
+    const base::RectF rect = node->presentedRect(0, progress, double(now));
+    const ui::Bitmap image = paint();
+    EXPECT_EQ(test::kRed, test::pixelAt(image, pixel(rect.center().x(), rect.center().y())));
+    EXPECT_NE(test::kRed, test::pixelAt(image, pixel(rect.right() + 1, rect.center().y())));
 }
 
 TEST_F(OverviewPixels, AnOpaqueRegionOverAnAlphaBufferReplacesTheLastFrame)
@@ -156,12 +154,12 @@ TEST_F(OverviewPixels, AnOpaqueRegionOverAnAlphaBufferReplacesTheLastFrame)
                                                 PixelFormat::Rgba8888));
     node->setBackdrop({surface});
     node->jumpTo(1);
-    const QImage image = paint();
+    const ui::Bitmap image = paint();
     ASSERT_FALSE(image.isNull());
-    const QColor dimmed = image.pixelColor(pixel(4, 4));
-    EXPECT_EQ(0, dimmed.red());
-    EXPECT_EQ(0, dimmed.blue());
-    EXPECT_EQ(255, dimmed.alpha());
+    const uint32_t dimmed = test::pixelAt(image, pixel(4, 4));
+    EXPECT_EQ(0, test::red(dimmed));
+    EXPECT_EQ(0, test::blue(dimmed));
+    EXPECT_EQ(255, test::alpha(dimmed));
 }
 
 TEST_F(OverviewPixels, ADesktopDrawnThroughItsSnapshotReplacesTheLastFrame)
@@ -175,7 +173,7 @@ TEST_F(OverviewPixels, ADesktopDrawnThroughItsSnapshotReplacesTheLastFrame)
     desk->setGeometry(kViewport);
     auto *surface = static_cast<scene::SurfaceNode *>(
             desk->addChild(std::make_unique<scene::SurfaceNode>()));
-    surface->setGeometry(QRect(QPoint(), kViewport.size()));
+    surface->setGeometry(base::Rect(base::Point(), kViewport.size()));
     surface->setOpaque(true);
     const std::vector<uint8_t> pixels(kNative.width() * kNative.height() * 4, 255);
     surface->setTexture(renderer->createTexture(kNative, pixels.data(), kNative.width() * 4,
@@ -183,13 +181,13 @@ TEST_F(OverviewPixels, ADesktopDrawnThroughItsSnapshotReplacesTheLastFrame)
     desk->finish();
     node->setBackdrop({desk});
     node->jumpTo(1);
-    const QImage image = paint();
+    const ui::Bitmap image = paint();
     ASSERT_FALSE(image.isNull());
-    const QColor dimmed = image.pixelColor(pixel(4, 4));
-    EXPECT_EQ(dimmed.green(), dimmed.red());
-    EXPECT_EQ(dimmed.green(), dimmed.blue());
-    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), dimmed.green(), 2);
-    EXPECT_EQ(255, dimmed.alpha());
+    const uint32_t dimmed = test::pixelAt(image, pixel(4, 4));
+    EXPECT_EQ(test::green(dimmed), test::red(dimmed));
+    EXPECT_EQ(test::green(dimmed), test::blue(dimmed));
+    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), test::green(dimmed), 2);
+    EXPECT_EQ(255, test::alpha(dimmed));
 }
 
 TEST_F(OverviewPixels, AnOpaqueDesktopDarkenedInPlaceStaysOpaque)
@@ -205,9 +203,9 @@ TEST_F(OverviewPixels, AnOpaqueDesktopDarkenedInPlaceStaysOpaque)
                                                 PixelFormat::Rgbx8888));
     node->setBackdrop({surface});
     node->jumpTo(1);
-    const QImage image = paint();
+    const ui::Bitmap image = paint();
     ASSERT_FALSE(image.isNull());
-    const QColor dimmed = image.pixelColor(pixel(4, 4));
-    EXPECT_EQ(255, dimmed.alpha());
-    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), dimmed.green(), 2);
+    const uint32_t dimmed = test::pixelAt(image, pixel(4, 4));
+    EXPECT_EQ(255, test::alpha(dimmed));
+    EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), test::green(dimmed), 2);
 }

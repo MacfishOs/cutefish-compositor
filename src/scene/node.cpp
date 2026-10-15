@@ -7,17 +7,18 @@
 #include <algorithm>
 #include <atomic>
 #include <unordered_map>
+#include "base/region.h"
 
 namespace cutefish::scene {
 
 uint64_t Node::s_mutations = 0;
 
-Node::Node(const QString &name)
+Node::Node(std::string name)
     : m_damageId([] {
         static std::atomic<uint64_t> next {0};
         return ++next;
     }())
-    , m_name(name)
+    , m_name(std::move(name))
 {
 }
 
@@ -135,7 +136,7 @@ void Node::requestFrame() const
             node->m_changed();
 }
 
-void Node::notifyDamage(const QRegion &damage)
+void Node::notifyDamage(const base::Region &damage)
 {
     if (damage.isEmpty())
         return;
@@ -149,20 +150,20 @@ void Node::notifyDamage(const QRegion &damage)
                 node->m_changed();
 }
 
-QRegion Node::damageSince(uint64_t revision) const
+base::Region Node::damageSince(uint64_t revision) const
 {
     if (revision == m_contentRevision)
         return {};
     if (m_damageHistory.empty() || revision + 1 < m_damageHistory.front().first)
-        return QRect(QPoint(), geometry().size());
-    QRegion result;
+        return base::Rect(base::Point(), geometry().size());
+    base::Region result;
     for (const auto &[serial, damage] : m_damageHistory)
         if (serial > revision)
             result += damage;
     return result;
 }
 
-void Node::setGeometry(const QRect &geometry)
+void Node::setGeometry(const base::Rect &geometry)
 {
     if (m_geometry == geometry)
         return;
@@ -188,17 +189,17 @@ void Node::setChildrenBelowParent(size_t count)
     notifyChanged();
 }
 
-QPoint Node::absolutePosition() const
+base::Point Node::absolutePosition() const
 {
-    QPoint result = m_geometry.topLeft();
+    base::Point result = m_geometry.topLeft();
     for (const Node *node = m_parent; node; node = node->m_parent)
         result += node->m_geometry.topLeft();
     return result;
 }
 
-QRect Node::absoluteGeometry() const
+base::Rect Node::absoluteGeometry() const
 {
-    return QRect(absolutePosition(), m_geometry.size());
+    return base::Rect(absolutePosition(), m_geometry.size());
 }
 
 bool Node::isEffectivelyVisible() const
@@ -293,12 +294,12 @@ void Node::collectRetired()
     }
 }
 
-void Node::paint(render::Renderer &, const QRect &) const
+void Node::paint(render::Renderer &, const base::Rect &) const
 {
 }
 
-ColorNode::ColorNode(const render::Color &color, const QString &name)
-    : Node(name)
+ColorNode::ColorNode(const render::Color &color, std::string name)
+    : Node(std::move(name))
     , m_color(color)
 {
 }
@@ -312,7 +313,7 @@ void ColorNode::setColor(const render::Color &color)
     notifyChanged();
 }
 
-void ColorNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
+void ColorNode::paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const
 {
     if (absoluteGeometry.isEmpty() || !renderer.drawsInto(absoluteGeometry))
         return;
@@ -328,13 +329,13 @@ void ColorNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry)
     renderer.fillRect(absoluteGeometry, color);
 }
 
-TextureNode::TextureNode(render::Texture *texture, const QString &name)
-    : Node(name)
+TextureNode::TextureNode(render::Texture *texture, std::string name)
+    : Node(std::move(name))
     , m_texture(texture)
 {
 }
 
-void TextureNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
+void TextureNode::paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const
 {
     if (m_texture && !absoluteGeometry.isEmpty() && renderer.drawsInto(absoluteGeometry)) {
         renderer.drawTexture(m_texture, absoluteGeometry, m_alpha);

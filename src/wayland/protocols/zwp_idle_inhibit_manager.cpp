@@ -23,16 +23,15 @@ public:
         , m_surface(surface)
     {
         m_surface->addSurfaceObserver(this);
-        m_sceneChanged =
-                QObject::connect(inhibition, &IdleInhibition::sceneChanged, inhibition, [this] {
-                    update();
-                });
+        m_sceneChanged = inhibition->sceneChanged.connect([this] {
+            update();
+        });
         update();
     }
 
     ~IdleInhibitor() override
     {
-        QObject::disconnect(m_sceneChanged);
+        m_sceneChanged.reset();
         if (m_surface) {
             m_surface->removeSurfaceObserver(this);
         }
@@ -64,7 +63,7 @@ private:
     }
 
     bool m_active = false;
-    QMetaObject::Connection m_sceneChanged;
+    base::Subscription m_sceneChanged;
     IdleInhibition *m_inhibition;
     compositor::Surface *m_surface;
 };

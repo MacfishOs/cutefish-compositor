@@ -13,12 +13,14 @@
 #include <fcntl.h>
 #include <gbm.h>
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <unistd.h>
 
 #include <cstdio>
 #include <memory>
 
 #include "render/egl_renderer.h"
+#include "base/geometry.h"
 
 using namespace cutefish;
 
@@ -44,7 +46,7 @@ Bo allocate(gbm_device *device, uint32_t format, uint64_t modifier)
 render::DmaBufAttributes attributesFor(gbm_bo *bo, uint32_t format, uint64_t modifier)
 {
     render::DmaBufAttributes attributes;
-    attributes.size = QSize(int(gbm_bo_get_width(bo)), int(gbm_bo_get_height(bo)));
+    attributes.size = base::Size(int(gbm_bo_get_width(bo)), int(gbm_bo_get_height(bo)));
     attributes.format = format;
     attributes.modifier = modifier == DRM_FORMAT_MOD_INVALID ? modifier : gbm_bo_get_modifier(bo);
     for (int plane = 0; plane < gbm_bo_get_plane_count(bo); ++plane) {
@@ -64,10 +66,10 @@ render::DmaBufAttributes attributesFor(gbm_bo *bo, uint32_t format, uint64_t mod
 // draw, or a client following the advertisement gets params.failed.
 TEST(DmaBufFormatGbm, EveryAdvertisedFormatThatAllocatesImportsAndDraws)
 {
-    const auto devicePath = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-    if (devicePath.isEmpty())
+    const char *devicePath = std::getenv("CUTEFISH_TEST_DRM_DEVICE");
+    if (!devicePath || !*devicePath)
         GTEST_SKIP() << "Set CUTEFISH_TEST_DRM_DEVICE to an accessible DRM device";
-    const int fd = open(devicePath.constData(), O_RDWR | O_CLOEXEC);
+    const int fd = open(devicePath, O_RDWR | O_CLOEXEC);
     ASSERT_GE(fd, 0);
 
     struct Close {
@@ -106,13 +108,13 @@ TEST(DmaBufFormatGbm, EveryAdvertisedFormatThatAllocatesImportsAndDraws)
             const render::DmaBufAttributes attributes = attributesFor(bo.get(), format, modifier);
             auto texture = renderer->importDmaBuf(attributes);
             ASSERT_TRUE(texture);
-            EXPECT_EQ(QSize(64, 48), texture->size());
+            EXPECT_EQ(base::Size(64, 48), texture->size());
 
-            renderer->setOutputContext({"gbm", QRect(0, 0, 128, 128), {128, 128}, 1, 0});
+            renderer->setOutputContext({"gbm", base::Rect(0, 0, 128, 128), {128, 128}, 1, 0});
             ASSERT_TRUE(renderer->beginFrame(target.get()));
             renderer->clear(render::Color {0, 0, 0, 1});
             static_cast<render::Renderer &>(*renderer).drawTexture(texture.get(),
-                                                                   QRect(10, 10, 64, 48));
+                                                                   base::Rect(10, 10, 64, 48));
             EXPECT_EQ(GLenum(GL_NO_ERROR), glGetError());
             ASSERT_TRUE(renderer->endFrame());
             if (auto *front = gbm_surface_lock_front_buffer(surface.get()))
@@ -120,7 +122,7 @@ TEST(DmaBufFormatGbm, EveryAdvertisedFormatThatAllocatesImportsAndDraws)
             texture.reset();
         }
     }
-    std::printf("renderer=%s advertised=%d allocated=%d\n", renderer->glesRenderer().constData(),
+    std::printf("renderer=%s advertised=%d allocated=%d\n", renderer->glesRenderer().c_str(),
                 advertised, allocated);
     EXPECT_GT(allocated, 0);
 

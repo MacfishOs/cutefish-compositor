@@ -86,8 +86,8 @@ protected:
     compositor::Output output {{13, 17},
                                {510, 290},
                                {1920, 1080},
-                               QStringLiteral("ACME"),
-                               QStringLiteral("DP-7"),
+                               "ACME",
+                               "DP-7",
                                59940,
                                true,
                                compositor::Output::Subpixel::HorizontalRgb};
@@ -180,13 +180,13 @@ TEST_F(SubsurfaceOutputProtocolTest, SyncDesyncPositionStackingAndInertResources
         c.sync();
         check([&] {
             EXPECT_EQ(1, compositor.surfaces()[2]->bufferScale());
-            EXPECT_EQ(QPoint(), compositor.surfaces()[1]->position());
+            EXPECT_EQ(base::Point(), compositor.surfaces()[1]->position());
         });
         wl_surface_commit(p);
         c.sync();
         check([&] {
             EXPECT_EQ(3, compositor.surfaces()[2]->bufferScale());
-            EXPECT_EQ(QPoint(30, 40), compositor.surfaces()[1]->position());
+            EXPECT_EQ(base::Point(30, 40), compositor.surfaces()[1]->position());
         });
         wl_surface_set_buffer_scale(a, 2);
         wl_surface_commit(a);
@@ -446,19 +446,19 @@ TEST_F(SubsurfaceOutputProtocolTest, OutputUpdatesAndRemovalKeepExistingResource
         struct Metrics {
             int geometry = 0;
             int mode = 0;
-            QPoint position;
-            QSize pixelSize;
+            base::Point position;
+            base::Size pixelSize;
         } metrics;
         static const wl_output_listener listener = {
             [](void* data, wl_output*, int x, int y, int, int, int, const char*, const char*, int) {
                 auto& metrics = *static_cast<Metrics*>(data);
                 ++metrics.geometry;
-                metrics.position = QPoint(x, y);
+                metrics.position = base::Point(x, y);
             },
             [](void* data, wl_output*, uint32_t, int width, int height, int) {
                 auto& metrics = *static_cast<Metrics*>(data);
                 ++metrics.mode;
-                metrics.pixelSize = QSize(width, height);
+                metrics.pixelSize = base::Size(width, height);
             },
             [](void*, wl_output*) {},
             [](void*, wl_output*, int) {},
@@ -470,19 +470,19 @@ TEST_F(SubsurfaceOutputProtocolTest, OutputUpdatesAndRemovalKeepExistingResource
             wl_registry_bind(c.registry, globalName, &wl_output_interface, 4));
         wl_output_add_listener(out, &listener, &metrics);
         c.sync();
-        EXPECT_EQ(QPoint(13, 17), metrics.position);
-        EXPECT_EQ(QSize(1920, 1080), metrics.pixelSize);
+        EXPECT_EQ(base::Point(13, 17), metrics.position);
+        EXPECT_EQ(base::Size(1920, 1080), metrics.pixelSize);
 
         check([&] {
-            output.position = QPoint(-1280, 0);
-            output.pixelSize = QSize(1280, 720);
+            output.position = base::Point(-1280, 0);
+            output.pixelSize = base::Size(1280, 720);
             wayland::updateOutputGlobal(outputGlobal, &output);
         });
         c.sync();
         EXPECT_EQ(2, metrics.geometry);
         EXPECT_EQ(2, metrics.mode);
-        EXPECT_EQ(QPoint(-1280, 0), metrics.position);
-        EXPECT_EQ(QSize(1280, 720), metrics.pixelSize);
+        EXPECT_EQ(base::Point(-1280, 0), metrics.position);
+        EXPECT_EQ(base::Size(1280, 720), metrics.pixelSize);
 
         check([&] {
             wayland::removeOutputGlobal(outputGlobal);

@@ -12,6 +12,7 @@
 #include "wm/shell_surface.h"
 
 #include <algorithm>
+#include <cassert>
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
@@ -41,7 +42,7 @@ ShellSurface::ScopedConfigure::ScopedConfigure(ShellSurface *shellSurface, bool 
     , m_forceConfigure(forceConfigure)
 {
     // Instances cannot be nested.
-    Q_ASSERT(!m_shellSurface->m_scopedConfigure);
+    assert(!m_shellSurface->m_scopedConfigure);
     m_shellSurface->m_scopedConfigure = this;
 }
 
@@ -139,7 +140,7 @@ bool ShellSurface::setToplevel()
     return true;
 }
 
-bool ShellSurface::setPopup(ShellSurface *parent, const QRect &bounds)
+bool ShellSurface::setPopup(ShellSurface *parent, const base::Rect &bounds)
 {
     if (m_role != Role::None || !m_surface || !parent || parent == this)
         return false;
@@ -170,7 +171,7 @@ void ShellSurface::clearRole()
             m_parentShell->removeChildShell(this);
             m_parentShell = nullptr;
         }
-        m_popupBounds = QRect();
+        m_popupBounds = base::Rect();
     } else {
         if (m_window)
             unmapToplevel();
@@ -190,7 +191,7 @@ void ShellSurface::clearRole()
     resetConfigureState();
     m_initialStateType = WindowStateType::Normal;
     m_initialStateInherited = false;
-    m_initialOutput = QRect();
+    m_initialOutput = base::Rect();
 }
 
 Window *ShellSurface::ownerWindow() const
@@ -202,18 +203,18 @@ Window *ShellSurface::ownerWindow() const
     return nullptr;
 }
 
-void ShellSurface::setGeometry(const QRect &geometry)
+void ShellSurface::setGeometry(const base::Rect &geometry)
 {
     // Upstream refuses an empty geometry outright; an explicitly empty one is
     // how a client goes back to using its own content bounds.
-    m_pendingGeometry = geometry.isEmpty() ? QRect() : geometry;
+    m_pendingGeometry = geometry.isEmpty() ? base::Rect() : geometry;
 }
 
-QRect ShellSurface::visibleBounds() const
+base::Rect ShellSurface::visibleBounds() const
 {
     if (!m_geometry.isEmpty())
         return m_geometry;
-    return QRect(QPoint(0, 0), m_surface ? m_surface->contentSize() : QSize());
+    return base::Rect(base::Point(0, 0), m_surface ? m_surface->contentSize() : base::Size());
 }
 
 bool ShellSurface::acknowledgeConfigure(uint32_t serial)
@@ -240,26 +241,26 @@ bool ShellSurface::acknowledgeConfigure(uint32_t serial)
     return true;
 }
 
-void ShellSurface::setTitle(const QString &title)
+void ShellSurface::setTitle(const std::string &title)
 {
     m_title = title;
     if (m_window)
         m_window->setTitle(title);
 }
 
-void ShellSurface::setApplicationId(const QString &id)
+void ShellSurface::setApplicationId(const std::string &id)
 {
     m_applicationId = id;
     if (m_window)
         m_window->setApplicationId(id);
 }
 
-void ShellSurface::setMinimumSize(const QSize &size)
+void ShellSurface::setMinimumSize(const base::Size &size)
 {
     m_pendingMinimumSize = size;
 }
 
-void ShellSurface::setMaximumSize(const QSize &size)
+void ShellSurface::setMaximumSize(const base::Size &size)
 {
     m_pendingMaximumSize = size;
 }
@@ -418,7 +419,7 @@ void ShellSurface::setFullscreen(bool fullscreen)
         return;
     }
     ScopedConfigure scoped(this, false);
-    if (fullscreen && !m_fullscreenOutputName.isEmpty())
+    if (fullscreen && !m_fullscreenOutputName.empty())
         m_manager->setWindowOutput(m_window, m_fullscreenOutputName);
     m_window->setFullscreen(fullscreen);
     if (!fullscreen)
@@ -435,7 +436,7 @@ void ShellSurface::dropInheritedState()
         configure();
 }
 
-void ShellSurface::setFullscreenOutput(const QString &waylandName)
+void ShellSurface::setFullscreenOutput(const std::string &waylandName)
 {
     m_fullscreenOutputName = waylandName;
     if (m_window && m_window->stateType() == WindowStateType::Fullscreen) {
@@ -464,8 +465,7 @@ bool ShellSurface::startResize(ResizeEdge edge, bool byTouch)
     if (byTouch) {
         const auto point = seat->touchPointOn(m_window->rootSurface());
         return point
-                && m_manager->eventHandler()->beginResize(m_window, edge, point->location,
-                                                          point->id);
+                && m_manager->eventHandler()->beginResize(m_window, edge, point->location, point->id);
     }
     return m_manager->eventHandler()->beginResize(m_window, edge, seat->pointerLocation());
 }
@@ -489,7 +489,7 @@ void ShellSurface::grab()
     m_manager->pushPopupGrab(this);
 }
 
-void ShellSurface::reposition(const QRect &bounds)
+void ShellSurface::reposition(const base::Rect &bounds)
 {
     if (m_role != Role::Popup)
         return;
@@ -506,10 +506,10 @@ void ShellSurface::configurePopup()
     const PopupConfigureCallback callback = m_popupConfigureCallback;
     const uint32_t serial = callback(m_popupBounds);
     if (*self && serial)
-        m_pendingConfigs.push_back(Config {serial, QPoint(), ResizeEdge::None});
+        m_pendingConfigs.push_back(Config {serial, base::Point(), ResizeEdge::None});
 }
 
-QPoint ShellSurface::absoluteOrigin() const
+base::Point ShellSurface::absoluteOrigin() const
 {
     if (m_role == Role::Popup && m_parentShell)
         return m_parentShell->absoluteOrigin() + m_popupBounds.topLeft();
@@ -517,7 +517,7 @@ QPoint ShellSurface::absoluteOrigin() const
     // starts inside the frame, not at the outer bounds.
     if (m_window)
         return m_window->contentBounds().topLeft();
-    return QPoint();
+    return base::Point();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -593,7 +593,7 @@ void ShellSurface::onSurfaceCommit(compositor::Surface *surface)
             // initial configure. The client attaches only after it acks.
             if (!m_initialConfigureSent) {
                 m_initialConfigureSent = true;
-                m_initialOutput = isPositionManaged() ? m_manager->outputForNewWindow() : QRect();
+                m_initialOutput = isPositionManaged() ? m_manager->outputForNewWindow() : base::Rect();
                 if (isPositionManaged() && computeResizable()) {
                     const WindowStateType requested = m_initialStateType;
                     m_initialStateType = window_positioner::showStateForNewWindow(
@@ -630,7 +630,7 @@ void ShellSurface::onSurfaceCommit(compositor::Surface *surface)
 ////////////////////////////////////////////////////////////////////////////////
 // WindowObserver overrides:
 
-void ShellSurface::onWindowBoundsChanged(Window *window, const QRect &oldBounds)
+void ShellSurface::onWindowBoundsChanged(Window *window, const base::Rect &)
 {
     if (window != m_window)
         return;
@@ -641,18 +641,17 @@ void ShellSurface::onWindowBoundsChanged(Window *window, const QRect &oldBounds)
         return;
     }
 
-    Q_UNUSED(oldBounds);
     // In client-area terms: the outer bounds also move when a frame appears or
     // disappears, and that is not a resize as far as the client is concerned.
-    const QRect newContent = window->contentBounds();
-    const QRect oldContent = m_configuredContentBounds;
+    const base::Rect newContent = window->contentBounds();
+    const base::Rect oldContent = m_configuredContentBounds;
     m_configuredContentBounds = newContent;
 
     if (newContent.size() != oldContent.size() && !m_applyingClientBounds) {
         // The window manager has already moved and resized the window; hold the
         // client's current contents where they are until it catches up. The
         // offset is handed back at the commit that follows the acknowledgement.
-        const QPoint delta = newContent.topLeft() - oldContent.topLeft();
+        const base::Point delta = newContent.topLeft() - oldContent.topLeft();
         m_originOffset -= delta;
         m_pendingOriginOffsetAccumulator += delta;
         configure();
@@ -688,9 +687,9 @@ void ShellSurface::onWindowStateTypeChanged(Window *window, WindowStateType oldT
 {
     if (window != m_window)
         return;
-    qCDebug(cfCompositor) << "xdg toplevel state:" << m_applicationId << toString(oldType) << "->"
+    CF_DEBUG(cfCompositor) << "xdg toplevel state:" << m_applicationId << toString(oldType) << "->"
                          << toString(window->stateType()) << window->bounds();
-    const QSize targetSize = window->contentBounds().size();
+    const base::Size targetSize = window->contentBounds().size();
     const auto targetState = window->presentedStateType();
     // Drag completion repeats the restored state without requiring another frame.
     const bool sameTarget = m_boundsTransitionTarget && m_boundsTransitionTarget->size == targetSize
@@ -703,7 +702,7 @@ void ShellSurface::onWindowStateTypeChanged(Window *window, WindowStateType oldT
     m_boundsTransitionOldContentSize = window->contentBounds().size() != visibleBounds().size()
                     && window->contentBounds().size() != m_surface->contentSize()
             ? m_surface->contentSize()
-            : QSize();
+            : base::Size();
     if (auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node()))
         animation->setBoundsContentReady(!m_configureCallback);
     configure();
@@ -746,8 +745,8 @@ void ShellSurface::configure()
     if (!m_configureCallback)
         return;
 
-    const QPoint originOffset = m_pendingOriginOffsetAccumulator;
-    m_pendingOriginOffsetAccumulator = QPoint();
+    const base::Point originOffset = m_pendingOriginOffsetAccumulator;
+    m_pendingOriginOffsetAccumulator = base::Point();
 
     ConfigureState state;
     ResizeEdge resizeEdge = ResizeEdge::None;
@@ -792,7 +791,7 @@ void ShellSurface::configure()
 
     m_pendingConfigs.push_back(Config {serial, originOffset, resizeEdge, state});
     if (m_pendingConfigs.size() > 100) {
-        qCWarning(cfCompositor) << "Outstanding xdg configure acknowledgements:"
+        CF_WARNING(cfCompositor) << "Outstanding xdg configure acknowledgements:"
                                 << m_pendingConfigs.size();
     }
 }
@@ -805,7 +804,7 @@ std::function<void()> ShellSurface::onSurfaceCommitRequested(compositor::Surface
         .geometry = m_pendingGeometry,
         .minimumSize = m_pendingMinimumSize,
         .maximumSize = m_pendingMaximumSize,
-        .originOffset = std::exchange(m_pendingOriginOffset, QPoint()),
+        .originOffset = std::exchange(m_pendingOriginOffset, base::Point()),
         .resizeEdge = m_pendingResizeEdge,
         .acknowledgedConfigure = m_acknowledgedConfigure,
         .decorationRemoval = std::exchange(m_decorationRemovalPending, false),
@@ -829,21 +828,21 @@ void ShellSurface::applyCommittedState(const CommittedState &state)
 
 void ShellSurface::mapToplevel()
 {
-    const QRect visible = visibleBounds();
+    const base::Rect visible = visibleBounds();
     WindowInit init;
     init.requestedSize = visible.size();
     init.title = m_title;
     init.applicationId = m_applicationId;
     init.processId = m_processId;
     init.decorated = decorationMode() == DecorationMode::ServerSide;
-    init.minimumSize = m_minimumSize.isEmpty() ? QSize(1, 1) : m_minimumSize;
+    init.minimumSize = m_minimumSize.isEmpty() ? base::Size(1, 1) : m_minimumSize;
     init.maximumSize = m_maximumSize;
     init.transientParent = m_transientParentShell ? m_transientParentShell->window() : nullptr;
     init.positionManaged = isPositionManaged();
     init.modal = m_modal;
-    init.output = isPositionManaged() ? m_initialOutput : QRect();
+    init.output = isPositionManaged() ? m_initialOutput : base::Rect();
     m_window = m_manager->createWindow(m_surface, init);
-    if (!m_fullscreenOutputName.isEmpty())
+    if (!m_fullscreenOutputName.empty())
         m_manager->setWindowOutput(m_window, m_fullscreenOutputName);
     // A caption button's close asks the client to close itself, over the same
     // path xdg_toplevel.close takes.
@@ -888,10 +887,10 @@ void ShellSurface::mapToplevel()
 
     // Mapped maximized or fullscreen, the window has no normal bounds to come
     // back to; give it those it would have had mapping normal at its own size.
-    const QSize restoreSize = m_surface->restoreSize();
+    const base::Size restoreSize = m_surface->restoreSize();
     if (!restoreSize.isEmpty()
         && (m_window->state()->isMaximized() || m_window->state()->isFullscreen())) {
-        QRect bounds = Placement().place(normalFrameInsets().outset(restoreSize),
+        base::Rect bounds = Placement().place(normalFrameInsets().outset(restoreSize),
                                          m_manager->workAreaFor(m_window));
         if (isPositionManaged())
             bounds = m_manager->boundsForNewWindow(m_window, bounds);
@@ -907,9 +906,10 @@ void ShellSurface::mapToplevel()
     m_configuredContentBounds = m_window->contentBounds();
     updateChildPopupPositions();
 
-    qCDebug(cfCompositor) << "xdg toplevel mapped:" << m_applicationId << m_title
+    CF_DEBUG(cfCompositor) << "xdg toplevel mapped:" << m_applicationId << m_title
                          << (m_window->isDecorated() ? "ssd" : "csd") << "outer"
-                         << m_window->bounds() << "content" << m_window->contentBounds();
+                         << m_window->bounds() << "content"
+                         << m_window->contentBounds();
 }
 
 void ShellSurface::unmapToplevel()
@@ -917,7 +917,7 @@ void ShellSurface::unmapToplevel()
     unmapChildPopups();
     // Before the window goes, so the children's windows move to the new parent.
     releaseTransientChildren();
-    qCDebug(cfCompositor) << "xdg toplevel unmapped:" << m_applicationId << m_title;
+    CF_DEBUG(cfCompositor) << "xdg toplevel unmapped:" << m_applicationId << m_title;
     Window *window = m_window;
     m_window = nullptr;
     window->removeObserver(this);
@@ -941,7 +941,7 @@ void ShellSurface::mapPopup()
     m_window->addObserver(this);
     updatePopupPosition();
 
-    qCDebug(cfCompositor) << "xdg popup mapped at" << absoluteOrigin() << "grab" << m_hasGrab;
+    CF_DEBUG(cfCompositor) << "xdg popup mapped at" << absoluteOrigin() << "grab" << m_hasGrab;
 }
 
 void ShellSurface::unmapChildPopups()
@@ -955,7 +955,7 @@ void ShellSurface::unmapChildPopups()
 void ShellSurface::unmapPopup()
 {
     unmapChildPopups();
-    qCDebug(cfCompositor) << "xdg popup unmapped";
+    CF_DEBUG(cfCompositor) << "xdg popup unmapped";
     m_popupMapped = false;
     if (m_window) {
         Window *window = m_window;
@@ -977,7 +977,7 @@ void ShellSurface::updatePopupPosition()
     if (m_window) {
         m_window->setVisible(m_parentShell && m_parentShell->window()
                              && m_parentShell->window()->targetVisibility());
-        m_window->setBounds(QRect(absoluteOrigin(), visibleBounds().size()));
+        m_window->setBounds(base::Rect(absoluteOrigin(), visibleBounds().size()));
         updateFromWindowGeometry();
     }
     updateChildPopupPositions();
@@ -1020,13 +1020,13 @@ Insets ShellSurface::clientExteriorInsets() const
     // protocol geometry only: no application id, toolkit or pixel is consulted.
     if (m_geometry.isEmpty() || !m_surface)
         return Insets();
-    const QSize content = m_surface->contentSize();
+    const base::Size content = m_surface->contentSize();
     if (content.isEmpty())
         return Insets();
     if (m_window && m_window->isResizing()) {
         const auto exterior = m_window->clientExteriorInsets();
         // Resize geometry can lead or lag the buffer; retain established CSD margins.
-        if (!exterior.topLeft().isNull() && m_geometry.topLeft() == exterior.topLeft())
+        if (!exterior.topLeft().isOrigin() && m_geometry.topLeft() == exterior.topLeft())
             return exterior;
     }
     // A geometry reaching outside the surface is not exterior decoration, so
@@ -1041,28 +1041,29 @@ Insets ShellSurface::clientInputInsets() const
     // No input region means the whole surface takes input.
     if (!m_surface || !m_surface->inputRegion())
         return Insets();
-    const QSize content = m_surface->contentSize();
-    const QRect input = m_surface->inputRegion()->boundingRect().intersected(QRect(QPoint(), content));
+    const base::Size content = m_surface->contentSize();
+    const base::Rect input =
+            m_surface->inputRegion()->boundingRect().intersected(base::Rect(base::Point(), content));
     if (content.isEmpty() || input.isEmpty())
         return Insets();
     return Insets {input.left(), input.top(), content.width() - (input.left() + input.width()),
                    content.height() - (input.top() + input.height())};
 }
 
-QPoint ShellSurface::surfaceOriginForWindow() const
+base::Point ShellSurface::surfaceOriginForWindow() const
 {
-    QRect visible = visibleBounds();
+    base::Rect visible = visibleBounds();
     // Anchor the committed body, including CSD margins, while geometry catches up.
     if (m_resizeEdge != ResizeEdge::None && m_surface && !m_surface->contentSize().isEmpty())
-        visible.setSize(visible.topLeft().isNull()
+        visible.setSize(visible.topLeft().isOrigin()
                                 ? m_surface->contentSize()
                                 : clientExteriorInsets().inset(m_surface->contentSize()));
-    const QSize windowSize = m_window->contentBounds().size();
+    const base::Size windowSize = m_window->contentBounds().size();
 
     // While a resize anchored to a top or left edge is in flight the window has
     // already grown, but the client's contents have not. Pin them to the corner
     // the drag is not moving so the window does not appear to jump.
-    QPoint anchor;
+    base::Point anchor;
     switch (m_resizeEdge) {
     case ResizeEdge::None:
         anchor = m_originOffset;
@@ -1073,14 +1074,14 @@ QPoint ShellSurface::surfaceOriginForWindow() const
         break;
     case ResizeEdge::Top:
     case ResizeEdge::TopRight:
-        anchor = QPoint(0, windowSize.height() - visible.height());
+        anchor = base::Point(0, windowSize.height() - visible.height());
         break;
     case ResizeEdge::Left:
     case ResizeEdge::BottomLeft:
-        anchor = QPoint(windowSize.width() - visible.width(), 0);
+        anchor = base::Point(windowSize.width() - visible.width(), 0);
         break;
     case ResizeEdge::TopLeft:
-        anchor = QPoint(windowSize.width() - visible.width(),
+        anchor = base::Point(windowSize.width() - visible.width(),
                         windowSize.height() - visible.height());
         break;
     }
@@ -1105,24 +1106,24 @@ void ShellSurface::updateWindowBoundsFromClient()
     if (!m_window->state()->isNormal() || m_window->isResizing())
         return;
 
-    const QSize size = visibleBounds().size();
+    const base::Size size = visibleBounds().size();
     if (size.isEmpty() || size == m_window->contentBounds().size())
         return;
 
-    QRect bounds = m_window->bounds();
-    const QSize oldSize = bounds.size();
+    base::Rect bounds = m_window->bounds();
+    const base::Size oldSize = bounds.size();
     bounds.setSize(m_window->frameInsets().outset(size));
     if (m_surface->resizeAnchor() == compositor::ResizeAnchor::Center) {
-        // Halves of the difference rather than moveCenter(): QRect's integer
-        // centre would drift a pixel on every odd-sized step.
+        // Halves of the difference rather than moveCenter(): an integer centre
+        // would drift a pixel on every odd-sized step.
         bounds.translate((oldSize.width() - bounds.width()) / 2,
                          (oldSize.height() - bounds.height()) / 2);
-        const QRect workArea = m_manager->workAreaFor(m_window);
+        const base::Rect workArea = m_manager->workAreaFor(m_window);
         if (!workArea.isEmpty()) {
             bounds.moveLeft(std::max(workArea.left(),
-                                     std::min(bounds.left(), workArea.right() + 1 - bounds.width())));
+                                     std::min(bounds.left(), workArea.right() - bounds.width())));
             bounds.moveTop(std::max(workArea.top(),
-                                    std::min(bounds.top(), workArea.bottom() + 1 - bounds.height())));
+                                    std::min(bounds.top(), workArea.bottom() - bounds.height())));
         }
     }
     m_applyingClientBounds = true;
@@ -1134,7 +1135,7 @@ void ShellSurface::updateSizeConstraints()
 {
     if (!m_window)
         return;
-    m_window->setMinimumSize(m_minimumSize.isEmpty() ? QSize(1, 1) : m_minimumSize);
+    m_window->setMinimumSize(m_minimumSize.isEmpty() ? base::Size(1, 1) : m_minimumSize);
     m_window->setMaximumSize(m_maximumSize);
     m_window->setResizable(computeResizable());
     // Only a configure carries a change of wm_capabilities to the client.
@@ -1144,15 +1145,15 @@ void ShellSurface::updateSizeConstraints()
         configure();
 }
 
-QSize ShellSurface::configureBounds() const
+base::Size ShellSurface::configureBounds() const
 {
     // Shell surfaces size themselves over the whole output. Qt clamps a
     // client-chosen size to the bounds, which would lift the desktop off the
     // dock's strip.
     if (m_manager->shellMetadata(m_surface) || (m_window && m_window->isShellWindow()))
-        return QSize(0, 0);
+        return base::Size(0, 0);
     const Insets insets = normalFrameInsets();
-    QRect workArea = m_window ? m_manager->workAreaFor(m_window)
+    base::Rect workArea = m_window ? m_manager->workAreaFor(m_window)
                               : m_manager->workAreaForOutput(m_initialOutput);
     if (workArea.isEmpty())
         workArea = m_manager->workAreaFor(nullptr);
@@ -1173,14 +1174,14 @@ bool ShellSurface::computeResizable() const
     return m_minimumSize.isEmpty() || m_minimumSize != m_maximumSize;
 }
 
-QSize ShellSurface::initialSizeForState(WindowStateType stateType) const
+base::Size ShellSurface::initialSizeForState(WindowStateType stateType) const
 {
     // No window yet, so no frame either: ask what one would cost.
     const Insets insets = normalFrameInsets();
 
     switch (stateType) {
     case WindowStateType::Maximized: {
-        QRect workArea = m_manager->workAreaForOutput(m_initialOutput);
+        base::Rect workArea = m_manager->workAreaForOutput(m_initialOutput);
         if (workArea.isEmpty())
             workArea = m_manager->workAreaFor(nullptr);
         return insets.inset(workArea.size());
@@ -1193,9 +1194,9 @@ QSize ShellSurface::initialSizeForState(WindowStateType stateType) const
     case WindowStateType::SecondarySnapped:
         // Zero lets the client pick its own size, which is what xdg-shell asks
         // a compositor with no opinion to do.
-        return QSize(0, 0);
+        return base::Size(0, 0);
     }
-    return QSize(0, 0);
+    return base::Size(0, 0);
 }
 
 void ShellSurface::resetConfigureState()
@@ -1205,13 +1206,13 @@ void ShellSurface::resetConfigureState()
     m_acknowledgedConfigure.reset();
     m_boundsTransitionTarget.reset();
     m_initialConfigureSent = false;
-    m_originOffset = QPoint();
-    m_pendingOriginOffset = QPoint();
-    m_pendingOriginOffsetAccumulator = QPoint();
+    m_originOffset = base::Point();
+    m_pendingOriginOffset = base::Point();
+    m_pendingOriginOffsetAccumulator = base::Point();
     m_resizeEdge = ResizeEdge::None;
     m_pendingResizeEdge = ResizeEdge::None;
-    m_configuredContentBounds = QRect();
-    m_boundsTransitionOldContentSize = QSize();
+    m_configuredContentBounds = base::Rect();
+    m_boundsTransitionOldContentSize = base::Size();
 }
 
 bool ShellSurface::hasPopupDescendant(const compositor::Surface *root) const

@@ -3,15 +3,14 @@
 // found in the LICENSE file.
 
 #include "session/window_debug_service.h"
+#include "core/main_loop.h"
 
-#include <QDBusError>
-#include <QDebug>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include "base/logging.h"
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
+#include "base/json.h"
 #include "input/input_manager.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
@@ -22,139 +21,191 @@
 namespace cutefish::session {
 
 namespace {
-const QString serviceName = QStringLiteral("com.cutefish.WindowDebug1");
-const QString objectPath = QStringLiteral("/com/cutefish/WindowDebug1");
 
-QJsonArray rectArray(const QRect &rect)
+const base::LogCategory &logs()
 {
-    return {rect.x(), rect.y(), rect.width(), rect.height()};
+    return base::LogCategory::defaultCategory();
 }
 
-QJsonObject describe(const wm::Window *window)
+const std::string serviceName = "com.cutefish.WindowDebug1";
+const std::string objectPath = "/com/cutefish/WindowDebug1";
+
+using base::json::Value;
+
+Value rectArray(const base::Rect &rect)
 {
-    QJsonObject object {
-            {QStringLiteral("id"), QString::number(window->id())},
-            {QStringLiteral("appId"), window->applicationId()},
-            {QStringLiteral("title"), window->title()},
-            {QStringLiteral("popup"), window->isPopup()},
-            {QStringLiteral("role"), QString::fromLatin1(wm::toString(window->role()))},
-            {QStringLiteral("state"), QString::fromLatin1(wm::toString(window->stateType()))},
-            {QStringLiteral("visible"), window->isVisible()},
-            {QStringLiteral("active"), window->isActive()},
-            {QStringLiteral("decorated"), window->isDecorated()},
-            {QStringLiteral("dragPreview"), window->isDragPreview()},
-            {QStringLiteral("bounds"), rectArray(window->bounds())},
-            {QStringLiteral("contentBounds"), rectArray(window->contentBounds())},
-            {QStringLiteral("minimizedGeometry"), rectArray(window->minimizedGeometry())},
-    };
+    return Value::Array {rect.x(), rect.y(), rect.width(), rect.height()};
+}
 
+// Members sorted by name at every level, as the output has always had them.
+Value sortedMembers(const Value &value)
+{
+    if (value.isArray()) {
+        Value::Array elements;
+        for (const Value &element : value.toArray())
+            elements.push_back(sortedMembers(element));
+        return elements;
+    }
+    if (!value.isObject())
+        return value;
+    Value::Object members;
+    for (const auto &[key, member] : value.toObject())
+        members.emplace_back(key, sortedMembers(member));
+    std::stable_sort(members.begin(), members.end(),
+                     [](const auto &a, const auto &b) { return a.first < b.first; });
+    return Value::object(std::move(members));
+}
+
+Value describe(const wm::Window *window)
+{
+    Value object = Value::object({
+            {"id", std::to_string(window->id())},
+            {"appId", window->applicationId()},
+            {"title", window->title()},
+            {"popup", window->isPopup()},
+            {"role", wm::toString(window->role())},
+            {"state", wm::toString(window->stateType())},
+            {"visible", window->isVisible()},
+            {"active", window->isActive()},
+            {"decorated", window->isDecorated()},
+            {"dragPreview", window->isDragPreview()},
+            {"bounds", rectArray(window->bounds())},
+            {"contentBounds", rectArray(window->contentBounds())},
+            {"minimizedGeometry", rectArray(window->minimizedGeometry())},
+    });
     if (const auto *animation = dynamic_cast<const scene::WindowAnimation *>(window->node())) {
-        object.insert(QStringLiteral("opacity"), animation->opacity());
-        object.insert(QStringLiteral("scale"), animation->targetPresentationScale());
+        object.insert("opacity", double(animation->opacity()));
+        object.insert("scale", double(animation->targetPresentationScale()));
     }
-
     const wm::Insets exterior = window->clientExteriorInsets();
-    object.insert(QStringLiteral("clientExteriorInsets"),
-                  QJsonArray {exterior.left, exterior.top, exterior.right, exterior.bottom});
+    object.insert("clientExteriorInsets",
+                  Value::Array {exterior.left, exterior.top, exterior.right, exterior.bottom});
     const wm::Insets input = window->clientInputInsets();
-    object.insert(QStringLiteral("clientInputInsets"),
-                  QJsonArray {input.left, input.top, input.right, input.bottom});
-
+    object.insert("clientInputInsets",
+                  Value::Array {input.left, input.top, input.right, input.bottom});
     if (const wm::WindowFrame *frame = window->frame()) {
-        object.insert(QStringLiteral("titleBar"), rectArray(frame->titleBarBounds()));
-        QJsonArray buttons;
-        for (const QRect &button : frame->captionButtonBounds())
-            buttons.append(rectArray(button));
-        object.insert(QStringLiteral("captionButtons"), buttons);
+        object.insert("titleBar", rectArray(frame->titleBarBounds()));
+        Value::Array buttons;
+        for (const base::Rect &button : frame->captionButtonBounds())
+            buttons.push_back(rectArray(button));
+        object.insert("captionButtons", std::move(buttons));
     }
-
     // What the plane planner and the blur see of the window's surfaces.
-    QJsonArray surfaces;
+    Value::Array surfaces;
     const auto collect = [&](const auto &self, const scene::Node *node) -> void {
         if (!node)
             return;
         if (const auto *surface = dynamic_cast<const scene::SurfaceNode *>(node)) {
             const render::Texture *texture = surface->texture();
-            surfaces.append(QJsonObject {
-                    {QStringLiteral("bounds"), rectArray(surface->absoluteGeometry())},
-                    {QStringLiteral("visible"), surface->isEffectivelyVisible()},
-                    {QStringLiteral("opaque"), surface->isOpaque()},
-                    {QStringLiteral("alpha"), surface->alpha()},
-                    {QStringLiteral("blur"), surface->hasBackgroundBlur()},
-                    {QStringLiteral("bufferSize"),
-                     texture ? QJsonArray {texture->size().width(), texture->size().height()}
-                             : QJsonArray {}},
-                    {QStringLiteral("scanoutBuffer"), surface->scanoutBuffer() != nullptr},
-                    {QStringLiteral("identityMapping"), surface->textureMapping().isIdentity()},
-            });
+            surfaces.push_back(Value::object({
+                    {"bounds", rectArray(surface->absoluteGeometry())},
+                    {"visible", surface->isEffectivelyVisible()},
+                    {"opaque", surface->isOpaque()},
+                    {"alpha", double(surface->alpha())},
+                    {"blur", surface->hasBackgroundBlur()},
+                    {"bufferSize",
+                     texture ? Value::Array {texture->size().width(), texture->size().height()}
+                             : Value::Array {}},
+                    {"scanoutBuffer", surface->scanoutBuffer() != nullptr},
+                    {"identityMapping", surface->textureMapping().isIdentity()},
+            }));
         }
         for (const scene::Node *child : node->children())
             self(self, child);
     };
     collect(collect, window->node());
-    object.insert(QStringLiteral("surfaces"), surfaces);
+    object.insert("surfaces", std::move(surfaces));
     return object;
 }
 } // namespace
 
-WindowDebugService::WindowDebugService(wm::WindowManager *manager, QDBusConnection bus)
+WindowDebugService::WindowDebugService(wm::WindowManager *manager, base::dbus::Connection *bus)
     : m_manager(manager)
-    , m_bus(std::move(bus))
+    , m_bus(bus ? bus : base::dbus::Connection::session(core::mainLoop()))
 {
 }
 
 WindowDebugService::~WindowDebugService()
 {
-    if (m_registered) {
-        m_bus.unregisterService(serviceName);
-        m_bus.unregisterObject(objectPath);
-    }
+    if (m_registered)
+        m_bus->releaseName(serviceName);
 }
 
 bool WindowDebugService::registerService()
 {
     if (m_registered)
         return true;
-    if (!m_bus.registerObject(objectPath, this, QDBusConnection::ExportScriptableSlots)) {
-        qWarning() << "Cannot export the window debug service:" << m_bus.lastError().message();
+    if (!m_bus) {
+        CF_WARNING(logs()) << "Cannot export the window debug service: no session bus";
         return false;
     }
-    if (!m_bus.registerService(serviceName)) {
-        qWarning() << "Cannot own the window debug service:" << m_bus.lastError().message();
-        m_bus.unregisterObject(objectPath);
+    auto object = std::make_unique<base::dbus::Object>(m_bus, objectPath, serviceName);
+    object->addMethod("ListWindows", [this] { return ListWindows(); });
+    object->addMethod("MoveWindow",
+                      [this](uint64_t id, int32_t x, int32_t y) { return MoveWindow(id, x, y); },
+                      base::dbus::ArgumentNames{{"id", "x", "y"}, {"result"}});
+    object->addMethod("SetWindowBounds",
+                      [this](uint64_t id, int32_t x, int32_t y, int32_t width, int32_t height) {
+                          return SetWindowBounds(id, x, y, width, height);
+                      },
+                      base::dbus::ArgumentNames{{"id", "x", "y", "width", "height"}, {"result"}});
+    object->addMethod("ActivateWindow", [this](uint64_t id) { return ActivateWindow(id); },
+                      base::dbus::ArgumentNames{{"id"}, {"result"}});
+    object->addMethod("MinimizeWindow", [this](uint64_t id) { return MinimizeWindow(id); },
+                      base::dbus::ArgumentNames{{"id"}, {"result"}});
+    object->addMethod("SnapWindow",
+                      [this](uint64_t id, bool primary) { return SnapWindow(id, primary); },
+                      base::dbus::ArgumentNames{{"id", "primary"}, {"result"}});
+    object->addMethod("RestoreWindow", [this](uint64_t id) { return RestoreWindow(id); },
+                      base::dbus::ArgumentNames{{"id"}, {"result"}});
+    object->addMethod("OutputStats", [this] { return OutputStats(); });
+    object->addMethod("PointerMotion", [this](double x, double y) { return PointerMotion(x, y); },
+                      base::dbus::ArgumentNames{{"x", "y"}, {"result"}});
+    object->addMethod("PointerButton", [this](uint32_t button, bool pressed) {
+        return PointerButton(button, pressed);
+    }, base::dbus::ArgumentNames{{"button", "pressed"}, {"result"}});
+    object->addMethod("Key", [this](uint32_t code, bool pressed) { return Key(code, pressed); },
+                      base::dbus::ArgumentNames{{"code", "pressed"}, {"result"}});
+    if (!object->publish()) {
+        CF_WARNING(logs()) << "Cannot export the window debug service";
         return false;
     }
+    if (!m_bus->requestName(serviceName)) {
+        CF_WARNING(logs()) << "Cannot own the window debug service";
+        return false;
+    }
+    m_object = std::move(object);
     m_registered = true;
     return true;
 }
 
-QString WindowDebugService::ListWindows() const
+std::string WindowDebugService::ListWindows() const
 {
-    QJsonArray windows;
+    Value::Array windows;
     for (const wm::Window *window : m_manager->windows())
-        windows.append(describe(window));
-    return QString::fromUtf8(QJsonDocument(windows).toJson(QJsonDocument::Compact));
+        windows.push_back(describe(window));
+    return sortedMembers(Value(std::move(windows))).serialize();
 }
 
-bool WindowDebugService::MoveWindow(qulonglong id, int x, int y)
+bool WindowDebugService::MoveWindow(uint64_t id, int x, int y)
 {
     wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
-    window->requestBounds(QRect(QPoint(x, y), window->bounds().size()));
+    window->requestBounds(base::Rect(base::Point(x, y), window->bounds().size()));
     return true;
 }
 
-bool WindowDebugService::SetWindowBounds(qulonglong id, int x, int y, int width, int height)
+bool WindowDebugService::SetWindowBounds(uint64_t id, int x, int y, int width, int height)
 {
     wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
-    window->requestBounds(QRect(x, y, width, height));
+    window->requestBounds(base::Rect(x, y, width, height));
     return true;
 }
 
-bool WindowDebugService::ActivateWindow(qulonglong id)
+bool WindowDebugService::ActivateWindow(uint64_t id)
 {
     wm::Window *window = m_manager->windowById(id);
     if (!window)
@@ -163,7 +214,7 @@ bool WindowDebugService::ActivateWindow(qulonglong id)
     return true;
 }
 
-bool WindowDebugService::MinimizeWindow(qulonglong id)
+bool WindowDebugService::MinimizeWindow(uint64_t id)
 {
     wm::Window *window = m_manager->windowById(id);
     if (!window)
@@ -172,7 +223,7 @@ bool WindowDebugService::MinimizeWindow(qulonglong id)
     return true;
 }
 
-bool WindowDebugService::SnapWindow(qulonglong id, bool primary)
+bool WindowDebugService::SnapWindow(uint64_t id, bool primary)
 {
     wm::Window *window = m_manager->windowById(id);
     if (!window)
@@ -184,7 +235,7 @@ bool WindowDebugService::SnapWindow(qulonglong id, bool primary)
     return true;
 }
 
-bool WindowDebugService::RestoreWindow(qulonglong id)
+bool WindowDebugService::RestoreWindow(uint64_t id)
 {
     wm::Window *window = m_manager->windowById(id);
     if (!window)
@@ -193,20 +244,20 @@ bool WindowDebugService::RestoreWindow(qulonglong id)
     return true;
 }
 
-QStringList WindowDebugService::OutputStats() const
+std::vector<std::string> WindowDebugService::OutputStats() const
 {
-    return m_outputStats ? m_outputStats() : QStringList();
+    return m_outputStats ? m_outputStats() : std::vector<std::string>();
 }
 
 bool WindowDebugService::PointerMotion(double x, double y)
 {
     if (!m_input)
         return false;
-    m_input->onPointerMotionAbsolute(std::chrono::steady_clock::now(), QPointF(x, y));
+    m_input->onPointerMotionAbsolute(std::chrono::steady_clock::now(), base::PointF(x, y));
     return true;
 }
 
-bool WindowDebugService::PointerButton(uint button, bool pressed)
+bool WindowDebugService::PointerButton(uint32_t button, bool pressed)
 {
     if (!m_input)
         return false;
@@ -214,7 +265,7 @@ bool WindowDebugService::PointerButton(uint button, bool pressed)
     return true;
 }
 
-bool WindowDebugService::Key(uint code, bool pressed)
+bool WindowDebugService::Key(uint32_t code, bool pressed)
 {
     if (!m_input)
         return false;

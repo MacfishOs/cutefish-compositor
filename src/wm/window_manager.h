@@ -6,20 +6,19 @@
 #define CUTEFISH_WM_WINDOW_MANAGER_H_
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
-#include <QObject>
-#include <QPointF>
-#include <QRect>
-#include <QSize>
-#include <QString>
-#include <QTimer>
-
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/timer.h"
+#include "base/weak_ptr.h"
 #include "decoration/window_visual_style.h"
 #include "input/event_sink.h"
 #include "wm/activation.h"
@@ -68,11 +67,11 @@ struct ShellWindowMetadata {
     WindowRole role = WindowRole::Normal;
     FocusPolicy focusPolicy = FocusPolicy::Normal;
     PanelBehavior panelBehavior = PanelBehavior::StayAbove;
-    QPoint position;
+    base::Point position;
     bool hasPosition = false;
-    QString outputName;
+    std::string outputName;
     // The window a Sheet hangs from, by Window::id; zero for none.
-    quint64 parentWindow = 0;
+    uint64_t parentWindow = 0;
 };
 
 // Everything a window is announced with. The application id and the process id
@@ -81,14 +80,14 @@ struct ShellWindowMetadata {
 // an app id never gets one, because nothing changed after that.
 struct WindowInit {
     WindowType type = WindowType::Normal;
-    QPoint origin;
-    QSize requestedSize;
-    QString title;
-    QString applicationId;
-    qint64 processId = 0;
+    base::Point origin;
+    base::Size requestedSize;
+    std::string title;
+    std::string applicationId;
+    int64_t processId = 0;
     bool decorated = false;
-    QSize minimumSize {1, 1};
-    QSize maximumSize;
+    base::Size minimumSize {1, 1};
+    base::Size maximumSize;
     FocusPolicy focusPolicy = FocusPolicy::Normal;
     // A transient toplevel is centered over its parent instead of placed.
     Window *transientParent = nullptr;
@@ -100,7 +99,7 @@ struct WindowInit {
     bool modal = false;
     // The output an ordinary window is placed on, chosen when it was first
     // configured. Empty means outputForNewWindow() at creation.
-    QRect output;
+    base::Rect output;
     std::function<void()> closeCallback;
 };
 
@@ -108,16 +107,21 @@ struct WindowInit {
 // them is active. It is also the compositor's input sink: it sees pointer and
 // key events before the seat dispatches them to clients, so that a drag can
 // consume them and a click can change activation first.
-class WindowManager : public QObject, public input::EventSink, public ActivationObserver
+class WindowManager : public input::EventSink, public ActivationObserver
 {
-    Q_OBJECT
-
 public:
     // `seat` may be null in tests that do not exercise keyboard focus.
-    WindowManager(compositor::Compositor *compositor, input::Seat *seat, QObject *parent = nullptr);
+    WindowManager(compositor::Compositor *compositor, input::Seat *seat);
+    WindowManager(const WindowManager &) = delete;
+    WindowManager &operator=(const WindowManager &) = delete;
     ~WindowManager() override;
 
     compositor::Compositor *compositor() const { return m_compositor; }
+
+    base::WeakPtr<WindowManager> weakPtr() { return m_weakFactory.getWeakPtr(); }
+    // Runs `task` from the main loop once `delay` has passed, or on its next
+    // turn for no delay, unless the window manager is gone by then.
+    void runLater(std::chrono::milliseconds delay, std::function<void()> task);
 
     input::Seat *seat() const { return m_seat; }
 
@@ -185,7 +189,7 @@ public:
 
     // Decides from the client's pid whether its toplevels are system dialogs.
     // The pid comes from the socket, so it names the process, not a claim.
-    void setSystemDialogPolicy(std::function<bool(qint64 pid)> policy)
+    void setSystemDialogPolicy(std::function<bool(int64_t pid)> policy)
     {
         m_systemDialogPolicy = std::move(policy);
     }
@@ -235,7 +239,7 @@ public:
 
     // How Quit ends a process that closed its windows but keeps running: the
     // session's AppRuntime in production. Unset, the process is left alone.
-    void setTerminateProcess(std::function<void(qint64 pid)> terminate)
+    void setTerminateProcess(std::function<void(int64_t pid)> terminate)
     {
         m_terminateProcess = std::move(terminate);
     }
@@ -248,7 +252,7 @@ public:
 
     // How force quit also ends the application scope the process was started
     // in: the session's AppRuntime in production. Unset, only the client ends.
-    void setForceQuitProcess(std::function<void(qint64 pid)> forceQuit)
+    void setForceQuitProcess(std::function<void(int64_t pid)> forceQuit)
     {
         m_forceQuitProcess = std::move(forceQuit);
     }
@@ -266,7 +270,7 @@ public:
 
     // The window with this identifier, or null. Identifiers are stable for the
     // life of the compositor and never reused.
-    Window *windowById(quint64 id) const;
+    Window *windowById(uint64_t id) const;
 
     // --- Private shell metadata ---
 
@@ -292,8 +296,8 @@ public:
     void onWindowVisibilityChanged(Window *window);
     // The window's outer bounds or its root surface moved or resized, from
     // `oldBounds` to `newBounds` in global coordinates.
-    void onWindowTargetBoundsChanged(Window *window, const QRect &oldBounds,
-                                     const QRect &newBounds);
+    void onWindowTargetBoundsChanged(Window *window, const base::Rect &oldBounds,
+                                     const base::Rect &newBounds);
 
     // --- Work-area reservations ---
 
@@ -301,7 +305,7 @@ public:
     // shell surface object - so it can be withdrawn again. Every change
     // recomputes the work area from the output bounds.
     void setExclusiveZone(const void *token, ScreenEdge edge, int thickness,
-                          const QString &outputName = QString());
+                          const std::string &outputName = {});
     void clearExclusiveZone(const void *token);
     // What a shell disconnect does.
     void clearAllExclusiveZones();
@@ -352,25 +356,25 @@ public:
     // Topmost visible window whose surface hierarchy contains `location`, given
     // in output coordinates. `surfaceLocation`, when non-null, receives the
     // point in the hit surface's own coordinates.
-    Window *windowAt(const QPointF &location, compositor::Surface **hitSurface = nullptr,
-                     QPointF *surfaceLocation = nullptr) const;
+    Window *windowAt(const base::PointF &location, compositor::Surface **hitSurface = nullptr,
+                     base::PointF *surfaceLocation = nullptr) const;
 
     // The topmost window shown at `location` as a capture sees the screen:
     // the capture interface is looked through, and a popup answers for the
     // window it belongs to.
-    Window *capturableWindowAt(const QPointF &location) const;
+    Window *capturableWindowAt(const base::PointF &location) const;
 
     // The topmost window whose server-side frame owns `location`, and which
     // part of it. Null when the point belongs to a client, to nothing, or to a
     // window under one that already covers the point. A window drawn away from
     // its bounds (Window::presentationOffset) covers where it is drawn and owns
     // no frame actions there.
-    Window *frameAt(const QPointF &location, FrameArea *area = nullptr) const;
+    Window *frameAt(const base::PointF &location, FrameArea *area = nullptr) const;
 
     // The topmost window whose server resize handles own `location`, and the
     // edge they grab; see cutefish_window_hints_v1.set_server_resize. A touch
     // gets wider handles. A window drawn away from its bounds has none.
-    Window *resizeHandleAt(const QPointF &location, bool touch, ResizeEdge *edge) const;
+    Window *resizeHandleAt(const base::PointF &location, bool touch, ResizeEdge *edge) const;
 
     // Whether this window is still managed. Callbacks are re-entrant, so a
     // pointer held across one has to be re-checked before it is used again.
@@ -378,11 +382,11 @@ public:
 
     // --- Output and work area ---
 
-    QRect outputBounds() const;
-    QRect outputBoundsFor(const Window *window) const;
-    void setWindowOutput(Window *window, const QString &waylandName);
+    base::Rect outputBounds() const;
+    base::Rect outputBoundsFor(const Window *window) const;
+    void setWindowOutput(Window *window, const std::string &waylandName);
     void clearWindowOutput(Window *window);
-    void setOutputBounds(const QRect &bounds);
+    void setOutputBounds(const base::Rect &bounds);
     void setDisplayManager(display::DisplayManager *manager);
 
     display::DisplayManager *displayManager() const { return m_displayManager; }
@@ -391,26 +395,26 @@ public:
     // whatever the trusted shell reserved through set_exclusive_zone. A shell
     // window is never confined to it - the launcher covers the whole screen -
     // so this is the output bounds for those.
-    QRect workAreaFor(const Window *window) const;
+    base::Rect workAreaFor(const Window *window) const;
     // What a normal window must stay partly inside while moved: the work area,
     // but down to the output's bottom edge so it can slide under the dock.
-    QRect visibleAreaFor(const Window *window) const;
-    void setWorkArea(const QRect &bounds);
+    base::Rect visibleAreaFor(const Window *window) const;
+    void setWorkArea(const base::Rect &bounds);
 
     // The output bounds a new ordinary window goes to: the active application
     // window's output, else the one under the pointer, else the primary one.
-    QRect outputForNewWindow() const;
+    base::Rect outputForNewWindow() const;
     // The work area of the output with `outputBounds`, or an empty rect when
     // there is no such output any more.
-    QRect workAreaForOutput(const QRect &outputBounds) const;
+    base::Rect workAreaForOutput(const base::Rect &outputBounds) const;
     // Where a new ordinary window at `bounds`, centered in its work area, goes
     // when its position is managed: back where the last window with its
     // restore id was left, or cascaded; see window_positioner.h.
-    QRect boundsForNewWindow(const Window *window, QRect bounds) const;
+    base::Rect boundsForNewWindow(const Window *window, base::Rect bounds) const;
 
     struct OutputArea {
-        QRect bounds;
-        QRect workArea;
+        base::Rect bounds;
+        base::Rect workArea;
         double scale = 1;
 
         bool operator==(const OutputArea &) const = default;
@@ -420,15 +424,15 @@ public:
 
     // --- input::EventSink ---
 
-    bool onPointerMotion(input::Timestamp timestamp, const QPointF &location) override;
-    bool onPointerButton(input::Timestamp timestamp, const QPointF &location, uint32_t evdevButton,
+    bool onPointerMotion(input::Timestamp timestamp, const base::PointF &location) override;
+    bool onPointerButton(input::Timestamp timestamp, const base::PointF &location, uint32_t evdevButton,
                          bool pressed) override;
-    bool onPointerAxis(input::Timestamp timestamp, const QPointF &location, const QPointF &offset,
+    bool onPointerAxis(input::Timestamp timestamp, const base::PointF &location, const base::PointF &offset,
                        bool discrete) override;
-    bool onPointerAxisStop(input::Timestamp timestamp, const QPointF &location) override;
+    bool onPointerAxisStop(input::Timestamp timestamp, const base::PointF &location) override;
     bool onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
-    bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
-    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
+    bool onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
+    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
     bool onTouchUp(input::Timestamp timestamp, int32_t id) override;
     void onTouchCancel(input::Timestamp timestamp) override;
 
@@ -436,27 +440,26 @@ public:
 
     void onWindowActivated(Window *gainedActive, Window *lostActive) override;
 
-Q_SIGNALS:
-    void windowAdded(cutefish::wm::Window *window);
-    void windowRemoved(cutefish::wm::Window *window);
-    void activeWindowChanged(cutefish::wm::Window *window);
+    base::Signal<Window *> windowAdded;
+    base::Signal<Window *> windowRemoved;
+    base::Signal<Window *> activeWindowChanged;
     // Every pointer motion, before any drag, grab or frame takes it: what the
     // dock's auto-hide watches, since it must see the pointer reach the screen
     // edge whatever else is going on.
-    void pointerMoved(const QPointF &location);
+    base::Signal<const base::PointF &> pointerMoved;
     // What lies under a still pointer may have changed: a window was shown,
     // hidden, removed, restacked, or moved or resized across the pointer.
-    void pointerTargetsChanged();
+    base::Signal<> pointerTargetsChanged;
     // An output came, went or changed its bounds, work area or scale; windows
     // left on no output have been brought back by now.
-    void outputsChanged();
+    base::Signal<> outputsChanged;
 
 private:
-    bool hasApplicationWindow(qint64 process) const;
+    bool hasApplicationWindow(int64_t process) const;
 
     // A press on a candidate popup picks a candidate: the window typed into
     // keeps the keyboard, and its menus stay open.
-    bool isInputMethodPress(const QPointF &location) const;
+    bool isInputMethodPress(const base::PointF &location) const;
 
     // Puts `window` at the top of its own layer in m_stackingOrder.
     void insertIntoStackingOrder(Window *window);
@@ -477,14 +480,14 @@ private:
     bool isCaptureWindow(const Window *window) const;
     // The window a pointer event at `location` is aimed at, frames included,
     // when a modal transient blocks it.
-    Window *modalBlockedWindowAt(const QPointF &location) const;
-    bool handlePointerButton(input::Timestamp timestamp, const QPointF &location, uint32_t code,
+    Window *modalBlockedWindowAt(const base::PointF &location) const;
+    bool handlePointerButton(input::Timestamp timestamp, const base::PointF &location, uint32_t code,
                              bool pressed);
     bool isPopupSurface(compositor::Surface *surface) const;
     // A popup under `location` takes client input over any window handle.
-    bool isPopupAt(const QPointF &location) const;
+    bool isPopupAt(const base::PointF &location) const;
     // The topmost visible window drawn at `location`, frame included.
-    Window *drawnWindowAt(const QPointF &location) const;
+    Window *drawnWindowAt(const base::PointF &location) const;
     // The frame currently holding a pressed caption button, if any.
     Window *windowTrackingFramePress() const;
     void setFrameHover(Window *window);
@@ -493,11 +496,11 @@ private:
     // Hands the keyboard back to the active window.
     void releaseKeyboardGrab();
     // Hangs a Sheet from the application window `parentId`, or from nothing.
-    void attachSheet(Window *sheet, quint64 parentId);
+    void attachSheet(Window *sheet, uint64_t parentId);
     // Where a window with a restore id is, kept as it unmaps and given back
     // to the next one with the same id; see set_restore_id.
     void rememberPlacement(const Window *window);
-    bool restorePlacement(const Window *window, QRect *bounds) const;
+    bool restorePlacement(const Window *window, base::Rect *bounds) const;
 
     compositor::Compositor *m_compositor = nullptr;
     input::Seat *m_seat = nullptr;
@@ -513,13 +516,13 @@ private:
     std::vector<std::unique_ptr<Window>> m_windows;
     // Bottom to top. Mirrors m_windows but is reordered by raise().
     std::vector<Window *> m_stackingOrder;
-    std::function<bool(qint64)> m_systemDialogPolicy;
+    std::function<bool(int64_t)> m_systemDialogPolicy;
 
     Activation m_activation;
     Window *m_keyboardGrab = nullptr;
     // The window updatePopupKeyboard() lent the keyboard to.
     Window *m_popupKeyboardRoot = nullptr;
-    QTimer *m_pasteTimer = nullptr;
+    std::unique_ptr<base::Timer> m_pasteTimer;
     std::chrono::steady_clock::time_point m_pasteDeadline;
     std::unique_ptr<TransientManager> m_transientManager;
     std::unique_ptr<MruWindowTracker> m_mruTracker;
@@ -532,18 +535,19 @@ private:
     Placement m_placement;
     WindowModalityController m_modality;
     display::DisplayManager *m_displayManager = nullptr;
-    QRect m_outputBounds;
-    QRect m_workArea;
+    base::Subscription m_displaysChanged;
+    base::Rect m_outputBounds;
+    base::Rect m_workArea;
     std::vector<OutputArea> m_outputAreas;
     ExclusiveZones m_exclusiveZones;
     std::map<compositor::Surface *, ShellWindowMetadata> m_shellMetadata;
-    std::map<const Window *, QString> m_windowOutputs;
+    std::map<const Window *, std::string> m_windowOutputs;
     struct RememberedPlacement {
-        QRect bounds;
-        QRect output;
+        base::Rect bounds;
+        base::Rect output;
     };
     // By application id and restore id.
-    std::map<std::pair<QString, QString>, RememberedPlacement> m_rememberedPlacements;
+    std::map<std::pair<std::string, std::string>, RememberedPlacement> m_rememberedPlacements;
 
     std::map<compositor::Surface *, Window *> m_surfaceOwners;
     std::vector<compositor::Surface *> m_auxiliarySurfaces;
@@ -554,10 +558,11 @@ private:
     std::set<uint32_t> m_consumedButtons;
     // Touch points that went down on a window's frame.
     std::map<int32_t, Window *> m_frameTouches;
-    std::function<void(qint64 pid)> m_terminateProcess;
-    std::function<void(qint64 pid)> m_forceQuitProcess;
+    std::function<void(int64_t pid)> m_terminateProcess;
+    std::function<void(int64_t pid)> m_forceQuitProcess;
     std::function<bool(Window *)> m_notRespondingPrompt;
     std::chrono::milliseconds m_quitGracePeriod {3000};
+    base::WeakPtrFactory<WindowManager> m_weakFactory {this};
 };
 
 } // namespace cutefish::wm

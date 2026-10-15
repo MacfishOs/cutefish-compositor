@@ -2,125 +2,156 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <gtest/gtest.h>
+
+#include <chrono>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <optional>
 
-#include <QDBusConnection>
-#include <QDBusMessage>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QTest>
-
+#include "base/dbus.h"
+#include "core/main_loop.h"
 #include "display/display_configuration_controller.h"
 #include "display/display_manager.h"
 #include "fake_native_display_delegate.h"
 #include "ipc/display_config_service.h"
+#include "loop_test_util.h"
 
 using namespace cutefish;
+namespace dbus = cutefish::base::dbus;
 
 namespace {
-const QString kService = QStringLiteral("com.cutefish.DisplayConfig.ServiceTest");
-} // namespace
 
-class DisplayConfigServiceTest : public QObject
-{
-    Q_OBJECT
+constexpr const char *kService = "com.cutefish.DisplayConfig.ServiceTest";
 
-private:
-    struct NightLightCall {
-        double strength;
-        std::chrono::milliseconds duration;
-    };
+struct NightLightCall {
+    double strength;
+    std::chrono::milliseconds duration;
+};
 
-    // The session is never on screen here: the night light goes through anyway.
-    struct Service {
-        display::DisplayManager manager;
-        test::FakeNativeDisplayDelegate delegate;
-        display::DisplayConfigurationController controller {&manager, &delegate};
-        display::ipc::DisplayConfigService service {&manager, &controller,
-                                                    QDBusConnection::sessionBus(),
-                                                    [] { return false; }};
-        std::optional<NightLightCall> nightLight;
+// The session is never on screen here: the night light goes through anyway.
+struct Service {
+    display::DisplayManager manager;
+    test::FakeNativeDisplayDelegate delegate;
+    display::DisplayConfigurationController controller {&manager, &delegate};
+    display::ipc::DisplayConfigService service {&manager, &controller,
+                                                dbus::Connection::session(core::mainLoop()),
+                                                [] { return false; }};
+    std::optional<NightLightCall> nightLight;
 
-        Service()
-        {
-            service.setNightLightHandler([this](double strength, std::chrono::milliseconds duration) {
-                nightLight = NightLightCall {strength, duration};
-            });
-        }
-
-        ~Service() { QDBusConnection::sessionBus().unregisterService(kService); }
-    };
-
-    QDBusConnection client = QDBusConnection::connectToBus(
-            QDBusConnection::SessionBus, QStringLiteral("display-config-service-test-client"));
-
-    // Waits with the event loop running: the service answers from this thread.
-    QDBusMessage call(const QString &method, const QVariantList &arguments)
+    Service()
     {
-        auto message = QDBusMessage::createMethodCall(kService,
-                                                      QStringLiteral("/com/cutefish/DisplayConfig1"),
-                                                      QStringLiteral("com.cutefish.DisplayConfig1"),
-                                                      method);
-        message.setArguments(arguments);
-        QDBusPendingCallWatcher watcher(client.asyncCall(message));
-        if (!QTest::qWaitFor([&] { return watcher.isFinished(); }))
-            return {};
-        return watcher.reply();
-    }
-
-private slots:
-    void initTestCase() { QVERIFY(client.isConnected()); }
-
-    void nightLightReachesTheCompositorWhileTheSessionIsInactive()
-    {
-        Service service;
-        QVERIFY(service.service.registerService(kService));
-
-        const auto reply = call(QStringLiteral("SetNightLight"), {0.5, 1000u});
-        QCOMPARE(reply.type(), QDBusMessage::ReplyMessage);
-        QVERIFY(service.nightLight);
-        QCOMPARE(service.nightLight->strength, 0.5);
-        QCOMPARE(service.nightLight->duration.count(), 1000);
-    }
-
-    void theStrengthIsClampedToTheRange()
-    {
-        Service service;
-        QVERIFY(service.service.registerService(kService));
-
-        call(QStringLiteral("SetNightLight"), {2.5, 0u});
-        QVERIFY(service.nightLight);
-        QCOMPARE(service.nightLight->strength, 1.0);
-        call(QStringLiteral("SetNightLight"), {-1.0, 0u});
-        QCOMPARE(service.nightLight->strength, 0.0);
-    }
-
-    void aStrengthThatIsNotANumberIsRefused()
-    {
-        Service service;
-        QVERIFY(service.service.registerService(kService));
-
-        const auto reply = call(QStringLiteral("SetNightLight"),
-                                {std::numeric_limits<double>::quiet_NaN(), 0u});
-        QCOMPARE(reply.type(), QDBusMessage::ErrorMessage);
-        QCOMPARE(reply.errorName(), QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"));
-        QVERIFY(!service.nightLight);
-    }
-
-    // The night light's exception does not open the configuration writes.
-    void otherWritesStillNeedTheSessionOnScreen()
-    {
-        Service service;
-        QVERIFY(service.service.registerService(kService));
-
-        const auto reply = call(QStringLiteral("RevertConfiguration"), {QString()});
-        QCOMPARE(reply.type(), QDBusMessage::ErrorMessage);
-        QCOMPARE(reply.errorName(),
-                 QStringLiteral("com.cutefish.DisplayConfig1.Error.Unauthorized"));
+        service.setNightLightHandler([this](double strength, std::chrono::milliseconds duration) {
+            nightLight = NightLightCall {strength, duration};
+        });
     }
 };
 
-QTEST_GUILESS_MAIN(DisplayConfigServiceTest)
-#include "display_config_service_test.moc"
+class DisplayConfigServiceTest : public ::testing::Test
+{
+protected:
+    void SetUp() override { ASSERT_NE(client, nullptr); }
+
+    // Waits with the loops running: the service answers from this thread.
+    template<typename... Args>
+    dbus::Reply call(const char *method, const Args &...arguments)
+    {
+        dbus::Proxy proxy(client.get(), kService, "/com/cutefish/DisplayConfig1",
+                          "com.cutefish.DisplayConfig1");
+        std::optional<dbus::Reply> reply;
+        auto pending = proxy.callAsync(
+                method, [&reply](const dbus::Reply &result) { reply = result; }, arguments...);
+        if (!test::runUntil([&reply] { return reply.has_value(); }))
+            return {};
+        return *reply;
+    }
+
+    std::unique_ptr<dbus::Connection> client =
+            dbus::Connection::open(dbus::Connection::Bus::Session, core::mainLoop());
+};
+
+} // namespace
+
+TEST_F(DisplayConfigServiceTest, NightLightReachesTheCompositorWhileTheSessionIsInactive)
+{
+    Service service;
+    ASSERT_TRUE(service.service.registerService(kService));
+
+    const auto reply = call("SetNightLight", 0.5, uint32_t(1000));
+    EXPECT_FALSE(reply.isError()) << reply.error().name;
+    ASSERT_TRUE(service.nightLight);
+    EXPECT_EQ(service.nightLight->strength, 0.5);
+    EXPECT_EQ(service.nightLight->duration.count(), 1000);
+}
+
+TEST_F(DisplayConfigServiceTest, TheStrengthIsClampedToTheRange)
+{
+    Service service;
+    ASSERT_TRUE(service.service.registerService(kService));
+
+    call("SetNightLight", 2.5, uint32_t(0));
+    ASSERT_TRUE(service.nightLight);
+    EXPECT_EQ(service.nightLight->strength, 1.0);
+    call("SetNightLight", -1.0, uint32_t(0));
+    EXPECT_EQ(service.nightLight->strength, 0.0);
+}
+
+TEST_F(DisplayConfigServiceTest, AStrengthThatIsNotANumberIsRefused)
+{
+    Service service;
+    ASSERT_TRUE(service.service.registerService(kService));
+
+    const auto reply =
+            call("SetNightLight", std::numeric_limits<double>::quiet_NaN(), uint32_t(0));
+    EXPECT_TRUE(reply.isError());
+    EXPECT_EQ(reply.error().name, "org.freedesktop.DBus.Error.InvalidArgs");
+    EXPECT_FALSE(service.nightLight);
+}
+
+// The night light's exception does not open the configuration writes.
+TEST_F(DisplayConfigServiceTest, OtherWritesStillNeedTheSessionOnScreen)
+{
+    Service service;
+    ASSERT_TRUE(service.service.registerService(kService));
+
+    const auto reply = call("RevertConfiguration", std::string());
+    EXPECT_TRUE(reply.isError());
+    EXPECT_EQ(reply.error().name, "com.cutefish.DisplayConfig1.Error.Unauthorized");
+}
+
+// What Qt marshalled: the XML once listed one string too few after `as`.
+TEST_F(DisplayConfigServiceTest, StateKeepsItsSignature)
+{
+    Service service;
+    ASSERT_TRUE(service.service.registerService(kService));
+
+    const auto reply = call("GetState");
+    ASSERT_FALSE(reply.isError()) << reply.error().name;
+    EXPECT_EQ(reply.message().signature(),
+              "sstta(sssssssassssiiuuuua(iiiiiiubbs))a(ssasiiiiiiiiuub)a(ssui)st");
+}
+
+// Introspection names every argument, as the interface XML does.
+TEST_F(DisplayConfigServiceTest, IntrospectionNamesTheArguments)
+{
+    Service service;
+    ASSERT_TRUE(service.service.registerService(kService));
+
+    dbus::Proxy introspectable(client.get(), kService, "/com/cutefish/DisplayConfig1",
+                               "org.freedesktop.DBus.Introspectable");
+    std::optional<dbus::Reply> reply;
+    auto pending = introspectable.callAsync(
+            "Introspect", [&reply](const dbus::Reply &result) { reply = result; });
+    ASSERT_TRUE(test::runUntil([&reply] { return reply.has_value(); }));
+    std::string xml;
+    ASSERT_TRUE(reply->read(xml)) << reply->error().name;
+    for (const char *argument :
+         {R"x(type="a(sb(iiiiiiubs)uu)" name="displays" direction="in")x",
+          R"x(type="s" name="operationToken" direction="out")x",
+          R"x(type="a(sssssssassssiiuuuua(iiiiiiubbs))" name="physicalDisplays" direction="out")x",
+          R"x(type="t" name="previewDeadlineMs" direction="out")x",
+          R"x(type="d" name="strength" direction="in")x",
+          R"x(type="as" name="affectedDisplayIds")x", R"x(type="t" name="deadlineMs")x"})
+        EXPECT_NE(xml.find(argument), std::string::npos) << argument;
+}

@@ -25,6 +25,7 @@
 #include <xdg-shell-client-protocol.h>
 #include <xdg-toplevel-drag-v1-client-protocol.h>
 
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
@@ -54,7 +55,7 @@ input::Timestamp at(int ms)
     return input::Timestamp(std::chrono::milliseconds(ms));
 }
 
-constexpr QRect kOutput(0, 0, 800, 600);
+const base::Rect kOutput(0, 0, 800, 600);
 
 struct Toplevel {
     wl_surface *surface = nullptr;
@@ -63,7 +64,7 @@ struct Toplevel {
     wl_buffer *buffer = nullptr;
     uint32_t configureSerial = 0;
     bool maximized = false;
-    QSize configuredSize;
+    base::Size configuredSize;
 };
 
 struct Client {
@@ -185,7 +186,7 @@ struct Client {
         return wl_registry_bind(registry, globals[interface].first, type, version);
     }
 
-    wl_buffer *makeBuffer(const QSize &size)
+    wl_buffer *makeBuffer(const base::Size &size)
     {
         const int stride = size.width() * 4;
         const size_t bytes = static_cast<size_t>(stride) * size.height();
@@ -215,7 +216,7 @@ struct Client {
         static const xdg_toplevel_listener toplevelListener = {
                 [](void *data, xdg_toplevel *, int32_t width, int32_t height, wl_array *states) {
                     auto *toplevel = static_cast<Toplevel *>(data);
-                    toplevel->configuredSize = QSize(width, height);
+                    toplevel->configuredSize = base::Size(width, height);
                     toplevel->maximized = false;
                     const auto *state = static_cast<const uint32_t *>(states->data);
                     for (size_t i = 0; i < states->size / sizeof(uint32_t); ++i)
@@ -233,7 +234,7 @@ struct Client {
         return toplevel;
     }
 
-    void map(Toplevel *toplevel, const QSize &size)
+    void map(Toplevel *toplevel, const base::Size &size)
     {
         xdg_surface_ack_configure(toplevel->xdgSurface, toplevel->configureSerial);
         toplevel->buffer = makeBuffer(size);
@@ -296,9 +297,9 @@ class XdgToplevelDragProtocolTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node *cursorContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("cursor")));
+            scene.root()->addChild(std::make_unique<scene::Node>("cursor"));
     compositor::Compositor compositor {surfaceContainer};
     input::Seat seat {&compositor};
     input::InputManager manager {&seat};
@@ -332,7 +333,7 @@ protected:
         future.wait();
     }
 
-    wm::Window *windowSized(const QSize &size)
+    wm::Window *windowSized(const base::Size &size)
     {
         for (wm::Window *window : windowManager.windows()) {
             if (window->bounds().size() == size)
@@ -357,11 +358,11 @@ protected:
     Toplevel *mapSourceWindowAndPress(Client &c, const char *appId = nullptr)
     {
         Toplevel *source = c.makeToplevel(appId);
-        c.map(source, QSize(300, 200));
+        c.map(source, base::Size(300, 200));
         check([&] {
             // Just mapped, so on top.
-            windowManager.windows().back()->setBounds(QRect(100, 100, 300, 200));
-            manager.onPointerMotionAbsolute(at(1), QPointF(150, 150));
+            windowManager.windows().back()->setBounds(base::Rect(100, 100, 300, 200));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(150, 150));
             manager.onPointerButton(at(2), BTN_LEFT, true);
         });
         c.sync();
@@ -433,11 +434,11 @@ TEST_F(XdgToplevelDragProtocolTest, ANewWindowMapsUnderThePointerAndStaysWhereIt
 
         Toplevel *detached = c.makeToplevel();
         xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
-        c.map(detached, QSize(200, 150));
+        c.map(detached, base::Size(200, 150));
         check([&] {
-            wm::Window *window = windowSized(QSize(200, 150));
+            wm::Window *window = windowSized(base::Size(200, 150));
             ASSERT_NE(nullptr, window);
-            EXPECT_EQ(QRect(130, 140, 200, 150), window->bounds());
+            EXPECT_EQ(base::Rect(130, 140, 200, 150), window->bounds());
             // A translucent preview, and the window it came out of keeps the keyboard.
             EXPECT_TRUE(window->isDragPreview());
             EXPECT_FALSE(window->isActive());
@@ -446,12 +447,12 @@ TEST_F(XdgToplevelDragProtocolTest, ANewWindowMapsUnderThePointerAndStaysWhereIt
             EXPECT_DOUBLE_EQ(wm::ToplevelDrag::kPreviewMaxScale,
                              static_cast<scene::WindowAnimation *>(window->node())
                                      ->presentationScale());
-            EXPECT_TRUE(windowSized(QSize(300, 200))->isActive());
+            EXPECT_TRUE(windowSized(base::Size(300, 200))->isActive());
             EXPECT_TRUE(windowManager.eventHandler()->isDragging());
             EXPECT_EQ(window, windowManager.eventHandler()->draggedWindow());
 
-            manager.onPointerMotionAbsolute(at(3), QPointF(250, 200));
-            EXPECT_EQ(QRect(230, 190, 200, 150), window->bounds());
+            manager.onPointerMotionAbsolute(at(3), base::PointF(250, 200));
+            EXPECT_EQ(base::Rect(230, 190, 200, 150), window->bounds());
         });
         c.sync();
         // The window under the pointer is the one being dragged; the drop
@@ -462,9 +463,9 @@ TEST_F(XdgToplevelDragProtocolTest, ANewWindowMapsUnderThePointerAndStaysWhereIt
             manager.onPointerButton(at(4), BTN_LEFT, false);
             EXPECT_FALSE(seat.drag()->active());
             EXPECT_FALSE(windowManager.eventHandler()->isDragging());
-            wm::Window *window = windowSized(QSize(200, 150));
+            wm::Window *window = windowSized(base::Size(200, 150));
             ASSERT_NE(nullptr, window);
-            EXPECT_EQ(QPoint(230, 190), window->bounds().topLeft());
+            EXPECT_EQ(base::Point(230, 190), window->bounds().topLeft());
             // Let go, it is a window of its own.
             EXPECT_FALSE(window->isDragPreview());
             EXPECT_TRUE(window->isActive());
@@ -505,7 +506,7 @@ TEST_F(XdgToplevelDragProtocolTest, AnAttachedWindowTakesNoInheritedStateAndMayR
         c.sync();
         // Normal, at a size of the client's choosing.
         EXPECT_FALSE(detached->maximized);
-        EXPECT_EQ(QSize(0, 0), detached->configuredSize);
+        EXPECT_EQ(base::Size(0, 0), detached->configuredSize);
         EXPECT_NE(maximizedSerial, detached->configureSerial);
 
         // Drawn for the configure the attach overtook.
@@ -517,31 +518,31 @@ TEST_F(XdgToplevelDragProtocolTest, AnAttachedWindowTakesNoInheritedStateAndMayR
         c.sync();
         // Nothing holds the client to the size it mapped at.
         EXPECT_FALSE(detached->maximized);
-        EXPECT_EQ(QSize(0, 0), detached->configuredSize);
+        EXPECT_EQ(base::Size(0, 0), detached->configuredSize);
         check([&] {
             wm::Window *window = windowAt(1);
             ASSERT_NE(nullptr, window);
             EXPECT_EQ(wm::WindowStateType::Normal, window->stateType());
-            EXPECT_EQ(QRect(QPoint(130, 140), kOutput.size()), window->bounds());
+            EXPECT_EQ(base::Rect(base::Point(130, 140), kOutput.size()), window->bounds());
             EXPECT_TRUE(window->isDragPreview());
             EXPECT_DOUBLE_EQ(wm::ToplevelDrag::kPreviewWidth / kOutput.width(),
                              static_cast<scene::WindowAnimation *>(window->node())
                                      ->presentationScale());
         });
 
-        c.map(detached, QSize(200, 150));
+        c.map(detached, base::Size(200, 150));
         check([&] {
             wm::Window *window = windowAt(1);
             ASSERT_NE(nullptr, window);
-            EXPECT_EQ(QRect(130, 140, 200, 150), window->bounds());
+            EXPECT_EQ(base::Rect(130, 140, 200, 150), window->bounds());
             EXPECT_DOUBLE_EQ(wm::ToplevelDrag::kPreviewMaxScale,
                              static_cast<scene::WindowAnimation *>(window->node())
                                      ->presentationScale());
-            manager.onPointerMotionAbsolute(at(3), QPointF(250, 200));
-            EXPECT_EQ(QRect(230, 190, 200, 150), window->bounds());
+            manager.onPointerMotionAbsolute(at(3), base::PointF(250, 200));
+            EXPECT_EQ(base::Rect(230, 190, 200, 150), window->bounds());
             manager.onPointerButton(at(4), BTN_LEFT, false);
             EXPECT_EQ(wm::WindowStateType::Normal, window->stateType());
-            EXPECT_EQ(QRect(230, 190, 200, 150), window->bounds());
+            EXPECT_EQ(base::Rect(230, 190, 200, 150), window->bounds());
         });
         c.sync();
 
@@ -565,13 +566,13 @@ TEST_F(XdgToplevelDragProtocolTest, EscapeRevertsAnExistingWindowAndIsNoDrop)
         check([&] {
             wm::Window *window = windowAt(0);
             EXPECT_EQ(window, windowManager.eventHandler()->draggedWindow());
-            manager.onPointerMotionAbsolute(at(3), QPointF(300, 250));
-            EXPECT_EQ(QRect(250, 200, 300, 200), window->bounds());
+            manager.onPointerMotionAbsolute(at(3), base::PointF(300, 250));
+            EXPECT_EQ(base::Rect(250, 200, 300, 200), window->bounds());
             manager.onKey(at(4), KEY_ESC, true);
             manager.onKey(at(5), KEY_ESC, false);
             EXPECT_FALSE(seat.drag()->active());
             EXPECT_FALSE(windowManager.eventHandler()->isDragging());
-            EXPECT_EQ(QRect(100, 100, 300, 200), window->bounds());
+            EXPECT_EQ(base::Rect(100, 100, 300, 200), window->bounds());
             manager.onPointerButton(at(6), BTN_LEFT, false);
         });
         c.sync();
@@ -594,7 +595,7 @@ TEST_F(XdgToplevelDragProtocolTest, UnmappingTheWindowDetachesItAndTheDragGoesOn
         c.sync();
         Toplevel *detached = c.makeToplevel();
         xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
-        c.map(detached, QSize(200, 150));
+        c.map(detached, base::Size(200, 150));
 
         // Snapping the tab back in: the client unmaps the window it tore off.
         wl_surface_attach(detached->surface, nullptr, 0, 0);
@@ -604,8 +605,8 @@ TEST_F(XdgToplevelDragProtocolTest, UnmappingTheWindowDetachesItAndTheDragGoesOn
             EXPECT_EQ(1u, windowManager.windows().size());
             EXPECT_TRUE(seat.drag()->active());
             EXPECT_FALSE(windowManager.eventHandler()->isDragging());
-            manager.onPointerMotionAbsolute(at(3), QPointF(200, 200));
-            EXPECT_EQ(QRect(100, 100, 300, 200), windowAt(0)->bounds());
+            manager.onPointerMotionAbsolute(at(3), base::PointF(200, 200));
+            EXPECT_EQ(base::Rect(100, 100, 300, 200), windowAt(0)->bounds());
         });
 
         // Once unmapped, another toplevel may be attached.
@@ -627,9 +628,9 @@ TEST_F(XdgToplevelDragProtocolTest, HidingTheWindowTheDragStartedFromDoesNotEndI
 {
     run([&](Client &c) {
         Toplevel *target = c.makeToplevel();
-        c.map(target, QSize(300, 200));
+        c.map(target, base::Size(300, 200));
         check([&] {
-            windowAt(0)->setBounds(QRect(500, 100, 300, 200));
+            windowAt(0)->setBounds(base::Rect(500, 100, 300, 200));
         });
         Toplevel *origin = mapSourceWindowAndPress(c);
         wl_data_source *source = c.makeSource();
@@ -638,7 +639,7 @@ TEST_F(XdgToplevelDragProtocolTest, HidingTheWindowTheDragStartedFromDoesNotEndI
         xdg_toplevel_drag_v1_attach(drag, origin->toplevel, 50, 50);
         c.sync();
         check([&] {
-            manager.onPointerMotionAbsolute(at(3), QPointF(550, 150));
+            manager.onPointerMotionAbsolute(at(3), base::PointF(550, 150));
         });
         c.sync();
         ASSERT_EQ(target->surface, c.dragEnterSurface);
@@ -656,7 +657,7 @@ TEST_F(XdgToplevelDragProtocolTest, HidingTheWindowTheDragStartedFromDoesNotEndI
         check([&] {
             EXPECT_EQ(1u, windowManager.windows().size());
             EXPECT_TRUE(seat.drag()->active());
-            manager.onPointerMotionAbsolute(at(4), QPointF(560, 160));
+            manager.onPointerMotionAbsolute(at(4), base::PointF(560, 160));
         });
         c.sync();
         EXPECT_EQ(target->surface, c.dragEnterSurface);
@@ -679,9 +680,9 @@ TEST_F(XdgToplevelDragProtocolTest, UnmappingADroppedWindowActivatesTheWindowItW
     run([&](Client &c) {
         // The tab goes from the source window into this one, to the right of it.
         Toplevel *target = c.makeToplevel();
-        c.map(target, QSize(300, 200));
+        c.map(target, base::Size(300, 200));
         check([&] {
-            windowAt(0)->setBounds(QRect(500, 100, 300, 200));
+            windowAt(0)->setBounds(base::Rect(500, 100, 300, 200));
         });
         Toplevel *origin = mapSourceWindowAndPress(c);
         wl_data_source *source = c.makeSource();
@@ -690,10 +691,10 @@ TEST_F(XdgToplevelDragProtocolTest, UnmappingADroppedWindowActivatesTheWindowItW
         c.sync();
         Toplevel *detached = c.makeToplevel();
         xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
-        c.map(detached, QSize(200, 150));
+        c.map(detached, base::Size(200, 150));
         check([&] {
-            EXPECT_FALSE(windowSized(QSize(200, 150))->isActive());
-            manager.onPointerMotionAbsolute(at(3), QPointF(600, 200));
+            EXPECT_FALSE(windowSized(base::Size(200, 150))->isActive());
+            manager.onPointerMotionAbsolute(at(3), base::PointF(600, 200));
             manager.onPointerButton(at(4), BTN_LEFT, false);
         });
         c.sync();
@@ -724,7 +725,7 @@ TEST_F(XdgToplevelDragProtocolTest, OverAWindowOfItsOwnThatTakesTheDropThePrevie
         c.sync();
         Toplevel *detached = c.makeToplevel();
         xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
-        c.map(detached, QSize(200, 150));
+        c.map(detached, base::Size(200, 150));
 
         // Over the window it came from, which takes the tab back.
         ASSERT_EQ(origin->surface, c.dragEnterSurface);
@@ -734,23 +735,23 @@ TEST_F(XdgToplevelDragProtocolTest, OverAWindowOfItsOwnThatTakesTheDropThePrevie
         c.sync();
         check([&] {
             EXPECT_FLOAT_EQ(wm::ToplevelDrag::kPreviewOpacity,
-                            opacityOf(windowSized(QSize(200, 150))));
+                            opacityOf(windowSized(base::Size(200, 150))));
         });
         // The frame that shows where the tab would go.
         wl_surface_damage(origin->surface, 0, 0, 10, 10);
         wl_surface_commit(origin->surface);
         c.sync();
         check([&] {
-            EXPECT_FLOAT_EQ(0, opacityOf(windowSized(QSize(200, 150))));
+            EXPECT_FLOAT_EQ(0, opacityOf(windowSized(base::Size(200, 150))));
             // Off it, the preview is back at once.
-            manager.onPointerMotionAbsolute(at(3), QPointF(600, 500));
+            manager.onPointerMotionAbsolute(at(3), base::PointF(600, 500));
             EXPECT_FLOAT_EQ(wm::ToplevelDrag::kPreviewOpacity,
-                            opacityOf(windowSized(QSize(200, 150))));
+                            opacityOf(windowSized(base::Size(200, 150))));
             manager.onKey(at(4), KEY_ESC, true);
             manager.onKey(at(5), KEY_ESC, false);
             // Cancelled, its client takes it back: not drawn meanwhile.
-            EXPECT_FLOAT_EQ(0, opacityOf(windowSized(QSize(200, 150))));
-            EXPECT_FALSE(windowSized(QSize(200, 150))->isActive());
+            EXPECT_FLOAT_EQ(0, opacityOf(windowSized(base::Size(200, 150))));
+            EXPECT_FALSE(windowSized(base::Size(200, 150))->isActive());
             manager.onPointerButton(at(6), BTN_LEFT, false);
         });
         c.sync();
@@ -768,14 +769,14 @@ TEST_F(XdgToplevelDragProtocolTest, AWindowDockedOnThenAttachedAndDestroyedIsLet
     run([&](Client &c) {
         // Another window of the client, whose subsurface takes the drop.
         Toplevel *target = c.makeToplevel();
-        c.map(target, QSize(300, 200));
+        c.map(target, base::Size(300, 200));
         check([&] {
-            windowAt(0)->setBounds(QRect(500, 100, 300, 200));
+            windowAt(0)->setBounds(base::Rect(500, 100, 300, 200));
         });
         wl_surface *child = wl_compositor_create_surface(c.compositor);
         wl_subsurface *subsurface =
                 wl_subcompositor_get_subsurface(c.subcompositor, child, target->surface);
-        wl_buffer *childBuffer = c.makeBuffer(QSize(100, 100));
+        wl_buffer *childBuffer = c.makeBuffer(base::Size(100, 100));
         wl_surface_attach(child, childBuffer, 0, 0);
         wl_surface_damage(child, 0, 0, 100, 100);
         wl_surface_commit(child);
@@ -788,9 +789,9 @@ TEST_F(XdgToplevelDragProtocolTest, AWindowDockedOnThenAttachedAndDestroyedIsLet
         c.sync();
         Toplevel *detached = c.makeToplevel();
         xdg_toplevel_drag_v1_attach(drag, detached->toplevel, 20, 10);
-        c.map(detached, QSize(200, 150));
+        c.map(detached, base::Size(200, 150));
         check([&] {
-            manager.onPointerMotionAbsolute(at(3), QPointF(550, 150));
+            manager.onPointerMotionAbsolute(at(3), base::PointF(550, 150));
         });
         c.sync();
         ASSERT_EQ(child, c.dragEnterSurface);
@@ -812,7 +813,7 @@ TEST_F(XdgToplevelDragProtocolTest, AWindowDockedOnThenAttachedAndDestroyedIsLet
         check([&] {
             EXPECT_EQ(1u, windowManager.windows().size());
             EXPECT_TRUE(seat.drag()->active());
-            manager.onPointerMotionAbsolute(at(4), QPointF(200, 150));
+            manager.onPointerMotionAbsolute(at(4), base::PointF(200, 150));
             manager.onPointerButton(at(5), BTN_LEFT, false);
             EXPECT_FALSE(seat.drag()->active());
         });

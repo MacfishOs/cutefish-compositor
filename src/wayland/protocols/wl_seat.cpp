@@ -36,14 +36,14 @@ namespace {
 void pointer_set_cursor(wl_client *client, wl_resource *resource, uint32_t serial,
                         wl_resource *surfaceResource, int32_t hotspotX, int32_t hotspotY)
 {
-    qCDebug(cfCursorTransitions) << "request pointer" << wl_resource_get_id(resource) << "client"
-                                 << wl_resource_get_client(resource) << "enter-serial" << serial;
+    CF_DEBUG(cfCursorTransitions) << "request pointer" << wl_resource_get_id(resource) << "client"
+                                  << wl_resource_get_client(resource) << "enter-serial" << serial;
     auto *pointer = getUserDataAs<input::Pointer>(resource);
     auto *delegate = static_cast<WaylandPointerDelegate *>(pointer->delegate());
     if (!delegate->acceptsCursorSerial(serial))
         return;
     pointer->setCursor(surfaceFromResource(surfaceResource),
-                       clientToLogical(QPoint(hotspotX, hotspotY), clientScale(client)));
+                       clientToLogical(base::Point(hotspotX, hotspotY), clientScale(client)));
 }
 
 void pointer_release(wl_client *, wl_resource *resource)

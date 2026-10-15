@@ -20,6 +20,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/shm_pool.h"
 #include "compositor/surface.h"
@@ -50,7 +51,7 @@ using cutefish::decoration::Corners;
 
 namespace {
 
-constexpr QRect kOutput(0, 0, 1000, 800);
+const base::Rect kOutput(0, 0, 1000, 800);
 
 struct Recorder {
     std::vector<uint32_t> serials;
@@ -62,7 +63,7 @@ struct Recorder {
 class TestScanoutBuffer final : public render::ScanoutBuffer
 {
 public:
-    explicit TestScanoutBuffer(const QSize &size)
+    explicit TestScanoutBuffer(const base::Size &size)
     {
         m_attributes.size = size;
         m_attributes.format = 0x34325258; // DRM_FORMAT_XRGB8888
@@ -80,15 +81,15 @@ private:
 class TestTexture final : public render::Texture
 {
 public:
-    explicit TestTexture(const QSize &size)
+    explicit TestTexture(const base::Size &size)
         : m_size(size)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 class ShadowControllerTest : public testing::Test
@@ -96,7 +97,7 @@ class ShadowControllerTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     WindowManager manager {&compositor, nullptr};
@@ -125,19 +126,19 @@ protected:
         controller.reset();
     }
 
-    void attach(compositor::Surface *surface, const QSize &size)
+    void attach(compositor::Surface *surface, const base::Size &size)
     {
         auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(base::Point(), size));
     }
 
     // The xdg-shell handshake. `geometry`, when non-null, is committed as the
     // window geometry before the first buffer, which is how a CSD client
     // declares that part of its surface is exterior decoration.
-    ShellSurface *makeToplevel(const QSize &bufferSize, bool serverSide,
-                               const QRect *geometry = nullptr)
+    ShellSurface *makeToplevel(const base::Size &bufferSize, bool serverSide,
+                               const base::Rect *geometry = nullptr)
     {
         recorders.push_back(std::make_unique<Recorder>());
         Recorder *recorder = recorders.back().get();
@@ -197,10 +198,10 @@ TEST_F(ShadowControllerTest, ServerSideDecoratedWindowGetsShadow)
     EXPECT_EQ(shadow->node()->content(), scene::Node::Content::Translucent);
 
     // It reaches outside the window by the style's exterior margins.
-    const QMargins margins = shadow->node()->margins();
+    const base::Insets margins = shadow->node()->margins();
     EXPECT_GT(margins.left(), 0);
     EXPECT_GT(margins.top(), 0);
-    EXPECT_EQ(shadow->shadowBounds(), window->bounds() + margins);
+    EXPECT_EQ(shadow->shadowBounds(), window->bounds().marginsAdded(margins));
 }
 
 TEST_F(ShadowControllerTest, DockShadowFollowsPanelInputBounds)
@@ -208,15 +209,15 @@ TEST_F(ShadowControllerTest, DockShadowFollowsPanelInputBounds)
     ShellSurface *shell = makeToplevel({800, 86}, false);
     Window *window = shell->window();
     window->setRole(WindowRole::Dock);
-    const QRect panel(200, 0, 400, 86);
-    shell->rootSurface()->setInputRegion(QRegion(panel));
+    const base::Rect panel(200, 0, 400, 86);
+    shell->rootSurface()->setInputRegion(base::Region(panel));
     shell->rootSurface()->commit();
     controller->handlePossibleShadowVisibilityChange(window);
 
     decoration::Shadow *shadow = shadowOf(window);
     ASSERT_TRUE(shadow);
     EXPECT_EQ(shadow->elevation(), ShadowElevation::Dock);
-    EXPECT_EQ(shadow->node()->geometry(), panel + shadow->node()->margins());
+    EXPECT_EQ(shadow->node()->geometry(), panel.marginsAdded(shadow->node()->margins()));
     window->setVisible(false);
     EXPECT_EQ(shadow->elevation(), ShadowElevation::None);
 }
@@ -228,8 +229,8 @@ TEST_F(ShadowControllerTest, TallDockKeepsItsShadow)
     ShellSurface *shell = makeToplevel({1200, 204}, false);
     Window *window = shell->window();
     window->setRole(WindowRole::Dock);
-    const QRect panel(200, 0, 800, 204);
-    shell->rootSurface()->setInputRegion(QRegion(panel));
+    const base::Rect panel(200, 0, 800, 204);
+    shell->rootSurface()->setInputRegion(base::Region(panel));
     shell->rootSurface()->commit();
     controller->handlePossibleShadowVisibilityChange(window);
 
@@ -237,14 +238,14 @@ TEST_F(ShadowControllerTest, TallDockKeepsItsShadow)
     ASSERT_TRUE(shadow);
     EXPECT_EQ(shadow->elevation(), ShadowElevation::Dock);
     EXPECT_TRUE(shadow->node()->isVisible());
-    EXPECT_EQ(shadow->node()->geometry(), panel + shadow->node()->margins());
+    EXPECT_EQ(shadow->node()->geometry(), panel.marginsAdded(shadow->node()->margins()));
 }
 
 // A FishUI window is frameless and declares its whole surface as its window
 // geometry, so there is no exterior area and the compositor owns the shadow.
 TEST_F(ShadowControllerTest, FramelessClientDecoratedWindowGetsShadow)
 {
-    const QRect geometry(0, 0, 400, 300);
+    const base::Rect geometry(0, 0, 400, 300);
     Window *window = makeToplevel({400, 300}, false, &geometry)->window();
     ASSERT_TRUE(window);
     EXPECT_FALSE(window->isDecorated());
@@ -265,7 +266,7 @@ TEST_F(ShadowControllerTest, ClientWithoutWindowGeometryGetsShadow)
 
 TEST_F(ShadowControllerTest, ExteriorClientDecorationGetsCompositorShadowAroundBody)
 {
-    const QRect geometry(30, 20, 400, 300);
+    const base::Rect geometry(30, 20, 400, 300);
     ShellSurface *shell = makeToplevel({460, 350}, false, &geometry);
     Window *window = shell->window();
     ASSERT_TRUE(window);
@@ -276,10 +277,10 @@ TEST_F(ShadowControllerTest, ExteriorClientDecorationGetsCompositorShadowAroundB
     ASSERT_TRUE(shadowOf(window)->node());
     EXPECT_TRUE(shadowOf(window)->node()->isVisible());
     EXPECT_EQ(shadowOf(window)->node()->geometry(),
-              QRect(0, 0, 400, 300) + shadowOf(window)->node()->margins());
+              base::Rect(0, 0, 400, 300).marginsAdded(shadowOf(window)->node()->margins()));
 
     // The same window after it stops drawing its own exterior.
-    const QRect full(0, 0, 460, 350);
+    const base::Rect full(0, 0, 460, 350);
     shell->setGeometry(full);
     shell->rootSurface()->commit();
     EXPECT_FALSE(window->hasClientExteriorDecoration());
@@ -294,8 +295,8 @@ TEST_F(ShadowControllerTest, PopupWithInputMarginDrawsItsOwnShadow)
     surfaces.push_back(compositor.createSurface());
     shells.push_back(std::make_unique<ShellSurface>(&manager, surfaces.back().get()));
     ShellSurface *popup = shells.back().get();
-    ASSERT_TRUE(popup->setPopup(parent, QRect(10, 20, 120, 90)));
-    popup->setGeometry(QRect(0, 0, 120, 90));
+    ASSERT_TRUE(popup->setPopup(parent, base::Rect(10, 20, 120, 90)));
+    popup->setGeometry(base::Rect(0, 0, 120, 90));
     attach(popup->rootSurface(), {120, 90});
     popup->rootSurface()->commit();
     Window *window = popup->window();
@@ -303,13 +304,13 @@ TEST_F(ShadowControllerTest, PopupWithInputMarginDrawsItsOwnShadow)
     EXPECT_EQ(window->clientExteriorInsets(), Insets());
     EXPECT_EQ(elevationOf(window), ShadowElevation::MenuOrTooltip);
 
-    popup->rootSurface()->setInputRegion(QRegion(4, 4, 112, 82));
+    popup->rootSurface()->setInputRegion(base::Region(base::Rect(4, 4, 112, 82)));
     popup->rootSurface()->commit();
     EXPECT_EQ(window->clientInputInsets(), (Insets {4, 4, 4, 4}));
     EXPECT_EQ(elevationOf(window), ShadowElevation::None);
 
     // An input region flush with any edge is not a surrounding band.
-    popup->rootSurface()->setInputRegion(QRegion(0, 4, 116, 82));
+    popup->rootSurface()->setInputRegion(base::Region(base::Rect(0, 4, 116, 82)));
     popup->rootSurface()->commit();
     EXPECT_FALSE(window->hasClientInputMargin());
     EXPECT_EQ(elevationOf(window), ShadowElevation::MenuOrTooltip);
@@ -319,7 +320,7 @@ TEST_F(ShadowControllerTest, PopupWithInputMarginDrawsItsOwnShadow)
 // client's window geometry still says about its own exterior.
 TEST_F(ShadowControllerTest, ServerSideDecorationOverridesClientExterior)
 {
-    const QRect geometry(30, 20, 400, 300);
+    const base::Rect geometry(30, 20, 400, 300);
     Window *window = makeToplevel({460, 350}, true, &geometry)->window();
     ASSERT_TRUE(window->isDecorated());
     EXPECT_TRUE(window->hasClientExteriorDecoration());
@@ -336,7 +337,7 @@ TEST_F(ShadowControllerTest, SilhouetteMatchesBothCompositorOwnedModes)
     EXPECT_TRUE(ssd.bottomLeft);
     EXPECT_TRUE(ssd.bottomRight);
 
-    const QRect geometry(0, 0, 400, 300);
+    const base::Rect geometry(0, 0, 400, 300);
     Window *frameless = makeToplevel({400, 300}, false, &geometry)->window();
     ASSERT_FALSE(frameless->isDecorated());
     const Corners csd = shadowOf(frameless)->node()->corners();
@@ -388,7 +389,7 @@ TEST_F(ShadowControllerTest, DraggedWindowKeepsActiveElevation)
     manager.activation()->activate(other);
     ASSERT_EQ(elevationOf(dragged), ShadowElevation::Inactive);
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(dragged, dragged->bounds().center()));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(dragged, centerPixel(dragged->bounds())));
     EXPECT_TRUE(dragged->isDragged());
     EXPECT_EQ(elevationOf(dragged), ShadowElevation::Active);
 
@@ -405,7 +406,7 @@ TEST_F(ShadowControllerTest, MaximizeAndFullscreenRemoveShadowAndRestoreBringsIt
 {
     Window *window = makeToplevel({400, 300}, true)->window();
     ASSERT_EQ(elevationOf(window), ShadowElevation::Active);
-    const QRect normalBounds = window->bounds();
+    const base::Rect normalBounds = window->bounds();
 
     window->maximize();
     ASSERT_EQ(window->stateType(), WindowStateType::Maximized);
@@ -440,7 +441,7 @@ TEST_F(ShadowControllerTest, DraggingOutOfAMaximizedStateWaitsForTheSmallerBuffe
     Window *window = shell->window();
     window->maximize();
     ASSERT_EQ(elevationOf(window), ShadowElevation::None);
-    const QSize maximized = window->bounds().size();
+    const base::Size maximized = window->bounds().size();
     attach(shell->rootSurface(), maximized);
     shell->rootSurface()->commit();
     compositor.updateTextures(renderer);
@@ -449,8 +450,8 @@ TEST_F(ShadowControllerTest, DraggingOutOfAMaximizedStateWaitsForTheSmallerBuffe
     // Past the threshold the window is presented as a restored one, but the
     // client is still showing the maximized buffer. A shadow around that would
     // sit at the edges of the work area, not at the edges of the window.
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(500, 10)));
-    manager.eventHandler()->onPointerMotion(QPointF(500, 300));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(500, 10)));
+    manager.eventHandler()->onPointerMotion(base::PointF(500, 300));
     ASSERT_TRUE(window->isRestoringFromDrag());
     ASSERT_LT(window->bounds().width(), maximized.width());
     EXPECT_EQ(elevationOf(window), ShadowElevation::None);
@@ -468,25 +469,25 @@ TEST_F(ShadowControllerTest, DraggingOutOfAMaximizedStateWaitsForTheSmallerBuffe
 
 TEST_F(ShadowControllerTest, DragRestoreWithClientMarginsRestoresFloatingVisuals)
 {
-    const QRect geometry(12, 12, 400, 300);
+    const base::Rect geometry(12, 12, 400, 300);
     auto *shell = makeToplevel({424, 324}, false, &geometry);
     auto *window = shell->window();
     auto *visual = static_cast<scene::WindowVisualNode *>(window->visualNode());
     window->maximize();
-    const QSize maximized = window->bounds().size();
-    shell->setGeometry(QRect(QPoint(), maximized));
+    const base::Size maximized = window->bounds().size();
+    shell->setGeometry(base::Rect(base::Point(), maximized));
     attach(shell->rootSurface(), maximized);
     shell->rootSurface()->commit();
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(500, 10)));
-    manager.eventHandler()->onPointerMotion(QPointF(500, 300));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(500, 10)));
+    manager.eventHandler()->onPointerMotion(base::PointF(500, 300));
     ASSERT_TRUE(window->isRestoringFromDrag());
     EXPECT_EQ(elevationOf(window), ShadowElevation::None);
     EXPECT_EQ(visual->state().shape.radius, 0);
 
-    const QSize restored = window->contentBounds().size();
+    const base::Size restored = window->contentBounds().size();
     shell->acknowledgeConfigure(recorders.back()->serials.back());
-    shell->setGeometry(QRect(QPoint(12, 12), restored));
-    attach(shell->rootSurface(), restored + QSize(24, 24));
+    shell->setGeometry(base::Rect(base::Point(12, 12), restored));
+    attach(shell->rootSurface(), restored + base::Size(24, 24));
     shell->rootSurface()->commit();
     EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
     EXPECT_EQ(visual->state().shape.radius, 14);
@@ -502,21 +503,21 @@ TEST_F(ShadowControllerTest, BoundsChangesUpdateShadow)
     auto *shell = makeToplevel({400, 300}, true);
     Window *window = shell->window();
     decoration::Shadow *shadow = shadowOf(window);
-    const QMargins margins = shadow->node()->margins();
+    const base::Insets margins = shadow->node()->margins();
 
-    const QRect moved(120, 90, window->bounds().width(), window->bounds().height());
+    const base::Rect moved(120, 90, window->bounds().width(), window->bounds().height());
     window->setBounds(moved);
     EXPECT_EQ(shadow->contentBounds(), moved);
-    EXPECT_EQ(shadow->shadowBounds(), moved + margins);
+    EXPECT_EQ(shadow->shadowBounds(), moved.marginsAdded(margins));
 
-    const QRect resized(120, 90, 640, 480);
+    const base::Rect resized(120, 90, 640, 480);
     window->setBounds(resized);
-    EXPECT_EQ(shadow->node()->geometry(), QRect(QPoint(), moved.size()) + margins);
+    EXPECT_EQ(shadow->node()->geometry(), base::Rect(base::Point(), moved.size()).marginsAdded(margins));
     ASSERT_TRUE(shell->acknowledgeConfigure(recorders.back()->serials.back()));
     attach(shell->rootSurface(), window->contentBounds().size());
     shell->rootSurface()->commit();
-    EXPECT_EQ(shadow->node()->geometry(), QRect(QPoint(0, 0), resized.size()) + margins);
-    EXPECT_EQ(shadow->shadowBounds(), resized + margins);
+    EXPECT_EQ(shadow->node()->geometry(), base::Rect(base::Point(0, 0), resized.size()).marginsAdded(margins));
+    EXPECT_EQ(shadow->shadowBounds(), resized.marginsAdded(margins));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -534,26 +535,27 @@ TEST_F(ShadowControllerTest, ShadowTracksCommittedContentDuringAnInteractiveResi
     Window *window = shell->window();
     auto *surface = window->surfaceNode();
     ASSERT_TRUE(surface);
-    ASSERT_EQ(surface->geometry().size(), QSize(400, 300));
-    const QMargins margins = shadowOf(window)->node()->margins();
-    ASSERT_EQ(shadowOf(window)->node()->geometry(), QRect(0, 0, 400, 300) + margins);
+    ASSERT_EQ(surface->geometry().size(), base::Size(400, 300));
+    const base::Insets margins = shadowOf(window)->node()->margins();
+    ASSERT_EQ(shadowOf(window)->node()->geometry(), base::Rect(0, 0, 400, 300).marginsAdded(margins));
 
     ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::BottomRight,
-                                                    window->bounds().bottomRight()));
-    manager.eventHandler()->onPointerMotion(window->bounds().bottomRight() + QPointF(100, 80));
+                                                    window->bounds().bottomRight() - base::Point(1, 1)));
+    manager.eventHandler()->onPointerMotion(window->bounds().bottomRight() - base::Point(1, 1)
+                                            + base::PointF(100, 80));
 
     // The window manager has already grown; the client has not committed yet.
-    EXPECT_EQ(window->bounds().size(), QSize(500, 380));
-    EXPECT_EQ(surface->geometry().size(), QSize(400, 300));
+    EXPECT_EQ(window->bounds().size(), base::Size(500, 380));
+    EXPECT_EQ(surface->geometry().size(), base::Size(400, 300));
     // The shadow must hug what is actually on screen, not the request.
-    EXPECT_EQ(shadowOf(window)->node()->geometry(), QRect(0, 0, 400, 300) + margins);
+    EXPECT_EQ(shadowOf(window)->node()->geometry(), base::Rect(0, 0, 400, 300).marginsAdded(margins));
 
     // The commit that carries the new size is what moves the shadow.
     attach(shell->rootSurface(), {500, 380});
     shell->rootSurface()->commit();
     compositor.updateTextures(renderer);
-    EXPECT_EQ(surface->geometry().size(), QSize(500, 380));
-    EXPECT_EQ(shadowOf(window)->node()->geometry(), QRect(0, 0, 500, 380) + margins);
+    EXPECT_EQ(surface->geometry().size(), base::Size(500, 380));
+    EXPECT_EQ(shadowOf(window)->node()->geometry(), base::Rect(0, 0, 500, 380).marginsAdded(margins));
 
     manager.eventHandler()->completeDrag(ToplevelEventHandler::DragResult::Success);
 }
@@ -565,7 +567,7 @@ TEST_F(ShadowControllerTest, ShadowTracksCommittedContentDuringAnInteractiveResi
 // what makes a resize flicker.
 TEST_F(ShadowControllerTest, ABufferAheadOfItsDeclaredGeometryIsNotExteriorDecoration)
 {
-    const QRect initial(0, 0, 400, 300);
+    const base::Rect initial(0, 0, 400, 300);
     ShellSurface *shell = makeToplevel({400, 300}, false, &initial);
     Window *window = shell->window();
     manager.activation()->activate(window);
@@ -583,9 +585,9 @@ TEST_F(ShadowControllerTest, ABufferAheadOfItsDeclaredGeometryIsNotExteriorDecor
     EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
 
     // And the shadow follows the content that is actually up.
-    EXPECT_EQ(window->presentedBounds(), QRect(0, 0, 500, 380));
+    EXPECT_EQ(window->presentedBounds(), base::Rect(0, 0, 500, 380));
 
-    shell->setGeometry(QRect(0, 0, 500, 380));
+    shell->setGeometry(base::Rect(0, 0, 500, 380));
     shell->rootSurface()->commit();
     EXPECT_EQ(window->clientExteriorInsets(), Insets());
     EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
@@ -606,7 +608,7 @@ TEST_F(ShadowControllerTest, ShadowSurvivesTheCloseAnimationAndLeavesNothingBehi
     shells.clear();
     EXPECT_TRUE(manager.windows().empty());
     for (const scene::Node *child : windowNode->children())
-        EXPECT_NE(child->name(), QStringLiteral("shadow"));
+        EXPECT_NE(child->name(), "shadow");
 
     // Re-asking after destruction must not resurrect anything either.
     EXPECT_EQ(controller->shadowForWindow(window), nullptr);
@@ -632,18 +634,18 @@ TEST_F(ShadowControllerTest, VisibleShadowBlocksOverlayPromotionOfTheWindowBehin
     // Built directly on the scene: proposeOverlays works on nodes, and a real
     // window's animation node hides its whole subtree from the planner anyway.
     auto *behind = static_cast<scene::SurfaceNode *>(scene.root()->addChild(
-            std::make_unique<scene::SurfaceNode>(QStringLiteral("surface"))));
-    behind->setGeometry(QRect(0, 0, 400, 300));
-    behind->setTexture(std::make_shared<TestTexture>(QSize(400, 300)));
-    behind->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(QSize(400, 300)));
+            std::make_unique<scene::SurfaceNode>("surface")));
+    behind->setGeometry(base::Rect(0, 0, 400, 300));
+    behind->setTexture(std::make_shared<TestTexture>(base::Size(400, 300)));
+    behind->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(base::Size(400, 300)));
     behind->setOpaque(true);
 
     auto *shadow = static_cast<decoration::ShadowNode *>(
             scene.root()->addChild(std::make_unique<decoration::ShadowNode>(&theme)));
-    shadow->update(QRect(0, 0, 200, 200), ShadowElevation::Active, decoration::Corners::all(),
+    shadow->update(base::Rect(0, 0, 200, 200), ShadowElevation::Active, decoration::Corners::all(),
                    theme.metrics().cornerRadius);
     // The window itself clears `behind`; only its shadow's left margin does not.
-    const QRect window(430, 100, 200, 200);
+    const base::Rect window(430, 100, 200, 200);
     shadow->setGeometry(shadow->geometry().translated(window.topLeft()));
     ASSERT_TRUE(shadow->absoluteGeometry().intersects(behind->absoluteGeometry()));
     ASSERT_FALSE(window.intersects(behind->absoluteGeometry()));
@@ -651,7 +653,7 @@ TEST_F(ShadowControllerTest, VisibleShadowBlocksOverlayPromotionOfTheWindowBehin
     EXPECT_TRUE(scene::proposeOverlays(*scene.root(), kOutput.size(), 2).overlays.empty());
 
     // With no shadow drawn there is nothing over it, and the plane is offered.
-    shadow->update(QRect(0, 0, 200, 200), ShadowElevation::None, decoration::Corners::all(),
+    shadow->update(base::Rect(0, 0, 200, 200), ShadowElevation::None, decoration::Corners::all(),
                    theme.metrics().cornerRadius);
     EXPECT_EQ(scene::proposeOverlays(*scene.root(), kOutput.size(), 2).overlays.size(), 1u);
 }

@@ -7,19 +7,22 @@
 #include <fcntl.h>
 #include <gbm.h>
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <unistd.h>
 
 #include "render/egl_renderer.h"
 #include "scene/scene.h"
+#include "base/geometry.h"
+#include "ui/bitmap.h"
 
 using namespace cutefish;
 
 TEST(DamageGbm, RealBufferAgeMatchesCompleteFrames)
 {
-    const auto devicePath = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-    if (devicePath.isEmpty())
+    const char *devicePath = std::getenv("CUTEFISH_TEST_DRM_DEVICE");
+    if (!devicePath || !*devicePath)
         GTEST_SKIP() << "Set CUTEFISH_TEST_DRM_DEVICE to an accessible DRM device";
-    const int fd = open(devicePath.constData(), O_RDWR | O_CLOEXEC);
+    const int fd = open(devicePath, O_RDWR | O_CLOEXEC);
     ASSERT_GE(fd, 0);
 
     struct Close {
@@ -65,16 +68,15 @@ TEST(DamageGbm, RealBufferAgeMatchesCompleteFrames)
             for (int frame = 0; frame < 8; ++frame) {
                 node->setGeometry({-30 + frame * 3, 20 + frame, 20 + frame, 25});
                 renderer->setOutputContext(
-                        {"gbm", QRect(-40, 10, 256, 256), {256, 256}, scale, rotation});
+                        {"gbm", base::Rect(-40, 10, 256, 256), {256, 256}, scale, rotation});
                 ASSERT_TRUE(renderer->beginFrame(target.get()));
                 scene.render(*renderer);
                 GLint scissor[4];
                 glGetIntegerv(GL_SCISSOR_BOX, scissor);
                 partialFrames += scissor[2] * scissor[3] < 256 * 256;
-                QImage partial({256, 256}, QImage::Format_RGBA8888_Premultiplied);
+                ui::Bitmap partial(256, 256, ui::Bitmap::Format::Rgba8888Premultiplied);
                 glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
-                partial = partial.mirrored(false, true)
-                                  .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                partial = partial.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
                 const auto complete = renderer->captureFrame([&] {
                     scene.render(*renderer);
                 });
@@ -82,10 +84,9 @@ TEST(DamageGbm, RealBufferAgeMatchesCompleteFrames)
                 glDisable(GL_SCISSOR_TEST);
                 renderer->clear(scene.background());
                 scene.root()->render(*renderer);
-                QImage full({256, 256}, QImage::Format_RGBA8888_Premultiplied);
+                ui::Bitmap full(256, 256, ui::Bitmap::Format::Rgba8888Premultiplied);
                 glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, full.bits());
-                full = full.mirrored(false, true)
-                               .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                full = full.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
                 EXPECT_EQ(partial, full)
                         << "scale=" << scale << " rotation=" << rotation << " frame=" << frame;
                 EXPECT_EQ(complete, renderer->captureFrame([&] {
@@ -100,11 +101,12 @@ TEST(DamageGbm, RealBufferAgeMatchesCompleteFrames)
             }
         }
     }
-    const QByteArray extensions(eglQueryString(renderer->eglDisplay(), EGL_EXTENSIONS));
-    if (extensions.split(' ').contains("EGL_EXT_buffer_age"))
+    const char *list = eglQueryString(renderer->eglDisplay(), EGL_EXTENSIONS);
+    const std::string extensions = list ? list : "";
+    if (render::hasExtension(extensions, "EGL_EXT_buffer_age"))
         EXPECT_GT(partialFrames, 0);
     std::printf("GBM renderer=%s partial=%d/128 extensions=%s\n",
-                renderer->glesRenderer().constData(), partialFrames, extensions.constData());
+                renderer->glesRenderer().c_str(), partialFrames, extensions.c_str());
     glFinish();
     if (held.buffer) {
         gbm_surface_release_buffer(surface.get(), held.buffer);

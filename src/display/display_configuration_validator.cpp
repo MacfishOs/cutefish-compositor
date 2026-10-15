@@ -10,14 +10,17 @@
 
 #include "display/display_configuration_validator.h"
 
-#include <QSet>
+#include <algorithm>
+#include <set>
+
+
 
 namespace cutefish::display {
 
 namespace {
 
-DisplayConfigurationValidator::Result failure(DisplayErrorCode code, QString message,
-                                               QList<DisplayId> displays = {})
+DisplayConfigurationValidator::Result failure(DisplayErrorCode code, std::string message,
+                                               std::vector<DisplayId> displays = {})
 {
     DisplayConfigurationValidator::Result result;
     result.error = {code, std::move(message), std::move(displays)};
@@ -50,25 +53,25 @@ DisplayConfigurationValidator::Result DisplayConfigurationValidator::validateExt
 {
     if (!hardware.isValid())
         return failure(DisplayErrorCode::Unavailable,
-                       QStringLiteral("The hardware snapshot is unavailable"));
+                       "The hardware snapshot is unavailable");
     if (requested.base.compositorInstanceId != hardware.compositorInstanceId ||
         requested.base.topologyGeneration != hardware.topologyGeneration ||
         requested.base.appliedRevision != appliedRevision) {
         return failure(DisplayErrorCode::StaleConfiguration,
-                       QStringLiteral("The configuration base is stale"));
+                       "The configuration base is stale");
     }
     if (requested.displays.size() > DisplayLayout::maximumDisplayCount)
         return failure(DisplayErrorCode::InvalidLayout,
-                       QStringLiteral("The configuration contains too many displays"));
+                       "The configuration contains too many displays");
 
-    QSet<DisplayId> seen;
-    QSet<DisplayId> enabled;
-    QHash<DisplayId, QSize> logicalSizes;
+    std::set<DisplayId> seen;
+    std::set<DisplayId> enabled;
+    std::map<DisplayId, base::Size> logicalSizes;
     for (const DisplayRequest& displayRequest : requested.displays) {
         const DisplaySnapshot* display = findDisplay(hardware, displayRequest.display);
         if (!display || seen.contains(displayRequest.display))
             return failure(DisplayErrorCode::UnknownOutput,
-                           QStringLiteral("The configuration contains an unknown or duplicate display"),
+                           "The configuration contains an unknown or duplicate display",
                            {displayRequest.display});
         seen.insert(displayRequest.display);
         if (!displayRequest.enabled)
@@ -77,72 +80,74 @@ DisplayConfigurationValidator::Result DisplayConfigurationValidator::validateExt
 
         if (!displayRequest.mode.isValid() || !containsMode(*display, displayRequest.mode))
             return failure(DisplayErrorCode::UnsupportedMode,
-                           QStringLiteral("The requested mode is unavailable"),
+                           "The requested mode is unavailable",
                            {displayRequest.display});
         if (displayRequest.scale.numerator() != compositor::OutputScale::denominator &&
             !display->capabilities.testFlag(DisplayCapability::Scale)) {
             return failure(DisplayErrorCode::UnsupportedProperty,
-                           QStringLiteral("The display does not support the requested scale"),
+                           "The display does not support the requested scale",
                            {displayRequest.display});
         }
         if (!isValid(displayRequest.rotation))
             return failure(DisplayErrorCode::UnsupportedProperty,
-                           QStringLiteral("The requested rotation is unknown"),
+                           "The requested rotation is unknown",
                            {displayRequest.display});
         if (displayRequest.rotation != DisplayRotation::Normal &&
             !display->capabilities.testFlag(DisplayCapability::Rotation)) {
             return failure(DisplayErrorCode::UnsupportedProperty,
-                           QStringLiteral("The display does not support rotation"),
+                           "The display does not support rotation",
                            {displayRequest.display});
         }
 
-        QSize rotated = displayRequest.mode.pixelSize;
+        base::Size rotated = displayRequest.mode.pixelSize;
         if (displayRequest.rotation == DisplayRotation::Rotate90 ||
             displayRequest.rotation == DisplayRotation::Rotate270) {
-            rotated.transpose();
+            rotated = rotated.transposed();
         }
-        logicalSizes.insert(displayRequest.display, displayRequest.scale.logicalSize(rotated));
+        logicalSizes.insert_or_assign(
+                displayRequest.display,
+                displayRequest.scale.logicalSize(rotated));
     }
 
-    if (enabled.isEmpty())
+    if (enabled.empty())
         return failure(DisplayErrorCode::NoEnabledOutput,
-                       QStringLiteral("At least one display must be enabled"));
+                       "At least one display must be enabled");
     if (!enabled.contains(requested.primary))
         return failure(DisplayErrorCode::InvalidLayout,
-                       QStringLiteral("The primary display must be enabled"), {requested.primary});
+                       "The primary display must be enabled", {requested.primary});
 
-    QSet<DisplayId> mirrorDestinations;
-    QSet<DisplayId> mirrorMembers;
+    std::set<DisplayId> mirrorDestinations;
+    std::set<DisplayId> mirrorMembers;
     for (const auto& group : requested.mirrorGroups) {
-        if (group.size() < 2 || !enabled.contains(group.first()))
+        if (group.size() < 2 || !enabled.contains(group.front()))
             return failure(DisplayErrorCode::InvalidLayout,
-                           QStringLiteral("A mirror group needs an enabled source and destination"),
+                           "A mirror group needs an enabled source and destination",
                            group);
-        for (int index = 0; index < group.size(); ++index) {
-            const DisplayId id = group.at(index);
+        for (size_t index = 0; index < group.size(); ++index) {
+            const DisplayId id = group[index];
             const DisplaySnapshot* display = findDisplay(hardware, id);
             if (!display || !enabled.contains(id) || mirrorMembers.contains(id) ||
                 !display->capabilities.testFlag(DisplayCapability::SoftwareMirror)) {
                 return failure(DisplayErrorCode::UnsupportedProperty,
-                               QStringLiteral("A mirror destination is unavailable or unsupported"),
+                               "A mirror destination is unavailable or unsupported",
                                {id});
             }
             mirrorMembers.insert(id);
             if (index > 0) {
                 mirrorDestinations.insert(id);
-                logicalSizes.remove(id);
+                logicalSizes.erase(id);
             }
         }
     }
     if (mirrorDestinations.contains(requested.primary))
         return failure(DisplayErrorCode::InvalidLayout,
-                       QStringLiteral("The primary display must be a mirror source"),
+                       "The primary display must be a mirror source",
                        {requested.primary});
 
     for (const DisplayPlacement& placement : requested.placements) {
         if (!isValid(placement.edge))
             return failure(DisplayErrorCode::InvalidLayout,
-                           QStringLiteral("A placement names an unknown edge"),
+                           "A placement names an unknown edge",
                            {placement.display});
     }
 

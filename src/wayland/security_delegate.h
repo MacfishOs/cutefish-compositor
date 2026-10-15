@@ -5,7 +5,9 @@
 #ifndef CUTEFISH_WAYLAND_SECURITY_DELEGATE_H_
 #define CUTEFISH_WAYLAND_SECURITY_DELEGATE_H_
 
-#include <QStringList>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 struct wl_client;
 
@@ -25,7 +27,7 @@ public:
     virtual bool canCaptureOutputs(const wl_client *client) const = 0;
     // Whether the process's toplevels are the session's own dialogs, stacked
     // above every application window.
-    virtual bool showsSystemDialogs(qint64 pid) const = 0;
+    virtual bool showsSystemDialogs(int64_t pid) const = 0;
     // The computer-use service, which may ask the user to let an agent drive
     // the seat, and reads the screen while it does.
     virtual bool canControlComputer(const wl_client *) const { return false; }
@@ -39,21 +41,22 @@ class ExecutableSecurityDelegate final : public SecurityDelegate
 public:
     // Paths are canonicalized once; entries that do not resolve are dropped, so
     // a client can never match an empty path.
-    ExecutableSecurityDelegate(const QStringList &clipboardClients,
-                               const QStringList &captureClients,
-                               const QStringList &systemDialogClients, bool captureEnabled,
-                               const QStringList &computerControlClients = {});
+    ExecutableSecurityDelegate(const std::vector<std::string> &clipboardClients,
+                               const std::vector<std::string> &captureClients,
+                               const std::vector<std::string> &systemDialogClients,
+                               bool captureEnabled,
+                               const std::vector<std::string> &computerControlClients = {});
 
     bool canManageClipboard(const wl_client *client) const override;
     bool canCaptureOutputs(const wl_client *client) const override;
-    bool showsSystemDialogs(qint64 pid) const override;
+    bool showsSystemDialogs(int64_t pid) const override;
     bool canControlComputer(const wl_client *client) const override;
 
 private:
-    const QStringList m_clipboardClients;
-    const QStringList m_captureClients;
-    const QStringList m_systemDialogClients;
-    const QStringList m_computerControlClients;
+    const std::vector<std::string> m_clipboardClients;
+    const std::vector<std::string> m_captureClients;
+    const std::vector<std::string> m_systemDialogClients;
+    const std::vector<std::string> m_computerControlClients;
     // Capture has nothing to read without a display, and computer control
     // nothing to show.
     const bool m_captureEnabled;

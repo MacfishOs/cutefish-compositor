@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "auth/auth_ui.h"
+#include "core/main_loop.h"
 #include "auth/auth_controller.h"
 #include "auth/auth_view.h"
 #include "auth/greetd_backend.h"
@@ -13,9 +14,6 @@
 #include "session/session_controller.h"
 #include "toolkit/toolkit_host.h"
 #include "ui/embedded_window.h"
-#include <QDBusConnection>
-#include <QDBusInterface>
-#include <QDBusReply>
 #include <linux/input-event-codes.h>
 #include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
@@ -26,7 +24,7 @@ class AuthNode final : public scene::Node
 {
 public:
     AuthNode(AuthUi *ui, const session::SecureContainer *secure)
-        : Node(QStringLiteral("auth-panel"))
+        : Node("auth-panel")
         , m_ui(ui)
         , m_secure(secure)
     {
@@ -37,7 +35,7 @@ public:
     void releaseRenderResources() override { m_ui->releaseRenderResources(); }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &bounds) const override
+    void paint(render::Renderer &renderer, const base::Rect &geometry) const override
     {
         // The lock transition draws every frame; the panel is rendered only
         // when it changed.
@@ -47,25 +45,26 @@ protected:
         const session::CoverSample sample = m_secure->sample(renderer);
         if (sample.panelOpacity <= 0)
             return;
-        const QPointF center = QRectF(bounds).center();
-        QTransform transform;
+        const base::PointF center = base::RectF(geometry).center();
+        base::AffineTransform transform;
         transform.translate(center.x(), center.y());
         transform.scale(sample.panelScale, sample.panelScale);
         transform.translate(-center.x(), -center.y());
         // The blur behind the password field fades and scales with the panel.
-        if (const QRectF field = m_ui->fieldBounds(); !field.isEmpty()) {
+        if (const base::RectF field = m_ui->fieldBounds(); !field.isEmpty()) {
             render::GlassParams fade;
             fade.opacity = sample.panelOpacity;
-            const QRectF blurred = transform.mapRect(field.translated(bounds.topLeft()));
-            renderer.drawBackgroundBlur(blurred.toAlignedRect(), qRound(blurred.height() / 2),
-                                        bounds, fade);
+            const base::RectF blurred =
+                    transform.mapRect(field.translated(base::PointF(geometry.origin())));
+            renderer.drawBackgroundBlur(blurred.toEnclosingRect(),
+                                        base::roundToInt(blurred.height() / 2), geometry, fade);
         }
         // Mapped at rest, so its device-density texels land on device pixels.
         if (sample.panelScale == 1) {
-            renderer.drawTextureMapped(texture, bounds, sample.panelOpacity, QTransform());
+            renderer.drawTextureMapped(texture, geometry, sample.panelOpacity, base::AffineTransform());
             return;
         }
-        renderer.drawTextureTransformed(texture, bounds, transform, sample.panelOpacity);
+        renderer.drawTextureTransformed(texture, geometry, transform, sample.panelOpacity);
     }
 
 private:
@@ -73,15 +72,15 @@ private:
     const session::SecureContainer *m_secure;
 };
 
-Qt::CursorShape qtCursor(ui::CursorShape shape)
+input::CursorShape sessionCursor(ui::CursorShape shape)
 {
     switch (shape) {
     case ui::CursorShape::Text:
-        return Qt::IBeamCursor;
+        return input::CursorShape::Text;
     case ui::CursorShape::Pointer:
-        return Qt::PointingHandCursor;
+        return input::CursorShape::Pointer;
     default:
-        return Qt::ArrowCursor;
+        return input::CursorShape::Default;
     }
 }
 
@@ -101,38 +100,43 @@ uint32_t toolkitModifiers(const input::XkbTracker *xkb)
 } // namespace
 
 AuthUi::AuthUi(session::SessionController *session, const input::XkbTracker *xkb,
-               AuthBackend *backend, QObject *parent)
-    : QObject(parent)
-    , m_session(session)
+               AuthBackend *backend)
+    : m_session(session)
     , m_xkb(xkb)
     , m_injectedBackend(backend)
+    , m_refresh(core::mainLoop())
+    , m_repeatTimer(core::mainLoop())
 {
+    // Before the observer is added: adding it reports the state, which
+    // schedules a refresh.
+    m_refresh.setSingleShot(true);
+    m_refresh.onTimeout = [this] { refresh(); };
     m_session->addObserver(this);
     m_session->setAuthInput(this);
-    m_refresh.setSingleShot(true);
-    connect(&m_refresh, &QTimer::timeout, this, &AuthUi::refresh);
     scheduleRefresh();
-    connect(&m_repeatTimer, &QTimer::timeout, this, [this] {
+    m_repeatTimer.onTimeout = [this] {
         if (!m_session->isBlocked() || !m_window || !m_repeatFocus
             || m_window->focusView() != m_repeatFocus || !m_repeatFocus->isEnabled()
             || m_session->state() == session::SessionState::Unlocking) {
             m_repeatTimer.stop();
             return;
         }
-        m_repeatTimer.setInterval(m_keyRepeat.interval);
+        m_repeatTimer.start(m_keyRepeat.interval);
         sendKey(m_repeatCode, true, true);
-    });
+    };
     // logind authenticates the sender and identifies this compositor's session.
-    QDBusInterface manager(
-            QStringLiteral("org.freedesktop.login1"), QStringLiteral("/org/freedesktop/login1"),
-            QStringLiteral("org.freedesktop.login1.Manager"), QDBusConnection::systemBus());
-    QDBusReply<QDBusObjectPath> path =
-            manager.call(QStringLiteral("GetSessionByPID"), uint(getpid()));
-    if (path.isValid())
-        QDBusConnection::systemBus().connect(QStringLiteral("org.freedesktop.login1"),
-                                             path.value().path(),
-                                             QStringLiteral("org.freedesktop.login1.Session"),
-                                             QStringLiteral("Lock"), this, SLOT(requestLock()));
+    if (base::dbus::Connection *bus = base::dbus::Connection::system(core::mainLoop())) {
+        const base::dbus::Proxy manager(bus, "org.freedesktop.login1", "/org/freedesktop/login1",
+                                        "org.freedesktop.login1.Manager");
+        const std::optional<base::dbus::ObjectPath> path =
+                manager.call("GetSessionByPID", uint32_t(getpid())).value<base::dbus::ObjectPath>();
+        if (path) {
+            const base::dbus::Proxy logindSession(bus, "org.freedesktop.login1", path->path,
+                                                  "org.freedesktop.login1.Session");
+            m_lockRequested = logindSession.onSignal(
+                    "Lock", [this](const base::dbus::Message &) { m_session->requestLock(); });
+        }
+    }
 }
 
 AuthUi::~AuthUi()
@@ -142,17 +146,12 @@ AuthUi::~AuthUi()
     clear();
 }
 
-void AuthUi::requestLock()
-{
-    m_session->requestLock();
-}
-
 void AuthUi::onSessionStateChanged(session::SessionState state)
 {
     if (state == session::SessionState::Active || state == session::SessionState::Unlocking) {
         m_repeatTimer.stop();
-        m_cursorShape = Qt::ArrowCursor;
-        emit cursorShapeChanged(m_cursorShape);
+        m_cursorShape = input::CursorShape::Default;
+        cursorShapeChanged(m_cursorShape);
     }
     if (state == session::SessionState::Active) {
         m_authenticated = false;
@@ -170,7 +169,7 @@ void AuthUi::onSessionOutputsChanged()
 void AuthUi::scheduleRefresh()
 {
     if (!m_refresh.isActive())
-        m_refresh.start(0);
+        m_refresh.start(std::chrono::nanoseconds(0));
 }
 
 void AuthUi::clear()
@@ -185,11 +184,12 @@ void AuthUi::clear()
     m_screen = nullptr;
     m_panel.reset();
     toolkit::destroyWindow(m_window);
+    m_controllerSubscriptions.clear();
     m_controller.reset();
     m_backend.reset();
     m_sized = false;
     m_pointerInside = false;
-    m_viewCursor = Qt::ArrowCursor;
+    m_viewCursor = input::CursorShape::Default;
     m_attempted = false;
     m_authenticated = false;
 }
@@ -217,7 +217,7 @@ void AuthUi::refresh()
     if (m_session->state() == session::SessionState::Unlocking)
         return;
     auto *secure = m_session->secureContainer();
-    if (!secure || secure->outputs().isEmpty()) {
+    if (!secure || secure->outputs().empty()) {
         if (m_node)
             m_node->setVisible(false);
         return;
@@ -234,14 +234,16 @@ void AuthUi::refresh()
         m_controller = std::make_unique<AuthController>(
                 login ? AuthController::Login : AuthController::Lock,
                 m_injectedBackend ? m_injectedBackend : m_backend.get());
-        connect(m_controller.get(), &AuthController::stateChanged, &m_repeatTimer, &QTimer::stop);
-        connect(m_controller.get(), &AuthController::authenticationSucceeded, this, [this, login] {
-            // greetd owns login handoff; the greeter stays covered until it exits.
-            if (!login) {
-                m_authenticated = true;
-                m_session->requestUnlock();
-            }
-        });
+        m_controllerSubscriptions.push_back(
+                m_controller->stateChanged.connect([this] { m_repeatTimer.stop(); }));
+        m_controllerSubscriptions.push_back(
+                m_controller->authenticationSucceeded.connect([this, login] {
+                    // greetd owns login handoff; the greeter stays covered until it exits.
+                    if (!login) {
+                        m_authenticated = true;
+                        m_session->requestUnlock();
+                    }
+                }));
         toolkit::application();
         m_window = std::make_unique<ui::EmbeddedWindow>();
         auto screen = std::make_unique<AuthScreen>(m_window.get(), m_controller.get());
@@ -259,7 +261,7 @@ void AuthUi::refresh()
                 scheduleRefresh();
         };
         m_window->onCursorShapeChanged = [this](ui::CursorShape shape) {
-            m_viewCursor = qtCursor(shape);
+            m_viewCursor = sessionCursor(shape);
             if (m_session->isBlocked())
                 updateCursor();
         };
@@ -281,16 +283,16 @@ void AuthUi::refresh()
     m_screen->setBlocked(m_session->isBlocked());
     const session::SecureOutput &target = panelOutput(secure->outputs());
     m_panelOutput = target.name;
-    const QRect output = target.bounds;
+    const base::Rect output = target.bounds;
     const double scale = target.scale;
     // The output's full height: the clock at the top, the login column at the bottom.
-    const QSize size(std::min(480, output.width()), output.height());
-    // QRect::center() rounds down a pixel, which a panel as tall as the output
-    // would overhang.
-    const QRect bounds(output.topLeft()
-                               + QPoint((output.width() - size.width()) / 2,
-                                        (output.height() - size.height()) / 2),
-                       size);
+    const base::Size size(std::min(480, output.width()), output.height());
+    // Centred by halving the room left, which a panel as tall as the output
+    // cannot overhang.
+    const base::Rect bounds(output.origin()
+                                    + base::Point((output.width() - size.width()) / 2,
+                                                  (output.height() - size.height()) / 2),
+                            size);
     m_node->setGeometry(bounds);
     m_node->setVisible(!size.isEmpty());
     if (size.isEmpty())
@@ -316,12 +318,15 @@ void AuthUi::refresh()
 }
 
 const session::SecureOutput &
-AuthUi::panelOutput(const QList<session::SecureOutput> &outputs) const
+AuthUi::panelOutput(const std::vector<session::SecureOutput> &outputs) const
 {
     // The screen the user is looking at: the one under the pointer, else the primary one.
-    const QPointF pointer = m_pointerLocator ? m_pointerLocator() : m_pointerPosition;
+    const base::PointF pointer = m_pointerLocator ? m_pointerLocator() : m_pointerPosition;
     for (const session::SecureOutput &output : outputs) {
-        if (QRectF(output.bounds).contains(pointer))
+        // Both edges count as inside.
+        const base::RectF bounds(output.bounds);
+        if (pointer.x() >= bounds.x() && pointer.x() <= bounds.right() && pointer.y() >= bounds.y()
+            && pointer.y() <= bounds.bottom())
             return output;
     }
     for (const session::SecureOutput &output : outputs) {
@@ -331,7 +336,7 @@ AuthUi::panelOutput(const QList<session::SecureOutput> &outputs) const
     return outputs.front();
 }
 
-QRectF AuthUi::fieldBounds() const
+base::RectF AuthUi::fieldBounds() const
 {
     if (!m_screen)
         return {};
@@ -340,7 +345,7 @@ QRectF AuthUi::fieldBounds() const
     return m_screen->fieldBounds();
 }
 
-QImage AuthUi::renderImage()
+ui::Bitmap AuthUi::renderImage()
 {
     if (m_resetPending || !m_window || !m_node || !m_node->isVisible())
         return {};
@@ -404,26 +409,29 @@ bool AuthUi::sendKey(uint32_t code, bool pressed, bool repeat)
 
 void AuthUi::updateCursor()
 {
-    const Qt::CursorShape shape =
+    const input::CursorShape shape =
             m_window && m_node && m_node->isEffectivelyVisible() && m_pointerInside
             ? m_viewCursor
-            : Qt::ArrowCursor;
+            : input::CursorShape::Default;
     if (shape != m_cursorShape) {
         m_cursorShape = shape;
-        emit cursorShapeChanged(shape);
+        cursorShapeChanged(shape);
     }
 }
 
-bool AuthUi::onPointerMotion(input::Timestamp, const QPointF &position)
+bool AuthUi::onPointerMotion(input::Timestamp, const base::PointF &position)
 {
     m_pointerPosition = position;
     const auto *secure = m_session->secureContainer();
-    if (m_node && secure && !secure->outputs().isEmpty()
+    if (m_node && secure && !secure->outputs().empty()
         && panelOutput(secure->outputs()).name != m_panelOutput)
         scheduleRefresh();
     if (!m_resetPending && m_window && m_node->isEffectivelyVisible()) {
-        const QPointF local = position - m_node->absolutePosition();
-        m_pointerInside = QRectF(QPointF(), QSizeF(m_node->geometry().size())).contains(local);
+        const base::PointF local = position - base::PointF(m_node->absolutePosition());
+        // Both edges count as inside.
+        const base::Size size = m_node->geometry().size();
+        m_pointerInside = local.x() >= 0 && local.y() >= 0 && local.x() <= size.width()
+                && local.y() <= size.height();
         // The views under the pointer are where the next frame puts them.
         m_window->updateLayout();
         m_window->pointerMove({local.x(), local.y()});
@@ -432,12 +440,12 @@ bool AuthUi::onPointerMotion(input::Timestamp, const QPointF &position)
     return true;
 }
 
-bool AuthUi::onPointerButton(input::Timestamp, const QPointF &position, uint32_t button,
+bool AuthUi::onPointerButton(input::Timestamp, const base::PointF &position, uint32_t button,
                              bool pressed)
 {
     if (m_resetPending || button != BTN_LEFT || !m_window || !m_node->isEffectivelyVisible())
         return true;
-    const QPointF local = position - m_node->absolutePosition();
+    const base::PointF local = position - base::PointF(m_node->absolutePosition());
     m_window->updateLayout();
     m_window->pointerMove({local.x(), local.y()});
     m_window->pointerButton(ui::MouseButton::Left, pressed, m_xkb ? toolkitModifiers(m_xkb) : 0);

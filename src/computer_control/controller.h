@@ -10,11 +10,6 @@
 #ifndef CUTEFISH_COMPUTER_CONTROL_CONTROLLER_H_
 #define CUTEFISH_COMPUTER_CONTROL_CONTROLLER_H_
 
-#include <QObject>
-#include <QPointF>
-#include <QRect>
-#include <QString>
-#include <QTimer>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -25,6 +20,9 @@
 #include <string>
 #include <vector>
 
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/timer.h"
 #include "input/types.h"
 #include "input/xkb_tracker.h"
 
@@ -61,10 +59,10 @@ struct WindowInfo {
         OtherDesk = 8,
     };
 
-    quint64 id = 0;
-    QString applicationId;
-    QString title;
-    QRect bounds;
+    uint64_t id = 0;
+    std::string applicationId;
+    std::string title;
+    base::Rect bounds;
     uint32_t flags = 0;
 };
 
@@ -85,19 +83,19 @@ public:
     virtual void rejected(Rejection rejection) = 0;
     virtual void window(uint32_t handle, const WindowInfo &window) = 0;
     virtual void windowsDone() = 0;
-    virtual void pointer(const QPointF &position) = 0;
+    virtual void pointer(const base::PointF &position) = 0;
 };
 
 // What the controller asks of the rest of the compositor.
 struct Environment {
     // Asks the user whether `agentName` may take control. `answer` runs once,
     // later; the returned function withdraws the question before then.
-    std::function<std::function<void()>(const QString &agentName,
+    std::function<std::function<void()>(const std::string &agentName,
                                         std::function<void(ConsentResult)> answer)>
             askConsent;
     // A window of a process that shows system dialogs is at `position`, or has
     // the keyboard focus.
-    std::function<bool(const QPointF &position)> protectedAt;
+    std::function<bool(const base::PointF &position)> protectedAt;
     std::function<bool()> protectedFocus;
     // A text field of the focused client is enabled; an input method composes
     // the keys typed into it; commit sends text to it.
@@ -108,12 +106,12 @@ struct Environment {
     // Application windows, most recently used first, and bringing one forward
     // as the dock does; false when the window is gone.
     std::function<std::vector<WindowInfo>()> windows;
-    std::function<bool(quint64 id)> activateWindow;
+    std::function<bool(uint64_t id)> activateWindow;
     // A window of a process that shows system dialogs. Closing and setting
     // the frame return false when the window is gone or cannot take it.
-    std::function<bool(quint64 id)> protectedWindow;
-    std::function<bool(quint64 id)> closeWindow;
-    std::function<bool(quint64 id, const QRect &frame)> setWindowFrame;
+    std::function<bool(uint64_t id)> protectedWindow;
+    std::function<bool(uint64_t id)> closeWindow;
+    std::function<bool(uint64_t id, const base::Rect &frame)> setWindowFrame;
     // Replaces the clipboard with UTF-8 text.
     std::function<void(const std::string &text)> setClipboard;
     // The clients with the keyboard and pointer focus have read every event
@@ -124,10 +122,8 @@ struct Environment {
 
 class Control;
 
-class Controller : public QObject
+class Controller
 {
-    Q_OBJECT
-
 public:
     // Real input blocks injection this long, as RemoteInputFilter's
     // kRemoteBlockTimeout.
@@ -137,18 +133,20 @@ public:
     static constexpr std::chrono::milliseconds kSettleQuiet {150};
     static constexpr std::chrono::milliseconds kMaxSettleTimeout {10000};
 
-    Controller(input::InputManager *input, Environment environment, QObject *parent = nullptr);
-    ~Controller() override;
+    Controller(input::InputManager *input, Environment environment);
+    Controller(const Controller &) = delete;
+    Controller &operator=(const Controller &) = delete;
+    ~Controller();
 
     // A new control for `client`, which `owner` (its wl_client) holds. Only
     // one control is pending or granted at a time; a second one is revoked at
     // once with Busy. The control ends when the returned handle is destroyed.
     std::unique_ptr<Control> request(ControlClient *client, const void *owner,
-                                     const QString &agentName);
+                                     const std::string &agentName);
 
     // A control is granted.
     bool isActive() const;
-    QString agentName() const;
+    std::string agentName() const;
 
     // `owner` holds the granted control, so it may read the screen.
     bool allowsCapture(const void *owner) const;
@@ -165,8 +163,7 @@ public:
     // one waits.
     void checkSettles();
 
-Q_SIGNALS:
-    void activeChanged(bool active);
+    base::Signal<bool> activeChanged;
 
 private:
     friend class Control;
@@ -189,6 +186,7 @@ private:
     void inject(const std::function<void()> &event);
 
     input::InputManager *m_input;
+    base::Subscription m_realInput;
     Environment m_environment;
     std::set<Control *> m_controls;
     Control *m_current = nullptr;
@@ -205,7 +203,7 @@ private:
     };
     std::vector<Settle> m_settles;
     std::optional<input::Timestamp> m_lastDrawn;
-    QTimer m_settleTimer;
+    base::Timer m_settleTimer;
 };
 
 // One control, as cutefish_computer_control_v1 describes it. Input requests
@@ -218,7 +216,7 @@ public:
     Control(const Control &) = delete;
     Control &operator=(const Control &) = delete;
 
-    void motion(const QPointF &position);
+    void motion(const base::PointF &position);
     void button(uint32_t button, bool pressed);
     void axis(int horizontal, int vertical);
     void key(uint32_t key, bool pressed);
@@ -228,7 +226,7 @@ public:
     void listWindows();
     void activateWindow(uint32_t handle);
     void closeWindow(uint32_t handle);
-    void setWindowFrame(uint32_t handle, const QRect &frame);
+    void setWindowFrame(uint32_t handle, const base::Rect &frame);
     void setClipboard(const std::string &text);
     void queryPointer();
     // `done` runs once the screen and the focused clients are quiet, with
@@ -246,16 +244,16 @@ private:
     };
 
     Control(Controller *controller, ControlClient *client, const void *owner,
-            const QString &agentName);
+            const std::string &agentName);
 
     void stroke(const input::KeyStroke &stroke);
     void changeWindow(uint32_t handle, bool guarded,
-                      const std::function<bool(quint64 id)> &change);
+                      const std::function<bool(uint64_t id)> &change);
 
     Controller *m_controller;
     ControlClient *const m_client;
     const void *const m_owner;
-    const QString m_agentName;
+    const std::string m_agentName;
     State m_state = State::Pending;
     uint64_t m_serial = 0;
     std::function<void()> m_withdrawConsent;
@@ -264,8 +262,8 @@ private:
     // The key each keysym press pressed, for its release after a layout change.
     std::map<uint32_t, uint32_t> m_keysymKeys;
     // The handle of each window listed so far, and back.
-    std::map<quint64, uint32_t> m_windowHandles;
-    std::map<uint32_t, quint64> m_handleWindows;
+    std::map<uint64_t, uint32_t> m_windowHandles;
+    std::map<uint32_t, uint64_t> m_handleWindows;
 };
 
 } // namespace cutefish::computer_control

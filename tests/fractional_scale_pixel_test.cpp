@@ -5,6 +5,7 @@
 #include <GLES3/gl3.h>
 #include <gtest/gtest.h>
 
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/shm_pool.h"
 #include "compositor/surface.h"
@@ -35,7 +36,7 @@ protected:
                 eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
         ASSERT_NE(surface, EGL_NO_SURFACE);
         target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface, nullptr,
-                                                           QSize(width, height));
+                                                           base::Size(width, height));
         ASSERT_TRUE(renderer->beginFrame(target.get()));
     }
 
@@ -67,8 +68,8 @@ TEST_F(FractionalScalePixelTest, NativeDensityPixelsStaySharpAtFractionalOrigins
 {
     for (double scale : {1.25, 1.5, 1.75, 2.0}) {
         renderer->setRasterScale(scale);
-        const QSize logical(33, 25);
-        const QSize physical(qRound(logical.width() * scale), qRound(logical.height() * scale));
+        const base::Size logical(33, 25);
+        const base::Size physical(base::roundToInt(logical.width() * scale), base::roundToInt(logical.height() * scale));
         std::vector<uint8_t> storage(physical.width() * physical.height() * 4);
         for (int y = 0; y < physical.height(); ++y) {
             for (int x = 0; x < physical.width(); ++x) {
@@ -92,22 +93,22 @@ TEST_F(FractionalScalePixelTest, NativeDensityPixelsStaySharpAtFractionalOrigins
         surface->attach(buffer, {});
         surface->commit();
         surface->updateTexture(*renderer);
-        for (QPoint outputOrigin : {QPoint(), QPoint(200, 100), QPoint(-200, -100)}) {
+        for (base::Point outputOrigin : {base::Point(), base::Point(200, 100), base::Point(-200, -100)}) {
             renderer->setOutputContext({"test",
-                                        QRect(outputOrigin, QSize(128, 128)),
-                                        QSize(width, height),
+                                        base::Rect(outputOrigin, {128, 128}),
+                                        base::Size(width, height),
                                         scale,
                                         0,
                                         1,
                                         {}});
-            for (QPoint localPosition : {QPoint(3, 5), QPoint(6, 7), QPoint(9, 10)}) {
-                const QPoint position = outputOrigin + localPosition;
+            for (base::Point localPosition : {base::Point(3, 5), base::Point(6, 7), base::Point(9, 10)}) {
+                const base::Point position = outputOrigin + localPosition;
                 surface->setPosition(position);
                 for (bool snapshot : {false, true}) {
                     renderer->clear({0, 0, 0, 0});
                     if (snapshot) {
                         std::unique_ptr<render::Texture> texture;
-                        const QRect coverage(position - QPoint(2, 2), logical + QSize(4, 4));
+                        const base::Rect coverage(position - base::Point(2, 2), logical + base::Size(4, 4));
                         ASSERT_TRUE(renderer->renderToTexture(texture, coverage, [&] {
                             scene.root()->render(*renderer);
                         }));
@@ -116,8 +117,8 @@ TEST_F(FractionalScalePixelTest, NativeDensityPixelsStaySharpAtFractionalOrigins
                         scene.root()->render(*renderer);
                     }
                     const auto image = pixels();
-                    const QPoint origin(qRound(localPosition.x() * scale),
-                                        qRound(localPosition.y() * scale));
+                    const base::Point origin(base::roundToInt(localPosition.x() * scale),
+                                        base::roundToInt(localPosition.y() * scale));
                     for (int y = 0; y < physical.height(); ++y) {
                         for (int x = 0; x < physical.width(); ++x) {
                             const int offset = (y * physical.width() + x) * 4;
@@ -140,14 +141,14 @@ TEST_F(FractionalScalePixelTest, ClientScaledBuffersAPixelOffStaySharp)
 {
     const struct {
         double scale;
-        QSize buffer;
+        base::Size buffer;
     } cases[] = {{1.25, {22, 27}}, {1.5, {22, 25}}, {1.75, {20, 27}}, {1.75, {22, 24}},
                  {2.0, {21, 23}}};
     for (const auto &c : cases) {
         renderer->setRasterScale(c.scale);
-        renderer->setOutputContext({"test", QRect(QPoint(), QSize(128, 128)), QSize(width, height),
+        renderer->setOutputContext({"test", base::Rect(0, 0, 128, 128), base::Size(width, height),
                                     c.scale, 0, 1, {}});
-        const QSize physical = c.buffer;
+        const base::Size physical = c.buffer;
         std::vector<uint8_t> storage(physical.width() * physical.height() * 4);
         for (int y = 0; y < physical.height(); ++y) {
             for (int x = 0; x < physical.width(); ++x) {
@@ -171,16 +172,16 @@ TEST_F(FractionalScalePixelTest, ClientScaledBuffersAPixelOffStaySharp)
         surface->attach(buffer, {});
         surface->commit();
         surface->updateTexture(*renderer);
-        const QSize device(qRound(surface->contentSize().width() * c.scale),
-                           qRound(surface->contentSize().height() * c.scale));
+        const base::Size device(base::roundToInt(surface->contentSize().width() * c.scale),
+                           base::roundToInt(surface->contentSize().height() * c.scale));
         ASSERT_NE(device, physical) << "scale=" << c.scale;
-        const QPoint localPosition(9, 10);
+        const base::Point localPosition(9, 10);
         surface->setPosition(localPosition);
         renderer->clear({0, 0, 0, 0});
         scene.root()->render(*renderer);
         const auto image = pixels();
-        const QPoint origin(qRound(localPosition.x() * c.scale), qRound(localPosition.y() * c.scale));
-        const QSize checked = physical.boundedTo(device);
+        const base::Point origin(base::roundToInt(localPosition.x() * c.scale), base::roundToInt(localPosition.y() * c.scale));
+        const base::Size checked = physical.boundedTo(device);
         for (int y = 0; y < checked.height(); ++y) {
             for (int x = 0; x < checked.width(); ++x) {
                 const int offset = (y * physical.width() + x) * 4;

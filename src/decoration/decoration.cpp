@@ -90,10 +90,10 @@ bool Decoration::hasRoundedCorners() const
     return m_window && wm::isRoundedStateType(m_window->decoratedStateType());
 }
 
-QString Decoration::title() const
+std::string Decoration::title() const
 {
     // The window's title is the only copy; this reads it.
-    return m_window ? m_window->title() : QString();
+    return m_window ? m_window->title() : std::string();
 }
 
 bool Decoration::isRestoreButton() const
@@ -113,71 +113,71 @@ wm::Insets Decoration::extents() const
     return insets;
 }
 
-QRect Decoration::frameRect() const
+base::Rect Decoration::frameRect() const
 {
-    return m_window ? QRect(QPoint(0, 0), m_window->presentedBounds().size()) : QRect();
+    return m_window ? base::Rect(m_window->presentedBounds().size()) : base::Rect();
 }
 
-QRect Decoration::titleBarRect() const
+base::Rect Decoration::titleBarRect() const
 {
-    const QRect frame = frameRect();
-    return QRect(0, 0, frame.width(), std::min(frame.height(), m_theme->metrics().titleBarHeight));
+    const base::Rect frame = frameRect();
+    return base::Rect(0, 0, frame.width(),
+                      std::min(frame.height(), m_theme->metrics().titleBarHeight));
 }
 
-QRect Decoration::titleBarBounds() const
+base::Rect Decoration::titleBarBounds() const
 {
     if (!m_window || m_window->frameInsets().isNull())
-        return QRect();
+        return base::Rect();
     return titleBarRect().translated(m_window->bounds().topLeft()
-                                     + m_window->presentedBounds().topLeft());
+                                                        + m_window->presentedBounds().topLeft());
 }
 
-std::vector<QRect> Decoration::captionButtonBounds() const
+std::vector<base::Rect> Decoration::captionButtonBounds() const
 {
-    std::vector<QRect> bounds;
+    std::vector<base::Rect> bounds;
     if (!m_window || m_window->frameInsets().isNull())
         return bounds;
     // The inverse of toFrame().
-    const QPoint origin = m_window->bounds().topLeft() + m_window->presentedBounds().topLeft();
+    const base::Point origin = m_window->bounds().topLeft() + m_window->presentedBounds().topLeft();
     for (const CaptionButton &button : m_buttons)
         bounds.push_back(button.geometry().translated(origin));
     return bounds;
 }
 
-QRect Decoration::inputBounds() const
+base::Rect Decoration::inputBounds() const
 {
     if (!m_window)
-        return QRect();
+        return base::Rect();
     const int margin = m_theme->metrics().resizeMargin;
     return m_window->bounds().adjusted(-margin, -margin, margin, margin);
 }
 
-QRect Decoration::captionArea() const
+base::Rect Decoration::captionArea() const
 {
     const Metrics &metrics = m_theme->metrics();
-    QRect area = titleBarRect();
+    const base::Rect area = titleBarRect();
     int buttonsWidth = 0;
     if (!m_buttons.empty()) {
         buttonsWidth = static_cast<int>(m_buttons.size()) * metrics.buttonSize
                 + (static_cast<int>(m_buttons.size()) - 1) * metrics.buttonSpacing
                 + metrics.buttonsRightMargin;
     }
-    area.adjust(metrics.captionMargin, 0, -(buttonsWidth + metrics.captionMargin), 0);
-    return area;
+    return area.adjusted(metrics.captionMargin, 0, -(buttonsWidth + metrics.captionMargin), 0);
 }
 
 void Decoration::layout()
 {
     const Metrics &metrics = m_theme->metrics();
-    const QRect titleBar = titleBarRect();
+    const base::Rect titleBar = titleBarRect();
 
     // The group is right-aligned, in the order the Cutefish KWin configuration
     // lists it: minimize, maximize, close.
-    int right = titleBar.right() + 1 - metrics.buttonsRightMargin;
+    int right = titleBar.right() - metrics.buttonsRightMargin;
     const int top = titleBar.top() + std::max(0, (titleBar.height() - metrics.buttonSize) / 2);
     for (auto button = m_buttons.rbegin(); button != m_buttons.rend(); ++button) {
         const int left = right - metrics.buttonSize;
-        button->setGeometry(QRect(left, top, metrics.buttonSize, metrics.buttonSize));
+        button->setGeometry(base::Rect(left, top, metrics.buttonSize, metrics.buttonSize));
         right = left - metrics.buttonSpacing;
     }
 }
@@ -200,15 +200,15 @@ void Decoration::scheduleRepaint()
         m_window->manager()->compositor()->scheduleRepaint(true);
 }
 
-QPoint Decoration::toFrame(const QPointF &location) const
+base::Point Decoration::toFrame(const base::PointF &location) const
 {
     if (!m_window)
-        return QPoint();
+        return base::Point();
     return location.toPoint() - m_window->bounds().topLeft()
             - m_window->presentedBounds().topLeft();
 }
 
-int Decoration::buttonIndexAt(const QPoint &framePoint) const
+int Decoration::buttonIndexAt(const base::Point &framePoint) const
 {
     for (size_t index = 0; index < m_buttons.size(); ++index) {
         if (m_buttons[index].geometry().contains(framePoint))
@@ -217,12 +217,12 @@ int Decoration::buttonIndexAt(const QPoint &framePoint) const
     return -1;
 }
 
-input::CursorShape Decoration::cursorShapeAt(const QPointF &location) const
+input::CursorShape Decoration::cursorShapeAt(const base::PointF &location) const
 {
     return wm::resizeCursor(resizeEdgeAt(toFrame(location)));
 }
 
-ResizeEdge Decoration::resizeEdgeAt(const QPoint &framePoint) const
+ResizeEdge Decoration::resizeEdgeAt(const base::Point &framePoint) const
 {
     // A snapped window keeps its resize borders: pulling the shared edge is
     // how its share of the screen is changed.
@@ -233,20 +233,20 @@ ResizeEdge Decoration::resizeEdgeAt(const QPoint &framePoint) const
     const Metrics &metrics = m_theme->metrics();
     const auto visual = wm::WindowVisualController::evaluate(*m_window, m_theme->visualStyle());
     const render::RoundedShape shape {
-            visual.shape.bounds.translated(-QPointF(m_window->presentedBounds().topLeft())),
+            visual.shape.bounds.translated(-base::PointF(m_window->presentedBounds().topLeft())),
             visual.shape.radius, visual.shape.radiusScale};
-    return wm::resizeEdgeFor(shape, frameRect(), framePoint, metrics.resizeMargin,
-                             metrics.resizeCorner);
+    return wm::resizeEdgeFor(shape, frameRect(), framePoint,
+                             metrics.resizeMargin, metrics.resizeCorner);
 }
 
-FrameArea Decoration::areaAt(const QPointF &location) const
+FrameArea Decoration::areaAt(const base::PointF &at) const
 {
     if (!m_window || !m_window->isVisible() || m_window->frameInsets().isNull())
         return FrameArea::None;
-    if (!inputBounds().contains(location.toPoint()))
+    if (!inputBounds().contains(at.toPoint()))
         return FrameArea::None;
 
-    const QPoint framePoint = toFrame(location);
+    const base::Point framePoint = toFrame(at);
     if (resizeEdgeAt(framePoint) != ResizeEdge::None)
         return FrameArea::ResizeBorder;
     if (buttonIndexAt(framePoint) >= 0)
@@ -274,12 +274,12 @@ bool Decoration::setHoveredButton(int index)
     return true;
 }
 
-bool Decoration::onPointerMotion(input::Timestamp, const QPointF &location)
+bool Decoration::onPointerMotion(input::Timestamp, const base::PointF &at)
 {
     if (!m_window)
         return false;
 
-    const QPoint framePoint = toFrame(location);
+    const base::Point framePoint = toFrame(at);
     if (m_pressedButton >= 0 && m_pressTouch)
         return true;
     if (m_pressedButton >= 0) {
@@ -295,36 +295,36 @@ bool Decoration::onPointerMotion(input::Timestamp, const QPointF &location)
     return true;
 }
 
-bool Decoration::onPointerButton(input::Timestamp timestamp, const QPointF &location, bool pressed)
+bool Decoration::onPointerButton(input::Timestamp timestamp, const base::PointF &at, bool pressed)
 {
     if (!m_window)
         return false;
 
-    qCDebug(cfInputTransitions) << "decoration target" << m_window
-                                << (pressed ? "press" : "release") << "caption-capture"
-                                << m_pressedButton;
+    CF_DEBUG(cfInputTransitions) << "decoration target" << m_window
+                                 << (pressed ? "press" : "release") << "caption-capture"
+                                 << m_pressedButton;
     if (pressed)
-        return press(timestamp, location, std::nullopt);
+        return press(timestamp, at, std::nullopt);
     // A button a touch point holds is released by that point.
     if (m_pressedButton < 0 || m_pressTouch)
         return false;
-    releaseButton(toFrame(location));
+    releaseButton(toFrame(at));
     return true;
 }
 
-bool Decoration::onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location)
+bool Decoration::onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF &at)
 {
     if (!m_window)
         return false;
-    qCDebug(cfInputTransitions) << "decoration target" << m_window << "touch down" << id;
-    return press(timestamp, location, id);
+    CF_DEBUG(cfInputTransitions) << "decoration target" << m_window << "touch down" << id;
+    return press(timestamp, at, id);
 }
 
-bool Decoration::onTouchMotion(input::Timestamp, int32_t id, const QPointF &location)
+bool Decoration::onTouchMotion(input::Timestamp, int32_t id, const base::PointF &at)
 {
     if (!m_window || m_pressedButton < 0 || m_pressTouch != id)
         return false;
-    m_pressTouchPoint = toFrame(location);
+    m_pressTouchPoint = toFrame(at);
     const bool inside = m_buttons[m_pressedButton].geometry().contains(m_pressTouchPoint);
     if (m_buttons[m_pressedButton].setHovered(inside))
         scheduleRepaint();
@@ -359,14 +359,14 @@ void Decoration::cancelPress()
     scheduleRepaint();
 }
 
-bool Decoration::press(input::Timestamp timestamp, const QPointF &location,
+bool Decoration::press(input::Timestamp timestamp, const base::PointF &location,
                        std::optional<int32_t> touchId)
 {
     // One press at a time holds a button, whichever device made it.
     if (m_pressedButton >= 0)
         return true;
 
-    const QPoint framePoint = toFrame(location);
+    const base::Point framePoint = toFrame(location);
     const int index = buttonIndexAt(framePoint);
     if (index >= 0) {
         m_pressedButton = index;
@@ -396,7 +396,7 @@ bool Decoration::press(input::Timestamp timestamp, const QPointF &location,
         m_lastTitleBarPressPoint = framePoint;
         m_hadTitleBarPress = !doubleClick;
 
-        qCDebug(cfInputTransitions)
+        CF_DEBUG(cfInputTransitions)
                 << "decoration titlebar action" << (doubleClick ? "maximize-toggle" : "begin-move");
         if (doubleClick)
             toggleMaximize();
@@ -408,7 +408,7 @@ bool Decoration::press(input::Timestamp timestamp, const QPointF &location,
     return true;
 }
 
-void Decoration::releaseButton(const QPoint &framePoint)
+void Decoration::releaseButton(const base::Point &framePoint)
 {
     const int index = m_pressedButton;
     m_pressedButton = -1;
@@ -430,7 +430,7 @@ void Decoration::runButtonAction(CaptionButtonType type)
     // client's process.
     switch (type) {
     case CaptionButtonType::Close:
-        qCDebug(cfCompositor) << "decoration: close" << m_window->title();
+        CF_DEBUG(cfCompositor) << "decoration: close" << m_window->title();
         m_window->requestClose();
         break;
     case CaptionButtonType::Minimize:
@@ -450,7 +450,7 @@ void Decoration::toggleMaximize()
         m_window->maximize();
 }
 
-void Decoration::onWindowBoundsChanged(wm::Window *window, const QRect &)
+void Decoration::onWindowBoundsChanged(wm::Window *window, const base::Rect &)
 {
     if (window != m_window)
         return;

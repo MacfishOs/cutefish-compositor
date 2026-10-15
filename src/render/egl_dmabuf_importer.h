@@ -7,6 +7,7 @@
 #include "render/dmabuf.h"
 #include "render/gl_texture.h"
 #include <EGL/eglext.h>
+#include "base/geometry.h"
 struct gbm_device;
 
 namespace cutefish::render {
@@ -14,7 +15,7 @@ class EglImageTexture : public GlTexture
 {
 public:
     EglImageTexture(std::shared_ptr<EglContext> context, EGLImageKHR image, uint32_t name,
-                    const QSize &size, PixelFormat format);
+                    const base::Size &size, PixelFormat format);
     ~EglImageTexture() override;
 
 private:

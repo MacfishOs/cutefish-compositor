@@ -7,7 +7,7 @@
 //           chromium/src/ui/gfx/geometry/rect.cc (AdjustToFit)
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: gfx::Rect becomes QRect, with exclusive edges kept.
+// Adapted for Cutefish: gfx::Rect becomes base::Rect.
 
 #include "wm/placement.h"
 
@@ -28,14 +28,14 @@ void adjustAlongAxis(int areaOrigin, int areaSize, int *origin, int *size)
 
 } // namespace
 
-void adjustBoundsSmallerThan(const QSize &maxSize, QRect *bounds)
+void adjustBoundsSmallerThan(const base::Size &maxSize, base::Rect *bounds)
 {
     bounds->setWidth(std::min(bounds->width(), maxSize.width()));
     bounds->setHeight(std::min(bounds->height(), maxSize.height()));
 }
 
-void adjustBoundsToEnsureMinimumVisibility(const QRect &visibleArea, QRect *bounds,
-                                           const QRect &grabArea)
+void adjustBoundsToEnsureMinimumVisibility(const base::Rect &visibleArea, base::Rect *bounds,
+                                           const base::Rect &grabArea)
 {
     if (visibleArea.isEmpty())
         return;
@@ -50,12 +50,10 @@ void adjustBoundsToEnsureMinimumVisibility(const QRect &visibleArea, QRect *boun
     minWidth = std::min(minWidth, visibleArea.width());
     minHeight = std::min(minHeight, visibleArea.height());
 
-    // QRect::right() is inclusive; this code works in exclusive edges
-    // throughout, as Ash's gfx::Rect does.
     const int areaLeft = visibleArea.x();
     const int areaTop = visibleArea.y();
-    const int areaRight = visibleArea.x() + visibleArea.width();
-    const int areaBottom = visibleArea.y() + visibleArea.height();
+    const int areaRight = visibleArea.right();
+    const int areaBottom = visibleArea.bottom();
     // The dock covers the bottom of the visible area; a strip pushed under it
     // has nothing left to grab, so the lower limit is the work area's.
     const int grabBottom = grabArea.isEmpty()
@@ -76,7 +74,7 @@ void adjustBoundsToEnsureMinimumVisibility(const QRect &visibleArea, QRect *boun
         bounds->moveTop(areaTop);
 }
 
-void adjustBoundsToFit(const QRect &area, QRect *bounds)
+void adjustBoundsToFit(const base::Rect &area, base::Rect *bounds)
 {
     int x = bounds->x();
     int y = bounds->y();
@@ -84,12 +82,12 @@ void adjustBoundsToFit(const QRect &area, QRect *bounds)
     int height = bounds->height();
     adjustAlongAxis(area.x(), area.width(), &x, &width);
     adjustAlongAxis(area.y(), area.height(), &y, &height);
-    *bounds = QRect(x, y, width, height);
+    *bounds = base::Rect(x, y, width, height);
 }
 
-QRect Placement::place(const QSize &requestedSize, const QRect &workArea)
+base::Rect Placement::place(const base::Size &requestedSize, const base::Rect &workArea)
 {
-    QRect bounds(workArea.topLeft(), requestedSize);
+    base::Rect bounds(workArea.topLeft(), requestedSize);
     if (bounds.width() <= 0)
         bounds.setWidth(1);
     if (bounds.height() <= 0)
@@ -99,23 +97,23 @@ QRect Placement::place(const QSize &requestedSize, const QRect &workArea)
         adjustBoundsSmallerThan(workArea.size(), &bounds);
 
         bounds.moveTopLeft(workArea.topLeft()
-                           + QPoint((workArea.width() - bounds.width()) / 2,
+                           + base::Point((workArea.width() - bounds.width()) / 2,
                                     (workArea.height() - bounds.height()) / 2));
     }
 
     return bounds;
 }
 
-QRect Placement::placeTransient(const QSize &requestedSize, const QRect &parentBounds,
-                                int parentTopInset, const QRect &workArea)
+base::Rect Placement::placeTransient(const base::Size &requestedSize, const base::Rect &parentBounds,
+                                int parentTopInset, const base::Rect &workArea)
 {
-    const QSize size = requestedSize.expandedTo(QSize(1, 1));
+    const base::Size size = requestedSize.expandedTo(base::Size(1, 1));
 
-    QRect area = workArea;
+    base::Rect area = workArea;
     if (parentBounds.height() >= size.height() || parentBounds.width() >= size.width())
         area = parentBounds.adjusted(0, parentTopInset, 0, 0);
 
-    QRect bounds(area.x() + (area.width() - size.width()) / 2,
+    base::Rect bounds(area.x() + (area.width() - size.width()) / 2,
                  area.y() + (area.height() - size.height()) / 2, size.width(), size.height());
 
     // Never larger than the work area, or its caption could end up out of reach.

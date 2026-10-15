@@ -9,10 +9,7 @@
 #ifndef CUTEFISH_WM_RESIZE_HANDLES_H_
 #define CUTEFISH_WM_RESIZE_HANDLES_H_
 
-#include <QPoint>
-#include <QPointF>
-#include <QRect>
-
+#include "base/geometry.h"
 #include "render/rounded_shape.h"
 #include "wm/types.h"
 
@@ -34,13 +31,13 @@ constexpr int kResizeAreaCornerSize = 16;
 // The edge `point` grabs on a window outlined by `shape` within `frame`: any
 // point outside the outline or less than `inside` into it. A corner reaches
 // `corner` along each edge, and past the arc. The caller bounds the outside.
-ResizeEdge resizeEdgeFor(const render::RoundedShape& shape, const QRect& frame,
-                         const QPoint& point, int inside, int corner);
+ResizeEdge resizeEdgeFor(const render::RoundedShape& shape, const base::Rect& frame,
+                         const base::Point& point, int inside, int corner);
 
 // The edge of a client-decorated window that asked for server resize under
 // `location`, in output coordinates, or None.
 ResizeEdge serverResizeEdgeAt(const Window& window, const decoration::WindowVisualStyle& style,
-                              const QPointF& location, bool touch);
+                              const base::PointF& location, bool touch);
 
 } // namespace cutefish::wm
 

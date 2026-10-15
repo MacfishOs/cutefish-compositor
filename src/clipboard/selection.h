@@ -12,16 +12,17 @@
 #include <string>
 #include <vector>
 
-#include <QObject>
-#include <QPointer>
+#include "base/signal.h"
+#include "base/weak_ptr.h"
 
 namespace cutefish::clipboard {
 
 // MIME names and payloads are opaque. send() always consumes the supplied fd.
-class DataSource : public QObject
+class DataSource
 {
-    Q_OBJECT
 public:
+    virtual ~DataSource() = default;
+
     bool offer(const std::string &mime);
 
     const std::vector<std::string> &formats() const { return m_formats; }
@@ -46,8 +47,7 @@ public:
 
     virtual void finished() { }
 
-signals:
-    void invalidated();
+    base::Signal<> invalidated;
 
 protected:
     virtual void cancelled() { }
@@ -56,13 +56,16 @@ private:
     std::vector<std::string> m_formats;
     bool m_alive = true;
     bool m_used = false;
+    base::WeakPtrFactory<DataSource> m_weakFactory {this};
 };
 
-class SelectionController : public QObject
+class SelectionController
 {
-    Q_OBJECT
 public:
-    ~SelectionController() override;
+    SelectionController() = default;
+    SelectionController(const SelectionController &) = delete;
+    SelectionController &operator=(const SelectionController &) = delete;
+    ~SelectionController();
     using Recipient = const void *; // Adapter-owned identity; never dereferenced.
 
     std::shared_ptr<DataSource> source() const { return m_source; }
@@ -90,9 +93,13 @@ public:
     bool setSource(std::shared_ptr<DataSource> source);
     // Expected-source check protects a replacement from old teardown callbacks.
     void sourceDestroyed(DataSource *source);
-signals:
-    void selectionChanged();
-    void recipientChanged();
+
+    base::WeakPtr<SelectionController> weakPtr() { return m_weakFactory.getWeakPtr(); }
+
+    base::Signal<> selectionChanged;
+    base::Signal<> recipientChanged;
+    // At the end of destruction, once the selection is gone.
+    base::Signal<> destroyed;
 
 private:
     bool m_destroying = false;
@@ -113,16 +120,18 @@ private:
     };
 
     std::deque<Serial> m_serials;
-    QMetaObject::Connection m_sourceConnection;
+    base::Subscription m_sourceConnection;
+    base::WeakPtrFactory<SelectionController> m_weakFactory {this};
 };
 
 // An immutable offer snapshot. Losing eligibility invalidates future receives,
 // even if the same recipient later regains focus or the same address is reused.
-class DataOffer : public QObject
+class DataOffer
 {
-    Q_OBJECT
 public:
     explicit DataOffer(SelectionController *controller);
+    DataOffer(const DataOffer &) = delete;
+    DataOffer &operator=(const DataOffer &) = delete;
     bool valid() const;
     void invalidate();
 
@@ -132,11 +141,13 @@ public:
 
 private:
     bool m_eligible = true;
-    QPointer<SelectionController> m_controller;
+    base::WeakPtr<SelectionController> m_controller;
     std::weak_ptr<DataSource> m_source;
     std::vector<std::string> m_formats;
     uint64_t m_generation;
     uint64_t m_focusGeneration;
+    base::Subscription m_selectionChanged;
+    base::Subscription m_recipientChanged;
 };
 
 } // namespace cutefish::clipboard

@@ -29,12 +29,12 @@
 #ifndef CUTEFISH_WM_TOPLEVEL_DRAG_H_
 #define CUTEFISH_WM_TOPLEVEL_DRAG_H_
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
-#include <QObject>
-#include <QPoint>
-
+#include "base/geometry.h"
+#include "base/signal.h"
 #include "compositor/surface_observer.h"
 #include "input/drag.h"
 #include "scene/window_animation.h"
@@ -48,11 +48,9 @@ namespace cutefish::wm {
 class Window;
 class WindowManager;
 
-class ToplevelDrag : public QObject,
-                     public compositor::SurfaceObserver,
+class ToplevelDrag : public compositor::SurfaceObserver,
                      public input::DragWindowDelegate
 {
-    Q_OBJECT
 public:
     ToplevelDrag(WindowManager *manager, std::shared_ptr<clipboard::DataSource> source);
     ~ToplevelDrag() override;
@@ -65,11 +63,11 @@ public:
 
     // `offset` is the pointer's place in the window geometry of `surface`,
     // which is a toplevel's root surface, mapped or not.
-    void attach(compositor::Surface *surface, const QPoint &offset);
+    void attach(compositor::Surface *surface, const base::Point &offset);
 
     // --- input::DragWindowDelegate ---
 
-    void dragMoved(const QPointF &location) override;
+    void dragMoved(const base::PointF &location) override;
     void dragTargetChanged(compositor::Surface *target, bool accepted) override;
     void dragEnded(bool released) override;
 
@@ -99,22 +97,25 @@ private:
     WindowManager *m_manager = nullptr;
     std::shared_ptr<clipboard::DataSource> m_source;
     compositor::Surface *m_surface = nullptr;
-    QPoint m_offset;
+    base::Point m_offset;
     bool m_dragging = false;
     Window *m_moving = nullptr;
     // The window a released drag was dropped on, while the dragged one is
     // still mapped. Zero otherwise.
-    quint64 m_dropWindow = 0;
+    uint64_t m_dropWindow = 0;
     // The preview, while the drag runs and a little after.
-    quint64 m_preview = 0;
+    uint64_t m_preview = 0;
     // The width its thumbnail scale was worked out for.
     int m_previewWidth = 0;
     // The window of the same process under the drag that takes the drop, or
     // zero. The preview is not drawn over it from its next commit, which the
     // root surface below is watched for.
-    quint64 m_docked = 0;
+    uint64_t m_docked = 0;
     compositor::Surface *m_dockTarget = nullptr;
     std::optional<scene::WindowAnimation::Style> m_animationStyle;
+    base::Subscription m_dragStarted;
+    base::Subscription m_windowAdded;
+    base::Subscription m_windowRemoved;
 };
 
 } // namespace cutefish::wm

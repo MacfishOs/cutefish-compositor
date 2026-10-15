@@ -14,9 +14,9 @@
 #ifndef CUTEFISH_WM_WINDOW_POSITIONER_H_
 #define CUTEFISH_WM_WINDOW_POSITIONER_H_
 
-#include <QRect>
-#include <QString>
+#include <string>
 
+#include "base/geometry.h"
 #include "wm/types.h"
 
 namespace cutefish::wm {
@@ -30,13 +30,13 @@ namespace window_positioner {
 // offset down and right from its application's most recent window on the same
 // output, or from that window's restore bounds while it is maximized. A cascade
 // that would run past the work area restarts from its top-left corner.
-QRect boundsForNewWindow(const Window *window, QRect bounds);
+base::Rect boundsForNewWindow(const Window *window, base::Rect bounds);
 
 // The state a new window of `applicationId` on `output` should be shown in,
 // decided before it exists. A window that asked for nothing is maximized when
 // its application's most recent window is.
-WindowStateType showStateForNewWindow(WindowManager *manager, const QRect &output,
-                                      const QString &applicationId, WindowStateType requested);
+WindowStateType showStateForNewWindow(WindowManager *manager, const base::Rect &output,
+                                      const std::string &applicationId, WindowStateType requested);
 
 } // namespace window_positioner
 

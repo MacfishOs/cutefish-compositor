@@ -8,15 +8,15 @@
 // Adapted for Cutefish: integrates the upstream behavior with native
 // compositor types and ownership.
 //
-// Adaptation: gfx::PointF/Vector2dF become QPointF, and the pinch/stylus and
+// Adaptation: gfx::PointF/Vector2dF become base::PointF, and the pinch/stylus and
 // relative-motion delegates are out of scope for v0.1.
 
 #ifndef CUTEFISH_INPUT_POINTER_DELEGATE_H_
 #define CUTEFISH_INPUT_POINTER_DELEGATE_H_
 
-#include <QPointF>
 
 #include "input/types.h"
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 class Surface;
@@ -40,10 +40,10 @@ public:
 
     // `location` is relative to the origin of `surface`; `pressedButtonFlags`
     // holds every button currently down.
-    virtual void onPointerEnter(compositor::Surface* surface, const QPointF& location,
+    virtual void onPointerEnter(compositor::Surface* surface, const base::PointF& location,
                                 ButtonFlags pressedButtonFlags) = 0;
     virtual void onPointerLeave(compositor::Surface* surface) = 0;
-    virtual void onPointerMotion(Timestamp timestamp, const QPointF& location) = 0;
+    virtual void onPointerMotion(Timestamp timestamp, const base::PointF& location) = 0;
 
     // `changedButtonFlags` holds every button that changed state.
     virtual void onPointerButton(Timestamp timestamp, ButtonFlags changedButtonFlags,
@@ -52,7 +52,7 @@ public:
     // `offset` is the direction and distance of the scroll in Wayland axis
     // units, where one wheel click is 10. `discrete` is true for a device with
     // detents, such as a wheel.
-    virtual void onPointerScroll(Timestamp timestamp, const QPointF& offset,
+    virtual void onPointerScroll(Timestamp timestamp, const base::PointF& offset,
                                  bool discrete) = 0;
 
     // Ends a sequence of finger scroll events, e.g. fingers lifted off a

@@ -5,6 +5,8 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <format>
+#include <string>
 #include <ext-foreign-toplevel-list-v1-client-protocol.h>
 #include <ext-image-capture-source-v1-client-protocol.h>
 #include <ext-image-copy-capture-v1-client-protocol.h>
@@ -33,13 +35,13 @@ using namespace cutefish;
 
 namespace {
 
-constexpr QRect kOutput(0, 0, 1000, 800);
+const base::Rect kOutput(0, 0, 1000, 800);
 
 struct Handle {
     ext_foreign_toplevel_handle_v1 *proxy = nullptr;
-    QString identifier;
-    QString title;
-    QString appId;
+    std::string identifier;
+    std::string title;
+    std::string appId;
     int done = 0;
     bool closed = false;
 };
@@ -49,7 +51,7 @@ class ForeignToplevelListTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     input::Seat seat {&compositor};
@@ -79,8 +81,8 @@ protected:
         input.setBounds(kOutput.size());
         input.setEventSink(&manager);
         compositor.setOutputViews(
-                {{QStringLiteral("output-1"), kOutput, *compositor::OutputScale::fromNumerator(240),
-                  QStringLiteral("eDP-1")}});
+                {{"output-1", kOutput,
+                  *compositor::OutputScale::fromNumerator(240), "eDP-1"}});
 
         server = wl_display_create();
         ASSERT_NE(server, nullptr);
@@ -181,13 +183,13 @@ protected:
                     ++static_cast<Handle *>(data)->done;
                 },
                 [](void *data, ext_foreign_toplevel_handle_v1 *, const char *title) {
-                    static_cast<Handle *>(data)->title = QString::fromUtf8(title);
+                    static_cast<Handle *>(data)->title = title;
                 },
                 [](void *data, ext_foreign_toplevel_handle_v1 *, const char *appId) {
-                    static_cast<Handle *>(data)->appId = QString::fromUtf8(appId);
+                    static_cast<Handle *>(data)->appId = appId;
                 },
                 [](void *data, ext_foreign_toplevel_handle_v1 *, const char *identifier) {
-                    static_cast<Handle *>(data)->identifier = QString::fromUtf8(identifier);
+                    static_cast<Handle *>(data)->identifier = identifier;
                 }};
         ext_foreign_toplevel_handle_v1_add_listener(proxy, &listener, handle.get());
         handles.push_back(std::move(handle));
@@ -209,21 +211,22 @@ protected:
         return result >= 0 && received;
     }
 
-    compositor::Surface *makeSurface(const QSize &size)
+    compositor::Surface *makeSurface(const base::Size &size)
     {
         surfaces.push_back(compositor.createSurface());
         compositor::Surface *surface = surfaces.back().get();
-        auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
+        auto buffer = pool->createBuffer(size, 0, size.width() * 4,
+                                         render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(base::Point(), size));
         surface->commit();
         compositor.updateTextures(renderer);
         return surface;
     }
 
-    wm::Window *makeWindow(const QRect &bounds, const QString &title = QStringLiteral("Editor"),
-                           const QString &appId = QStringLiteral("org.example.Editor"))
+    wm::Window *makeWindow(const base::Rect &bounds, const std::string &title = "Editor",
+                           const std::string &appId = "org.example.Editor")
     {
         wm::Window *window = manager.createWindow(
                 makeSurface(bounds.size()),
@@ -245,14 +248,14 @@ protected:
 
 TEST_F(ForeignToplevelListTest, ListsApplicationWindowsWithIdentityAndSource)
 {
-    wm::Window *window = makeWindow(QRect(100, 50, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 50, 300, 200));
     ASSERT_TRUE(roundtrip());
     ASSERT_EQ(handles.size(), 1u);
     const Handle &handle = *handles.front();
     EXPECT_EQ(handle.title, "Editor");
     EXPECT_EQ(handle.appId, "org.example.Editor");
     // The shell names a window to capture clients by the id it knows it by.
-    EXPECT_EQ(handle.identifier, QStringLiteral("cutefish-%1").arg(window->id()));
+    EXPECT_EQ(handle.identifier, std::format("cutefish-{}", window->id()));
     EXPECT_GE(handle.done, 1);
     EXPECT_FALSE(handle.closed);
 
@@ -260,40 +263,39 @@ TEST_F(ForeignToplevelListTest, ListsApplicationWindowsWithIdentityAndSource)
     ASSERT_TRUE(source);
     EXPECT_EQ(source->kind, compositor::CaptureSource::Kind::Window);
     EXPECT_EQ(source->node, window->node());
-    EXPECT_EQ(source->bounds, QRect(100, 50, 300, 200));
+    EXPECT_EQ(source->bounds, base::Rect(100, 50, 300, 200));
     EXPECT_EQ(source->renderedOn(), "eDP-1");
     // Pixels follow the output's scale.
-    EXPECT_EQ(source->pixelSize(), QSize(600, 400));
+    EXPECT_EQ(source->pixelSize(), base::Size(600, 400));
 
-    window->setTitle(QStringLiteral("Editor - file.txt"));
+    window->setTitle("Editor - file.txt");
     ASSERT_TRUE(roundtrip());
     EXPECT_EQ(handle.title, "Editor - file.txt");
     EXPECT_GE(handle.done, 2);
 
     // A resize changes the buffer size the session must announce.
     int changes = 0;
-    // The context dies with the locals the lambda captures.
-    QObject scope;
-    QObject::connect(source.get(), &compositor::CaptureSource::changed, &scope, [&] {
+    // The subscription dies with the locals the lambda captures.
+    const auto scope = source->changed.connect([&] {
         ++changes;
     });
-    window->setBounds(QRect(100, 50, 400, 200));
-    EXPECT_EQ(source->pixelSize(), QSize(800, 400));
+    window->setBounds(base::Rect(100, 50, 400, 200));
+    EXPECT_EQ(source->pixelSize(), base::Size(800, 400));
     EXPECT_EQ(changes, 1);
-    window->setBounds(QRect(120, 60, 400, 200));
+    window->setBounds(base::Rect(120, 60, 400, 200));
     EXPECT_EQ(changes, 1);
 }
 
 TEST_F(ForeignToplevelListTest, PopupsAndSystemDialogsAreNotListed)
 {
-    manager.setSystemDialogPolicy([](qint64 pid) {
+    manager.setSystemDialogPolicy([](int64_t pid) {
         return pid == 42;
     });
-    wm::Window *app = makeWindow(QRect(0, 0, 300, 200));
-    manager.createWindow(makeSurface(QSize(100, 40)),
+    wm::Window *app = makeWindow(base::Rect(0, 0, 300, 200));
+    manager.createWindow(makeSurface(base::Size(100, 40)),
                          {.type = wm::WindowType::Popup, .transientParent = app});
     wm::Window *prompt = manager.createWindow(
-            makeSurface(QSize(200, 100)),
+            makeSurface(base::Size(200, 100)),
             {.requestedSize = {200, 100}, .processId = 42, .transientParent = app});
     ASSERT_TRUE(prompt->isSystemDialog());
     ASSERT_TRUE(roundtrip());
@@ -307,15 +309,14 @@ TEST_F(ForeignToplevelListTest, PopupsAndSystemDialogsAreNotListed)
 
 TEST_F(ForeignToplevelListTest, ClosingAWindowStopsItsSource)
 {
-    wm::Window *window = makeWindow(QRect(0, 0, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(0, 0, 300, 200));
     ASSERT_TRUE(roundtrip());
     ASSERT_EQ(handles.size(), 1u);
     auto source = sourceOf(*handles.front());
     ASSERT_TRUE(source);
     int changes = 0;
-    // The context dies with the locals the lambda captures.
-    QObject scope;
-    QObject::connect(source.get(), &compositor::CaptureSource::changed, &scope, [&] {
+    // The subscription dies with the locals the lambda captures.
+    const auto scope = source->changed.connect([&] {
         ++changes;
     });
     manager.destroyWindow(window);
@@ -329,7 +330,7 @@ TEST_F(ForeignToplevelListTest, ClosingAWindowStopsItsSource)
 
 TEST_F(ForeignToplevelListTest, AShadowedSourceCoversTheShadowBounds)
 {
-    wm::Window *window = makeWindow(QRect(100, 50, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 50, 300, 200));
     ASSERT_TRUE(roundtrip());
     ASSERT_EQ(handles.size(), 1u);
     auto plain = sourceOf(*handles.front());
@@ -339,27 +340,26 @@ TEST_F(ForeignToplevelListTest, AShadowedSourceCoversTheShadowBounds)
     EXPECT_EQ(shadowed->kind, compositor::CaptureSource::Kind::Window);
     EXPECT_EQ(shadowed->node, window->node());
     // Without a shadow the picture is the window.
-    EXPECT_EQ(shadowed->bounds, QRect(100, 50, 300, 200));
+    EXPECT_EQ(shadowed->bounds, base::Rect(100, 50, 300, 200));
     EXPECT_EQ(toplevels->shadowedSourceFor(nullptr), nullptr);
 
     int changes = 0;
-    // The context dies with the locals the lambda captures.
-    QObject scope;
-    QObject::connect(shadowed.get(), &compositor::CaptureSource::changed, &scope, [&] {
+    // The subscription dies with the locals the lambda captures.
+    const auto scope = shadowed->changed.connect([&] {
         ++changes;
     });
     toplevels->setShadowBounds([](const wm::Window *window) {
         return window->bounds().adjusted(-20, -10, 20, 40);
     });
-    EXPECT_EQ(shadowed->bounds, QRect(80, 40, 340, 250));
-    EXPECT_EQ(shadowed->pixelSize(), QSize(680, 500));
+    EXPECT_EQ(shadowed->bounds, base::Rect(80, 40, 340, 250));
+    EXPECT_EQ(shadowed->pixelSize(), base::Size(680, 500));
     EXPECT_EQ(shadowed->renderedOn(), "eDP-1");
     EXPECT_EQ(changes, 1);
-    EXPECT_EQ(plain->bounds, QRect(100, 50, 300, 200));
+    EXPECT_EQ(plain->bounds, base::Rect(100, 50, 300, 200));
 
     // The margins may reach outside the output.
-    window->setBounds(QRect(0, 0, 300, 200));
-    EXPECT_EQ(shadowed->bounds, QRect(-20, -10, 340, 250));
+    window->setBounds(base::Rect(0, 0, 300, 200));
+    EXPECT_EQ(shadowed->bounds, base::Rect(-20, -10, 340, 250));
     EXPECT_EQ(changes, 1);
     EXPECT_EQ(toplevels->shadowedSourceFor(window), shadowed);
 
@@ -372,10 +372,10 @@ TEST_F(ForeignToplevelListTest, AShadowedSourceCoversTheShadowBounds)
 
 TEST_F(ForeignToplevelListTest, AnUnlistedWindowStillHasAShadowedSource)
 {
-    wm::Window *app = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *popup = manager.createWindow(makeSurface(QSize(100, 40)),
+    wm::Window *app = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *popup = manager.createWindow(makeSurface(base::Size(100, 40)),
                                              {.type = wm::WindowType::Popup, .transientParent = app});
-    popup->setBounds(QRect(50, 60, 100, 40));
+    popup->setBounds(base::Rect(50, 60, 100, 40));
     toplevels->setShadowBounds([](const wm::Window *window) {
         return window->bounds().adjusted(-8, -8, 8, 8);
     });
@@ -385,7 +385,7 @@ TEST_F(ForeignToplevelListTest, AnUnlistedWindowStillHasAShadowedSource)
     auto shadowed = toplevels->shadowedSourceFor(popup);
     ASSERT_TRUE(shadowed);
     EXPECT_EQ(shadowed->node, popup->node());
-    EXPECT_EQ(shadowed->bounds, QRect(42, 52, 116, 56));
+    EXPECT_EQ(shadowed->bounds, base::Rect(42, 52, 116, 56));
     EXPECT_EQ(toplevels->shadowedSourceFor(popup), shadowed);
     // A late list still sees only the application window.
     bindList(registry, listName);
@@ -403,21 +403,21 @@ TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
 {
     struct WindowRenderer : testsupport::FakeRenderer {
         render::OutputRenderContext seen;
-        QSize viewportSize() const override { return {1000, 800}; }
-        QImage captureImage(const render::OutputRenderContext &context, const QSize &size,
-                            const std::function<void()> &paint) override
+        base::Size viewportSize() const override { return {1000, 800}; }
+        ui::Bitmap captureImage(const render::OutputRenderContext &context, const base::Size &size,
+                                const std::function<void()> &paint) override
         {
             seen = context;
             paint();
-            QImage image(size, QImage::Format_ARGB32_Premultiplied);
-            image.fill(QColor(1, 2, 3));
+            ui::Bitmap image(size, ui::Bitmap::Format::Argb32Premultiplied);
+            image.fill(0xff010203);
             return image;
         }
     } windowRenderer;
     windowRenderer.setOutputContext(
-            {QStringLiteral("eDP-1"), kOutput, {2000, 1600}, 2, 0, 17, QRect(0, 0, 2000, 1600)});
+            {"eDP-1", kOutput, {2000, 1600}, 2, 0, 17, base::Rect(0, 0, 2000, 1600)});
 
-    makeWindow(QRect(100, 50, 300, 200));
+    makeWindow(base::Rect(100, 50, 300, 200));
     ASSERT_TRUE(roundtrip());
     ASSERT_EQ(handles.size(), 1u);
     ASSERT_NE(toplevelSources, nullptr);
@@ -426,10 +426,10 @@ TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
     auto *source = ext_foreign_toplevel_image_capture_source_manager_v1_create_source(
             toplevelSources, handles.front()->proxy);
     auto *session = ext_image_copy_capture_manager_v1_create_session(copies, source, 0);
-    QSize constraint;
+    base::Size constraint;
     static const ext_image_copy_capture_session_v1_listener sessionListener = {
             [](void *data, ext_image_copy_capture_session_v1 *, uint32_t w, uint32_t h) {
-                *static_cast<QSize *>(data) = QSize(int(w), int(h));
+                *static_cast<base::Size *>(data) = base::Size(int(w), int(h));
             },
             [](void *, ext_image_copy_capture_session_v1 *, uint32_t) {},
             [](void *, ext_image_copy_capture_session_v1 *, wl_array *) {},
@@ -439,7 +439,7 @@ TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
     ext_image_copy_capture_session_v1_add_listener(session, &sessionListener, &constraint);
     ASSERT_TRUE(roundtrip());
     // 300x200 logical on a 2x output.
-    EXPECT_EQ(constraint, QSize(600, 400));
+    EXPECT_EQ(constraint, base::Size(600, 400));
 
     const int size = 600 * 400 * 4;
     const int fd = memfd_create("capture-test", MFD_CLOEXEC);
@@ -481,8 +481,8 @@ TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
     EXPECT_EQ(result.failed, -1);
     EXPECT_EQ(result.ready, 1);
     EXPECT_EQ(result.transform, 0u);
-    EXPECT_EQ(windowRenderer.seen.logicalViewport, QRect(100, 50, 300, 200));
-    EXPECT_EQ(windowRenderer.seen.nativeTargetSize, QSize(600, 400));
+    EXPECT_EQ(windowRenderer.seen.logicalViewport, base::Rect(100, 50, 300, 200));
+    EXPECT_EQ(windowRenderer.seen.nativeTargetSize, base::Size(600, 400));
     EXPECT_DOUBLE_EQ(windowRenderer.seen.scale, 2.0);
     EXPECT_EQ(windowRenderer.seen.transform, 0u);
     auto *bytes = static_cast<uint8_t *>(pixels);
@@ -501,12 +501,12 @@ TEST_F(ForeignToplevelListTest, AWindowSourceIsPaintedOnItsOwnAtItsScale)
 
 TEST_F(ForeignToplevelListTest, StopFinishesTheListAndLateBindersSeeExistingWindows)
 {
-    makeWindow(QRect(0, 0, 300, 200));
+    makeWindow(base::Rect(0, 0, 300, 200));
     ASSERT_TRUE(roundtrip());
     ext_foreign_toplevel_list_v1_stop(list);
     ASSERT_TRUE(roundtrip());
     EXPECT_TRUE(finished);
-    makeWindow(QRect(0, 0, 300, 200));
+    makeWindow(base::Rect(0, 0, 300, 200));
     ASSERT_TRUE(roundtrip());
     EXPECT_EQ(handles.size(), 1u);
 }
@@ -529,7 +529,7 @@ TEST_F(ForeignToplevelListTest, ADestroyedListLeavesNothingBehind)
     ext_foreign_toplevel_list_v1_destroy(std::exchange(list, nullptr));
     ASSERT_TRUE(roundtrip());
     EXPECT_EQ(toplevels->boundListCount(), 0);
-    makeWindow(QRect(0, 0, 300, 200));
+    makeWindow(base::Rect(0, 0, 300, 200));
     ASSERT_TRUE(roundtrip());
     EXPECT_TRUE(handles.empty());
 }

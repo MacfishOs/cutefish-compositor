@@ -4,8 +4,7 @@
 
 #include <gtest/gtest.h>
 
-#include <QElapsedTimer>
-#include <QTemporaryDir>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <ext-image-capture-source-v1-client-protocol.h>
@@ -23,6 +22,8 @@
 #include "scene/scene.h"
 #include "session/secure_container.h"
 #include "session/session_controller.h"
+#include "temporary_directory.h"
+#include "ui/bitmap.h"
 #include "wayland/protocols/image_capture.h"
 #include "wayland/protocols/wl_output.h"
 #include "wayland/protocols/wl_shm.h"
@@ -33,22 +34,22 @@ namespace {
 class CaptureRenderer : public testsupport::FakeRenderer
 {
 public:
-    QSize viewportSize() const override { return {8, 6}; }
+    base::Size viewportSize() const override { return {8, 6}; }
 
-    QImage captureFrame(const std::function<void()> &paint) override
+    ui::Bitmap captureFrame(const std::function<void()> &paint) override
     {
         paint();
-        QImage image(viewportSize(), QImage::Format_ARGB32_Premultiplied);
-        image.fill(QColor(12, 34, 56));
+        ui::Bitmap image(viewportSize(), ui::Bitmap::Format::Argb32Premultiplied);
+        image.fill(0xff0c2238);
         return image;
     }
 
     // A readback the test collects by hand, as the GPU would finish it.
     struct Pending : render::PendingImage {
-        QImage image;
+        ui::Bitmap image;
         int *taken = nullptr;
 
-        QImage take() override
+        ui::Bitmap take() override
         {
             ++*taken;
             return image;
@@ -59,7 +60,7 @@ public:
     int taken = 0;
     bool copiesOutput = false;
 
-    bool copyOutputFrame(const QSize &) override { return copiesOutput; }
+    bool copyOutputFrame(const base::Size &) override { return copiesOutput; }
 
     std::shared_ptr<render::PendingImage>
     captureFrameLater(const std::function<void()> &paint) override
@@ -91,7 +92,7 @@ protected:
     compositor::Compositor compositor {nullptr};
     scene::Scene scene;
     scene::Node *secureNode =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("secure")));
+            scene.root()->addChild(std::make_unique<scene::Node>("secure"));
     session::SecureContainer secure {secureNode};
     session::SessionController sessionController {&secure};
     compositor::Output model;
@@ -101,8 +102,8 @@ protected:
     int fd = -1;
     int ready = 0, failed = -1, done = 0, stopped = 0, releases = 0;
     uint64_t timestamp = 0;
-    QSize constraintSize;
-    std::vector<QRect> damageRects;
+    base::Size constraintSize;
+    std::vector<base::Rect> damageRects;
     dev_t dmabufDevice = 0;
     std::map<uint32_t, std::vector<uint64_t>> dmabufFormats;
     bool repaint = false;
@@ -180,14 +181,14 @@ protected:
         session = ext_image_copy_capture_manager_v1_create_session(copies, source, 0);
         ext_image_copy_capture_session_v1_add_listener(session, sessionListener(), this);
         ASSERT_TRUE(roundtrip());
-        renderer.setOutputContext({model.name, QRect(0, 0, 8, 6), {8, 6}, 1, 0, 17});
+        renderer.setOutputContext({model.name, base::Rect(0, 0, 8, 6), {8, 6}, 1, 0, 17});
     }
 
     static const ext_image_copy_capture_session_v1_listener *sessionListener()
     {
         static const ext_image_copy_capture_session_v1_listener listener = {
                 [](void *data, ext_image_copy_capture_session_v1 *, uint32_t w, uint32_t h) {
-                    static_cast<ImageCaptureTest *>(data)->constraintSize = QSize(w, h);
+                    static_cast<ImageCaptureTest *>(data)->constraintSize = base::Size(w, h);
                 },
                 [](void *, ext_image_copy_capture_session_v1 *, uint32_t) {},
                 [](void *data, ext_image_copy_capture_session_v1 *, wl_array *device) {
@@ -230,7 +231,7 @@ protected:
                 [](void *, ext_image_copy_capture_frame_v1 *, uint32_t) {},
                 [](void *data, ext_image_copy_capture_frame_v1 *, int32_t x, int32_t y, int32_t w,
                    int32_t h) {
-                    static_cast<ImageCaptureTest *>(data)->damageRects.push_back(QRect(x, y, w, h));
+                    static_cast<ImageCaptureTest *>(data)->damageRects.push_back(base::Rect(x, y, w, h));
                 },
                 [](void *data, ext_image_copy_capture_frame_v1 *, uint32_t hi, uint32_t lo,
                    uint32_t ns) {
@@ -288,7 +289,7 @@ protected:
 
 TEST_F(ImageCaptureTest, PixelsStrideAndPresentation)
 {
-    EXPECT_EQ(constraintSize, QSize(8, 6));
+    EXPECT_EQ(constraintSize, base::Size(8, 6));
     EXPECT_FALSE(manager->hasPending(model.name));
     makeFrame();
     submit();
@@ -420,7 +421,7 @@ TEST_F(ImageCaptureTest, OutputChangeUpdatesConstraints)
     model.pixelSize = {12, 10};
     wayland::updateOutputGlobal(outputGlobal, &model);
     ASSERT_TRUE(roundtrip());
-    EXPECT_EQ(constraintSize, QSize(12, 10));
+    EXPECT_EQ(constraintSize, base::Size(12, 10));
     EXPECT_EQ(done, 2);
     makeFrame();
     submit();
@@ -553,10 +554,10 @@ TEST_F(ImageCaptureTest, CursorMotionIsDamageToACursorPaintingSession)
 TEST_F(ImageCaptureTest, DamageIsReportedSinceTheSessionsPreviousFrame)
 {
     // The tree an output session tracks damage against.
-    scene::Node root(QStringLiteral("root"));
-    root.setGeometry(QRect(0, 0, 8, 6));
-    auto *child = root.addChild(std::make_unique<scene::Node>(QStringLiteral("child")));
-    child->setGeometry(QRect(0, 0, 8, 6));
+    scene::Node root("root");
+    root.setGeometry(base::Rect(0, 0, 8, 6));
+    auto *child = root.addChild(std::make_unique<scene::Node>("child"));
+    child->setGeometry(base::Rect(0, 0, 8, 6));
     wayland::ImageCaptureManager::Painters painters;
     painters.root = &root;
     painters.scene = [](bool) { };
@@ -570,7 +571,7 @@ TEST_F(ImageCaptureTest, DamageIsReportedSinceTheSessionsPreviousFrame)
     ASSERT_EQ(ready, 1);
     // Nothing was known before the first frame: all of it changed.
     ASSERT_EQ(damageRects.size(), 1u);
-    EXPECT_EQ(damageRects.front(), QRect(0, 0, 8, 6));
+    EXPECT_EQ(damageRects.front(), base::Rect(0, 0, 8, 6));
 
     damageRects.clear();
     ext_image_copy_capture_frame_v1_destroy(frame);
@@ -581,7 +582,7 @@ TEST_F(ImageCaptureTest, DamageIsReportedSinceTheSessionsPreviousFrame)
     pixels = MAP_FAILED;
     close(fd);
     fd = -1;
-    child->notifyDamage(QRegion(QRect(1, 1, 2, 2)));
+    child->notifyDamage(base::Region(base::Rect(1, 1, 2, 2)));
     makeFrame();
     ext_image_copy_capture_frame_v1_capture(frame);
     ASSERT_TRUE(roundtrip());
@@ -590,14 +591,14 @@ TEST_F(ImageCaptureTest, DamageIsReportedSinceTheSessionsPreviousFrame)
     ASSERT_TRUE(roundtrip());
     ASSERT_EQ(ready, 2);
     ASSERT_EQ(damageRects.size(), 1u);
-    EXPECT_EQ(damageRects.front(), QRect(1, 1, 2, 2));
+    EXPECT_EQ(damageRects.front(), base::Rect(1, 1, 2, 2));
 }
 
 TEST_F(ImageCaptureTest, ACopiedOutputFrameStandsInOnlyWhenItHoldsWhatTheSessionPaints)
 {
     using Composited = wayland::ImageCaptureManager::Composited;
-    scene::Node root(QStringLiteral("root"));
-    root.setGeometry(QRect(0, 0, 8, 6));
+    scene::Node root("root");
+    root.setGeometry(base::Rect(0, 0, 8, 6));
     int scenes = 0, cursors = 0;
     Composited composited = Composited::Unusable;
     wayland::ImageCaptureManager::Painters painters;
@@ -809,9 +810,9 @@ TEST_F(ImageCaptureTest, InvalidDamageIsProtocolError)
 
 TEST_F(ImageCaptureTest, ScreenshotExecutableWritesPng)
 {
-    QTemporaryDir directory;
+    test::TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const auto path = (directory.path() + "/capture.png").toLocal8Bit();
+    const std::string path = directory.filePath("capture.png");
     int sockets[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets), 0);
     const pid_t child = fork();
@@ -820,18 +821,17 @@ TEST_F(ImageCaptureTest, ScreenshotExecutableWritesPng)
         if (dup2(sockets[1], 198) < 0)
             _exit(126);
         setenv("WAYLAND_SOCKET", "198", 1);
-        execl(SCREENSHOT_EXECUTABLE, SCREENSHOT_EXECUTABLE, "--cursor", path.constData(), nullptr);
+        execl(SCREENSHOT_EXECUTABLE, SCREENSHOT_EXECUTABLE, "--cursor", path.c_str(), nullptr);
         _exit(127);
     }
     close(sockets[1]);
     ASSERT_NE(wl_client_create(server, sockets[0]), nullptr);
-    QElapsedTimer timer;
-    timer.start();
+    const auto started = std::chrono::steady_clock::now();
     bool cursors = false;
     bool changed = false;
     int status = 0;
     pid_t exited = 0;
-    while (timer.elapsed() < 7000) {
+    while (std::chrono::steady_clock::now() - started < std::chrono::milliseconds(7000)) {
         wl_event_loop_dispatch(wl_display_get_event_loop(server), 10);
         manager->renderPending(renderer, [&](bool include) {
             cursors = include;
@@ -855,9 +855,9 @@ TEST_F(ImageCaptureTest, ScreenshotExecutableWritesPng)
     ASSERT_TRUE(WIFEXITED(status));
     ASSERT_EQ(WEXITSTATUS(status), 0);
     EXPECT_TRUE(cursors);
-    const QImage image(QString::fromLocal8Bit(path));
-    ASSERT_EQ(image.size(), QSize(8, 6));
-    EXPECT_EQ(image.pixelColor(0, 0), QColor(12, 34, 56));
+    const ui::Bitmap image = ui::Bitmap::decodeFile(path);
+    ASSERT_EQ(image.size(), base::Size(8, 6));
+    EXPECT_EQ(image.pixel(0, 0), 0xff0c2238u);
 }
 
 TEST_F(ImageCaptureTest, TruncatedDestinationFailsWithoutExtendingFile)

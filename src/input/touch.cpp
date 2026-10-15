@@ -32,7 +32,7 @@ Touch::~Touch()
 }
 
 void Touch::onTouchDown(compositor::Surface* target, Timestamp timestamp, int32_t id,
-                        const QPointF& rootLocation)
+                        const base::PointF& rootLocation)
 {
     if (!target || !m_delegate->canAcceptTouchEventsForSurface(target) || m_points.contains(id))
         return;
@@ -43,7 +43,7 @@ void Touch::onTouchDown(compositor::Surface* target, Timestamp timestamp, int32_
     m_framePending = true;
 }
 
-void Touch::onTouchMotion(Timestamp timestamp, int32_t id, const QPointF& rootLocation)
+void Touch::onTouchMotion(Timestamp timestamp, int32_t id, const base::PointF& rootLocation)
 {
     const auto it = m_points.find(id);
     if (it == m_points.end())
@@ -85,9 +85,8 @@ void Touch::onTouchFrame()
     m_delegate->onTouchFrame();
 }
 
-void Touch::onSurfaceDestroying(compositor::Surface* surface)
+void Touch::onSurfaceDestroying(compositor::Surface*)
 {
-    Q_UNUSED(surface);
     // As upstream, a surface going away cancels every point, not only its own.
     cancelAllTouches();
     m_delegate->onTouchCancel();

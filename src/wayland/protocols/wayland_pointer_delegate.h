@@ -41,13 +41,14 @@ public:
     // input::PointerDelegate:
     void onPointerDestroying(input::Pointer* pointer) override;
     bool canAcceptPointerEventsForSurface(compositor::Surface* surface) const override;
-    void onPointerEnter(compositor::Surface* surface, const QPointF& location,
+    void onPointerEnter(compositor::Surface* surface, const base::PointF& location,
                         input::ButtonFlags pressedButtonFlags) override;
     void onPointerLeave(compositor::Surface* surface) override;
-    void onPointerMotion(input::Timestamp timestamp, const QPointF& location) override;
+    void onPointerMotion(input::Timestamp timestamp, const base::PointF& location) override;
     void onPointerButton(input::Timestamp timestamp, input::ButtonFlags changedButtonFlags,
                          bool pressed) override;
-    void onPointerScroll(input::Timestamp timestamp, const QPointF& offset, bool discrete) override;
+    void onPointerScroll(input::Timestamp timestamp, const base::PointF& offset,
+                         bool discrete) override;
     void onFingerScrollStop(input::Timestamp timestamp) override;
     void onPointerFrame() override;
 
@@ -65,7 +66,7 @@ private:
 
     wl_resource* const m_pointerResource;
     SerialTracker* const m_serialTracker;
-    QPointer<clipboard::SelectionController> m_selection;
+    base::WeakPtr<clipboard::SelectionController> m_selection;
 };
 
 } // namespace cutefish::wayland

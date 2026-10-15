@@ -4,11 +4,9 @@
 
 #include "wm/snap_drag_controller.h"
 
-#include <QAbstractEventDispatcher>
-#include <QLineF>
-
 #include "compositor/compositor.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "scene/snap_preview_node.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -31,12 +29,13 @@ constexpr int kDwellResetThreshold = 16;
 
 SnapDragController::SnapDragController(WindowManager *manager)
     : m_manager(manager)
+    , m_dwellTimer(core::mainLoop())
 {
     m_dwellTimer.setSingleShot(true);
-    m_dwellTimer.setInterval(kDwellMs);
-    QObject::connect(&m_dwellTimer, &QTimer::timeout, [this] {
+    m_dwellTimer.setInterval(std::chrono::milliseconds(kDwellMs));
+    m_dwellTimer.onTimeout = [this] {
         fireDwell();
-    });
+    };
 }
 
 SnapDragController::~SnapDragController()
@@ -44,7 +43,7 @@ SnapDragController::~SnapDragController()
     clearPreview();
 }
 
-void SnapDragController::begin(Window *window, const QPointF &start)
+void SnapDragController::begin(Window *window, const base::PointF &start)
 {
     m_window = window;
     m_snapType = SnapType::None;
@@ -53,9 +52,9 @@ void SnapDragController::begin(Window *window, const QPointF &start)
     stopDwell();
 }
 
-bool SnapDragController::isBelowTopEdge(const QPointF &location) const
+bool SnapDragController::isBelowTopEdge(const base::PointF &location) const
 {
-    const QRect area =
+    const base::Rect area =
             nonSnapArea(m_manager->workAreaFor(m_window), m_manager->outputBoundsFor(m_window));
     return !area.isEmpty() && location.y() > area.top();
 }
@@ -63,10 +62,7 @@ bool SnapDragController::isBelowTopEdge(const QPointF &location) const
 void SnapDragController::startDwell()
 {
     m_dwellPending = true;
-    // Tests drive the countdown by hand and have no event loop to run a timer
-    // in; starting one there only warns.
-    if (QAbstractEventDispatcher::instance())
-        m_dwellTimer.start();
+    m_dwellTimer.start();
 }
 
 void SnapDragController::stopDwell()
@@ -99,7 +95,7 @@ SnapType SnapDragController::constrained(SnapType type) const
     return SnapType::None;
 }
 
-void SnapDragController::update(const QPointF &location)
+void SnapDragController::update(const base::PointF &location)
 {
     if (!m_window)
         return;
@@ -115,7 +111,7 @@ void SnapDragController::update(const QPointF &location)
     if (type == SnapType::Maximize) {
         if (m_canSnapToMaximize) {
             const bool movedAway = m_dwellLocation
-                    && QLineF(*m_dwellLocation, location).length() > kDwellResetThreshold;
+                    && (location - *m_dwellLocation).length() > kDwellResetThreshold;
             if (!m_dwellPending || movedAway) {
                 startDwell();
                 if (movedAway)
@@ -147,7 +143,7 @@ void SnapDragController::setSnapType(SnapType type)
     if (m_snapType == type)
         return;
     m_snapType = type;
-    qCDebug(cfCompositor) << "drag snap target:" << toString(type);
+    CF_DEBUG(cfCompositor) << "drag snap target:" << toString(type);
     updatePreview();
 }
 
@@ -158,7 +154,7 @@ void SnapDragController::updatePreview()
         return;
     }
 
-    const QRect bounds = snapBounds(m_snapType, m_manager->workAreaFor(m_window));
+    const base::Rect bounds = snapBounds(m_snapType, m_manager->workAreaFor(m_window));
     scene::Node *container =
             m_manager->compositor() ? m_manager->compositor()->surfaceContainer() : nullptr;
     if (bounds.isEmpty() || !container)

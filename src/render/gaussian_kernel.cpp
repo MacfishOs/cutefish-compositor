@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -46,11 +47,11 @@ void setGaussianKernel(const GlProgram &program, float sigma, float stepX, float
     glUniform4f(program.uniform("uClamp"), 0, 0, 1, 1);
 }
 
-void setGaussianClamp(const GlProgram &program, const QRect &texels, const QSize &size)
+void setGaussianClamp(const GlProgram &program, const base::Rect &texels, const base::Size &size)
 {
     glUniform4f(program.uniform("uClamp"), (texels.left() + 0.5f) / size.width(),
-                (texels.top() + 0.5f) / size.height(), (texels.right() + 0.5f) / size.width(),
-                (texels.bottom() + 0.5f) / size.height());
+                (texels.top() + 0.5f) / size.height(), (texels.right() - 0.5f) / size.width(),
+                (texels.bottom() - 0.5f) / size.height());
 }
 
 } // namespace cutefish::render

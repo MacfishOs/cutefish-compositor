@@ -6,13 +6,15 @@
 // keyboard_unittest.cc and seat_unittest.cc, against fake delegates.
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 
-#include <QCoreApplication>
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
 #include <string>
 #include <vector>
 
+#include "base/event_loop.h"
+#include "base/geometry.h"
+#include "base/region.h"
 #include "compositor/compositor.h"
 #include "compositor/sub_surface.h"
 #include "compositor/surface.h"
@@ -45,16 +47,16 @@ class FakePointerDelegate : public PointerDelegate
 public:
     struct Enter {
         compositor::Surface* surface;
-        QPointF location;
+        base::PointF location;
         ButtonFlags buttons;
     };
 
     std::vector<std::string> calls;
     std::vector<Enter> enters;
     std::vector<compositor::Surface*> leaves;
-    std::vector<QPointF> motions;
+    std::vector<base::PointF> motions;
     std::vector<std::pair<ButtonFlags, bool>> buttons;
-    std::vector<std::pair<QPointF, bool>> scrolls;
+    std::vector<std::pair<base::PointF, bool>> scrolls;
     int scrollStops = 0;
     int frames = 0;
     bool destroying = false;
@@ -71,7 +73,7 @@ public:
         return std::find(acceptable.begin(), acceptable.end(), surface) != acceptable.end();
     }
 
-    void onPointerEnter(compositor::Surface* surface, const QPointF& location,
+    void onPointerEnter(compositor::Surface* surface, const base::PointF& location,
                         ButtonFlags pressedButtonFlags) override
     {
         calls.push_back("enter");
@@ -84,7 +86,7 @@ public:
         leaves.push_back(surface);
     }
 
-    void onPointerMotion(Timestamp, const QPointF& location) override
+    void onPointerMotion(Timestamp, const base::PointF& location) override
     {
         calls.push_back("motion");
         motions.push_back(location);
@@ -96,7 +98,7 @@ public:
         buttons.emplace_back(changed, pressed);
     }
 
-    void onPointerScroll(Timestamp, const QPointF& offset, bool discrete) override
+    void onPointerScroll(Timestamp, const base::PointF& offset, bool discrete) override
     {
         calls.push_back("scroll");
         scrolls.emplace_back(offset, discrete);
@@ -193,9 +195,9 @@ protected:
     // Mirrors the compositor's own layout: surfaces in one container, cursor
     // surfaces lifted out into another.
     scene::Node* surfaceContainer =
-        scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+        scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node* cursorContainer =
-        scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("cursor")));
+        scene.root()->addChild(std::make_unique<scene::Node>("cursor"));
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     std::shared_ptr<compositor::ShmPool> pool = testsupport::makePool(1 << 20);
@@ -204,12 +206,12 @@ protected:
 
     void SetUp() override
     {
-        scene.setSize(QSize(800, 600));
+        scene.setSize(base::Size(800, 600));
         seat.setCursorContainer(cursorContainer);
     }
 
     // Gives `surface` content of `size` and places it at `position`.
-    void map(compositor::Surface* surface, const QPoint& position, const QSize& size)
+    void map(compositor::Surface* surface, const base::Point& position, const base::Size& size)
     {
         auto buffer = pool->createBuffer(size, 0, size.width() * 4,
                                          render::PixelFormat::Bgrx8888, nullptr);
@@ -228,21 +230,21 @@ private:
 TEST_F(InputTest, PointerEntersAndLeavesAsItCrossesASurface)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(100, 100), QSize(50, 40));
+    map(surface.get(), base::Point(100, 100), base::Size(50, 40));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(10, 10));
+    seat.onPointerMotion(at(1), base::PointF(10, 10));
     EXPECT_TRUE(delegate.enters.empty());
 
-    seat.onPointerMotion(at(2), QPointF(120, 110));
+    seat.onPointerMotion(at(2), base::PointF(120, 110));
     ASSERT_EQ(1u, delegate.enters.size());
     EXPECT_EQ(surface.get(), delegate.enters[0].surface);
     // Enter and leave are each followed by their own frame.
     EXPECT_EQ(std::vector<std::string>({"enter", "frame"}), delegate.calls);
 
-    seat.onPointerMotion(at(3), QPointF(400, 400));
+    seat.onPointerMotion(at(3), base::PointF(400, 400));
     ASSERT_EQ(1u, delegate.leaves.size());
     EXPECT_EQ(surface.get(), delegate.leaves[0]);
     EXPECT_EQ(std::vector<std::string>({"enter", "frame", "leave", "frame"}), delegate.calls);
@@ -251,87 +253,87 @@ TEST_F(InputTest, PointerEntersAndLeavesAsItCrossesASurface)
 TEST_F(InputTest, OnePointerMotionIsHitTestedOnceForAllItsHandlers)
 {
     auto below = compositor.createSurface();
-    map(below.get(), QPoint(100, 100), QSize(50, 40));
+    map(below.get(), base::Point(100, 100), base::Size(50, 40));
     auto above = compositor.createSurface();
-    map(above.get(), QPoint(300, 300), QSize(50, 40));
+    map(above.get(), base::Point(300, 300), base::Size(50, 40));
     EXPECT_EQ(compositor.surfaceForNode(above->node()), above.get());
     EXPECT_EQ(compositor.surfaceForNode(surfaceContainer), nullptr);
 
-    QPointF local;
+    base::PointF local;
     seat.beginPointerMotion();
-    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, QPointF(120, 110), &local), below.get());
-    EXPECT_EQ(local, QPointF(20, 10));
+    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, base::PointF(120, 110), &local), below.get());
+    EXPECT_EQ(local, base::PointF(20, 10));
     // Whatever changes while the motion is dispatched, its handlers agree.
-    above->setPosition(QPoint(100, 100));
+    above->setPosition(base::Point(100, 100));
     local = {};
-    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, QPointF(120, 110), &local), below.get());
-    EXPECT_EQ(local, QPointF(20, 10));
-    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, QPointF(121, 110), &local), above.get());
+    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, base::PointF(120, 110), &local), below.get());
+    EXPECT_EQ(local, base::PointF(20, 10));
+    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, base::PointF(121, 110), &local), above.get());
     seat.endPointerMotion();
-    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, QPointF(120, 110), &local), above.get());
+    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, base::PointF(120, 110), &local), above.get());
     // A surface destroyed in the meantime is not handed out.
     seat.beginPointerMotion();
-    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, QPointF(120, 110), &local), above.get());
+    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, base::PointF(120, 110), &local), above.get());
     above.reset();
-    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, QPointF(120, 110), &local), below.get());
+    EXPECT_EQ(seat.pointerTargetAt(surfaceContainer, base::PointF(120, 110), &local), below.get());
     seat.endPointerMotion();
 }
 
 TEST_F(InputTest, EnterAndMotionCarrySurfaceLocalCoordinates)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(100, 100), QSize(50, 40));
+    map(surface.get(), base::Point(100, 100), base::Size(50, 40));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(120, 110));
+    seat.onPointerMotion(at(1), base::PointF(120, 110));
     ASSERT_EQ(1u, delegate.enters.size());
-    EXPECT_EQ(QPointF(20, 10), delegate.enters[0].location);
+    EXPECT_EQ(base::PointF(20, 10), delegate.enters[0].location);
     // The enter already carried the location, so no motion follows it.
     EXPECT_TRUE(delegate.motions.empty());
 
-    seat.onPointerMotion(at(2), QPointF(130.5, 115.25));
+    seat.onPointerMotion(at(2), base::PointF(130.5, 115.25));
     ASSERT_EQ(1u, delegate.motions.size());
-    EXPECT_EQ(QPointF(30.5, 15.25), delegate.motions[0]);
+    EXPECT_EQ(base::PointF(30.5, 15.25), delegate.motions[0]);
 }
 
 TEST_F(InputTest, ViewportPreservesSurfaceLocalPointerCoordinates)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(100, 100), QSize(400, 200));
+    map(surface.get(), base::Point(100, 100), base::Size(400, 200));
     surface->setBufferScale(2);
-    surface->setCrop(QRectF(25, 10, 100, 50));
-    surface->setViewport(QSize(200, 100));
+    surface->setCrop(base::RectF(25, 10, 100, 50));
+    surface->setViewport(base::Size(200, 100));
     surface->commit();
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(120, 110));
+    seat.onPointerMotion(at(1), base::PointF(120, 110));
     ASSERT_EQ(1u, delegate.enters.size());
-    EXPECT_EQ(QPointF(20, 10), delegate.enters[0].location);
+    EXPECT_EQ(base::PointF(20, 10), delegate.enters[0].location);
     // The enter already carried the location, so no motion follows it.
     EXPECT_TRUE(delegate.motions.empty());
 
-    seat.onPointerMotion(at(2), QPointF(130.5, 115.25));
+    seat.onPointerMotion(at(2), base::PointF(130.5, 115.25));
     ASSERT_EQ(1u, delegate.motions.size());
-    EXPECT_EQ(QPointF(30.5, 15.25), delegate.motions[0]);
+    EXPECT_EQ(base::PointF(30.5, 15.25), delegate.motions[0]);
 }
 
 TEST_F(InputTest, AMotionToTheSameLocationIsSuppressed)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(200, 200));
+    map(surface.get(), base::Point(0, 0), base::Size(200, 200));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(10, 10));
-    seat.onPointerMotion(at(2), QPointF(10, 10));
+    seat.onPointerMotion(at(1), base::PointF(10, 10));
+    seat.onPointerMotion(at(2), base::PointF(10, 10));
     EXPECT_TRUE(delegate.motions.empty());
 
-    seat.onPointerMotion(at(3), QPointF(11, 10));
+    seat.onPointerMotion(at(3), base::PointF(11, 10));
     EXPECT_EQ(1u, delegate.motions.size());
 }
 
@@ -340,42 +342,42 @@ TEST_F(InputTest, HitTestingDescendsIntoSubsurfaces)
     auto parent = compositor.createSurface();
     auto child = compositor.createSurface();
     auto sub = compositor::SubSurface::create(child.get(), parent.get());
-    sub->setPosition(QPoint(20, 20));
+    sub->setPosition(base::Point(20, 20));
 
-    map(child.get(), QPoint(0, 0), QSize(30, 30));
-    map(parent.get(), QPoint(100, 100), QSize(80, 80));
+    map(child.get(), base::Point(0, 0), base::Size(30, 30));
+    map(parent.get(), base::Point(100, 100), base::Size(80, 80));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
     // (105,105) is over the parent only.
-    seat.onPointerMotion(at(1), QPointF(105, 105));
+    seat.onPointerMotion(at(1), base::PointF(105, 105));
     ASSERT_EQ(1u, delegate.enters.size());
     EXPECT_EQ(parent.get(), delegate.enters[0].surface);
-    EXPECT_EQ(QPointF(5, 5), delegate.enters[0].location);
+    EXPECT_EQ(base::PointF(5, 5), delegate.enters[0].location);
 
     // (125,125) is inside the subsurface, which is stacked above the parent.
-    seat.onPointerMotion(at(2), QPointF(125, 125));
+    seat.onPointerMotion(at(2), base::PointF(125, 125));
     ASSERT_EQ(2u, delegate.enters.size());
     EXPECT_EQ(child.get(), delegate.enters[1].surface);
     // Local to the subsurface, not to the parent.
-    EXPECT_EQ(QPointF(5, 5), delegate.enters[1].location);
+    EXPECT_EQ(base::PointF(5, 5), delegate.enters[1].location);
     EXPECT_EQ(1u, delegate.leaves.size());
 }
 
 TEST_F(InputTest, AnInputRegionExcludesPartOfASurface)
 {
     auto surface = compositor.createSurface();
-    surface->setInputRegion(QRegion(QRect(0, 0, 20, 20)));
-    map(surface.get(), QPoint(100, 100), QSize(80, 80));
+    surface->setInputRegion(base::Region(base::Rect(0, 0, 20, 20)));
+    map(surface.get(), base::Point(100, 100), base::Size(80, 80));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(150, 150));
+    seat.onPointerMotion(at(1), base::PointF(150, 150));
     EXPECT_TRUE(delegate.enters.empty());
 
-    seat.onPointerMotion(at(2), QPointF(110, 110));
+    seat.onPointerMotion(at(2), base::PointF(110, 110));
     EXPECT_EQ(1u, delegate.enters.size());
 }
 
@@ -383,14 +385,14 @@ TEST_F(InputTest, ButtonsAreReportedAndSeedThePressedSetOnEnter)
 {
     auto first = compositor.createSurface();
     auto second = compositor.createSurface();
-    map(first.get(), QPoint(0, 0), QSize(100, 100));
-    map(second.get(), QPoint(200, 0), QSize(100, 100));
+    map(first.get(), base::Point(0, 0), base::Size(100, 100));
+    map(second.get(), base::Point(200, 0), base::Size(100, 100));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(50, 50));
-    seat.onPointerButton(at(2), QPointF(50, 50), BTN_LEFT, true);
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
+    seat.onPointerButton(at(2), base::PointF(50, 50), BTN_LEFT, true);
 
     ASSERT_EQ(1u, delegate.buttons.size());
     EXPECT_EQ(LeftButton, delegate.buttons[0].first);
@@ -398,17 +400,17 @@ TEST_F(InputTest, ButtonsAreReportedAndSeedThePressedSetOnEnter)
 
     // The press holds the pointer: crossing the second surface changes nothing
     // until the button comes back up.
-    seat.onPointerMotion(at(3), QPointF(250, 50));
+    seat.onPointerMotion(at(3), base::PointF(250, 50));
     EXPECT_EQ(1u, delegate.enters.size());
     EXPECT_TRUE(delegate.leaves.empty());
 
-    seat.onPointerButton(at(4), QPointF(250, 50), BTN_LEFT, false);
+    seat.onPointerButton(at(4), base::PointF(250, 50), BTN_LEFT, false);
     ASSERT_EQ(2u, delegate.buttons.size());
     EXPECT_FALSE(delegate.buttons[1].second);
     EXPECT_EQ(NoButton, seat.pressedButtons());
 
     // With the grab gone the next motion lands where the pointer actually is.
-    seat.onPointerMotion(at(5), QPointF(251, 50));
+    seat.onPointerMotion(at(5), base::PointF(251, 50));
     ASSERT_EQ(2u, delegate.enters.size());
     EXPECT_EQ(second.get(), delegate.enters[1].surface);
 }
@@ -416,7 +418,7 @@ TEST_F(InputTest, ButtonsAreReportedAndSeedThePressedSetOnEnter)
 TEST_F(InputTest, AnEnterReportsButtonsHeldOutsideTheClient)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
@@ -424,7 +426,7 @@ TEST_F(InputTest, AnEnterReportsButtonsHeldOutsideTheClient)
     // A press the window manager consumed: the seat tracks the button, but no
     // client took the implicit grab.
     seat.updatePointerButtonState(BTN_LEFT, true);
-    seat.onPointerMotion(at(1), QPointF(50, 50));
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
     ASSERT_EQ(1u, delegate.enters.size());
     EXPECT_EQ(LeftButton, delegate.enters[0].buttons);
 }
@@ -432,32 +434,32 @@ TEST_F(InputTest, AnEnterReportsButtonsHeldOutsideTheClient)
 TEST_F(InputTest, AGrabbedPointerKeepsReportingLocationsOutsideTheSurface)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(100, 100), QSize(50, 40));
+    map(surface.get(), base::Point(100, 100), base::Size(50, 40));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(120, 110));
-    seat.onPointerButton(at(2), QPointF(120, 110), BTN_LEFT, true);
+    seat.onPointerMotion(at(1), base::PointF(120, 110));
+    seat.onPointerButton(at(2), base::PointF(120, 110), BTN_LEFT, true);
     EXPECT_EQ(surface.get(), seat.pointerGrabSurface());
 
     // Well outside the surface, and negative in both axes.
-    seat.onPointerMotion(at(3), QPointF(10, 20));
+    seat.onPointerMotion(at(3), base::PointF(10, 20));
     EXPECT_EQ(surface.get(), pointer.focusedSurface());
     ASSERT_EQ(1u, delegate.motions.size());
-    EXPECT_EQ(QPointF(-90, -80), delegate.motions[0]);
+    EXPECT_EQ(base::PointF(-90, -80), delegate.motions[0]);
     EXPECT_TRUE(delegate.leaves.empty());
 
     // A second button joins the drag and does not end it.
-    seat.onPointerButton(at(4), QPointF(10, 20), BTN_RIGHT, true);
-    seat.onPointerButton(at(5), QPointF(10, 20), BTN_RIGHT, false);
+    seat.onPointerButton(at(4), base::PointF(10, 20), BTN_RIGHT, true);
+    seat.onPointerButton(at(5), base::PointF(10, 20), BTN_RIGHT, false);
     EXPECT_EQ(surface.get(), seat.pointerGrabSurface());
 
-    seat.onPointerButton(at(6), QPointF(10, 20), BTN_LEFT, false);
+    seat.onPointerButton(at(6), base::PointF(10, 20), BTN_LEFT, false);
     EXPECT_EQ(nullptr, seat.pointerGrabSurface());
 
     // The grab ended over nothing, so the surface is left on the next motion.
-    seat.onPointerMotion(at(7), QPointF(11, 20));
+    seat.onPointerMotion(at(7), base::PointF(11, 20));
     EXPECT_EQ(nullptr, pointer.focusedSurface());
     ASSERT_EQ(1u, delegate.leaves.size());
     EXPECT_EQ(surface.get(), delegate.leaves[0]);
@@ -467,19 +469,19 @@ TEST_F(InputTest, AGrabHidesTheEventsFromEveryOtherClient)
 {
     auto mine = compositor.createSurface();
     auto theirs = compositor.createSurface();
-    map(mine.get(), QPoint(0, 0), QSize(100, 100));
-    map(theirs.get(), QPoint(200, 0), QSize(100, 100));
+    map(mine.get(), base::Point(0, 0), base::Size(100, 100));
+    map(theirs.get(), base::Point(200, 0), base::Size(100, 100));
 
     FakePointerDelegate first, second;
     first.acceptable = {mine.get()};
     second.acceptable = {theirs.get()};
     Pointer firstPointer(&first, &seat), secondPointer(&second, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(50, 50));
-    seat.onPointerButton(at(2), QPointF(50, 50), BTN_LEFT, true);
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
+    seat.onPointerButton(at(2), base::PointF(50, 50), BTN_LEFT, true);
     const auto secondEvents = second.calls.size();
 
-    seat.onPointerMotion(at(3), QPointF(250, 50));
+    seat.onPointerMotion(at(3), base::PointF(250, 50));
     EXPECT_EQ(mine.get(), firstPointer.focusedSurface());
     EXPECT_EQ(nullptr, secondPointer.focusedSurface());
     EXPECT_EQ(secondEvents, second.calls.size());
@@ -489,18 +491,18 @@ TEST_F(InputTest, DestroyingTheGrabbedSurfaceEndsTheGrab)
 {
     auto surface = compositor.createSurface();
     auto other = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
-    map(other.get(), QPoint(200, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
+    map(other.get(), base::Point(200, 0), base::Size(100, 100));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(50, 50));
-    seat.onPointerButton(at(2), QPointF(50, 50), BTN_LEFT, true);
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
+    seat.onPointerButton(at(2), base::PointF(50, 50), BTN_LEFT, true);
     surface.reset();
     EXPECT_EQ(nullptr, seat.pointerGrabSurface());
 
-    seat.onPointerMotion(at(3), QPointF(250, 50));
+    seat.onPointerMotion(at(3), base::PointF(250, 50));
     ASSERT_EQ(2u, delegate.enters.size());
     EXPECT_EQ(other.get(), delegate.enters[1].surface);
 }
@@ -508,22 +510,22 @@ TEST_F(InputTest, DestroyingTheGrabbedSurfaceEndsTheGrab)
 TEST_F(InputTest, ScrollAndScrollStopReachTheDelegate)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
-    seat.onPointerMotion(at(1), QPointF(50, 50));
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
 
-    seat.onPointerAxis(at(2), QPointF(50, 50), QPointF(0, 10), true);
+    seat.onPointerAxis(at(2), base::PointF(50, 50), base::PointF(0, 10), true);
     ASSERT_EQ(1u, delegate.scrolls.size());
-    EXPECT_EQ(QPointF(0, 10), delegate.scrolls[0].first);
+    EXPECT_EQ(base::PointF(0, 10), delegate.scrolls[0].first);
     EXPECT_TRUE(delegate.scrolls[0].second);
 
-    seat.onPointerAxis(at(3), QPointF(50, 50), QPointF(3.5, -2.0), false);
+    seat.onPointerAxis(at(3), base::PointF(50, 50), base::PointF(3.5, -2.0), false);
     ASSERT_EQ(2u, delegate.scrolls.size());
     EXPECT_FALSE(delegate.scrolls[1].second);
 
-    seat.onPointerAxisStop(at(4), QPointF(50, 50));
+    seat.onPointerAxisStop(at(4), base::PointF(50, 50));
     EXPECT_EQ(1, delegate.scrollStops);
     // Every scroll is its own frame.
     EXPECT_EQ(4, delegate.frames);
@@ -533,17 +535,17 @@ TEST_F(InputTest, APointerIgnoresSurfacesItsClientDoesNotOwn)
 {
     auto mine = compositor.createSurface();
     auto theirs = compositor.createSurface();
-    map(mine.get(), QPoint(0, 0), QSize(100, 100));
-    map(theirs.get(), QPoint(200, 0), QSize(100, 100));
+    map(mine.get(), base::Point(0, 0), base::Size(100, 100));
+    map(theirs.get(), base::Point(200, 0), base::Size(100, 100));
 
     FakePointerDelegate delegate;
     delegate.acceptable = {mine.get()};
     Pointer pointer(&delegate, &seat);
 
-    seat.onPointerMotion(at(1), QPointF(250, 50));
+    seat.onPointerMotion(at(1), base::PointF(250, 50));
     EXPECT_TRUE(delegate.enters.empty());
 
-    seat.onPointerMotion(at(2), QPointF(50, 50));
+    seat.onPointerMotion(at(2), base::PointF(50, 50));
     ASSERT_EQ(1u, delegate.enters.size());
     EXPECT_EQ(mine.get(), delegate.enters[0].surface);
 }
@@ -551,11 +553,11 @@ TEST_F(InputTest, APointerIgnoresSurfacesItsClientDoesNotOwn)
 TEST_F(InputTest, DestroyingTheFocusedSurfaceLeavesAndClearsFocus)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
-    seat.onPointerMotion(at(1), QPointF(50, 50));
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
     ASSERT_EQ(surface.get(), pointer.focusedSurface());
 
     compositor::Surface* raw = surface.get();
@@ -566,7 +568,7 @@ TEST_F(InputTest, DestroyingTheFocusedSurfaceLeavesAndClearsFocus)
     EXPECT_EQ(raw, delegate.leaves[0]);
 
     // Nothing dangles afterwards.
-    seat.onPointerMotion(at(2), QPointF(60, 60));
+    seat.onPointerMotion(at(2), base::PointF(60, 60));
     EXPECT_EQ(1u, delegate.enters.size());
 }
 
@@ -574,28 +576,28 @@ TEST_F(InputTest, SetCursorLiftsTheSurfaceOutOfTheStackAndTracksTheHotspot)
 {
     auto surface = compositor.createSurface();
     auto cursor = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(200, 200));
-    map(cursor.get(), QPoint(0, 0), QSize(24, 24));
+    map(surface.get(), base::Point(0, 0), base::Size(200, 200));
+    map(cursor.get(), base::Point(0, 0), base::Size(24, 24));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
     // set_cursor before focus does nothing, per the protocol.
-    pointer.setCursor(cursor.get(), QPoint(4, 4));
+    pointer.setCursor(cursor.get(), base::Point(4, 4));
     EXPECT_EQ(nullptr, pointer.cursorSurface());
 
-    seat.onPointerMotion(at(1), QPointF(50, 60));
-    pointer.setCursor(cursor.get(), QPoint(4, 4));
+    seat.onPointerMotion(at(1), base::PointF(50, 60));
+    pointer.setCursor(cursor.get(), base::Point(4, 4));
 
     EXPECT_EQ(cursor.get(), pointer.cursorSurface());
-    EXPECT_EQ(QPoint(4, 4), pointer.hotspot());
+    EXPECT_EQ(base::Point(4, 4), pointer.hotspot());
     EXPECT_TRUE(cursor->hasRole());
     // Out of the surface container, into the cursor one.
     EXPECT_EQ(cursorContainer, cursor->node()->parent());
-    EXPECT_EQ(QPoint(46, 56), cursor->position());
+    EXPECT_EQ(base::Point(46, 56), cursor->position());
 
-    seat.onPointerMotion(at(2), QPointF(100, 100));
-    EXPECT_EQ(QPoint(96, 96), cursor->position());
+    seat.onPointerMotion(at(2), base::PointF(100, 100));
+    EXPECT_EQ(base::Point(96, 96), cursor->position());
 
     // A cursor surface is never a hit-test target.
     EXPECT_EQ(surface.get(), pointer.focusedSurface());
@@ -605,34 +607,34 @@ TEST_F(InputTest, ViewportCursorPreservesHotspotAndSampling)
 {
     auto surface = compositor.createSurface();
     auto cursor = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(200, 200));
-    map(cursor.get(), QPoint(0, 0), QSize(24, 24));
+    map(surface.get(), base::Point(0, 0), base::Size(200, 200));
+    map(cursor.get(), base::Point(0, 0), base::Size(24, 24));
 
-    cursor->setCrop(QRectF(4, 4, 16, 16));
-    cursor->setViewport(QSize(32, 32));
+    cursor->setCrop(base::RectF(4, 4, 16, 16));
+    cursor->setViewport(base::Size(32, 32));
     cursor->commit();
-    EXPECT_EQ(cursor->contentSize(), QSize(32, 32));
-    EXPECT_EQ(cursor->surfaceToBuffer().map(QPointF()), QPointF(4, 4));
+    EXPECT_EQ(cursor->contentSize(), base::Size(32, 32));
+    EXPECT_EQ(cursor->surfaceToBuffer().map(base::PointF()), base::PointF(4, 4));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
 
     // set_cursor before focus does nothing, per the protocol.
-    pointer.setCursor(cursor.get(), QPoint(4, 4));
+    pointer.setCursor(cursor.get(), base::Point(4, 4));
     EXPECT_EQ(nullptr, pointer.cursorSurface());
 
-    seat.onPointerMotion(at(1), QPointF(50, 60));
-    pointer.setCursor(cursor.get(), QPoint(4, 4));
+    seat.onPointerMotion(at(1), base::PointF(50, 60));
+    pointer.setCursor(cursor.get(), base::Point(4, 4));
 
     EXPECT_EQ(cursor.get(), pointer.cursorSurface());
-    EXPECT_EQ(QPoint(4, 4), pointer.hotspot());
+    EXPECT_EQ(base::Point(4, 4), pointer.hotspot());
     EXPECT_TRUE(cursor->hasRole());
     // Out of the surface container, into the cursor one.
     EXPECT_EQ(cursorContainer, cursor->node()->parent());
-    EXPECT_EQ(QPoint(46, 56), cursor->position());
+    EXPECT_EQ(base::Point(46, 56), cursor->position());
 
-    seat.onPointerMotion(at(2), QPointF(100, 100));
-    EXPECT_EQ(QPoint(96, 96), cursor->position());
+    seat.onPointerMotion(at(2), base::PointF(100, 100));
+    EXPECT_EQ(base::Point(96, 96), cursor->position());
 
     // A cursor surface is never a hit-test target.
     EXPECT_EQ(surface.get(), pointer.focusedSurface());
@@ -642,17 +644,17 @@ TEST_F(InputTest, LosingFocusDropsTheCursorSurface)
 {
     auto surface = compositor.createSurface();
     auto cursor = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
-    map(cursor.get(), QPoint(0, 0), QSize(24, 24));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
+    map(cursor.get(), base::Point(0, 0), base::Size(24, 24));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
-    seat.onPointerMotion(at(1), QPointF(50, 50));
-    pointer.setCursor(cursor.get(), QPoint(0, 0));
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
+    pointer.setCursor(cursor.get(), base::Point(0, 0));
     ASSERT_EQ(cursor.get(), pointer.cursorSurface());
 
     // The client must call set_cursor again in response to the next enter.
-    seat.onPointerMotion(at(2), QPointF(500, 500));
+    seat.onPointerMotion(at(2), base::PointF(500, 500));
     EXPECT_EQ(nullptr, pointer.cursorSurface());
     EXPECT_FALSE(cursor->hasRole());
 }
@@ -662,14 +664,14 @@ TEST_F(InputTest, ASurfaceWithARoleCannotBecomeTheCursor)
     auto surface = compositor.createSurface();
     auto child = compositor.createSurface();
     auto sub = compositor::SubSurface::create(child.get(), surface.get());
-    map(child.get(), QPoint(0, 0), QSize(20, 20));
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(child.get(), base::Point(0, 0), base::Size(20, 20));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
-    seat.onPointerMotion(at(1), QPointF(50, 50));
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
 
-    pointer.setCursor(child.get(), QPoint(0, 0));
+    pointer.setCursor(child.get(), base::Point(0, 0));
     EXPECT_EQ(nullptr, pointer.cursorSurface());
 }
 
@@ -677,13 +679,13 @@ TEST_F(InputTest, ACursorSurfaceCannotBecomeASubsurface)
 {
     auto surface = compositor.createSurface();
     auto cursor = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
-    map(cursor.get(), QPoint(0, 0), QSize(24, 24));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
+    map(cursor.get(), base::Point(0, 0), base::Size(24, 24));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
-    seat.onPointerMotion(at(1), QPointF(50, 50));
-    pointer.setCursor(cursor.get(), QPoint(0, 0));
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
+    pointer.setCursor(cursor.get(), base::Point(0, 0));
     ASSERT_EQ(cursor.get(), pointer.cursorSurface());
 
     EXPECT_EQ(nullptr, compositor::SubSurface::create(cursor.get(), surface.get()));
@@ -693,13 +695,13 @@ TEST_F(InputTest, DestroyingTheCursorSurfaceClearsIt)
 {
     auto surface = compositor.createSurface();
     auto cursor = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
-    map(cursor.get(), QPoint(0, 0), QSize(24, 24));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
+    map(cursor.get(), base::Point(0, 0), base::Size(24, 24));
 
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
-    seat.onPointerMotion(at(1), QPointF(50, 50));
-    pointer.setCursor(cursor.get(), QPoint(0, 0));
+    seat.onPointerMotion(at(1), base::PointF(50, 50));
+    pointer.setCursor(cursor.get(), base::Point(0, 0));
 
     cursor.reset();
     EXPECT_EQ(nullptr, pointer.cursorSurface());
@@ -725,7 +727,7 @@ TEST_F(InputTest, AKeyboardSendsItsKeymapAndRepeatInfoOnCreation)
 TEST_F(InputTest, ALayoutChangeResendsTheKeymapWithTheHeldModifiers)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
@@ -778,7 +780,7 @@ TEST_F(InputTest, RepeatSettingsReachEveryKeyboardOnlyWhenTheyChange)
 TEST_F(InputTest, KeyboardFocusFollowsTheSeatWithModifiersBeforeEnter)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
@@ -798,7 +800,7 @@ TEST_F(InputTest, KeyboardFocusFollowsTheSeatWithModifiersBeforeEnter)
 TEST_F(InputTest, EnterCarriesTheKeysAlreadyPressed)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
@@ -825,7 +827,7 @@ TEST_F(InputTest, EnterCarriesTheKeysAlreadyPressed)
 TEST_F(InputTest, KeyEventsReachTheFocusedSurfaceBeforeTheModifiersTheyChange)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
@@ -858,7 +860,7 @@ TEST_F(InputTest, KeyEventsReachTheFocusedSurfaceBeforeTheModifiersTheyChange)
 TEST_F(InputTest, ARepeatedPressForAHeldKeyIsNotForwarded)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
@@ -874,7 +876,7 @@ TEST_F(InputTest, ARepeatedPressForAHeldKeyIsNotForwarded)
 TEST_F(InputTest, DestroyingTheFocusedSurfaceLeavesTheKeyboard)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
 
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
@@ -899,8 +901,8 @@ TEST_F(InputTest, AKeyboardIgnoresFocusOnSurfacesItsClientDoesNotOwn)
 {
     auto mine = compositor.createSurface();
     auto theirs = compositor.createSurface();
-    map(mine.get(), QPoint(0, 0), QSize(100, 100));
-    map(theirs.get(), QPoint(200, 0), QSize(100, 100));
+    map(mine.get(), base::Point(0, 0), base::Size(100, 100));
+    map(theirs.get(), base::Point(200, 0), base::Size(100, 100));
 
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
@@ -918,8 +920,8 @@ TEST_F(InputTest, ABorrowedFocusLeavesTheOtherClientFocusedWithoutNewKeys)
 {
     auto app = compositor.createSurface();
     auto capture = compositor.createSurface();
-    map(app.get(), QPoint(0, 0), QSize(100, 100));
-    map(capture.get(), QPoint(0, 0), QSize(800, 600));
+    map(app.get(), base::Point(0, 0), base::Size(100, 100));
+    map(capture.get(), base::Point(0, 0), base::Size(800, 600));
 
     auto appDelegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* appKeys = appDelegate.get();
@@ -969,14 +971,14 @@ TEST_F(InputTest, ABorrowedFocusLeavesTheOtherClientFocusedWithoutNewKeys)
 TEST_F(InputTest, ThePointerIsClampedToTheOutput)
 {
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
-    manager.warpPointer(QPointF(400, 300));
+    manager.setBounds(base::Size(800, 600));
+    manager.warpPointer(base::PointF(400, 300));
 
-    manager.onPointerMotion(at(1), QPointF(-1000, -1000));
-    EXPECT_EQ(QPointF(0, 0), manager.pointerPosition());
+    manager.onPointerMotion(at(1), base::PointF(-1000, -1000));
+    EXPECT_EQ(base::PointF(0, 0), manager.pointerPosition());
 
-    manager.onPointerMotion(at(2), QPointF(5000, 5000));
-    EXPECT_EQ(QPointF(799, 599), manager.pointerPosition());
+    manager.onPointerMotion(at(2), base::PointF(5000, 5000));
+    EXPECT_EQ(base::PointF(799, 599), manager.pointerPosition());
 }
 
 // aura clears hover when a touch hides the cursor (a mouse exit with
@@ -984,28 +986,28 @@ TEST_F(InputTest, ThePointerIsClampedToTheOutput)
 TEST_F(InputTest, ATouchTakesTheHoverAwayUntilTheMouseIsUsedAgain)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(400, 300));
+    map(surface.get(), base::Point(0, 0), base::Size(400, 300));
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
+    manager.setBounds(base::Size(800, 600));
     manager.onPointerMotionAbsolute(at(0), {100, 100});
     ASSERT_EQ(1u, delegate.enters.size());
 
     delegate.calls.clear();
-    manager.onTouchDown(at(1), 1, QPointF(0.5, 0.5));
+    manager.onTouchDown(at(1), 1, base::PointF(0.5, 0.5));
     manager.onTouchUp(at(2), 1);
     manager.onTouchFrame(at(2));
     EXPECT_TRUE(seat.cursorHiddenByTouch());
     EXPECT_EQ(std::vector<std::string>({"leave", "frame"}), delegate.calls);
 
     delegate.calls.clear();
-    manager.onPointerAxis(at(3), QPointF(0, 10), true);
+    manager.onPointerAxis(at(3), base::PointF(0, 10), true);
     EXPECT_FALSE(seat.cursorHiddenByTouch());
     EXPECT_EQ(std::vector<std::string>({"enter", "frame", "scroll", "frame"}), delegate.calls);
-    EXPECT_EQ(QPointF(100, 100), delegate.enters.back().location);
+    EXPECT_EQ(base::PointF(100, 100), delegate.enters.back().location);
 
-    manager.onTouchDown(at(4), 1, QPointF(0.5, 0.5));
+    manager.onTouchDown(at(4), 1, base::PointF(0.5, 0.5));
     manager.onTouchUp(at(5), 1);
     delegate.calls.clear();
     manager.onPointerButton(at(6), BTN_LEFT, true);
@@ -1014,7 +1016,7 @@ TEST_F(InputTest, ATouchTakesTheHoverAwayUntilTheMouseIsUsedAgain)
 
     // The surface the mouse is pressing on keeps it.
     delegate.calls.clear();
-    manager.onTouchDown(at(7), 1, QPointF(0.5, 0.5));
+    manager.onTouchDown(at(7), 1, base::PointF(0.5, 0.5));
     manager.onTouchUp(at(8), 1);
     EXPECT_FALSE(seat.cursorHiddenByTouch());
     EXPECT_TRUE(delegate.calls.empty());
@@ -1025,31 +1027,31 @@ TEST_F(InputTest, ATouchTakesTheHoverAwayUntilTheMouseIsUsedAgain)
 // gets its enter without the pointer moving, but not while a button is held.
 TEST_F(InputTest, ASurfaceMappedUnderAStillPointerIsEntered)
 {
-    int argc = 0;
-    QCoreApplication application(argc, nullptr);
+    base::EventLoop *loop = base::EventLoop::current();
+    ASSERT_NE(loop, nullptr);
     FakePointerDelegate delegate;
     Pointer pointer(&delegate, &seat);
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
+    manager.setBounds(base::Size(800, 600));
     manager.onPointerMotionAbsolute(at(0), {100, 100});
     ASSERT_TRUE(delegate.enters.empty());
 
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(400, 300));
+    map(surface.get(), base::Point(0, 0), base::Size(400, 300));
     manager.synthesizeMotion();
     manager.synthesizeMotion();
     EXPECT_TRUE(delegate.enters.empty());
-    QCoreApplication::sendPostedEvents();
+    loop->dispatch();
     ASSERT_EQ(1u, delegate.enters.size());
     EXPECT_EQ(surface.get(), delegate.enters[0].surface);
-    EXPECT_EQ(QPointF(100, 100), delegate.enters[0].location);
+    EXPECT_EQ(base::PointF(100, 100), delegate.enters[0].location);
     EXPECT_TRUE(delegate.motions.empty());
 
     manager.onPointerButton(at(1), BTN_LEFT, true);
     auto above = compositor.createSurface();
-    map(above.get(), QPoint(0, 0), QSize(400, 300));
+    map(above.get(), base::Point(0, 0), base::Size(400, 300));
     manager.synthesizeMotion();
-    QCoreApplication::sendPostedEvents();
+    loop->dispatch();
     EXPECT_EQ(1u, delegate.enters.size());
     manager.onPointerButton(at(2), BTN_LEFT, false);
 }
@@ -1059,12 +1061,12 @@ TEST_F(InputTest, PointerStartsAtThePrimaryDisplaysCentre)
     // Upstream DrmCursor::OnWindowAdded: a cursor not placed yet goes to the
     // centre, not the origin a new compositor would otherwise show it at.
     InputManager manager(&seat);
-    manager.setTopology({QRect(-200, 0, 200, 100), QRect(0, 0, 300, 200)}, QRect(0, 0, 300, 200));
-    EXPECT_EQ(manager.pointerPosition(), QPointF(150, 100));
+    manager.setTopology({base::Rect(-200, 0, 200, 100), base::Rect(0, 0, 300, 200)}, base::Rect(0, 0, 300, 200));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(150, 100));
     // Placed once: a later layout keeps the pointer where it is.
-    manager.warpPointer(QPointF(-100, 50));
-    manager.setTopology({QRect(-200, 0, 200, 100), QRect(0, 0, 400, 300)}, QRect(0, 0, 400, 300));
-    EXPECT_EQ(manager.pointerPosition(), QPointF(-100, 50));
+    manager.warpPointer(base::PointF(-100, 50));
+    manager.setTopology({base::Rect(-200, 0, 200, 100), base::Rect(0, 0, 400, 300)}, base::Rect(0, 0, 400, 300));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(-100, 50));
 }
 
 TEST_F(InputTest, PointerKeepsItsSpotOnADisplayThatChangesScale)
@@ -1073,45 +1075,45 @@ TEST_F(InputTest, PointerKeepsItsSpotOnADisplayThatChangesScale)
     // stay centred, not keep a logical point that is now bottom right. The
     // coordinator republishes through an empty layout, as every reprobe does.
     InputManager manager(&seat);
-    manager.setTopology({QRect(0, 0, 2160, 1440)});
-    EXPECT_EQ(manager.pointerPosition(), QPointF(1080, 720));
+    manager.setTopology({base::Rect(0, 0, 2160, 1440)});
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(1080, 720));
     manager.setTopology({});
-    manager.setTopology({QRect(0, 0, 1440, 960)});
-    EXPECT_EQ(manager.pointerPosition(), QPointF(720, 480));
-    manager.warpPointer(QPointF(1200, 60));
-    manager.setTopology({QRect(0, 0, 1080, 720)});
-    EXPECT_EQ(manager.pointerPosition(), QPointF(900, 45));
+    manager.setTopology({base::Rect(0, 0, 1440, 960)});
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(720, 480));
+    manager.warpPointer(base::PointF(1200, 60));
+    manager.setTopology({base::Rect(0, 0, 1080, 720)});
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(900, 45));
     // A reprobe that brings the same layout back leaves the pointer alone.
     manager.setTopology({});
-    manager.setTopology({QRect(0, 0, 1080, 720)});
-    EXPECT_EQ(manager.pointerPosition(), QPointF(900, 45));
+    manager.setTopology({base::Rect(0, 0, 1080, 720)});
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(900, 45));
 }
 
 TEST_F(InputTest, PointerProjectsOntoLogicalTopologyAndCrossesSharedEdges)
 {
     InputManager manager(&seat);
-    manager.setTopology({QRect(-200, 0, 200, 100), QRect(0, 40, 300, 200)});
-    manager.warpPointer(QPointF(-10, 50));
+    manager.setTopology({base::Rect(-200, 0, 200, 100), base::Rect(0, 40, 300, 200)});
+    manager.warpPointer(base::PointF(-10, 50));
 
-    manager.onPointerMotion(at(1), QPointF(20, 0));
-    EXPECT_EQ(manager.pointerPosition(), QPointF(10, 50));
+    manager.onPointerMotion(at(1), base::PointF(20, 0));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(10, 50));
 
-    manager.warpPointer(QPointF(-10, 10));
-    manager.onPointerMotion(at(2), QPointF(20, 0));
-    EXPECT_EQ(manager.pointerPosition(), QPointF(-1, 10));
+    manager.warpPointer(base::PointF(-10, 10));
+    manager.onPointerMotion(at(2), base::PointF(20, 0));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(-1, 10));
 
-    manager.warpPointer(QPointF(150, 500));
-    EXPECT_EQ(manager.pointerPosition(), QPointF(150, 239));
+    manager.warpPointer(base::PointF(150, 500));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(150, 239));
 }
 
 TEST_F(InputTest, LogicalTopologyDoesNotApplyOneOutputsDeviceScaleToRelativeMotion)
 {
     InputManager manager(&seat);
     manager.setDeviceScale(2);
-    manager.setTopology({QRect(0, 0, 100, 100), QRect(100, 0, 100, 100)});
-    manager.warpPointer(QPointF(50, 50));
-    manager.onPointerMotion(at(1), QPointF(25, 0));
-    EXPECT_EQ(manager.pointerPosition(), QPointF(75, 50));
+    manager.setTopology({base::Rect(0, 0, 100, 100), base::Rect(100, 0, 100, 100)});
+    manager.warpPointer(base::PointF(50, 50));
+    manager.onPointerMotion(at(1), base::PointF(25, 0));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(75, 50));
 }
 
 TEST_F(InputTest, AbsolutePointerClicksUseCurrentResolutionRatherThanStartupMode)
@@ -1119,19 +1121,19 @@ TEST_F(InputTest, AbsolutePointerClicksUseCurrentResolutionRatherThanStartupMode
     InputManager manager(&seat);
     manager.setDeviceBounds({1280, 800});
     manager.setDeviceScale(1);
-    for (const QRect desktop : {QRect(0, 0, 1280, 800), QRect(0, 0, 1920, 1200),
-                                QRect(0, 0, 960, 600), QRect(0, 0, 1280, 800)}) {
+    for (const base::Rect desktop : {base::Rect(0, 0, 1280, 800), base::Rect(0, 0, 1920, 1200),
+                                base::Rect(0, 0, 960, 600), base::Rect(0, 0, 1280, 800)}) {
         manager.setTopology({desktop});
-        const QPoint target(desktop.width() * 3 / 4, desktop.height() * 3 / 4);
+        const base::Point target(desktop.width() * 3 / 4, desktop.height() * 3 / 4);
         auto surface = compositor.createSurface();
-        map(surface.get(), target - QPoint(10, 10), {20, 20});
+        map(surface.get(), target - base::Point(10, 10), {20, 20});
         FakePointerDelegate delegate;
         delegate.acceptable = {surface.get()};
         Pointer pointer(&delegate, &seat);
         manager.onPointerMotionNormalized(at(1), {0.75, 0.75});
-        EXPECT_EQ(manager.pointerPosition(), QPointF(target));
+        EXPECT_EQ(manager.pointerPosition(), base::PointF(target));
         ASSERT_FALSE(delegate.enters.empty());
-        EXPECT_EQ(delegate.enters.back().location, QPointF(10, 10));
+        EXPECT_EQ(delegate.enters.back().location, base::PointF(10, 10));
         manager.onPointerButton(at(2), BTN_LEFT, true);
         manager.onPointerButton(at(3), BTN_LEFT, false);
         ASSERT_EQ(delegate.buttons.size(), 2u);
@@ -1145,13 +1147,13 @@ TEST_F(InputTest, NormalizedAbsolutePointerUsesLogicalScaleAndNegativeDesktopOri
     InputManager manager(&seat);
     manager.setDeviceBounds({1920, 1200});
     manager.setDeviceScale(2);
-    manager.setTopology({QRect(-960, 0, 960, 600), QRect(0, 0, 960, 600)});
+    manager.setTopology({base::Rect(-960, 0, 960, 600), base::Rect(0, 0, 960, 600)});
     manager.onPointerMotionNormalized(at(1), {0.25, 0.5});
-    EXPECT_EQ(manager.pointerPosition(), QPointF(-480, 300));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(-480, 300));
     manager.onPointerMotionNormalized(at(2), {0.75, 0.5});
-    EXPECT_EQ(manager.pointerPosition(), QPointF(480, 300));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(480, 300));
     manager.onPointerMotionNormalized(at(3), {1, 1});
-    EXPECT_EQ(manager.pointerPosition(), QPointF(959, 599));
+    EXPECT_EQ(manager.pointerPosition(), base::PointF(959, 599));
 }
 
 TEST_F(InputTest, CursorPresentationSurvivesConsumedMotionAndHonorsHideWhileIdle)
@@ -1178,10 +1180,9 @@ TEST_F(InputTest, CursorPresentationSurvivesConsumedMotionAndHonorsHideWhileIdle
     scene.root()->setChangeCallback([&] {
         ++repaint;
     });
-    const auto connection =
-        QObject::connect(&compositor, &compositor::Compositor::repaintNeeded, [&] {
-            ++repaint;
-        });
+    auto connection = compositor.repaintNeeded.connect([&](bool) {
+        ++repaint;
+    });
     pointer.setCursor(cursor.get(), {4, 5});
     compositor.updateTextures(renderer);
     auto checkCursor = [&](compositor::Surface* expected) {
@@ -1201,7 +1202,7 @@ TEST_F(InputTest, CursorPresentationSurvivesConsumedMotionAndHonorsHideWhileIdle
     EXPECT_GT(repaint, 0);
 
     struct ConsumingSink : EventSink {
-        bool onPointerMotion(Timestamp, const QPointF&) override { return true; }
+        bool onPointerMotion(Timestamp, const base::PointF&) override { return true; }
     } sink;
 
     manager.setEventSink(&sink);
@@ -1258,7 +1259,7 @@ TEST_F(InputTest, CursorPresentationSurvivesConsumedMotionAndHonorsHideWhileIdle
     EXPECT_TRUE(fallback->isEffectivelyVisible());
     EXPECT_EQ(seat.selection()->generation(), generation);
     EXPECT_EQ(seat.selection()->recipient(), recipient);
-    QObject::disconnect(connection);
+    connection.reset();
     scene.root()->setChangeCallback({});
 }
 
@@ -1284,7 +1285,7 @@ TEST_F(InputTest, ConsumedReleaseCompletesOnlyTheOriginalClientPress)
     struct Sink : EventSink {
         Seat* seat = nullptr;
 
-        bool onPointerButton(Timestamp, const QPointF&, uint32_t button, bool pressed) override
+        bool onPointerButton(Timestamp, const base::PointF&, uint32_t button, bool pressed) override
         {
             if (!pressed)
                 EXPECT_EQ(seat->pressedButtons() & buttonFlagFromEvdev(button), NoButton);
@@ -1361,8 +1362,8 @@ TEST_F(InputTest, FocusMovedWhileAKeyIsConsumedKeepsTheNewSurfaceConsistent)
 {
     auto first = compositor.createSurface();
     auto second = compositor.createSurface();
-    map(first.get(), QPoint(0, 0), QSize(100, 100));
-    map(second.get(), QPoint(200, 0), QSize(100, 100));
+    map(first.get(), base::Point(0, 0), base::Size(100, 100));
+    map(second.get(), base::Point(200, 0), base::Size(100, 100));
     auto delegate = std::make_unique<FakeKeyboardDelegate>();
     FakeKeyboardDelegate* raw = delegate.get();
     Keyboard keyboard(std::move(delegate), &seat);

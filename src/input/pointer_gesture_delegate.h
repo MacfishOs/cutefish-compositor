@@ -14,9 +14,9 @@
 
 #include <cstdint>
 
-#include <QPointF>
 
 #include "input/types.h"
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 class Surface;
@@ -34,10 +34,10 @@ enum class GestureType {
 
 struct GestureUpdate {
     // The fingers' motion, accelerated and in logical units.
-    QPointF delta;
+    base::PointF delta;
     // The same motion without acceleration, as libinput reports it; see
     // WmGestureHandler::kMmPerUnacceleratedUnit for what that is on a touchpad.
-    QPointF unacceleratedDelta;
+    base::PointF unacceleratedDelta;
     // Pinch only: the distance between the fingers relative to the begin,
     // and the rotation since the last update, in degrees clockwise.
     double scale = 1;

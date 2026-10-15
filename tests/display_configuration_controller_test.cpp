@@ -10,14 +10,14 @@
 
 #include <gtest/gtest.h>
 
-#include <QFile>
-#include <QJsonDocument>
-#include <QSignalSpy>
-#include <QTemporaryDir>
-#include <QTest>
+#include <deque>
+#include <filesystem>
 
+
+#include "base/file.h"
 #include "display/display_configuration_controller.h"
 #include "fake_native_display_delegate.h"
+#include "loop_test_util.h"
 
 using namespace cutefish;
 
@@ -25,26 +25,26 @@ namespace {
 
 display::DisplayId id(const char* value)
 {
-    return display::DisplayId(QString::fromLatin1(value));
+    return display::DisplayId(std::string(value));
 }
 
-display::DisplayMode mode(QSize size)
+display::DisplayMode mode(base::Size size)
 {
     return {size, 60000, 148500, size.width() + 100, size.height() + 50, 0,
-            QStringLiteral("mode"), true};
+            "mode", true};
 }
 
-display::DisplaySnapshot output(const char* name, QSize size)
+display::DisplaySnapshot output(const char* name, base::Size size)
 {
     display::DisplaySnapshot value;
     value.sessionId = id(name);
-    value.persistentKey = QStringLiteral("edid-") + QString::fromLatin1(name);
-    value.portKey = QStringLiteral("port-") + QString::fromLatin1(name);
-    value.connectorName = QString::fromLatin1(name);
-    value.devicePath = QStringLiteral("/dev/dri/card0");
+    value.persistentKey = "edid-" + std::string(name);
+    value.portKey = "port-" + std::string(name);
+    value.connectorName = std::string(name);
+    value.devicePath = "/dev/dri/card0";
     value.physicalSizeMm = {600, 340};
     value.modes = {mode(size)};
-    value.currentMode = value.modes.first();
+    value.currentMode = value.modes.front();
     value.capabilities = display::DisplayCapability::Scale |
         display::DisplayCapability::Rotation | display::DisplayCapability::Power;
     return value;
@@ -52,7 +52,7 @@ display::DisplaySnapshot output(const char* name, QSize size)
 
 display::HardwareSnapshot hardware()
 {
-    return {QStringLiteral("instance"), QStringLiteral("seat0"), 3,
+    return {"instance", "seat0", 3,
             {output("internal", {1920, 1080}), output("external", {2560, 1440})}};
 }
 
@@ -62,10 +62,10 @@ display::AppliedConfiguration applied(const display::HardwareSnapshot& state)
             state.topologyGeneration,
             7,
             state.displays,
-            {{id("internal"), {id("internal")}, QStringLiteral("eDP-1"),
+            {{id("internal"), {id("internal")}, "eDP-1",
               {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, {},
               display::DisplayRotation::Normal, true},
-             {id("external"), {id("external")}, QStringLiteral("DP-1"),
+             {id("external"), {id("external")}, "DP-1",
               {1920, 0, 2560, 1440}, {1920, 0, 2560, 1440}, {},
               display::DisplayRotation::Normal, false}},
             {{id("external"), id("internal"), display::LayoutEdge::Right, 0}}};
@@ -86,7 +86,9 @@ display::DisplayConfiguration request(const display::HardwareSnapshot& state)
 }
 
 struct Fixture {
-    QTemporaryDir directory;
+    base::file::TemporaryDirectory directory {std::filesystem::temp_directory_path().string()};
+
+    std::string path(const std::string &name) const { return directory.path() + '/' + name; }
     display::HardwareSnapshot snapshot = hardware();
     display::DisplayManager manager;
     test::FakeNativeDisplayDelegate delegate;
@@ -100,24 +102,25 @@ struct Fixture {
         EXPECT_TRUE(manager.installApplied(applied(snapshot)));
         controller = std::make_unique<display::DisplayConfigurationController>(
             &manager, &delegate,
-            display::DisplayPreferences(directory.filePath(QStringLiteral("display.json"))));
+            display::DisplayPreferences(path("display.json")));
     }
 };
 
 class DeferredDelegate : public test::FakeNativeDisplayDelegate
 {
 public:
-    QList<ConfigureCallback> pending;
+    std::deque<ConfigureCallback> pending;
     int calls = 0;
     void configure(const display::DisplayConfiguration&, ConfigureMode,
                    ConfigureCallback callback) override
     {
         ++calls;
-        pending.append(std::move(callback));
+        pending.push_back(std::move(callback));
     }
     void complete()
     {
-        auto callback = pending.takeFirst();
+        auto callback = std::move(pending.front());
+        pending.pop_front();
         callback({true, false, {}, std::nullopt});
     }
 };
@@ -127,21 +130,21 @@ public:
 TEST(DisplayConfigurationController, AppliesOnlyAfterTestAndPersistsOnlyOnConfirm)
 {
     Fixture fixture;
-    const QString operation = fixture.controller->apply(request(fixture.snapshot),
-                                                        QStringLiteral(":1.20"), 1000);
-    EXPECT_TRUE(operation.startsWith(QStringLiteral("apply-")));
+    const std::string operation = fixture.controller->apply(request(fixture.snapshot),
+                                                        ":1.20", 1000);
+    EXPECT_TRUE(operation.starts_with("apply-"));
     EXPECT_EQ(fixture.delegate.configureCount(), 2);
     EXPECT_EQ(fixture.manager.applied()->revision, 8u);
-    ASSERT_FALSE(fixture.controller->previewToken().isEmpty());
-    EXPECT_FALSE(QFile::exists(fixture.directory.filePath(QStringLiteral("display.json"))));
+    ASSERT_FALSE(fixture.controller->previewToken().empty());
+    EXPECT_FALSE(std::filesystem::exists(fixture.path("display.json")));
 
-    fixture.controller->confirm(fixture.controller->previewToken(), QStringLiteral(":1.20"));
-    EXPECT_TRUE(QFile::exists(fixture.directory.filePath(QStringLiteral("display.json"))));
+    fixture.controller->confirm(fixture.controller->previewToken(), ":1.20");
+    EXPECT_TRUE(std::filesystem::exists(fixture.path("display.json")));
     display::DisplayError error;
     const auto restored = display::DisplayPreferences(
-                              fixture.directory.filePath(QStringLiteral("display.json")))
+                              fixture.path("display.json"))
                               .restore(fixture.snapshot, 8, &error);
-    ASSERT_TRUE(restored) << error.message.toStdString();
+    ASSERT_TRUE(restored) << error.message;
     EXPECT_EQ(restored->primary, id("external"));
 }
 
@@ -171,8 +174,10 @@ TEST(DisplayConfigurationController, SnapshotInvalidationDuringTestPreventsCommi
     DeferredDelegate delegate;
     display::DisplayConfigurationController controller(&fixture.manager, &delegate);
     display::DisplayErrorCode error = display::DisplayErrorCode::None;
-    QObject::connect(&controller, &display::DisplayConfigurationController::operationFinished,
-        [&](const QString&, const display::ConfigurationResult& result) { error = result.error.code; });
+    const auto finished1 = controller.operationFinished.connect(
+            [&](const std::string&, const display::ConfigurationResult& result) {
+                error = result.error.code;
+            });
     controller.apply(request(fixture.snapshot), "owner", 1000);
     delegate.invalidate(fixture.snapshot.topologyGeneration + 1);
     delegate.complete();
@@ -185,18 +190,19 @@ TEST(DisplayConfigurationController, SnapshotInvalidationDuringTestPreventsCommi
 TEST(DisplayConfigurationController, TimeoutAndOwnerLossRestorePreviousConfiguration)
 {
     Fixture fixture;
-    fixture.controller->apply(request(fixture.snapshot), QStringLiteral(":1.20"), 10);
-    QTRY_VERIFY_WITH_TIMEOUT(fixture.controller->previewToken().isEmpty(), 1000);
+    fixture.controller->apply(request(fixture.snapshot), ":1.20", 10);
+    ASSERT_TRUE(test::runUntil([&] { return fixture.controller->previewToken().empty(); },
+                               std::chrono::seconds(1)));
     EXPECT_EQ(fixture.manager.applied()->revision, 9u);
     EXPECT_EQ(fixture.manager.primaryDisplay()->id, id("internal"));
     EXPECT_EQ(fixture.delegate.configureCount(), 4);
 
     auto next = request(fixture.snapshot);
     next.base.appliedRevision = 9;
-    fixture.controller->apply(next, QStringLiteral(":1.21"), 1000);
-    ASSERT_FALSE(fixture.controller->previewToken().isEmpty());
-    fixture.controller->ownerDisconnected(QStringLiteral(":1.21"));
-    EXPECT_TRUE(fixture.controller->previewToken().isEmpty());
+    fixture.controller->apply(next, ":1.21", 1000);
+    ASSERT_FALSE(fixture.controller->previewToken().empty());
+    fixture.controller->ownerDisconnected(":1.21");
+    EXPECT_TRUE(fixture.controller->previewToken().empty());
     EXPECT_EQ(fixture.manager.primaryDisplay()->id, id("internal"));
 }
 
@@ -204,32 +210,31 @@ TEST(DisplayConfigurationController, RejectsStaleAndForeignPreviewTokens)
 {
     Fixture fixture;
     int failures = 0;
-    QObject::connect(fixture.controller.get(),
-                     &display::DisplayConfigurationController::operationFinished,
-                     [&failures](const QString&, const display::ConfigurationResult& result) {
-                         if (!result.succeeded)
-                             ++failures;
-                     });
+    const auto finished2 = fixture.controller->operationFinished.connect(
+            [&failures](const std::string&, const display::ConfigurationResult& result) {
+                if (!result.succeeded)
+                    ++failures;
+            });
     auto stale = request(fixture.snapshot);
     stale.base.appliedRevision = 6;
-    fixture.controller->apply(stale, QStringLiteral(":1.20"), 1000);
+    fixture.controller->apply(stale, ":1.20", 1000);
     EXPECT_EQ(fixture.delegate.configureCount(), 0);
     EXPECT_EQ(failures, 1);
 
-    fixture.controller->apply(request(fixture.snapshot), QStringLiteral(":1.20"), 1000);
-    fixture.controller->confirm(fixture.controller->previewToken(), QStringLiteral(":1.99"));
-    EXPECT_FALSE(fixture.controller->previewToken().isEmpty());
+    fixture.controller->apply(request(fixture.snapshot), ":1.20", 1000);
+    fixture.controller->confirm(fixture.controller->previewToken(), ":1.99");
+    EXPECT_FALSE(fixture.controller->previewToken().empty());
     EXPECT_EQ(failures, 2);
 }
 
 TEST(DisplayConfigurationController, ImmediateChangePersistsWithoutPreviewOrOwnerLifetime)
 {
     Fixture fixture;
-    fixture.controller->apply(request(fixture.snapshot), QStringLiteral(":1.20"), 0);
-    EXPECT_TRUE(fixture.controller->previewToken().isEmpty());
+    fixture.controller->apply(request(fixture.snapshot), ":1.20", 0);
+    EXPECT_TRUE(fixture.controller->previewToken().empty());
     EXPECT_EQ(fixture.manager.applied()->revision, 8u);
-    EXPECT_TRUE(QFile::exists(fixture.directory.filePath(QStringLiteral("display.json"))));
-    fixture.controller->ownerDisconnected(QStringLiteral(":1.20"));
+    EXPECT_TRUE(std::filesystem::exists(fixture.path("display.json")));
+    fixture.controller->ownerDisconnected(":1.20");
     EXPECT_EQ(fixture.manager.applied()->revision, 8u);
 }
 
@@ -238,24 +243,24 @@ TEST(DisplayConfigurationController, ModeChangesPublishSelectedModeAndRevertToPr
     Fixture fixture;
     auto hardware = fixture.snapshot;
     hardware.topologyGeneration++;
-    hardware.displays[1].modes.append(mode({1920, 1080}));
+    hardware.displays[1].modes.push_back(mode({1920, 1080}));
     fixture.snapshot = hardware;
     fixture.delegate.setSnapshot(hardware);
     ASSERT_TRUE(fixture.manager.installHardware(hardware));
     ASSERT_TRUE(fixture.manager.installApplied(applied(hardware)));
     auto first = request(hardware);
     first.displays[1].mode = hardware.displays[1].modes[1];
-    fixture.controller->apply(first, QStringLiteral(":1.20"), 0);
+    fixture.controller->apply(first, ":1.20", 0);
     ASSERT_EQ(fixture.manager.applied()->revision, 8u);
-    EXPECT_EQ(fixture.manager.applied()->physicalDisplays[1].currentMode->pixelSize, QSize(1920, 1080));
+    EXPECT_EQ(fixture.manager.applied()->physicalDisplays[1].currentMode->pixelSize, base::Size(1920, 1080));
     auto second = request(hardware);
     second.base.appliedRevision = 8;
-    fixture.controller->apply(second, QStringLiteral(":1.20"), 1000);
-    EXPECT_EQ(fixture.manager.applied()->physicalDisplays[1].currentMode->pixelSize, QSize(2560, 1440));
-    fixture.controller->revert(fixture.controller->previewToken(), QStringLiteral(":1.20"));
-    EXPECT_EQ(fixture.manager.applied()->physicalDisplays[1].currentMode->pixelSize, QSize(1920, 1080));
+    fixture.controller->apply(second, ":1.20", 1000);
+    EXPECT_EQ(fixture.manager.applied()->physicalDisplays[1].currentMode->pixelSize, base::Size(2560, 1440));
+    fixture.controller->revert(fixture.controller->previewToken(), ":1.20");
+    EXPECT_EQ(fixture.manager.applied()->physicalDisplays[1].currentMode->pixelSize, base::Size(1920, 1080));
     ASSERT_TRUE(fixture.delegate.lastConfiguration());
-    EXPECT_EQ(fixture.delegate.lastConfiguration()->displays[1].mode.pixelSize, QSize(1920, 1080));
+    EXPECT_EQ(fixture.delegate.lastConfiguration()->displays[1].mode.pixelSize, base::Size(1920, 1080));
 }
 
 TEST(DisplayConfigurationController, ImmediatePersistenceFailureRestoresPreviousConfiguration)
@@ -264,13 +269,13 @@ TEST(DisplayConfigurationController, ImmediatePersistenceFailureRestoresPrevious
     fixture.controller = std::make_unique<display::DisplayConfigurationController>(
         &fixture.manager, &fixture.delegate, display::DisplayPreferences(fixture.directory.path()));
     bool persistenceFailed = false;
-    QObject::connect(fixture.controller.get(), &display::DisplayConfigurationController::operationFinished,
-        [&](const QString&, const display::ConfigurationResult& result) {
-            persistenceFailed |= !result.succeeded && result.error.code == display::DisplayErrorCode::PersistenceFailed;
-        });
-    fixture.controller->apply(request(fixture.snapshot), QStringLiteral(":1.20"), 0);
+    const auto finished3 = fixture.controller->operationFinished.connect(
+            [&](const std::string&, const display::ConfigurationResult& result) {
+                persistenceFailed |= !result.succeeded && result.error.code == display::DisplayErrorCode::PersistenceFailed;
+            });
+    fixture.controller->apply(request(fixture.snapshot), ":1.20", 0);
     EXPECT_TRUE(persistenceFailed);
-    EXPECT_TRUE(fixture.controller->previewToken().isEmpty());
+    EXPECT_TRUE(fixture.controller->previewToken().empty());
     EXPECT_EQ(fixture.manager.primaryDisplay()->id, id("internal"));
     EXPECT_EQ(fixture.delegate.configureCount(), 4);
 }
@@ -281,18 +286,18 @@ TEST(DisplayConfigurationController, PersistenceFailureCompletesOnlyAfterAsynchr
     DeferredDelegate delegate;
     display::DisplayConfigurationController controller(
         &fixture.manager, &delegate, display::DisplayPreferences(fixture.directory.path()));
-    QString completedToken;
+    std::string completedToken;
     display::ConfigurationResult completion;
-    QObject::connect(&controller, &display::DisplayConfigurationController::operationFinished,
-        [&](const QString& token, const display::ConfigurationResult& result) {
-            completedToken = token;
-            completion = result;
-        });
-    const QString token = controller.apply(request(fixture.snapshot), QStringLiteral(":1.20"), 0);
+    const auto finished4 = controller.operationFinished.connect(
+            [&](const std::string& token, const display::ConfigurationResult& result) {
+                completedToken = token;
+                completion = result;
+            });
+    const std::string token = controller.apply(request(fixture.snapshot), ":1.20", 0);
     delegate.complete();
     delegate.complete();
     EXPECT_TRUE(controller.busy());
-    EXPECT_TRUE(completedToken.isEmpty());
+    EXPECT_TRUE(completedToken.empty());
     delegate.complete();
     EXPECT_TRUE(controller.busy());
     delegate.complete();
@@ -309,17 +314,17 @@ TEST(DisplayConfigurationController, MirrorRollbackKeepsTheSourceAsPrimary)
     for (auto& physical : snapshot.displays)
         physical.capabilities |= display::DisplayCapability::SoftwareMirror;
     auto mirrored = applied(snapshot);
-    mirrored.logicalDisplays.removeLast();
-    mirrored.logicalDisplays[0].destinations.append(id("external"));
+    mirrored.logicalDisplays.pop_back();
+    mirrored.logicalDisplays[0].destinations.push_back(id("external"));
     mirrored.placements.clear();
     display::DisplayManager manager;
     ASSERT_TRUE(manager.installHardware(snapshot));
     ASSERT_TRUE(manager.installApplied(mirrored));
     test::FakeNativeDisplayDelegate delegate;
     display::DisplayConfigurationController controller(&manager, &delegate);
-    controller.apply(request(snapshot), QStringLiteral(":1.20"), 1000);
-    ASSERT_FALSE(controller.previewToken().isEmpty());
-    controller.revert(controller.previewToken(), QStringLiteral(":1.20"));
+    controller.apply(request(snapshot), ":1.20", 1000);
+    ASSERT_FALSE(controller.previewToken().empty());
+    controller.revert(controller.previewToken(), ":1.20");
     ASSERT_TRUE(delegate.lastConfiguration());
     EXPECT_EQ(delegate.lastConfiguration()->primary, id("internal"));
     EXPECT_EQ(manager.applied()->logicalDisplays.size(), 1);

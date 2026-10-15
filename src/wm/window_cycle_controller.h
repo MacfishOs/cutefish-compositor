@@ -17,12 +17,13 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
-#include <QMetaObject>
-#include <QPointF>
-#include <QString>
-#include <QTimer>
+
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/timer.h"
 
 namespace cutefish::wm {
 
@@ -40,14 +41,14 @@ public:
     // on the output named `output`. A list that changes while shown is shown
     // again.
     virtual void showWindowCycle(const std::vector<Window *> &entries, int selected,
-                                 const QString &output) = 0;
+                                 const std::string &output) = 0;
     virtual void selectWindowCycleEntry(int index) = 0;
     virtual void hideWindowCycle() = 0;
 
     // Where the list is on screen, in global logical coordinates, and which
     // entry is at `location`, or -1.
-    virtual bool windowCycleViewContains(const QPointF &location) const = 0;
-    virtual int windowCycleEntryAt(const QPointF &location) const = 0;
+    virtual bool windowCycleViewContains(const base::PointF &location) const = 0;
+    virtual int windowCycleEntryAt(const base::PointF &location) const = 0;
 };
 
 class WindowCycleController
@@ -62,7 +63,7 @@ public:
     static constexpr int kShowDelayMs = 150;
     // Upstream: kMouseMovementThreshold. The list may appear under a pointer
     // resting there; it selects only once the pointer moves.
-    static constexpr qreal kMouseMovementThreshold = 5;
+    static constexpr double kMouseMovementThreshold = 5;
 
     WindowCycleController(WindowManager *manager, MruWindowTracker *mruTracker);
     WindowCycleController(const WindowCycleController &) = delete;
@@ -103,11 +104,11 @@ public:
     bool onKey(uint32_t keysym, bool pressed);
 
     // Hovering an entry selects it.
-    void onPointerMotion(const QPointF &location);
+    void onPointerMotion(const base::PointF &location);
     // While the list is shown a press on an entry switches to it, and one
     // anywhere else does nothing; both are consumed. Before it shows, a press
     // means the user moved on: the selection is kept and the press lands.
-    bool onPointerButtonPressed(const QPointF &location);
+    bool onPointerButtonPressed(const base::PointF &location);
 
 private:
     void startCycling();
@@ -116,21 +117,21 @@ private:
     void switchToApplication(const std::vector<Window *> &windows);
     void showView();
     void hideView();
-    QString outputForView() const;
+    std::string outputForView() const;
     void onWindowRemoved(Window *window);
 
     WindowManager *m_manager = nullptr;
     MruWindowTracker *m_mruTracker = nullptr;
     WindowCycleView *m_view = nullptr;
-    QMetaObject::Connection m_removedConnection;
-    QTimer m_showTimer;
+    base::Subscription m_windowRemoved;
+    base::Timer m_showTimer;
     bool m_cycling = false;
     // Each application's cyclable windows, most recently used first.
     std::vector<std::vector<Window *>> m_applications;
     int m_currentIndex = 0;
     bool m_viewShown = false;
     // Where the pointer was when cycling started, until it moves away.
-    std::optional<QPointF> m_pointerOrigin;
+    std::optional<base::PointF> m_pointerOrigin;
 };
 
 } // namespace cutefish::wm

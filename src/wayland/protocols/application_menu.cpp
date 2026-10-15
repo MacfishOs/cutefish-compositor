@@ -7,7 +7,8 @@
 #include <algorithm>
 #include <appmenu-server-protocol.h>
 #include <new>
-#include <QRegularExpression>
+#include <string>
+#include <string_view>
 
 #include "compositor/surface.h"
 #include "compositor/surface_observer.h"
@@ -17,6 +18,64 @@ namespace cutefish::wayland {
 namespace {
 
 constexpr uint32_t kAppMenuVersion = 2;
+
+bool isAsciiLetter(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+bool isAsciiDigit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+// Splits `text` at `separator` and checks every element with `valid`; there
+// must be at least `minimum` elements and none may be empty.
+template<typename Valid>
+bool validElements(std::string_view text, char separator, size_t minimum, Valid valid)
+{
+    size_t count = 0;
+    while (true) {
+        const size_t end = text.find(separator);
+        const std::string_view element = text.substr(0, end);
+        if (element.empty() || !valid(element))
+            return false;
+        ++count;
+        if (end == std::string_view::npos)
+            return count >= minimum;
+        text.remove_prefix(end + 1);
+    }
+}
+
+// A unique name (":1.42") or a well-known one ("org.example.Menu").
+bool validBusName(std::string_view name)
+{
+    const auto uniqueChar = [](char c) {
+        return isAsciiLetter(c) || isAsciiDigit(c) || c == '_' || c == '-';
+    };
+    if (!name.empty() && name.front() == ':') {
+        return validElements(name.substr(1), '.', 2, [&](std::string_view element) {
+            return std::all_of(element.begin(), element.end(), uniqueChar);
+        });
+    }
+    return validElements(name, '.', 2, [&](std::string_view element) {
+        return !isAsciiDigit(element.front())
+                && std::all_of(element.begin(), element.end(), uniqueChar);
+    });
+}
+
+bool validObjectPath(std::string_view path)
+{
+    if (path.empty() || path.front() != '/')
+        return false;
+    if (path.size() == 1)
+        return true;
+    return validElements(path.substr(1), '/', 1, [](std::string_view element) {
+        return std::all_of(element.begin(), element.end(), [](char c) {
+            return isAsciiLetter(c) || isAsciiDigit(c) || c == '_';
+        });
+    });
+}
 
 class MenuSurface final : public compositor::SurfaceObserver
 {
@@ -45,19 +104,15 @@ public:
     {
         if (!m_surface)
             return;
-        static const QRegularExpression servicePattern(QStringLiteral(
-            "\\A(?::[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)+|"
-            "[A-Za-z_-][A-Za-z0-9_-]*(?:\\.[A-Za-z_-][A-Za-z0-9_-]*)+)\\z"));
-        static const QRegularExpression pathPattern(QStringLiteral(
-            "\\A/(?:[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*)?\\z"));
-        const QString serviceName = QString::fromLatin1(service);
-        const QString objectPath = QString::fromLatin1(path);
-        if (serviceName.size() > 255 || !servicePattern.match(serviceName).hasMatch() ||
-            !pathPattern.match(objectPath).hasMatch()) {
+        const std::string_view serviceName(service);
+        const std::string_view objectPath(path);
+        if (serviceName.size() > 255 || !validBusName(serviceName)
+            || !validObjectPath(objectPath)) {
             m_surface->setMenuAddress(m_source, {});
             return;
         }
-        m_surface->setMenuAddress(m_source, {serviceName, objectPath});
+        m_surface->setMenuAddress(m_source,
+                                  {std::string(serviceName), std::string(objectPath)});
     }
 
 private:

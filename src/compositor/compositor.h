@@ -16,13 +16,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
-#include <QList>
-#include <QObject>
-#include <QRect>
-#include <QString>
+#include "base/geometry.h"
+
+#include "base/signal.h"
 
 #include "compositor/output_scale.h"
 
@@ -47,26 +47,24 @@ class Surface;
 // Creates the compositor-side objects the Wayland protocol layer hands out, and
 // owns the relationship between committed surface state and presented frames.
 // Deliberately not a place for protocol handling or for window management.
-class Compositor : public QObject
+class Compositor
 {
-    Q_OBJECT
-
 public:
     struct OutputView {
-        QString id;
-        QRect bounds;
+        std::string id;
+        base::Rect bounds;
         OutputScale scale;
         // The wl_output whose composition carries this view, which is what a
         // render context names; `id` is the logical display's session id.
-        QString waylandName;
+        std::string waylandName;
 
         friend bool operator==(const OutputView &, const OutputView &) = default;
     };
 
     // `surfaceContainer` is the scene node new surfaces are parented into. It
     // may be null in tests that only exercise protocol behavior.
-    explicit Compositor(scene::Node *surfaceContainer, QObject *parent = nullptr);
-    ~Compositor() override;
+    explicit Compositor(scene::Node *surfaceContainer);
+    ~Compositor();
 
     // The wl_surface resource takes ownership of the returned Surface.
     std::unique_ptr<Surface> createSurface();
@@ -89,9 +87,9 @@ public:
     OutputScale outputScale() const { return m_outputScale; }
 
     void setOutputScale(OutputScale scale);
-    void setOutputViews(QList<OutputView> outputs);
+    void setOutputViews(std::vector<OutputView> outputs);
 
-    const QList<OutputView> &outputViews() const { return m_outputViews; }
+    const std::vector<OutputView> &outputViews() const { return m_outputViews; }
 
     void refreshOutputScales();
     uint32_t preferredScaleFor(const Surface *surface) const;
@@ -101,7 +99,7 @@ public:
 
     // Whether a frame of the output showing `viewport` has frame callbacks or
     // presentation feedback to deliver, pixels aside.
-    bool awaitsFrame(const QRect &viewport) const;
+    bool awaitsFrame(const base::Rect &viewport) const;
 
     // The scene node new surfaces are parented into. Null in tests that only
     // exercise protocol behavior.
@@ -122,12 +120,12 @@ public:
     // Snapshot callbacks immediately before composition. Roll back on failed
     // submission or suspension; only the matching completion may finish them.
     void frameSubmitted(uint64_t generation = 0);
-    void frameSubmittedForOutput(const QRect &viewport, uint64_t generation);
+    void frameSubmittedForOutput(const base::Rect &viewport, uint64_t generation);
     // Discards the feedback an output's accepted attempt left out, for content
     // no other output can still show: hidden, wholly inside `viewport`, or on
     // no output. Content spanning outputs waits for one of them to present it,
     // or for its replacement.
-    void abandonUnsubmittedPresentation(const QRect &viewport,
+    void abandonUnsubmittedPresentation(const base::Rect &viewport,
                                         const render::PresentationSubmission &submission);
     void frameDiscarded(uint64_t generation);
     // That frame was drawn and handed to the display: its callbacks are done.
@@ -140,24 +138,23 @@ public:
     scene::SurfaceNode *createSurfaceNode(Surface *surface);
     void surfaceDestroyed(Surface *surface);
 
-Q_SIGNALS:
-    void repaintNeeded(bool decoration = false);
-    void outputScaleChanged();
-    void outputViewsChanged();
-    void outputRendered(render::Renderer &renderer);
+    base::Signal<bool> repaintNeeded;
+    base::Signal<> outputScaleChanged;
+    base::Signal<> outputViewsChanged;
+    base::Signal<render::Renderer &> outputRendered;
     // An output is about to render the frame timed at `frameTimeMs`, on the
     // same clock renderer.frameTime uses. Animations that move scene nodes
     // rather than paint them advance here, before the frame is drawn.
-    void frameStarted(double frameTimeMs);
+    base::Signal<double> frameStarted;
     // Handed to the display, which is expected to show it at `aimedNs`, on the
     // monotonic clock.
-    void outputDrawn(uint64_t generation, uint64_t aimedNs);
-    void outputPresented(uint64_t generation, uint64_t monotonicNs);
-    void outputDiscarded(uint64_t generation);
+    base::Signal<uint64_t, uint64_t> outputDrawn;
+    base::Signal<uint64_t, uint64_t> outputPresented;
+    base::Signal<uint64_t> outputDiscarded;
 
 private:
     OutputScale m_outputScale;
-    QList<OutputView> m_outputViews;
+    std::vector<OutputView> m_outputViews;
     scene::Node *m_surfaceContainer = nullptr;
     scene::Node *m_inputMethodContainer = nullptr;
     render::DmaBufDevice *m_dmaBufDevice = nullptr;

@@ -12,11 +12,9 @@
 #ifndef CUTEFISH_BACKEND_DRM_DRM_PLANE_H_
 #define CUTEFISH_BACKEND_DRM_DRM_PLANE_H_
 
-#include <QByteArray>
-#include <QList>
-
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "backend/drm/drm_properties.h"
@@ -47,7 +45,7 @@ struct DrmPlane {
 
     // Property names an atomic commit of a plane cannot do without. A plane
     // missing any of these is unusable and is dropped at enumeration.
-    static QList<QByteArray> requiredProperties();
+    static std::vector<std::string> requiredProperties();
 };
 
 } // namespace cutefish::backend

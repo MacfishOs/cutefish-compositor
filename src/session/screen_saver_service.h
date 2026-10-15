@@ -4,14 +4,13 @@
 
 #pragma once
 
+#include "base/dbus.h"
+#include "base/signal.h"
 #include "session/session_state.h"
-#include <QDBusConnection>
-#include <QDBusContext>
-#include <QDBusMessage>
-#include <QDBusServiceWatcher>
-#include <QHash>
-#include <QObject>
 #include <functional>
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 namespace cutefish::session {
@@ -19,13 +18,12 @@ class SessionController;
 
 // The one org.freedesktop.ScreenSaver object, at /ScreenSaver and
 // /org/freedesktop/ScreenSaver: a second object at either path fails to register.
-class ScreenSaverService : public QObject, protected QDBusContext, public SessionObserver
+class ScreenSaverService : public SessionObserver
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.ScreenSaver")
 public:
+    // The session bus when no connection is given.
     explicit ScreenSaverService(SessionController *session,
-                                QDBusConnection bus = QDBusConnection::sessionBus());
+                                base::dbus::Connection *bus = nullptr);
     ~ScreenSaverService() override;
     bool registerService();
     void onSessionStateChanged(SessionState state) override;
@@ -34,26 +32,29 @@ public:
     // Without them, as in the greeter, Inhibit is refused.
     void setInhibition(std::function<void()> acquire, std::function<void()> release);
 
-public slots:
-    Q_SCRIPTABLE void Lock();
-    Q_SCRIPTABLE bool GetActive() const;
-    Q_SCRIPTABLE uint Inhibit(const QString &application_name, const QString &reason_for_inhibit);
-    Q_SCRIPTABLE void UnInhibit(uint cookie);
+    // Locks as the D-Bus Lock does, for callers inside the compositor.
+    void Lock();
+    bool GetActive() const;
 
-signals:
-    Q_SCRIPTABLE void ActiveChanged(bool active);
+    // Also sent on the bus.
+    base::Signal<bool> activeChanged;
 
 private:
-    void releaseOwner(const QString &owner);
+    void lock(base::dbus::MethodCall *call);
+    void inhibit(base::dbus::MethodCall &call);
+    void uninhibit(base::dbus::MethodCall &call);
+    void releaseOwner(const std::string &owner);
 
     SessionController *m_session;
-    QDBusConnection m_bus;
-    QDBusServiceWatcher m_watcher;
-    std::vector<QDBusMessage> m_pending;
+    base::dbus::Connection *m_bus;
+    std::vector<std::unique_ptr<base::dbus::Object>> m_objects;
+    // A caller that leaves the bus takes all of its cookies with it.
+    std::map<std::string, base::dbus::NameWatch> m_owners;
+    std::vector<base::dbus::MethodCall> m_pending;
     std::function<void()> m_acquire;
     std::function<void()> m_release;
-    QHash<uint, QString> m_cookies;
-    uint m_nextCookie = 0;
+    std::map<uint32_t, std::string> m_cookies;
+    uint32_t m_nextCookie = 0;
     bool m_registered = false;
     bool m_active;
 };

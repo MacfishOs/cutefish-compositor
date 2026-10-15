@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include "base/geometry.h"
+#include "base/transform.h"
 
 namespace cutefish::scene {
 
@@ -67,8 +69,8 @@ struct CubicBezier {
 
 } // namespace
 
-ScreenTransitionNode::ScreenTransitionNode(std::function<qint64()> clock)
-    : Node(QStringLiteral("screen-transition"))
+ScreenTransitionNode::ScreenTransitionNode(std::function<int64_t()> clock)
+    : Node("screen-transition")
     , m_now(clock ? std::move(clock) : [] {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now().time_since_epoch())
@@ -93,20 +95,20 @@ ScreenTransitionNode::RotationSample ScreenTransitionNode::sampleRotation(int de
             direction * kRotationDegrees * (1 - t)};
 }
 
-QRectF ScreenTransitionNode::coverRect(const QSizeF &source, int degrees, const QRectF &viewport)
+base::RectF ScreenTransitionNode::coverRect(const base::SizeF &source, int degrees, const base::RectF &viewport)
 {
     if (source.isEmpty() || viewport.isEmpty())
         return viewport;
-    const QSizeF turned = std::abs(degrees) == 90 ? source.transposed() : source;
+    const base::SizeF turned = std::abs(degrees) == 90 ? source.transposed() : source;
     const double scale =
             std::max(viewport.width() / turned.width(), viewport.height() / turned.height());
-    const QSizeF size = source * scale;
-    return QRectF(viewport.center() - QPointF(size.width(), size.height()) / 2, size);
+    const base::SizeF size = source * scale;
+    return base::RectF(viewport.center() - base::PointF(size.width(), size.height()) / 2, size);
 }
 
-QTransform ScreenTransitionNode::aboutCenter(const QPointF &center, double degrees)
+base::AffineTransform ScreenTransitionNode::aboutCenter(const base::PointF &center, double degrees)
 {
-    QTransform transform;
+    base::AffineTransform transform;
     transform.translate(center.x(), center.y());
     transform.rotate(degrees);
     transform.translate(-center.x(), -center.y());
@@ -146,7 +148,7 @@ void ScreenTransitionNode::render(render::Renderer &renderer) const
 {
     if (!isActive() || !isVisible())
         return;
-    const qint64 now = m_now();
+    const int64_t now = m_now();
     // A capture only records what is on screen; it must not advance anything.
     if (!isAnimating() && !renderer.capturing && (now >= m_deadline || !m_ready || m_ready()))
         m_animationStarted = now;
@@ -159,7 +161,7 @@ void ScreenTransitionNode::render(render::Renderer &renderer) const
     const auto &context = renderer.outputContext();
     const auto state = m_outputs.find(context.outputId);
     if (state != m_outputs.end() && state->second.output.outgoing) {
-        const QRect viewport =
+        const base::Rect viewport =
                 context.logicalViewport.isEmpty() ? absoluteGeometry() : context.logicalViewport;
         auto &layers = state->second;
         if (isAnimating() && !layers.incoming && !layers.incomingFailed && !renderer.capturing
@@ -170,7 +172,7 @@ void ScreenTransitionNode::render(render::Renderer &renderer) const
         }
         const auto &output = layers.output;
         const RotationSample sample = sampleRotation(output.degrees, progress);
-        const QPointF center = QRectF(viewport).center();
+        const base::PointF center = base::RectF(viewport).center();
         // The mask hides the live content around a turned copy.
         if (!isAnimating() || layers.incoming)
             renderer.fillRect(viewport, {0, 0, 0, 1});

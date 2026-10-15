@@ -3,117 +3,134 @@
 // found in the LICENSE file.
 
 #include "input/keyboard_settings.h"
+#include "core/logging.h"
 
-#include <QDBusConnection>
-#include <QDBusError>
-#include <QDebug>
+#include <algorithm>
+#include <limits>
 
 #include "core/preferences.h"
+#include "input/dbus_export.h"
 #include "input/types.h"
 
 namespace cutefish::input {
-namespace {
-constexpr auto service = "com.cutefish.Keyboard1";
-constexpr auto path = "/com/cutefish/Keyboard1";
 
-constexpr auto pcConvention = "pc";
-constexpr auto commandConvention = "command";
+static constexpr auto service = "com.cutefish.Keyboard1";
+static constexpr auto path = "/com/cutefish/Keyboard1";
+static constexpr auto group = "Keyboard/";
+
+static constexpr auto pcConvention = "pc";
+static constexpr auto commandConvention = "command";
 
 // What xkbcommon compiles for empty rule names.
-QString defaultLayout()
+static std::string defaultLayout()
 {
-    return QStringLiteral("us");
+    return "us";
 }
 
-int storedMilliseconds(const QSettings &settings, const QString &key, int fallback, int min,
-                       int max)
+static int storedMilliseconds(const base::Settings &settings, const std::string &key,
+                              int fallback, int min, int max)
 {
-    bool valid = false;
-    const int value = settings.value(key, fallback).toInt(&valid);
-    return valid ? qBound(min, value, max) : fallback;
+    // A value out of int's range is not a number either.
+    constexpr int64_t invalid = std::numeric_limits<int64_t>::min();
+    const int64_t value = settings.intValue(key, invalid);
+    if (!settings.contains(key))
+        return std::clamp(fallback, min, max);
+    if (value == invalid || value < std::numeric_limits<int>::min()
+        || value > std::numeric_limits<int>::max())
+        return fallback;
+    return std::clamp(int(value), min, max);
 }
-} // namespace
 
-KeyboardSettings::KeyboardSettings(QObject *parent, const QString &settingsFile)
-    : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
-                                       : settingsFile,
-                 QSettings::IniFormat)
+KeyboardSettings::KeyboardSettings(const std::string &settingsFile)
+    : m_settings(settingsFile.empty() ? preferencesFile("compositor") : settingsFile)
 {
-    m_settings.beginGroup(QStringLiteral("Keyboard"));
-    m_repeatEnabled = m_settings.value(QStringLiteral("repeatEnabled"), true).toBool();
-    m_repeatDelay = storedMilliseconds(m_settings, QStringLiteral("repeatDelay"),
-                                       kDefaultKeyRepeatDelayMs, kMinRepeatDelayMs,
-                                       kMaxRepeatDelayMs);
-    m_repeatInterval = storedMilliseconds(m_settings, QStringLiteral("repeatInterval"),
+    m_repeatEnabled = m_settings.boolValue("Keyboard/repeatEnabled", true);
+    m_repeatDelay = storedMilliseconds(m_settings, "Keyboard/repeatDelay", kDefaultKeyRepeatDelayMs,
+                                       kMinRepeatDelayMs, kMaxRepeatDelayMs);
+    m_repeatInterval = storedMilliseconds(m_settings, "Keyboard/repeatInterval",
                                           kDefaultKeyRepeatIntervalMs, kMinRepeatIntervalMs,
                                           kMaxRepeatIntervalMs);
-    m_layout = m_settings.value(QStringLiteral("layout")).toString();
-    if (m_settings.value(QStringLiteral("shortcutConvention")).toString()
-        == QLatin1String(commandConvention))
+    m_layout = m_settings.stringValue("Keyboard/layout");
+    if (m_settings.stringValue("Keyboard/shortcutConvention") == commandConvention)
         m_shortcutConvention = ShortcutConvention::Command;
 }
 
-KeyboardSettings::~KeyboardSettings()
-{
-    if (m_registered) {
-        auto bus = QDBusConnection::sessionBus();
-        bus.unregisterObject(QLatin1String(path));
-        bus.unregisterService(QLatin1String(service));
-    }
-}
+KeyboardSettings::~KeyboardSettings() = default;
 
 bool KeyboardSettings::registerService()
 {
-    if (m_registered)
+    if (m_object)
         return true;
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.registerObject(QLatin1String(path), this,
-                            QDBusConnection::ExportAllProperties | QDBusConnection::ExportAllSlots
-                                    | QDBusConnection::ExportAllSignals)) {
-        qWarning() << "Cannot export keyboard settings:" << bus.lastError().message();
+    auto exported = DBusExport::create(service, path, service);
+    if (!exported) {
+        CF_WARNING(cfInput) << "Cannot export keyboard settings: no session bus";
         return false;
     }
-    if (!bus.registerService(QLatin1String(service))) {
-        qWarning() << "Cannot register keyboard settings:" << bus.lastError().message();
-        bus.unregisterObject(QLatin1String(path));
+    base::dbus::Object &object = exported->object();
+    object.addProperty("repeatEnabled", [this] { return m_repeatEnabled; });
+    object.addProperty("repeatDelay", [this] { return int32_t(m_repeatDelay); });
+    object.addProperty("repeatInterval", [this] { return int32_t(m_repeatInterval); });
+    object.addProperty("layout", [this] { return layout(); });
+    object.addProperty("shortcutConvention", [this] { return shortcutConventionName(); });
+    object.addMethod("setRepeatEnabled", [this](bool enabled) { setRepeatEnabled(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setRepeatDelay",
+                     [this](int32_t milliseconds) { setRepeatDelay(milliseconds); },
+                     base::dbus::ArgumentNames{{"milliseconds"}, {}});
+    object.addMethod("setRepeatInterval",
+                     [this](int32_t milliseconds) { setRepeatInterval(milliseconds); },
+                     base::dbus::ArgumentNames{{"milliseconds"}, {}});
+    object.addMethod("setLayout", [this](const std::string &name) { return setLayout(name); },
+                     base::dbus::ArgumentNames{{"name"}, {"result"}});
+    object.addMethod("setShortcutConvention",
+                     [this](const std::string &name) { return setShortcutConvention(name); },
+                     base::dbus::ArgumentNames{{"name"}, {"result"}});
+    for (const char *member : {"repeatEnabledChanged", "repeatDelayChanged",
+                               "repeatIntervalChanged", "layoutChanged",
+                               "shortcutConventionChanged"})
+        object.addSignal(member, "");
+    if (!exported->publish("keyboard settings"))
         return false;
-    }
-    m_registered = true;
+    m_object = std::move(exported);
     return true;
+}
+
+void KeyboardSettings::notify(const base::Signal<> &signal, const char *member)
+{
+    signal();
+    if (m_object)
+        m_object->emitSignal(member);
 }
 
 void KeyboardSettings::setLayoutApplier(LayoutApplier applier)
 {
     m_applier = std::move(applier);
-    if (m_layout.isEmpty() || !m_applier || m_applier(m_layout))
+    if (m_layout.empty() || !m_applier || m_applier(m_layout))
         return;
-    qWarning() << "Cannot use the saved keyboard layout" << m_layout;
+    CF_WARNING(cfInput).printf("Cannot use the saved keyboard layout \"%s\"", m_layout.c_str());
     m_layout.clear();
-    emit layoutChanged();
+    notify(layoutChanged, "layoutChanged");
 }
 
-QString KeyboardSettings::layout() const
+std::string KeyboardSettings::layout() const
 {
-    return m_layout.isEmpty() ? defaultLayout() : m_layout;
+    return m_layout.empty() ? defaultLayout() : m_layout;
 }
 
-QString KeyboardSettings::shortcutConventionName() const
+std::string KeyboardSettings::shortcutConventionName() const
 {
-    return QLatin1String(m_shortcutConvention == ShortcutConvention::Command ? commandConvention
-                                                                             : pcConvention);
+    return m_shortcutConvention == ShortcutConvention::Command ? commandConvention : pcConvention;
 }
 
-// An invalid value removes the key.
-void KeyboardSettings::save(const QString &key, const QVariant &value)
+template<typename T>
+void KeyboardSettings::save(const std::string &key, const std::optional<T> &value)
 {
-    if (value.isValid())
-        m_settings.setValue(key, value);
+    if (value)
+        m_settings.setValue(group + key, *value);
     else
-        m_settings.remove(key);
-    m_settings.sync();
-    if (m_settings.status() != QSettings::NoError)
-        qWarning() << "Cannot persist keyboard settings to" << m_settings.fileName();
+        m_settings.remove(group + key);
+    if (!m_settings.sync())
+        CF_WARNING(cfInput) << "Cannot persist keyboard settings to" << m_settings.path();
 }
 
 void KeyboardSettings::setRepeatEnabled(bool enabled)
@@ -121,57 +138,57 @@ void KeyboardSettings::setRepeatEnabled(bool enabled)
     if (m_repeatEnabled == enabled)
         return;
     m_repeatEnabled = enabled;
-    save(QStringLiteral("repeatEnabled"), enabled);
-    emit repeatEnabledChanged();
+    save("repeatEnabled", std::optional(enabled));
+    notify(repeatEnabledChanged, "repeatEnabledChanged");
 }
 
 void KeyboardSettings::setRepeatDelay(int milliseconds)
 {
-    milliseconds = qBound(kMinRepeatDelayMs, milliseconds, kMaxRepeatDelayMs);
+    milliseconds = std::clamp(milliseconds, kMinRepeatDelayMs, kMaxRepeatDelayMs);
     if (m_repeatDelay == milliseconds)
         return;
     m_repeatDelay = milliseconds;
-    save(QStringLiteral("repeatDelay"), milliseconds);
-    emit repeatDelayChanged();
+    save("repeatDelay", std::optional(milliseconds));
+    notify(repeatDelayChanged, "repeatDelayChanged");
 }
 
 void KeyboardSettings::setRepeatInterval(int milliseconds)
 {
-    milliseconds = qBound(kMinRepeatIntervalMs, milliseconds, kMaxRepeatIntervalMs);
+    milliseconds = std::clamp(milliseconds, kMinRepeatIntervalMs, kMaxRepeatIntervalMs);
     if (m_repeatInterval == milliseconds)
         return;
     m_repeatInterval = milliseconds;
-    save(QStringLiteral("repeatInterval"), milliseconds);
-    emit repeatIntervalChanged();
+    save("repeatInterval", std::optional(milliseconds));
+    notify(repeatIntervalChanged, "repeatIntervalChanged");
 }
 
-bool KeyboardSettings::setLayout(const QString &name)
+bool KeyboardSettings::setLayout(const std::string &name)
 {
     if (name == m_layout)
         return true;
     if (!m_applier || !m_applier(name))
         return false;
     m_layout = name;
-    save(QStringLiteral("layout"), name.isEmpty() ? QVariant() : QVariant(name));
-    emit layoutChanged();
+    save("layout", name.empty() ? std::nullopt : std::optional(name));
+    notify(layoutChanged, "layoutChanged");
     return true;
 }
 
-bool KeyboardSettings::setShortcutConvention(const QString &name)
+bool KeyboardSettings::setShortcutConvention(const std::string &name)
 {
     ShortcutConvention convention;
-    if (name == QLatin1String(pcConvention))
+    if (name == pcConvention)
         convention = ShortcutConvention::Pc;
-    else if (name == QLatin1String(commandConvention))
+    else if (name == commandConvention)
         convention = ShortcutConvention::Command;
     else
         return false;
     if (convention == m_shortcutConvention)
         return true;
     m_shortcutConvention = convention;
-    save(QStringLiteral("shortcutConvention"),
-         convention == ShortcutConvention::Pc ? QVariant() : QVariant(name));
-    emit shortcutConventionChanged();
+    save("shortcutConvention",
+         convention == ShortcutConvention::Pc ? std::nullopt : std::optional(name));
+    notify(shortcutConventionChanged, "shortcutConventionChanged");
     return true;
 }
 

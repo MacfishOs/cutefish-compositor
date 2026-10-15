@@ -14,10 +14,9 @@
 #ifndef CUTEFISH_ACCELERATORS_ACCELERATOR_FILTER_H_
 #define CUTEFISH_ACCELERATORS_ACCELERATOR_FILTER_H_
 
-#include <QObject>
-#include <QTimer>
-
 #include "accelerators/accelerator.h"
+#include "base/geometry.h"
+#include "base/timer.h"
 #include "input/event_sink.h"
 #include "input/types.h"
 
@@ -38,15 +37,14 @@ class AcceleratorController;
 // every layout but the US ones pins punctuation shortcuts by position.
 bool usesPositionalShortcuts(const input::XkbTracker &xkb);
 
-class AcceleratorFilter : public QObject, public input::EventSink
+class AcceleratorFilter : public input::EventSink
 {
-    Q_OBJECT
 
 public:
     // `next` receives whatever is not consumed here; it is the window manager.
     AcceleratorFilter(AcceleratorController *controller, const input::XkbTracker *xkb,
                       wm::WindowManager *windowManager, wm::WindowCycleController *windowCycle,
-                      input::EventSink *next, QObject *parent = nullptr);
+                      input::EventSink *next);
     ~AcceleratorFilter() override;
 
     // The accelerator a physical key transition amounts to under the current
@@ -58,18 +56,18 @@ public:
     void setKeyRepeatSettings(const input::KeyRepeatSettings &settings);
 
     // input::EventSink:
-    bool onPointerMotion(input::Timestamp timestamp, const QPointF &location) override;
-    bool onPointerButton(input::Timestamp timestamp, const QPointF &location,
+    bool onPointerMotion(input::Timestamp timestamp, const base::PointF &location) override;
+    bool onPointerButton(input::Timestamp timestamp, const base::PointF &location,
                          uint32_t evdevButton, bool pressed) override;
-    bool onPointerAxis(input::Timestamp timestamp, const QPointF &location,
-                       const QPointF &offset, bool discrete) override;
-    bool onPointerAxisStop(input::Timestamp timestamp, const QPointF &location) override;
+    bool onPointerAxis(input::Timestamp timestamp, const base::PointF &location,
+                       const base::PointF &offset, bool discrete) override;
+    bool onPointerAxisStop(input::Timestamp timestamp, const base::PointF &location) override;
     bool onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
     bool onSecureKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
     // Touch passes straight through: ash's launcher state machine and window
     // cycle filter watch the mouse only.
-    bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
-    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
+    bool onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
+    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
     bool onTouchUp(input::Timestamp timestamp, int32_t id) override;
     void onTouchCancel(input::Timestamp timestamp) override;
 
@@ -92,7 +90,7 @@ private:
     input::EventSink *m_next = nullptr;
 
     input::KeyRepeatSettings m_repeatSettings;
-    QTimer m_repeatTimer;
+    base::Timer m_repeatTimer;
     Accelerator m_repeatAccelerator;
 };
 

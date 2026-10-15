@@ -4,7 +4,10 @@
 
 #pragma once
 
-#include <QObject>
+#include <cstddef>
+
+#include "base/signal.h"
+#include "base/weak_ptr.h"
 
 namespace cutefish::input {
 class InputManager;
@@ -14,12 +17,12 @@ namespace cutefish::wayland {
 
 // Shared inhibition count. Wayland inhibitors and the org.freedesktop.ScreenSaver
 // service (session::ScreenSaverService) acquire it; idle notifications read it.
-class IdleInhibition : public QObject
+class IdleInhibition
 {
-    Q_OBJECT
 public:
-    explicit IdleInhibition(QObject *parent = nullptr);
-    ~IdleInhibition() override;
+    IdleInhibition() = default;
+    IdleInhibition(const IdleInhibition &) = delete;
+    IdleInhibition &operator=(const IdleInhibition &) = delete;
 
     bool inhibited() const { return m_count != 0 && !m_ignored; }
 
@@ -31,12 +34,14 @@ public:
     void setIgnored(bool ignored);
     input::InputManager *input = nullptr;
 
-Q_SIGNALS:
-    void inhibitedChanged();
-    void sceneChanged();
+    base::WeakPtr<IdleInhibition> weakPtr() { return m_weakFactory.getWeakPtr(); }
+
+    base::Signal<> inhibitedChanged;
+    base::Signal<> sceneChanged;
 
 private:
     size_t m_count = 0;
     bool m_ignored = false;
+    base::WeakPtrFactory<IdleInhibition> m_weakFactory {this};
 };
 } // namespace cutefish::wayland

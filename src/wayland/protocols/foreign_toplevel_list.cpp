@@ -4,7 +4,6 @@
 
 #include "wayland/protocols/foreign_toplevel_list.h"
 
-#include <QRect>
 #include <algorithm>
 #include <ext-foreign-toplevel-list-v1-server-protocol.h>
 #include <wayland-server-core.h>
@@ -25,7 +24,7 @@ struct ForeignToplevelList::Client {
 
 struct ForeignToplevelList::Entry {
     wm::Window *window = nullptr;
-    QString identifier;
+    std::string identifier;
     std::shared_ptr<compositor::CaptureSource> source;
     // The window with its shadow, for cutefish_window_v1.create_capture_source.
     std::shared_ptr<compositor::CaptureSource> shadowed;
@@ -122,15 +121,17 @@ ForeignToplevelList::ForeignToplevelList(wl_display *display, wm::WindowManager 
                                 ForeignToplevelListEvents::bind);
     for (wm::Window *window : m_manager->windows())
         add(window);
-    connect(m_manager, &wm::WindowManager::windowAdded, this, [this](wm::Window *window) {
+    m_windowAdded = m_manager->windowAdded.connect([this](wm::Window *window) {
         add(window);
     });
-    connect(m_manager, &wm::WindowManager::windowRemoved, this, [this](wm::Window *window) {
+    m_windowRemoved = m_manager->windowRemoved.connect([this](wm::Window *window) {
         remove(window);
     });
-    connect(m_compositor, &compositor::Compositor::outputViewsChanged, this, [this] {
-        updateAllGeometry();
-    });
+    if (m_compositor) {
+        m_outputViewsChanged = m_compositor->outputViewsChanged.connect([this] {
+            updateAllGeometry();
+        });
+    }
 }
 
 ForeignToplevelList::~ForeignToplevelList()
@@ -170,7 +171,7 @@ ForeignToplevelList::Entry &ForeignToplevelList::entryFor(wm::Window *window)
     entry->window = window;
     // The window id is never reused, and the shell names windows to its
     // capture clients by it (cutefish_window_management_v1.window).
-    entry->identifier = QStringLiteral("cutefish-%1").arg(window->id());
+    entry->identifier = "cutefish-" + std::to_string(window->id());
     entry->source = std::make_shared<compositor::CaptureSource>();
     entry->source->kind = compositor::CaptureSource::Kind::Window;
     entry->source->node = window->node();
@@ -208,7 +209,7 @@ void ForeignToplevelList::remove(wm::Window *window)
     for (auto &source : {entry->source, entry->shadowed}) {
         source->node = nullptr;
         source->active = false;
-        Q_EMIT source->changed();
+        source->changed();
     }
     // Handles outlive the window until the client destroys them; they simply
     // no longer resolve to a source.
@@ -232,10 +233,10 @@ void ForeignToplevelList::announce(Client &client, Entry &entry)
                                    ForeignToplevelListEvents::handleResourceDestroyed);
     entry.handles.push_back(handle);
     ext_foreign_toplevel_list_v1_send_toplevel(client.resource, handle);
-    ext_foreign_toplevel_handle_v1_send_identifier(handle, entry.identifier.toUtf8().constData());
-    ext_foreign_toplevel_handle_v1_send_title(handle, entry.window->title().toUtf8().constData());
+    ext_foreign_toplevel_handle_v1_send_identifier(handle, entry.identifier.c_str());
+    ext_foreign_toplevel_handle_v1_send_title(handle, entry.window->title().c_str());
     ext_foreign_toplevel_handle_v1_send_app_id(handle,
-                                               entry.window->applicationId().toUtf8().constData());
+                                               entry.window->applicationId().c_str());
     ext_foreign_toplevel_handle_v1_send_done(handle);
 }
 
@@ -243,26 +244,26 @@ void ForeignToplevelList::announce(Client &client, Entry &entry)
 // it; its scale decides the capture's pixel size.
 void ForeignToplevelList::updateGeometry(Entry &entry)
 {
-    const QRect bounds = entry.window->bounds();
-    QString outputName;
+    const base::Rect bounds = entry.window->bounds();
+    std::string outputName;
     double scale = 1;
     int best = -1;
     for (const auto &view : m_compositor->outputViews()) {
-        const QRect overlap = view.bounds.intersected(bounds);
+        const base::Rect overlap = view.bounds.intersected(bounds);
         const int area = overlap.width() * overlap.height();
         if (area > best) {
             best = area;
-            outputName = view.waylandName.isEmpty() ? view.id : view.waylandName;
+            outputName = view.waylandName.empty() ? view.id : view.waylandName;
             scale = view.scale.value();
         }
     }
-    const auto update = [&](compositor::CaptureSource &source, const QRect &bounds) {
-        const QSize before = source.pixelSize();
+    const auto update = [&](compositor::CaptureSource &source, const base::Rect &bounds) {
+        const base::Size before = source.pixelSize();
         source.bounds = bounds;
         source.scale = scale;
         source.outputName = outputName;
         if (source.pixelSize() != before)
-            Q_EMIT source.changed();
+            source.changed();
     };
     update(*entry.source, bounds);
     update(*entry.shadowed, m_shadowBounds ? m_shadowBounds(entry.window) : bounds);
@@ -299,7 +300,7 @@ std::shared_ptr<compositor::CaptureSource> ForeignToplevelList::sourceFor(wl_res
     return entry ? entry->source : nullptr;
 }
 
-void ForeignToplevelList::onWindowBoundsChanged(wm::Window *window, const QRect &)
+void ForeignToplevelList::onWindowBoundsChanged(wm::Window *window, const base::Rect &)
 {
     if (const auto it = m_entries.find(window); it != m_entries.end())
         updateGeometry(*it->second);
@@ -320,7 +321,7 @@ void ForeignToplevelList::onWindowApplicationIdChanged(wm::Window *window)
         return;
     for (wl_resource *handle : it->second->handles) {
         ext_foreign_toplevel_handle_v1_send_app_id(handle,
-                                                   window->applicationId().toUtf8().constData());
+                                                   window->applicationId().c_str());
         ext_foreign_toplevel_handle_v1_send_done(handle);
     }
 }
@@ -331,7 +332,7 @@ void ForeignToplevelList::onWindowTitleChanged(wm::Window *window)
     if (it == m_entries.end())
         return;
     for (wl_resource *handle : it->second->handles) {
-        ext_foreign_toplevel_handle_v1_send_title(handle, window->title().toUtf8().constData());
+        ext_foreign_toplevel_handle_v1_send_title(handle, window->title().c_str());
         ext_foreign_toplevel_handle_v1_send_done(handle);
     }
 }

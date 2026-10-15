@@ -81,7 +81,7 @@ public:
     void onPointerGestureUpdate(input::Timestamp timestamp,
                                 const input::GestureUpdate &update) override
     {
-        const QPointF delta =
+        const base::PointF delta =
                 logicalToClient(update.delta, clientScale(wl_resource_get_client(m_resource)));
         const uint32_t time = timePointToMilliseconds(timestamp);
         if (m_type == input::GestureType::Swipe) {

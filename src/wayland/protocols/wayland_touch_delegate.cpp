@@ -35,7 +35,7 @@ bool WaylandTouchDelegate::canAcceptTouchEventsForSurface(compositor::Surface *s
 }
 
 void WaylandTouchDelegate::onTouchDown(compositor::Surface *surface, input::Timestamp timestamp,
-                                       int32_t id, const QPointF &location)
+                                       int32_t id, const base::PointF &location)
 {
     wl_resource *surfaceResource = getSurfaceResource(surface);
     if (!surfaceResource)
@@ -44,7 +44,7 @@ void WaylandTouchDelegate::onTouchDown(compositor::Surface *surface, input::Time
     // A touch is a user action, as a click is: the client may cite it to
     // activate a window.
     m_serialTracker->recordActivationSerial(serial, m_touchResource);
-    const QPointF local = logicalToClient(location, clientScale(client()));
+    const base::PointF local = logicalToClient(location, clientScale(client()));
     wl_touch_send_down(m_touchResource, serial, timePointToMilliseconds(timestamp),
                        surfaceResource, id, wl_fixed_from_double(local.x()),
                        wl_fixed_from_double(local.y()));
@@ -57,9 +57,9 @@ void WaylandTouchDelegate::onTouchUp(input::Timestamp timestamp, int32_t id)
 }
 
 void WaylandTouchDelegate::onTouchMotion(input::Timestamp timestamp, int32_t id,
-                                         const QPointF &location)
+                                         const base::PointF &location)
 {
-    const QPointF local = logicalToClient(location, clientScale(client()));
+    const base::PointF local = logicalToClient(location, clientScale(client()));
     wl_touch_send_motion(m_touchResource, timePointToMilliseconds(timestamp), id,
                          wl_fixed_from_double(local.x()), wl_fixed_from_double(local.y()));
 }

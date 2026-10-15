@@ -9,6 +9,7 @@
 
 #include <linux/input-event-codes.h>
 
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "fake_renderer.h"
@@ -32,7 +33,7 @@ input::Timestamp at(int ms)
     return input::Timestamp(std::chrono::milliseconds(ms));
 }
 
-constexpr QRect kOutput(0, 0, 1000, 800);
+const base::Rect kOutput(0, 0, 1000, 800);
 constexpr int kSliver = ShowDesktopController::kSliverWidth;
 
 class ShowDesktopTest : public testing::Test
@@ -40,7 +41,7 @@ class ShowDesktopTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     input::Seat seat {&compositor};
@@ -65,20 +66,20 @@ protected:
 
     void TearDown() override { seat.shutdown(); }
 
-    compositor::Surface *makeSurface(const QSize &size)
+    compositor::Surface *makeSurface(const base::Size &size)
     {
         surfaces.push_back(compositor.createSurface());
         compositor::Surface *surface = surfaces.back().get();
         auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(base::Point(), size));
         surface->commit();
         compositor.updateTextures(renderer);
         return surface;
     }
 
-    Window *makeWindow(const QRect &bounds)
+    Window *makeWindow(const base::Rect &bounds)
     {
         Window *window =
                 manager.createWindow(makeSurface(bounds.size()), {.requestedSize = bounds.size()});
@@ -95,7 +96,7 @@ protected:
         now += 1000;
     }
 
-    void click(const QPointF &location)
+    void click(const base::PointF &location)
     {
         manager.onPointerButton(at(0), location, BTN_LEFT, true);
         manager.onPointerButton(at(0), location, BTN_LEFT, false);
@@ -104,23 +105,23 @@ protected:
 
 TEST_F(ShowDesktopTest, WindowsGoToTheNearerSideLeavingASliver)
 {
-    Window *left = makeWindow(QRect(100, 100, 300, 200));
-    Window *right = makeWindow(QRect(600, 300, 300, 200));
+    Window *left = makeWindow(base::Rect(100, 100, 300, 200));
+    Window *right = makeWindow(base::Rect(600, 300, 300, 200));
     showDesktop->enter();
     finishSlide();
 
     EXPECT_TRUE(showDesktop->isActive());
-    EXPECT_EQ(left->bounds(), QRect(100, 100, 300, 200));
-    EXPECT_EQ(left->presentationOffset(), QPoint(kSliver - 400, 0));
-    EXPECT_EQ(right->presentationOffset(), QPoint(1000 - kSliver - 600, 0));
-    EXPECT_EQ(desktop->presentationOffset(), QPoint());
+    EXPECT_EQ(left->bounds(), base::Rect(100, 100, 300, 200));
+    EXPECT_EQ(left->presentationOffset(), base::Point(kSliver - 400, 0));
+    EXPECT_EQ(right->presentationOffset(), base::Point(1000 - kSliver - 600, 0));
+    EXPECT_EQ(desktop->presentationOffset(), base::Point());
     // The desktop has the keyboard meanwhile.
     EXPECT_EQ(manager.activation()->activeWindow(), desktop);
 }
 
 TEST_F(ShowDesktopTest, MovesHalfwayMidSlideAndBackWhenToggledAgain)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     showDesktop->enter();
     showDesktop->advance(now);
     showDesktop->advance(now + ShowDesktopController::kSlideDurationMs / 2);
@@ -132,19 +133,19 @@ TEST_F(ShowDesktopTest, MovesHalfwayMidSlideAndBackWhenToggledAgain)
     EXPECT_FALSE(showDesktop->isActive());
     now += ShowDesktopController::kSlideDurationMs;
     finishSlide();
-    EXPECT_EQ(window->presentationOffset(), QPoint());
+    EXPECT_EQ(window->presentationOffset(), base::Point());
     EXPECT_FALSE(showDesktop->isMovedAside(window));
 }
 
 TEST_F(ShowDesktopTest, LeavesShellMinimizedAndHiddenWindowsAlone)
 {
-    Window *dock = makeWindow(QRect(200, 720, 600, 75));
+    Window *dock = makeWindow(base::Rect(200, 720, 600, 75));
     dock->setRole(WindowRole::Dock);
-    Window *minimized = makeWindow(QRect(100, 100, 300, 200));
+    Window *minimized = makeWindow(base::Rect(100, 100, 300, 200));
     minimized->minimize();
-    Window *hidden = makeWindow(QRect(100, 100, 300, 200));
+    Window *hidden = makeWindow(base::Rect(100, 100, 300, 200));
     hidden->setHidden(true);
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     showDesktop->enter();
     finishSlide();
 
@@ -152,7 +153,7 @@ TEST_F(ShowDesktopTest, LeavesShellMinimizedAndHiddenWindowsAlone)
     EXPECT_FALSE(showDesktop->isMovedAside(dock));
     EXPECT_FALSE(showDesktop->isMovedAside(minimized));
     EXPECT_FALSE(showDesktop->isMovedAside(hidden));
-    EXPECT_EQ(dock->presentationOffset(), QPoint());
+    EXPECT_EQ(dock->presentationOffset(), base::Point());
 }
 
 TEST_F(ShowDesktopTest, NothingToMoveLeavesTheModeOff)
@@ -163,40 +164,40 @@ TEST_F(ShowDesktopTest, NothingToMoveLeavesTheModeOff)
 
 TEST_F(ShowDesktopTest, ActivatingAnApplicationWindowBringsThemBack)
 {
-    Window *first = makeWindow(QRect(100, 100, 300, 200));
-    Window *second = makeWindow(QRect(600, 300, 300, 200));
+    Window *first = makeWindow(base::Rect(100, 100, 300, 200));
+    Window *second = makeWindow(base::Rect(600, 300, 300, 200));
     showDesktop->enter();
     finishSlide();
 
     // Clicking the desktop keeps them aside.
-    click(QPointF(500, 650));
+    click(base::PointF(500, 650));
     EXPECT_TRUE(showDesktop->isActive());
 
     manager.activation()->activate(first);
     EXPECT_FALSE(showDesktop->isActive());
     finishSlide();
-    EXPECT_EQ(first->presentationOffset(), QPoint());
-    EXPECT_EQ(second->presentationOffset(), QPoint());
+    EXPECT_EQ(first->presentationOffset(), base::Point());
+    EXPECT_EQ(second->presentationOffset(), base::Point());
 }
 
 TEST_F(ShowDesktopTest, ClickingASliverBringsThatWindowBackInFront)
 {
-    Window *first = makeWindow(QRect(100, 100, 300, 200));
-    Window *second = makeWindow(QRect(150, 150, 300, 200));
+    Window *first = makeWindow(base::Rect(100, 100, 300, 200));
+    Window *second = makeWindow(base::Rect(150, 150, 300, 200));
     manager.activation()->activate(second);
     showDesktop->enter();
     finishSlide();
 
     // The first window's sliver, below the second's.
-    click(QPointF(kSliver / 2, 120));
+    click(base::PointF(kSliver / 2, 120));
     EXPECT_FALSE(showDesktop->isActive());
     EXPECT_EQ(manager.activation()->activeWindow(), first);
 }
 
 TEST_F(ShowDesktopTest, ADialogGoesWithItsWindow)
 {
-    Window *window = makeWindow(QRect(500, 100, 400, 300));
-    Window *dialog = makeWindow(QRect(300, 150, 200, 100));
+    Window *window = makeWindow(base::Rect(500, 100, 400, 300));
+    Window *dialog = makeWindow(base::Rect(300, 150, 200, 100));
     dialog->setTransientParent(window);
     showDesktop->enter();
     finishSlide();
@@ -205,8 +206,8 @@ TEST_F(ShowDesktopTest, ADialogGoesWithItsWindow)
 
 TEST_F(ShowDesktopTest, ASheetGoesWithItsWindow)
 {
-    Window *window = makeWindow(QRect(500, 100, 400, 300));
-    Window *sheet = makeWindow(QRect(550, 100, 300, 150));
+    Window *window = makeWindow(base::Rect(500, 100, 400, 300));
+    Window *sheet = makeWindow(base::Rect(550, 100, 300, 150));
     sheet->setRole(WindowRole::Sheet);
     sheet->setTransientParent(window);
     showDesktop->enter();
@@ -217,9 +218,9 @@ TEST_F(ShowDesktopTest, ASheetGoesWithItsWindow)
 
 TEST_F(ShowDesktopTest, WhereAWindowWasIsDesktop)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     window->rootSurface()->setServerResize(true);
-    const QPointF outsideRight(window->bounds().right() + 2, window->bounds().center().y());
+    const base::PointF outsideRight(window->bounds().right() + 1, centerPixel(window->bounds()).y());
     ResizeEdge edge = ResizeEdge::None;
     ASSERT_EQ(window, manager.resizeHandleAt(outsideRight, false, &edge));
     showDesktop->enter();
@@ -233,14 +234,14 @@ TEST_F(ShowDesktopTest, WhereAWindowWasIsDesktop)
 
 TEST_F(ShowDesktopTest, MinimizingOrClosingWhileAsideReleasesTheWindow)
 {
-    Window *minimized = makeWindow(QRect(100, 100, 300, 200));
-    Window *closed = makeWindow(QRect(600, 300, 300, 200));
+    Window *minimized = makeWindow(base::Rect(100, 100, 300, 200));
+    Window *closed = makeWindow(base::Rect(600, 300, 300, 200));
     showDesktop->enter();
     finishSlide();
 
     minimized->minimize();
     EXPECT_FALSE(showDesktop->isMovedAside(minimized));
-    EXPECT_EQ(minimized->presentationOffset(), QPoint());
+    EXPECT_EQ(minimized->presentationOffset(), base::Point());
     manager.destroyWindow(closed);
     EXPECT_TRUE(showDesktop->isActive());
 }

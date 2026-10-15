@@ -12,28 +12,29 @@
 #include "scene/damage_tracker.h"
 #include "scene/scene.h"
 #include "shm_test_util.h"
+#include "base/region.h"
 
 using namespace cutefish;
 
 TEST(Damage, OldNewRemovedAndRestoredCoverage)
 {
     scene::Scene scene;
-    const QRect viewport(0, 0, 400, 300);
+    const base::Rect viewport(0, 0, 400, 300);
     scene.setSize(viewport.size());
     auto *node = scene.root()->addChild(std::make_unique<scene::Node>());
     node->setGeometry({10, 20, 30, 40});
     scene::DamageTracker tracker;
-    EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(viewport));
+    EXPECT_EQ(tracker.update(*scene.root(), viewport), base::Region(viewport));
     EXPECT_TRUE(tracker.update(*scene.root(), viewport).isEmpty());
     node->setGeometry({20, 30, 50, 60});
     EXPECT_EQ(tracker.update(*scene.root(), viewport),
-              QRegion(QRect(10, 20, 30, 40)) + QRect(20, 30, 50, 60));
+              base::Region(base::Rect(10, 20, 30, 40)) + base::Rect(20, 30, 50, 60));
     node->setVisible(false);
-    EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(QRect(20, 30, 50, 60)));
+    EXPECT_EQ(tracker.update(*scene.root(), viewport), base::Region(base::Rect(20, 30, 50, 60)));
     node->setVisible(true);
-    EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(QRect(20, 30, 50, 60)));
+    EXPECT_EQ(tracker.update(*scene.root(), viewport), base::Region(base::Rect(20, 30, 50, 60)));
     auto owned = scene.root()->removeChild(node);
-    EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(QRect(20, 30, 50, 60)));
+    EXPECT_EQ(tracker.update(*scene.root(), viewport), base::Region(base::Rect(20, 30, 50, 60)));
 }
 
 TEST(Damage, OutputsRetainIndependentContentHistory)
@@ -42,16 +43,16 @@ TEST(Damage, OutputsRetainIndependentContentHistory)
     auto *node = root.addChild(std::make_unique<scene::Node>());
     node->setGeometry({90, 0, 30, 40});
     scene::DamageTracker left, right;
-    const QRect a(0, 0, 100, 100), b(100, 0, 100, 100);
+    const base::Rect a(0, 0, 100, 100), b(100, 0, 100, 100);
     left.update(root, a);
     right.update(root, b);
-    node->notifyDamage(QRect(5, 2, 20, 3));
-    EXPECT_EQ(left.update(root, a), QRegion(QRect(95, 2, 5, 3)));
+    node->notifyDamage(base::Rect(5, 2, 20, 3));
+    EXPECT_EQ(left.update(root, a), base::Region(base::Rect(95, 2, 5, 3)));
     EXPECT_TRUE(left.update(root, a).isEmpty());
-    EXPECT_EQ(right.update(root, b), QRegion(QRect(100, 2, 15, 3)));
+    EXPECT_EQ(right.update(root, b), base::Region(base::Rect(100, 2, 15, 3)));
     for (int i = 0; i < 40; ++i)
-        node->notifyDamage(QRect(0, i, 1, 1));
-    EXPECT_EQ(right.update(root, b), QRegion(QRect(100, 0, 20, 40)));
+        node->notifyDamage(base::Rect(0, i, 1, 1));
+    EXPECT_EQ(right.update(root, b), base::Region(base::Rect(100, 0, 20, 40)));
 }
 
 TEST(Damage, ParentMovementAndStackingDamageDescendants)
@@ -61,15 +62,15 @@ TEST(Damage, ParentMovementAndStackingDamageDescendants)
     auto *child = parent->addChild(std::make_unique<scene::Node>());
     child->setGeometry({10, 20, 30, 40});
     scene::DamageTracker tracker;
-    const QRect viewport(0, 0, 400, 300);
+    const base::Rect viewport(0, 0, 400, 300);
     tracker.update(root, viewport);
     parent->setPosition({5, 6});
     EXPECT_EQ(tracker.update(root, viewport),
-              QRegion(QRect(10, 20, 30, 40)) + QRect(15, 26, 30, 40));
+              base::Region(base::Rect(10, 20, 30, 40)) + base::Rect(15, 26, 30, 40));
     root.addChild(std::make_unique<scene::Node>());
     tracker.update(root, viewport);
     root.raise(parent);
-    EXPECT_EQ(tracker.update(root, viewport), QRegion(QRect(15, 26, 30, 40)));
+    EXPECT_EQ(tracker.update(root, viewport), base::Region(base::Rect(15, 26, 30, 40)));
 }
 
 TEST(Damage, BlurUsesCompleteSourcePixels)
@@ -80,14 +81,14 @@ TEST(Damage, BlurUsesCompleteSourcePixels)
     node->setGeometry({20, 20, 50, 50});
     node->setBackgroundBlur({0, 0, 50, 50}, 12);
     scene::DamageTracker tracker;
-    const QRect viewport(0, 0, 100, 100);
+    const base::Rect viewport(0, 0, 100, 100);
     tracker.update(root, viewport);
-    node->notifyDamage(QRect(2, 2, 1, 1));
+    node->notifyDamage(base::Rect(2, 2, 1, 1));
     // Its own content lies above its blur, which reads what it did.
-    const QRegion damage = tracker.update(root, viewport);
-    EXPECT_EQ(damage, QRegion(QRect(22, 22, 1, 1)));
+    const base::Region damage = tracker.update(root, viewport);
+    EXPECT_EQ(damage, base::Region(base::Rect(22, 22, 1, 1)));
     const int halo = render::kBackdropBlurSupport + 2;
-    const QRect sampled = QRect(20, 20, 50, 50).adjusted(-halo, -halo, halo, halo);
+    const base::Rect sampled = base::Rect(20, 20, 50, 50).adjusted(-halo, -halo, halo, halo);
     EXPECT_EQ(render::coverSamples(damage.boundingRect(), tracker.samples()), sampled);
 }
 
@@ -96,11 +97,11 @@ TEST(Damage, ABlurReadsOnlyWhatIsDrawnBeforeIt)
     scene::Node root;
     auto *below = root.addChild(std::make_unique<scene::Node>());
     below->setGeometry({500, 400, 10, 10});
-    const auto addBlur = [&](const QRect &geometry) {
+    const auto addBlur = [&](const base::Rect &geometry) {
         auto *node = static_cast<scene::SurfaceNode *>(
                 root.addChild(std::make_unique<scene::SurfaceNode>()));
         node->setGeometry(geometry);
-        node->setBackgroundBlur({QPoint(), geometry.size()}, 12);
+        node->setBackgroundBlur({base::Point(), geometry.size()}, 12);
         return node;
     };
     const auto *first = addBlur({0, 0, 100, 40});
@@ -108,32 +109,32 @@ TEST(Damage, ABlurReadsOnlyWhatIsDrawnBeforeIt)
     auto *above = root.addChild(std::make_unique<scene::Node>());
     above->setGeometry({500, 400, 10, 10});
     scene::DamageTracker tracker;
-    const QRect viewport(0, 0, 800, 600);
+    const base::Rect viewport(0, 0, 800, 600);
     tracker.update(root, viewport);
     const int halo = render::kBackdropBlurSupport + 2;
-    const QRect firstSampled = QRect(0, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
-    const QRect secondSampled = QRect(150, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
-    EXPECT_EQ(tracker.samples(), (std::vector<QRect> {firstSampled, secondSampled}));
+    const base::Rect firstSampled = base::Rect(0, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
+    const base::Rect secondSampled = base::Rect(150, 0, 100, 40).adjusted(-halo, -halo, halo, halo);
+    EXPECT_EQ(tracker.samples(), (std::vector<base::Rect> {firstSampled, secondSampled}));
     const auto kept = [](uint64_t) {
         return true;
     };
 
     above->setPosition({10, 50});
     EXPECT_EQ(tracker.update(root, viewport),
-              QRegion(QRect(500, 400, 10, 10)) + QRect(10, 50, 10, 10));
+              base::Region(base::Rect(500, 400, 10, 10)) + base::Rect(10, 50, 10, 10));
     EXPECT_TRUE(tracker.samples(kept).empty());
     EXPECT_EQ(tracker.freshBackdrops(kept),
               (std::vector<uint64_t> {first->damageId(), second->damageId()}));
     // Without a kept result, a repaint reaching a blur still takes in all it reads.
-    EXPECT_EQ(tracker.samples(), (std::vector<QRect> {firstSampled, secondSampled}));
+    EXPECT_EQ(tracker.samples(), (std::vector<base::Rect> {firstSampled, secondSampled}));
 
     // The first blur changes, and the second, drawn over it, reads it.
     below->setPosition({10, 50});
     EXPECT_EQ(tracker.update(root, viewport),
-              (QRegion(QRect(500, 400, 10, 10)) + QRect(10, 50, 10, 10)
-               + QRect(-1, -1, 102, 42) + QRect(149, -1, 102, 42))
+              (base::Region(base::Rect(500, 400, 10, 10)) + base::Rect(10, 50, 10, 10)
+               + base::Rect(-1, -1, 102, 42) + base::Rect(149, -1, 102, 42))
                       .intersected(viewport));
-    EXPECT_EQ(tracker.samples(kept), (std::vector<QRect> {firstSampled, secondSampled}));
+    EXPECT_EQ(tracker.samples(kept), (std::vector<base::Rect> {firstSampled, secondSampled}));
     EXPECT_TRUE(tracker.freshBackdrops(kept).empty());
 
     // A kept result is only drawn again where nothing under it changed.
@@ -141,7 +142,7 @@ TEST(Damage, ABlurReadsOnlyWhatIsDrawnBeforeIt)
     tracker.update(root, viewport);
     below->setPosition({300, 100});
     tracker.update(root, viewport);
-    EXPECT_EQ(tracker.samples(kept), (std::vector<QRect> {secondSampled}));
+    EXPECT_EQ(tracker.samples(kept), (std::vector<base::Rect> {secondSampled}));
     EXPECT_EQ(tracker.freshBackdrops(kept), (std::vector<uint64_t> {first->damageId()}));
 }
 
@@ -153,23 +154,23 @@ TEST(Damage, ABlurRepaintsWhenWhatItReadsChangesOutOfSight)
     node->setGeometry({100, 100, 50, 50});
     node->setBackgroundBlur({0, 0, 50, 50}, 12);
     bool changed = false;
-    const auto backdropChanged = [&](const QRect &) {
+    const auto backdropChanged = [&](const base::Rect &) {
         return changed;
     };
     const auto kept = [](uint64_t) {
         return true;
     };
     scene::DamageTracker tracker;
-    const QRect viewport(0, 0, 400, 400);
+    const base::Rect viewport(0, 0, 400, 400);
     tracker.update(root, viewport, 1, 0, backdropChanged);
     EXPECT_TRUE(tracker.update(root, viewport, 1, 0, backdropChanged).isEmpty());
     EXPECT_TRUE(tracker.samples(kept).empty());
     changed = true;
     const int halo = render::kBackdropBlurSupport + 2;
     EXPECT_EQ(tracker.update(root, viewport, 1, 0, backdropChanged),
-              QRegion(QRect(99, 99, 52, 52)));
+              base::Region(base::Rect(99, 99, 52, 52)));
     EXPECT_EQ(tracker.samples(kept),
-              (std::vector<QRect> {QRect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)}));
+              (std::vector<base::Rect> {base::Rect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)}));
 }
 
 TEST(Damage, ABlurDrawnAgainWholeReadsEverythingAgain)
@@ -179,7 +180,7 @@ TEST(Damage, ABlurDrawnAgainWholeReadsEverythingAgain)
     public:
         bool redraws = false;
 
-        bool redrawsSubtree(const QRect &, double) const override { return redraws; }
+        bool redrawsSubtree(const base::Rect &, double) const override { return redraws; }
     };
 
     scene::Node root;
@@ -192,15 +193,15 @@ TEST(Damage, ABlurDrawnAgainWholeReadsEverythingAgain)
         return true;
     };
     scene::DamageTracker tracker, inner;
-    const QRect viewport(0, 0, 400, 400);
+    const base::Rect viewport(0, 0, 400, 400);
     tracker.update(root, viewport);
     inner.update(*retained, viewport);
     EXPECT_TRUE(tracker.update(root, viewport).isEmpty());
     retained->redraws = true;
     const int halo = render::kBackdropBlurSupport + 2;
-    EXPECT_EQ(tracker.update(root, viewport), QRegion(QRect(99, 99, 52, 52)));
+    EXPECT_EQ(tracker.update(root, viewport), base::Region(base::Rect(99, 99, 52, 52)));
     EXPECT_EQ(tracker.samples(kept),
-              (std::vector<QRect> {QRect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)}));
+              (std::vector<base::Rect> {base::Rect(100, 100, 50, 50).adjusted(-halo, -halo, halo, halo)}));
     // A tracker of the retained subtree itself is what draws it again.
     EXPECT_TRUE(inner.update(*retained, viewport).isEmpty());
 }
@@ -217,32 +218,32 @@ TEST(Damage, AFullRepaintStaysOnTheOutputsItDrawsOn)
     auto *node = root.addChild(std::make_unique<Filter>());
     node->setGeometry({10, 10, 50, 50});
     scene::DamageTracker left, right;
-    const QRect a(0, 0, 100, 100), b(100, 0, 100, 100);
+    const base::Rect a(0, 0, 100, 100), b(100, 0, 100, 100);
     left.update(root, a);
     right.update(root, b);
-    node->notifyDamage(QRect(0, 0, 1, 1));
-    EXPECT_EQ(left.update(root, a), QRegion(a));
+    node->notifyDamage(base::Rect(0, 0, 1, 1));
+    EXPECT_EQ(left.update(root, a), base::Region(a));
     EXPECT_TRUE(right.update(root, b).isEmpty());
     node->setPosition({80, 10});
-    EXPECT_EQ(left.update(root, a), QRegion(a));
-    EXPECT_EQ(right.update(root, b), QRegion(b));
+    EXPECT_EQ(left.update(root, a), base::Region(a));
+    EXPECT_EQ(right.update(root, b), base::Region(b));
 }
 
 TEST(Damage, RepaintCoversEveryBlurItReaches)
 {
-    const render::OutputRenderContext context {"test", QRect(100, 0, 200, 100), QSize(400, 200),
+    const render::OutputRenderContext context {"test", base::Rect(100, 0, 200, 100), base::Size(400, 200),
                                                2};
-    const QSize size(400, 200);
-    const std::vector<QRect> samples {QRect(110, 10, 20, 20), QRect(125, 25, 20, 20),
-                                      QRect(250, 60, 10, 10)};
-    EXPECT_EQ(render::coverSamples(QRect(300, 0, 10, 10), samples, context, size),
-              QRect(300, 0, 10, 10));
-    EXPECT_TRUE(render::coverSamples(QRect(), samples, context, size).isEmpty());
+    const base::Size size(400, 200);
+    const std::vector<base::Rect> samples {base::Rect(110, 10, 20, 20), base::Rect(125, 25, 20, 20),
+                                      base::Rect(250, 60, 10, 10)};
+    EXPECT_EQ(render::coverSamples(base::Rect(300, 0, 10, 10), samples, context, size),
+              base::Rect(300, 0, 10, 10));
+    EXPECT_TRUE(render::coverSamples(base::Rect(), samples, context, size).isEmpty());
     // The first, once taken in, reaches the second; the third stays out of it.
-    EXPECT_EQ(render::coverSamples(QRect(0, 0, 30, 30), samples, context, size),
-              QRect(0, 0, 90, 90));
-    EXPECT_EQ(render::coverSamples(QRect(0, 0, 100, 100), samples, context, size),
-              QRect(0, 0, 100, 100));
+    EXPECT_EQ(render::coverSamples(base::Rect(0, 0, 30, 30), samples, context, size),
+              base::Rect(0, 0, 90, 90));
+    EXPECT_EQ(render::coverSamples(base::Rect(0, 0, 100, 100), samples, context, size),
+              base::Rect(0, 0, 100, 100));
 }
 
 TEST(Damage, CheckingForDamageLeavesTheHistoryAlone)
@@ -254,7 +255,7 @@ TEST(Damage, CheckingForDamageLeavesTheHistoryAlone)
     auto *right = scene.root()->addChild(std::make_unique<scene::Node>());
     right->setGeometry({300, 20, 30, 40});
     testsupport::FakeRenderer renderer;
-    const render::OutputRenderContext context {"left", QRect(0, 0, 200, 300), {200, 300}, 1};
+    const render::OutputRenderContext context {"left", base::Rect(0, 0, 200, 300), {200, 300}, 1};
     renderer.setOutputContext(context);
     EXPECT_TRUE(scene.hasDamage(context));
     scene.render(renderer);
@@ -271,20 +272,20 @@ TEST(Damage, CheckingForDamageLeavesTheHistoryAlone)
 TEST(Damage, FractionalTranslatedAndRotatedPhysicalCoverage)
 {
     // Each rect also takes the pixel a snapped texture can reach past its far edges.
-    render::OutputRenderContext context {"test", QRect(-100, 50, 80, 60), QSize(100, 75), 1.25};
-    EXPECT_EQ(render::physicalDamage(QRect(-99, 51, 2, 2), context, {100, 75}), QRect(1, 1, 4, 4));
+    render::OutputRenderContext context {"test", base::Rect(-100, 50, 80, 60), base::Size(100, 75), 1.25};
+    EXPECT_EQ(render::physicalDamage(base::Rect(-99, 51, 2, 2), context, {100, 75}), base::Rect(1, 1, 4, 4));
     context.transform = 1;
-    EXPECT_EQ(render::physicalDamage(QRect(-99, 51, 2, 2), context, {75, 100}), QRect(1, 95, 4, 4));
+    EXPECT_EQ(render::physicalDamage(base::Rect(-99, 51, 2, 2), context, {75, 100}), base::Rect(1, 95, 4, 4));
     context.transform = 2;
-    EXPECT_EQ(render::physicalDamage(QRect(-99, 51, 2, 2), context, {100, 75}),
-              QRect(95, 70, 4, 4));
+    EXPECT_EQ(render::physicalDamage(base::Rect(-99, 51, 2, 2), context, {100, 75}),
+              base::Rect(95, 70, 4, 4));
     context.transform = 3;
-    EXPECT_EQ(render::physicalDamage(QRect(-99, 51, 2, 2), context, {75, 100}), QRect(70, 1, 4, 4));
+    EXPECT_EQ(render::physicalDamage(base::Rect(-99, 51, 2, 2), context, {75, 100}), base::Rect(70, 1, 4, 4));
     context.transform = 0;
     context.nativeContentRect = {10, 20, 100, 75};
-    EXPECT_EQ(render::physicalDamage(QRect(-99, 51, 2, 2), context, {120, 120}),
-              QRect(11, 21, 4, 4));
-    EXPECT_TRUE(render::physicalDamage(QRect(500, 500, 1, 1), context, {120, 120}).isEmpty());
+    EXPECT_EQ(render::physicalDamage(base::Rect(-99, 51, 2, 2), context, {120, 120}),
+              base::Rect(11, 21, 4, 4));
+    EXPECT_TRUE(render::physicalDamage(base::Rect(500, 500, 1, 1), context, {120, 120}).isEmpty());
 }
 
 TEST(Damage, LogicalRepaintTakesInEverythingThatReachesTheRepaint)
@@ -294,23 +295,23 @@ TEST(Damage, LogicalRepaintTakesInEverythingThatReachesTheRepaint)
     for (const double scale : {1.0, 1.25, 1.5, 1.75, 2.0}) {
         for (uint32_t transform = 0; transform < 4; ++transform) {
             for (const bool letterboxed : {false, true}) {
-                render::OutputRenderContext context {"test", QRect(-40, 30, 24, 20), {}, scale,
+                render::OutputRenderContext context {"test", base::Rect(-40, 30, 24, 20), {}, scale,
                                                      transform};
-                QSize content(int(std::ceil(24 * scale)), int(std::ceil(20 * scale)));
+                base::Size content(int(std::ceil(24 * scale)), int(std::ceil(20 * scale)));
                 if (transform % 2)
-                    content.transpose();
-                QSize target = content;
+                    content = content.transposed();
+                base::Size target = content;
                 if (letterboxed) {
-                    context.nativeContentRect = QRect(QPoint(3, 5), content);
-                    target += QSize(7, 9);
+                    context.nativeContentRect = base::Rect(base::Point(3, 5), content);
+                    target += base::Size(7, 9);
                 }
-                for (const QRect &damage : {QRect(-37, 33, 1, 1), QRect(-30, 40, 5, 3)}) {
-                    const QRect repaint = render::physicalDamage(damage, context, target);
+                for (const base::Rect &damage : {base::Rect(-37, 33, 1, 1), base::Rect(-30, 40, 5, 3)}) {
+                    const base::Rect repaint = render::physicalDamage(damage, context, target);
                     const auto clip = render::logicalRepaint(repaint, context, target);
                     ASSERT_TRUE(clip);
                     for (int y = 30; y < 50; ++y) {
                         for (int x = -40; x < -16; ++x) {
-                            const QRect rect(x, y, 1, 1);
+                            const base::Rect rect(x, y, 1, 1);
                             if (render::physicalDamage(rect, context, target).intersects(repaint))
                                 EXPECT_TRUE(clip->intersects(rect))
                                         << scale << " " << transform << " " << letterboxed
@@ -321,14 +322,14 @@ TEST(Damage, LogicalRepaintTakesInEverythingThatReachesTheRepaint)
             }
         }
     }
-    render::OutputRenderContext flipped {"test", QRect(0, 0, 10, 10), {}, 1, 4};
-    EXPECT_FALSE(render::logicalRepaint(QRect(0, 0, 2, 2), flipped, {10, 10}));
+    render::OutputRenderContext flipped {"test", base::Rect(0, 0, 10, 10), {}, 1, 4};
+    EXPECT_FALSE(render::logicalRepaint(base::Rect(0, 0, 2, 2), flipped, {10, 10}));
 }
 
 TEST(Damage, BufferAgeRepairsMissingFramesAndResets)
 {
     render::BufferDamageHistory history;
-    const QRect full(0, 0, 100, 100), a(1, 1, 2, 2), b(20, 20, 3, 3), c(40, 40, 4, 4);
+    const base::Rect full(0, 0, 100, 100), a(1, 1, 2, 2), b(20, 20, 3, 3), c(40, 40, 4, 4);
     EXPECT_EQ(history.repair(a, 0, full), full);
     EXPECT_EQ(history.repair(a, 2, full), full);
     history.presented(a);
@@ -357,7 +358,7 @@ TEST(Damage, SynchronizedSurfaceDamageWaitsForParentAndSurvivesUpload)
     testsupport::FakeRenderer renderer;
     compositor.updateTextures(renderer);
     scene::DamageTracker tracker;
-    const QRect viewport(0, 0, 100, 100);
+    const base::Rect viewport(0, 0, 100, 100);
     tracker.update(*scene.root(), viewport);
     child->damageBuffer({4, 6, 8, 10});
     child->attach(buffer, {});
@@ -365,7 +366,7 @@ TEST(Damage, SynchronizedSurfaceDamageWaitsForParentAndSurvivesUpload)
     EXPECT_TRUE(tracker.update(*scene.root(), viewport).isEmpty());
     parent->commit();
     compositor.updateTextures(renderer);
-    EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(QRect(1, 2, 6, 7)));
+    EXPECT_EQ(tracker.update(*scene.root(), viewport), base::Region(base::Rect(1, 2, 6, 7)));
     child->setBufferScale(1);
     child->attach(buffer, {});
     child->damageBuffer({40, 40, 2, 2});
@@ -376,7 +377,7 @@ TEST(Damage, SynchronizedSurfaceDamageWaitsForParentAndSurvivesUpload)
     EXPECT_TRUE(tracker.update(*scene.root(), viewport).isEmpty());
     parent->commit();
     compositor.updateTextures(renderer);
-    EXPECT_EQ(tracker.update(*scene.root(), viewport), QRegion(QRect(0, 0, 32, 32)));
+    EXPECT_EQ(tracker.update(*scene.root(), viewport), base::Region(base::Rect(0, 0, 32, 32)));
 }
 
 namespace {
@@ -397,7 +398,7 @@ struct SubsurfaceDamageFixture {
             {64, 128}, 256 * 512 * 4, 256, render::PixelFormat::Bgrx8888, nullptr);
     testsupport::FakeRenderer renderer;
     scene::DamageTracker tracker;
-    const QRect viewport {0, 0, 400, 600};
+    const base::Rect viewport {0, 0, 400, 600};
 
     explicit SubsurfaceDamageFixture(bool synchronized)
     {
@@ -409,7 +410,7 @@ struct SubsurfaceDamageFixture {
         compositor.updateTextures(renderer);
     }
 
-    QRegion update()
+    base::Region update()
     {
         compositor.updateTextures(renderer);
         return tracker.update(*scene.root(), viewport);
@@ -417,7 +418,7 @@ struct SubsurfaceDamageFixture {
 };
 
 // Linear sampling reaches one texel past damage at scale 1, as exo's margin.
-bool approximately(const QRegion &damage, const QRect &expected)
+bool approximately(const base::Region &damage, const base::Rect &expected)
 {
     return damage.boundingRect().contains(expected)
             && expected.adjusted(-1, -1, 1, 1).contains(damage.boundingRect());
@@ -428,19 +429,19 @@ bool approximately(const QRegion &damage, const QRect &expected)
 TEST(Damage, SubsurfaceDamageAggregation)
 {
     SubsurfaceDamageFixture f(true);
-    EXPECT_EQ(f.update(), QRegion(f.viewport));
+    EXPECT_EQ(f.update(), base::Region(f.viewport));
 
     f.child->damage({32, 32, 16, 16});
     f.child->commit();
     f.parent->commit();
-    EXPECT_TRUE(approximately(f.update(), QRect(32, 32, 16, 16)));
+    EXPECT_TRUE(approximately(f.update(), base::Rect(32, 32, 16, 16)));
 
     // A root commit without a child commit must not repeat the child's damage.
     f.parent->damage({0, 0, 16, 16});
     f.parent->commit();
-    const QRegion damage = f.update();
-    EXPECT_TRUE(approximately(damage, QRect(0, 0, 16, 16)));
-    EXPECT_FALSE(damage.intersects(QRect(32, 32, 16, 16)));
+    const base::Region damage = f.update();
+    EXPECT_TRUE(approximately(damage, base::Rect(0, 0, 16, 16)));
+    EXPECT_FALSE(damage.intersects(base::Rect(32, 32, 16, 16)));
 }
 
 TEST(Damage, SubsurfaceDamageSynchronizedCommitBehavior)
@@ -449,7 +450,7 @@ TEST(Damage, SubsurfaceDamageSynchronizedCommitBehavior)
     f.update();
 
     f.child->damage({32, 32, 16, 16});
-    EXPECT_EQ(f.child->pendingDamage(), QRegion(QRect(32, 32, 16, 16)));
+    EXPECT_EQ(f.child->pendingDamage(), base::Region(base::Rect(32, 32, 16, 16)));
     f.child->commit();
     EXPECT_TRUE(f.child->pendingDamage().isEmpty());
     EXPECT_TRUE(f.update().isEmpty());
@@ -457,10 +458,10 @@ TEST(Damage, SubsurfaceDamageSynchronizedCommitBehavior)
     // Pending damage stays behind; the parent applies only what was cached.
     f.child->damage({0, 0, 16, 16});
     f.parent->commit();
-    const QRegion damage = f.update();
-    EXPECT_TRUE(approximately(damage, QRect(32, 32, 16, 16)));
-    EXPECT_FALSE(damage.intersects(QRect(0, 0, 16, 16)));
-    EXPECT_EQ(f.child->pendingDamage(), QRegion(QRect(0, 0, 16, 16)));
+    const base::Region damage = f.update();
+    EXPECT_TRUE(approximately(damage, base::Rect(32, 32, 16, 16)));
+    EXPECT_FALSE(damage.intersects(base::Rect(0, 0, 16, 16)));
+    EXPECT_EQ(f.child->pendingDamage(), base::Region(base::Rect(0, 0, 16, 16)));
 }
 
 TEST(Damage, SubsurfaceDamageDesynchronizedCommitBehavior)
@@ -471,7 +472,7 @@ TEST(Damage, SubsurfaceDamageDesynchronizedCommitBehavior)
     f.child->damage({32, 32, 16, 16});
     f.child->commit();
     EXPECT_TRUE(f.child->pendingDamage().isEmpty());
-    EXPECT_TRUE(approximately(f.update(), QRect(32, 32, 16, 16)));
+    EXPECT_TRUE(approximately(f.update(), base::Rect(32, 32, 16, 16)));
 }
 
 TEST(Damage, SubsurfaceReorderDamagesOnlyWhenTheOrderChanges)
@@ -505,6 +506,6 @@ TEST(Damage, RemovingASubsurfaceDamagesOnlyWhereItWas)
 
     f.sub.reset();
     EXPECT_TRUE(f.parent->pendingDamage().isEmpty());
-    EXPECT_EQ(f.update(), QRegion(QRect(20, 10, 64, 128)));
+    EXPECT_EQ(f.update(), base::Region(base::Rect(20, 10, 64, 128)));
     EXPECT_TRUE(f.update().isEmpty());
 }

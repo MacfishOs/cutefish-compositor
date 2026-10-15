@@ -39,7 +39,7 @@ DrmDevice::DrmDevice(int fd, gbm_device *gbm)
         width = 64;
     if (drmGetCap(m_fd, DRM_CAP_CURSOR_HEIGHT, &height) != 0)
         height = 64;
-    m_maxCursorSize = QSize(static_cast<int>(std::min(width, kMaxCursorSize)),
+    m_maxCursorSize = base::Size(static_cast<int>(std::min(width, kMaxCursorSize)),
                             static_cast<int>(std::min(height, kMaxCursorSize)));
 }
 
@@ -94,7 +94,7 @@ bool DrmDevice::exportCrtcFramebuffer(uint32_t crtcId, render::DmaBufAttributes*
     if (!framebuffer)
         return false;
 
-    attributes->size = QSize(framebuffer->width, framebuffer->height);
+    attributes->size = base::Size(int(framebuffer->width), int(framebuffer->height));
     attributes->format = framebuffer->pixel_format;
     attributes->modifier = framebuffer->flags & DRM_MODE_FB_MODIFIERS ? framebuffer->modifier
                                                                        : DRM_FORMAT_MOD_INVALID;
@@ -159,8 +159,8 @@ bool DrmDevice::atomicCommit(const AtomicRequest& request, uint32_t flags, void*
     return result == 0;
 }
 
-bool DrmDevice::setCursor(uint32_t crtcId, uint32_t handle, const QSize& size,
-                          const QPoint& hotspot)
+bool DrmDevice::setCursor(uint32_t crtcId, uint32_t handle, const base::Size& size,
+                          const base::Point& hotspot)
 {
     if (m_hasCursor2) {
         if (drmModeSetCursor2(m_fd, crtcId, handle, size.width(), size.height(), hotspot.x(),
@@ -175,12 +175,12 @@ bool DrmDevice::setCursor(uint32_t crtcId, uint32_t handle, const QSize& size,
     return drmModeSetCursor(m_fd, crtcId, handle, size.width(), size.height()) == 0;
 }
 
-bool DrmDevice::moveCursor(uint32_t crtcId, const QPoint& position)
+bool DrmDevice::moveCursor(uint32_t crtcId, const base::Point& position)
 {
     return drmModeMoveCursor(m_fd, crtcId, position.x(), position.y()) == 0;
 }
 
-bool DrmDevice::createDumbBuffer(const QSize& size, DumbBufferInfo* info)
+bool DrmDevice::createDumbBuffer(const base::Size& size, DumbBufferInfo* info)
 {
     drm_mode_create_dumb request = {};
     request.width = static_cast<uint32_t>(size.width());

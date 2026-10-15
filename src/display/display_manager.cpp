@@ -5,7 +5,7 @@
 // Upstream: chromium/src/ui/display/manager/display_manager.cc
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: publish validated Qt value snapshots as one batch and
+// Adapted for Cutefish: publish validated value snapshots as one batch and
 // centralize logical-display selection and coordinate lookup.
 
 #include "display/display_manager.h"
@@ -13,33 +13,54 @@
 #include <algorithm>
 #include <limits>
 
-#include <QScopedValueRollback>
-#include <QSet>
+#include <set>
+
+#include "base/auto_reset.h"
 
 namespace cutefish::display {
 
 namespace {
 
-void setError(DisplayError *target, DisplayErrorCode code, QString message,
-              QList<DisplayId> displays = {})
+void setError(DisplayError *target, DisplayErrorCode code, std::string message,
+              std::vector<DisplayId> displays = {})
 {
     if (target)
         *target = {code, std::move(message), std::move(displays)};
 }
 
-bool containsHalfOpen(const QRect &bounds, const QPointF &point)
+bool containsHalfOpen(const base::Rect &bounds, const base::PointF &point)
 {
     return point.x() >= bounds.x() && point.y() >= bounds.y()
             && point.x() < bounds.x() + bounds.width() && point.y() < bounds.y() + bounds.height();
 }
 
-qint64 intersectionArea(const QRect &left, const QRect &right)
+int64_t intersectionArea(const base::Rect &left, const base::Rect &right)
 {
-    const QRect intersection = left.intersected(right);
-    return intersection.isEmpty() ? 0 : qint64(intersection.width()) * intersection.height();
+    const base::Rect intersection = left.intersected(right);
+    return intersection.isEmpty() ? 0 : int64_t(intersection.width()) * intersection.height();
 }
 
-double squaredDistance(const QRect &bounds, const QPointF &point)
+// The centre as it has always been taken: the middle of the first and last
+// pixel, rounded towards zero, so an even width leans left.
+base::PointF pixelCenter(const base::Rect &rect)
+{
+    const int64_t right = int64_t(rect.x()) + rect.width() - 1;
+    const int64_t bottom = int64_t(rect.y()) + rect.height() - 1;
+    return base::PointF(double((rect.x() + right) / 2), double((rect.y() + bottom) / 2));
+}
+
+// The largest size of the same aspect ratio as `size` that fits in `bounds`.
+base::SizeF fittedInside(const base::SizeF &size, const base::SizeF &bounds)
+{
+    if (size.width() == 0 || size.height() == 0)
+        return bounds;
+    const double width = bounds.height() * size.width() / size.height();
+    if (width <= bounds.width())
+        return {width, bounds.height()};
+    return {bounds.width(), bounds.width() * size.height() / size.width()};
+}
+
+double squaredDistance(const base::Rect &bounds, const base::PointF &point)
 {
     const double x =
             std::clamp(point.x(), double(bounds.x()), double(bounds.x() + bounds.width() - 1));
@@ -52,32 +73,27 @@ double squaredDistance(const QRect &bounds, const QPointF &point)
 
 } // namespace
 
-DisplayManager::DisplayManager(QObject *parent)
-    : QObject(parent)
-{
-}
-
 bool DisplayManager::installHardware(HardwareSnapshot snapshot, DisplayError *error)
 {
     if (m_publishing) {
         setError(error, DisplayErrorCode::Busy,
-                 QStringLiteral("Display publication is in progress"));
+                 "Display publication is in progress");
         return false;
     }
-    QScopedValueRollback<bool> publishing(m_publishing, true);
+    base::AutoReset<bool> publishing(m_publishing, true);
     if (!snapshot.isValid()) {
         setError(error, DisplayErrorCode::Unavailable,
-                 QStringLiteral("The hardware snapshot is invalid"));
+                 "The hardware snapshot is invalid");
         return false;
     }
     if (m_hardware && snapshot.compositorInstanceId == m_hardware->compositorInstanceId
         && snapshot.topologyGeneration <= m_hardware->topologyGeneration) {
         setError(error, DisplayErrorCode::StaleConfiguration,
-                 QStringLiteral("The hardware snapshot generation did not advance"));
+                 "The hardware snapshot generation did not advance");
         return false;
     }
 
-    emit displayChangeStarted();
+    displayChangeStarted();
     m_hardware = std::move(snapshot);
     if (m_applied
         && (m_applied->compositorInstanceId != m_hardware->compositorInstanceId
@@ -86,7 +102,7 @@ bool DisplayManager::installHardware(HardwareSnapshot snapshot, DisplayError *er
     }
     if (m_publisher)
         m_publisher();
-    emit displaysChanged(m_hardware->topologyGeneration, m_applied ? m_applied->revision : 0);
+    displaysChanged(m_hardware->topologyGeneration, m_applied ? m_applied->revision : 0);
     return true;
 }
 
@@ -94,35 +110,35 @@ bool DisplayManager::installApplied(AppliedConfiguration configuration, DisplayE
 {
     if (m_publishing) {
         setError(error, DisplayErrorCode::Busy,
-                 QStringLiteral("Display publication is in progress"));
+                 "Display publication is in progress");
         return false;
     }
-    QScopedValueRollback<bool> publishing(m_publishing, true);
+    base::AutoReset<bool> publishing(m_publishing, true);
     if (!m_hardware || configuration.compositorInstanceId != m_hardware->compositorInstanceId
         || configuration.topologyGeneration != m_hardware->topologyGeneration
         || (m_applied && configuration.revision <= m_applied->revision)) {
         setError(error, DisplayErrorCode::StaleConfiguration,
-                 QStringLiteral("The applied configuration does not match current hardware"));
+                 "The applied configuration does not match current hardware");
         return false;
     }
 
-    QSet<DisplayId> logicalIds;
-    QSet<QString> waylandNames;
-    QSet<DisplayId> destinations;
+    std::set<DisplayId> logicalIds;
+    std::set<std::string> waylandNames;
+    std::set<DisplayId> destinations;
     int primaryCount = 0;
     for (const LogicalDisplay &logical : configuration.logicalDisplays) {
         if (!logical.id.isValid() || logical.bounds.width() <= 0 || logical.bounds.height() <= 0
             || logical.workArea.isEmpty() || !logical.bounds.contains(logical.workArea)
-            || logical.destinations.isEmpty() || logical.waylandName.isEmpty()
+            || logical.destinations.empty() || logical.waylandName.empty()
             || logicalIds.contains(logical.id) || waylandNames.contains(logical.waylandName)) {
             setError(error, DisplayErrorCode::InvalidLayout,
-                     QStringLiteral("An applied logical display is invalid"), {logical.id});
+                     "An applied logical display is invalid", {logical.id});
             return false;
         }
         for (const DisplayId &destination : logical.destinations) {
             if (!physicalDisplay(destination) || destinations.contains(destination)) {
                 setError(error, DisplayErrorCode::UnknownOutput,
-                         QStringLiteral("A physical destination is missing or duplicated"),
+                         "A physical destination is missing or duplicated",
                          {destination});
                 return false;
             }
@@ -132,29 +148,28 @@ bool DisplayManager::installApplied(AppliedConfiguration configuration, DisplayE
         waylandNames.insert(logical.waylandName);
         primaryCount += logical.primary ? 1 : 0;
     }
-    for (int i = 0; i < configuration.logicalDisplays.size(); ++i) {
-        for (int j = i + 1; j < configuration.logicalDisplays.size(); ++j) {
-            if (configuration.logicalDisplays.at(i).bounds.intersects(
-                        configuration.logicalDisplays.at(j).bounds)) {
+    const auto &logicalDisplays = configuration.logicalDisplays;
+    for (size_t i = 0; i < logicalDisplays.size(); ++i) {
+        for (size_t j = i + 1; j < logicalDisplays.size(); ++j) {
+            if (logicalDisplays[i].bounds.intersects(logicalDisplays[j].bounds)) {
                 setError(error, DisplayErrorCode::InvalidLayout,
-                         QStringLiteral("Applied logical displays overlap"),
-                         {configuration.logicalDisplays.at(i).id,
-                          configuration.logicalDisplays.at(j).id});
+                         "Applied logical displays overlap",
+                         {logicalDisplays[i].id, logicalDisplays[j].id});
                 return false;
             }
         }
     }
-    if (!configuration.logicalDisplays.isEmpty() && primaryCount != 1) {
+    if (!configuration.logicalDisplays.empty() && primaryCount != 1) {
         setError(error, DisplayErrorCode::InvalidLayout,
-                 QStringLiteral("Exactly one active logical display must be primary"));
+                 "Exactly one active logical display must be primary");
         return false;
     }
 
-    emit displayChangeStarted();
+    displayChangeStarted();
     m_applied = std::move(configuration);
     if (m_publisher)
         m_publisher();
-    emit displaysChanged(m_applied->topologyGeneration, m_applied->revision);
+    displaysChanged(m_applied->topologyGeneration, m_applied->revision);
     return true;
 }
 
@@ -162,14 +177,14 @@ void DisplayManager::clearApplied(uint64_t topologyGeneration)
 {
     if (m_publishing)
         return;
-    QScopedValueRollback<bool> publishing(m_publishing, true);
+    base::AutoReset<bool> publishing(m_publishing, true);
     if (!m_applied && (!m_hardware || m_hardware->topologyGeneration == topologyGeneration))
         return;
-    emit displayChangeStarted();
+    displayChangeStarted();
     m_applied.reset();
     if (m_publisher)
         m_publisher();
-    emit displaysChanged(topologyGeneration, 0);
+    displaysChanged(topologyGeneration, 0);
 }
 
 const LogicalDisplay *DisplayManager::display(const DisplayId &id) const
@@ -194,7 +209,7 @@ const LogicalDisplay *DisplayManager::primaryDisplay() const
     return nullptr;
 }
 
-const LogicalDisplay *DisplayManager::displayAt(const QPointF &point) const
+const LogicalDisplay *DisplayManager::displayAt(const base::PointF &point) const
 {
     if (!m_applied)
         return nullptr;
@@ -205,7 +220,7 @@ const LogicalDisplay *DisplayManager::displayAt(const QPointF &point) const
     return nullptr;
 }
 
-const LogicalDisplay *DisplayManager::nearestDisplay(const QPointF &point) const
+const LogicalDisplay *DisplayManager::nearestDisplay(const base::PointF &point) const
 {
     if (const LogicalDisplay *exact = displayAt(point))
         return exact;
@@ -225,26 +240,26 @@ const LogicalDisplay *DisplayManager::nearestDisplay(const QPointF &point) const
     return nearest;
 }
 
-const LogicalDisplay *DisplayManager::displayForRect(const QRect &rect) const
+const LogicalDisplay *DisplayManager::displayForRect(const base::Rect &rect) const
 {
     if (!m_applied || rect.isEmpty())
-        return nearestDisplay(rect.center());
+        return nearestDisplay(pixelCenter(rect));
 
     const LogicalDisplay *selected = nullptr;
-    qint64 best = -1;
+    int64_t best = -1;
     for (const LogicalDisplay &logical : m_applied->logicalDisplays) {
-        const qint64 area = intersectionArea(logical.bounds, rect);
+        const int64_t area = intersectionArea(logical.bounds, rect);
         if (!selected || area > best || (area == best && logical.primary && !selected->primary)) {
             selected = &logical;
             best = area;
         }
     }
-    return best > 0 ? selected : nearestDisplay(rect.center());
+    return best > 0 ? selected : nearestDisplay(pixelCenter(rect));
 }
 
-QRect DisplayManager::desktopBounds() const
+base::Rect DisplayManager::desktopBounds() const
 {
-    QRect result;
+    base::Rect result;
     if (!m_applied)
         return result;
     for (const LogicalDisplay &logical : m_applied->logicalDisplays)
@@ -259,7 +274,7 @@ DisplayManager::mappingFor(const DisplayId &destination) const
         return std::nullopt;
     const LogicalDisplay *logical = nullptr;
     for (const auto &candidate : m_applied->logicalDisplays) {
-        if (candidate.destinations.contains(destination)) {
+        if (candidate.hasDestination(destination)) {
             logical = &candidate;
             break;
         }
@@ -273,23 +288,24 @@ DisplayManager::mappingFor(const DisplayId &destination) const
     }
     if (!logical || !physical || !physical->currentMode)
         return std::nullopt;
-    const QSize pixels = physical->currentMode->pixelSize;
-    QSize oriented = pixels;
+    const base::Size pixels = physical->currentMode->pixelSize;
+    base::Size oriented = pixels;
     const bool rotated = logical->rotation == DisplayRotation::Rotate90
             || logical->rotation == DisplayRotation::Rotate270;
     if (rotated)
-        oriented.transpose();
-    const QSize extent = logical->bounds.size();
+        oriented = oriented.transposed();
+    const base::Size extent = logical->bounds.size();
     const double fit = logical->destinations.size() > 1
             ? std::min(double(oriented.width()) / extent.width(),
                        double(oriented.height()) / extent.height())
             : logical->scale.value();
-    QSize content(qRound(extent.width() * fit), qRound(extent.height() * fit));
+    base::Size content(base::roundToInt(extent.width() * fit),
+                       base::roundToInt(extent.height() * fit));
     if (rotated)
-        content.transpose();
-    const QRect native = logical->destinations.size() == 1
-            ? QRect(QPoint(), pixels)
-            : QRect(QPoint((pixels.width() - content.width()) / 2,
+        content = content.transposed();
+    const base::Rect native = logical->destinations.size() == 1
+            ? base::Rect(pixels)
+            : base::Rect(base::Point((pixels.width() - content.width()) / 2,
                            (pixels.height() - content.height()) / 2),
                     content);
     return DestinationMapping {logical->bounds, native, fit, logical->rotation};
@@ -298,11 +314,11 @@ DisplayManager::mappingFor(const DisplayId &destination) const
 std::optional<DisplayTransform> DisplayManager::transformFor(const DisplayId &id) const
 {
     const LogicalDisplay *logical = display(id);
-    if (!logical || logical->destinations.isEmpty())
+    if (!logical || logical->destinations.empty())
         return std::nullopt;
     const DisplaySnapshot *physical = nullptr;
     for (const auto &candidate : m_applied->physicalDisplays) {
-        if (candidate.sessionId == logical->destinations.first()) {
+        if (candidate.sessionId == logical->destinations.front()) {
             physical = &candidate;
             break;
         }
@@ -313,16 +329,17 @@ std::optional<DisplayTransform> DisplayManager::transformFor(const DisplayId &id
                             logical->scale, logical->rotation);
 }
 
-QPointF DisplayManager::normalizedToGlobal(const QPointF &point) const
+base::PointF DisplayManager::normalizedToGlobal(const base::PointF &point) const
 {
-    const QRect bounds = desktopBounds();
-    return QPointF(bounds.x() + point.x() * bounds.width(),
+    const base::Rect bounds = desktopBounds();
+    return base::PointF(bounds.x() + point.x() * bounds.width(),
                    bounds.y() + point.y() * bounds.height());
 }
 
-std::optional<QPointF> DisplayManager::touchscreenToGlobal(const QPointF &normalized) const
+std::optional<base::PointF>
+DisplayManager::touchscreenToGlobal(const base::PointF &normalized) const
 {
-    if (!m_applied || m_applied->logicalDisplays.isEmpty())
+    if (!m_applied || m_applied->logicalDisplays.empty())
         return std::nullopt;
     // ash's TouchDeviceManager, reduced to its first rules: the touchscreen is
     // the internal panel's when that panel is shown, else the only display's,
@@ -339,7 +356,7 @@ std::optional<QPointF> DisplayManager::touchscreenToGlobal(const QPointF &normal
         const LogicalDisplay *logical = m_applied->logicalDisplays.size() == 1
                 ? &m_applied->logicalDisplays.front()
                 : primaryDisplay();
-        if (!logical || logical->destinations.isEmpty())
+        if (!logical || logical->destinations.empty())
             return std::nullopt;
         for (const DisplaySnapshot &physical : m_applied->physicalDisplays) {
             if (physical.sessionId == logical->destinations.front())
@@ -354,35 +371,35 @@ std::optional<QPointF> DisplayManager::touchscreenToGlobal(const QPointF &normal
     // The glass spans the panel's native mode. A smaller mode on an internal
     // panel goes through the GPU's panel fitter, which keeps the mode's aspect
     // ratio (amdgpu's and i915's default) and centres it between black bars.
-    const QSize pixels = panel->currentMode->pixelSize;
-    const QSizeF glass = panel->connectionType == DisplayConnectionType::Internal
+    const base::Size pixels = panel->currentMode->pixelSize;
+    const base::SizeF glass = panel->connectionType == DisplayConnectionType::Internal
                     && panel->nativeMode
-            ? QSizeF(panel->nativeMode->pixelSize)
-            : QSizeF(pixels);
-    QRectF shown(QPointF(), QSizeF(pixels).scaled(glass, Qt::KeepAspectRatio));
-    shown.moveCenter(QRectF(QPointF(), glass).center());
-    const QPointF onShown(
+            ? base::SizeF(panel->nativeMode->pixelSize)
+            : base::SizeF(pixels);
+    base::RectF shown(base::PointF(), fittedInside(base::SizeF(pixels), glass));
+    shown.moveCenter(base::RectF(glass).center());
+    const base::PointF onShown(
             std::clamp((normalized.x() * glass.width() - shown.x()) / shown.width(), 0.0, 1.0),
             std::clamp((normalized.y() * glass.height() - shown.y()) / shown.height(), 0.0, 1.0));
     // The mode's pixels are where the mapping's transform starts; it takes
     // rotation and mirror letterboxing from there.
-    const QPointF native(onShown.x() * (pixels.width() - 1e-3),
+    const base::PointF native(onShown.x() * (pixels.width() - 1e-3),
                          onShown.y() * (pixels.height() - 1e-3));
     return mapping->transform().nativeToLogical(native);
 }
 
-std::optional<QPointF> DisplayManager::globalToOutputLocal(const DisplayId &id,
-                                                           const QPointF &point) const
+std::optional<base::PointF> DisplayManager::globalToOutputLocal(const DisplayId &id,
+                                                           const base::PointF &point) const
 {
     const auto *logical = display(id);
-    return logical ? std::optional(point - logical->bounds.topLeft()) : std::nullopt;
+    return logical ? std::optional(point - base::PointF(logical->bounds.topLeft())) : std::nullopt;
 }
 
-std::optional<QPointF> DisplayManager::outputLocalToGlobal(const DisplayId &id,
-                                                           const QPointF &point) const
+std::optional<base::PointF> DisplayManager::outputLocalToGlobal(const DisplayId &id,
+                                                           const base::PointF &point) const
 {
     const auto *logical = display(id);
-    return logical ? std::optional(point + logical->bounds.topLeft()) : std::nullopt;
+    return logical ? std::optional(point + base::PointF(logical->bounds.topLeft())) : std::nullopt;
 }
 
 const DisplaySnapshot *DisplayManager::physicalDisplay(const DisplayId &id) const

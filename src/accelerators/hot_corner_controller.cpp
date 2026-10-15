@@ -17,9 +17,9 @@
 namespace cutefish::accelerators {
 namespace {
 
-bool onAnyOutput(const std::vector<QRect> &outputs, const QPoint &point)
+bool onAnyOutput(const std::vector<base::Rect> &outputs, const base::Point &point)
 {
-    for (const QRect &output : outputs) {
+    for (const base::Rect &output : outputs) {
         if (output.contains(point))
             return true;
     }
@@ -34,22 +34,26 @@ HotCornerController::HotCornerController(input::Seat *seat, Perform perform)
 {
 }
 
-void HotCornerController::setOutputs(const std::vector<QRect> &outputs)
+void HotCornerController::setOutputs(const std::vector<base::Rect> &outputs)
 {
     m_corners.clear();
-    const QPoint pointer(int(std::floor(m_lastPosition.x())), int(std::floor(m_lastPosition.y())));
-    for (const QRect &output : outputs) {
+    const base::Point pointer(int(std::floor(m_lastPosition.x())),
+                              int(std::floor(m_lastPosition.y())));
+    for (const base::Rect &output : outputs) {
         // Each corner with the direction out of the output from it.
-        const std::array<std::tuple<HotCorner, QPoint, QPoint>, 4> candidates = {{
-                {HotCorner::TopLeft, output.topLeft(), QPoint(-1, -1)},
-                {HotCorner::TopRight, output.topRight(), QPoint(1, -1)},
-                {HotCorner::BottomLeft, output.bottomLeft(), QPoint(-1, 1)},
-                {HotCorner::BottomRight, output.bottomRight(), QPoint(1, 1)},
+        const std::array<std::tuple<HotCorner, base::Point, base::Point>, 4> candidates = {{
+                {HotCorner::TopLeft, output.topLeft(), base::Point(-1, -1)},
+                {HotCorner::TopRight, base::Point(output.right() - 1, output.y()),
+                 base::Point(1, -1)},
+                {HotCorner::BottomLeft, base::Point(output.x(), output.bottom() - 1),
+                 base::Point(-1, 1)},
+                {HotCorner::BottomRight, output.bottomRight() - base::Point(1, 1),
+                 base::Point(1, 1)},
         }};
         for (const auto &[corner, point, out] : candidates) {
             // Where two outputs meet the pointer goes on across: not a corner.
-            if (onAnyOutput(outputs, point + QPoint(out.x(), 0))
-                || onAnyOutput(outputs, point + QPoint(0, out.y()))
+            if (onAnyOutput(outputs, point + base::Point(out.x(), 0))
+                || onAnyOutput(outputs, point + base::Point(0, out.y()))
                 || onAnyOutput(outputs, point + out))
                 continue;
             // One the pointer already rests on waits for it to leave.
@@ -63,10 +67,10 @@ void HotCornerController::setBinding(HotCorner corner, const HotCornerBinding &b
     m_bindings[size_t(corner)] = binding;
 }
 
-void HotCornerController::onPointerMoved(const QPointF &position, bool dragging)
+void HotCornerController::onPointerMoved(const base::PointF &position, bool dragging)
 {
     m_lastPosition = position;
-    const QPoint pointer(int(std::floor(position.x())), int(std::floor(position.y())));
+    const base::Point pointer(int(std::floor(position.x())), int(std::floor(position.y())));
     for (Corner &corner : m_corners) {
         if (!corner.armed) {
             if (std::abs(pointer.x() - corner.point.x()) > kRearmDistance
@@ -88,9 +92,9 @@ void HotCornerController::onPointerMoved(const QPointF &position, bool dragging)
     }
 }
 
-std::vector<std::pair<HotCorner, QPoint>> HotCornerController::corners() const
+std::vector<std::pair<HotCorner, base::Point>> HotCornerController::corners() const
 {
-    std::vector<std::pair<HotCorner, QPoint>> result;
+    std::vector<std::pair<HotCorner, base::Point>> result;
     for (const Corner &corner : m_corners)
         result.emplace_back(corner.corner, corner.point);
     return result;

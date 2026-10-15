@@ -43,7 +43,7 @@ struct ComputerControlHosts {
     // Wayland comes up after the controller, so the input method is looked up late.
     std::function<wayland::InputMethodManager *()> inputMethod;
     // Whether the process `pid` shows system dialogs the agent must leave alone.
-    std::function<bool(qint64 pid)> showsSystemDialogs;
+    std::function<bool(int64_t pid)> showsSystemDialogs;
 };
 
 computer_control::Environment computerControlEnvironment(ComputerControlHosts hosts);

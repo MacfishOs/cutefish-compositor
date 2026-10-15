@@ -17,31 +17,31 @@ bool isDesktopOutput(const ConnectorInfo& connector)
         && !connector.nonDesktop;
 }
 
-std::optional<int> selectConnector(const QList<ConnectorInfo>& connectors)
+std::optional<int> selectConnector(const std::vector<ConnectorInfo>& connectors)
 {
-    for (int i = 0; i < connectors.size(); ++i) {
-        if (isDesktopOutput(connectors.at(i)))
-            return i;
+    for (size_t i = 0; i < connectors.size(); ++i) {
+        if (isDesktopOutput(connectors[i]))
+            return int(i);
     }
     return std::nullopt;
 }
 
-QStringList orderDisplayDevices(const QList<DrmDeviceCandidate>& candidates)
+std::vector<std::string> orderDisplayDevices(const std::vector<DrmDeviceCandidate>& candidates)
 {
-    static const QStringList preferred = {QStringLiteral("i915"), QStringLiteral("amdgpu"),
-                                          QStringLiteral("virtio_gpu")};
+    static const std::vector<std::string> preferred = {"i915", "amdgpu", "virtio_gpu"};
     const auto rank = [](const DrmDeviceCandidate& candidate) {
-        const auto index = preferred.indexOf(candidate.driver);
-        return std::pair(candidate.bootVga ? 0 : 1, index < 0 ? preferred.size() : index);
+        const auto index =
+            std::find(preferred.begin(), preferred.end(), candidate.driver) - preferred.begin();
+        return std::pair(candidate.bootVga ? 0 : 1, index);
     };
-    QList<DrmDeviceCandidate> ordered = candidates;
+    std::vector<DrmDeviceCandidate> ordered = candidates;
     std::stable_sort(ordered.begin(), ordered.end(),
                      [&](const DrmDeviceCandidate& a, const DrmDeviceCandidate& b) {
                          return rank(a) < rank(b);
                      });
-    QStringList paths;
+    std::vector<std::string> paths;
     for (const DrmDeviceCandidate& candidate : ordered)
-        paths.append(candidate.path);
+        paths.push_back(candidate.path);
     return paths;
 }
 
@@ -80,19 +80,19 @@ std::optional<drmModeModeInfo> selectMode(const drmModeModeInfo* modes, int coun
 }
 
 uint32_t selectCrtc(uint32_t possibleCrtcs,
-                    const QList<uint32_t>& crtcIds,
+                    const std::vector<uint32_t>& crtcIds,
                     uint32_t usedCrtcMask,
                     uint32_t currentCrtcId)
 {
     uint32_t first = 0;
-    for (int i = 0; i < crtcIds.size(); ++i) {
+    for (size_t i = 0; i < crtcIds.size(); ++i) {
         const uint32_t bit = 1u << i;
         if (!(possibleCrtcs & bit) || (usedCrtcMask & bit))
             continue;
-        if (crtcIds.at(i) == currentCrtcId && currentCrtcId != 0)
+        if (crtcIds[i] == currentCrtcId && currentCrtcId != 0)
             return currentCrtcId;
         if (!first)
-            first = crtcIds.at(i);
+            first = crtcIds[i];
     }
     return first;
 }
@@ -113,12 +113,10 @@ double refreshRate(const drmModeModeInfo& mode)
     return mode.clock * 1000.0 / total;
 }
 
-QString connectorName(uint32_t type, uint32_t typeId)
+std::string connectorName(uint32_t type, uint32_t typeId)
 {
     const char* name = drmModeGetConnectorTypeName(type);
-    return QStringLiteral("%1-%2")
-        .arg(QString::fromUtf8(name ? name : "Unknown"))
-        .arg(typeId);
+    return std::string(name ? name : "Unknown") + '-' + std::to_string(typeId);
 }
 
 } // namespace cutefish::backend

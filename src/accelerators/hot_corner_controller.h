@@ -8,11 +8,8 @@
 #include <functional>
 #include <vector>
 
-#include <QPoint>
-#include <QPointF>
-#include <QRect>
-
 #include "accelerators/hot_corner_settings.h"
+#include "base/geometry.h"
 
 namespace cutefish::input {
 class Seat;
@@ -40,23 +37,23 @@ public:
     HotCornerController(input::Seat *seat, Perform perform);
 
     // The outputs' logical bounds.
-    void setOutputs(const std::vector<QRect> &outputs);
+    void setOutputs(const std::vector<base::Rect> &outputs);
     void setBinding(HotCorner corner, const HotCornerBinding &binding);
 
     // Every pointer move after clamping to the layout. A drag of any kind
     // (a held button, a window move, a drag and drop) uses the visit up
     // without running the action.
-    void onPointerMoved(const QPointF &position, bool dragging = false);
+    void onPointerMoved(const base::PointF &position, bool dragging = false);
 
     // The outer corners, for tests.
-    std::vector<std::pair<HotCorner, QPoint>> corners() const;
+    std::vector<std::pair<HotCorner, base::Point>> corners() const;
 
     uint32_t heldModifiers() const;
 
 private:
     struct Corner {
         HotCorner corner;
-        QPoint point;
+        base::Point point;
         bool armed = true;
     };
 
@@ -64,7 +61,7 @@ private:
     Perform m_perform;
     std::vector<Corner> m_corners;
     std::array<HotCornerBinding, 4> m_bindings;
-    QPointF m_lastPosition {-1e9, -1e9};
+    base::PointF m_lastPosition {-1e9, -1e9};
 };
 
 } // namespace cutefish::accelerators

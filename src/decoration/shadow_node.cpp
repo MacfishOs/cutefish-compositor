@@ -12,6 +12,7 @@
 #include <cmath>
 
 #include "compositor/surface.h"
+#include "ui/geometry_conversions.h"
 #include "decoration/decoration_theme.h"
 #include "decoration/shadow.h"
 #include "wm/window.h"
@@ -33,13 +34,13 @@ bool operator==(const Corners &a, const Corners &b)
 // ShadowNode:
 
 ShadowNode::ShadowNode(const Theme *theme)
-    : scene::Node(QStringLiteral("shadow"))
+    : scene::Node("shadow")
     , m_theme(theme)
 {
 }
 
-void ShadowNode::update(const QRect &content, wm::ShadowElevation elevation, const Corners &corners,
-                        int radius, const QPainterPath &silhouette)
+void ShadowNode::update(const base::Rect &content, wm::ShadowElevation elevation,
+                        const Corners &corners, int radius, const ui::Path &silhouette)
 {
     if (content == m_content && elevation == m_requested && corners == m_corners
         && radius == m_radius && silhouette == m_silhouette)
@@ -57,21 +58,21 @@ void ShadowNode::update(const QRect &content, wm::ShadowElevation elevation, con
     m_silhouette = silhouette;
     m_requested = elevation;
     m_elevation = visible ? elevation : wm::ShadowElevation::None;
-    m_margins = visible ? geometry.margins() : QMargins();
+    m_margins = visible ? geometry.margins() : base::Insets();
 
     // Hide before the geometry shrinks, so the repaint still covers what the
     // shadow used to reach; show only once the new geometry is in place.
     if (!visible)
         setVisible(false);
     // Relative to the window node, whose geometry is the outer window bounds.
-    setGeometry(content + m_margins);
+    setGeometry(content.marginsAdded(m_margins));
     if (visible)
         setVisible(true);
     // An elevation change alone moves neither, so ask for the repaint here.
     notifyChanged();
 }
 
-void ShadowNode::setSurfaceOrigin(const QPoint &origin)
+void ShadowNode::setSurfaceOrigin(const base::Point &origin)
 {
     if (origin == m_surfaceOrigin)
         return;
@@ -79,7 +80,7 @@ void ShadowNode::setSurfaceOrigin(const QPoint &origin)
     notifyChanged();
 }
 
-void ShadowNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
+void ShadowNode::paint(render::Renderer &renderer, const base::Rect &bounds) const
 {
     if (m_elevation == wm::ShadowElevation::None || m_content.isEmpty())
         return;
@@ -88,9 +89,9 @@ void ShadowNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry
                                   int(std::ceil(renderer.rasterScale())), m_corners, m_silhouette);
     // paintShadow's target rects are already offset by the margins, so it wants
     // the window's own top-left, not the node's.
-    const QPointF surface = absoluteGeometry.topLeft() + m_surfaceOrigin;
+    const base::PointF surface(bounds.origin() + m_surfaceOrigin);
     paintShadow(renderer, geometry,
-                absoluteGeometry.topLeft() + QPoint(m_margins.left(), m_margins.top()), 1,
+                bounds.origin() + base::Point(m_margins.left(), m_margins.top()), 1,
                 renderer.pixelAligned(surface) - surface);
 }
 
@@ -125,7 +126,7 @@ void Shadow::setElevation(wm::ShadowElevation elevation)
     updateNode();
 }
 
-void Shadow::setContentBounds(const QRect &bounds)
+void Shadow::setContentBounds(const base::Rect &bounds)
 {
     // Only the size changes what is drawn; the origin comes from the window
     // node this one hangs off. The node ignores a call that changes nothing,
@@ -134,11 +135,11 @@ void Shadow::setContentBounds(const QRect &bounds)
     updateNode();
 }
 
-QRect Shadow::shadowBounds() const
+base::Rect Shadow::shadowBounds() const
 {
     if (!m_node || !m_node->isVisible())
-        return QRect();
-    return m_node->geometry().translated(m_contentBounds.topLeft());
+        return base::Rect();
+    return m_node->geometry().translated(m_contentBounds.origin());
 }
 
 void Shadow::stackAtBottom()
@@ -156,7 +157,7 @@ void Shadow::updateNode()
     // LocalSurfaceId when they change). Cutefish gets the same guarantee by
     // sizing the shadow from what the window has actually presented, so it can
     // never hug an edge the client has not reached yet.
-    QRect content = m_window->presentedBounds();
+    base::Rect content = m_window->presentedBounds();
     m_node->setSurfaceOrigin(m_window->frameInsets().topLeft() + m_window->surfaceOrigin());
     if (m_window->role() == wm::WindowRole::Dock && m_window->rootSurface()) {
         const auto region = m_window->rootSurface()->inputRegion();
@@ -165,7 +166,8 @@ void Shadow::updateNode()
             content = content.intersected(region->boundingRect());
         // The panel's corners grow with the icon size; past the largest shadow
         // corner the shadow keeps that corner rather than disappearing.
-        const int panel = qRound(std::min(content.width(), content.height()) * 28.0 / 86.0);
+        const int panel =
+                base::roundToInt(std::min(content.width(), content.height()) * 28.0 / 86.0);
         m_node->update(content, m_elevation, Corners::all(),
                        std::min(panel, ShadowGeometry::kMaxRadius));
         return;
@@ -173,19 +175,21 @@ void Shadow::updateNode()
     const auto visual = wm::WindowVisualController::evaluate(*m_window, m_theme->visualStyle());
     // A client-drawn outline casts the shadow instead of the surface rectangle.
     if (!visual.outlinePath.isEmpty()) {
-        content = visual.outlinePath.boundingRect().toAlignedRect();
+        const ui::Path &outline = visual.outlinePath;
+        content = ui::toBase(outline.boundingRect()).toEnclosingRect();
         m_node->update(content, m_elevation, Corners::all(), 0,
-                       visual.outlinePath.translated(-content.topLeft()));
+                       outline.translated(-content.x(), -content.y()));
         return;
     }
     // So does a glass body inside a larger surface: the transparent room around
     // it, as a banner keeps for the close button on its corner, casts nothing.
     if (!visual.outlineShape.bounds.isEmpty()) {
-        content = visual.outlineShape.bounds.toAlignedRect();
-        m_node->update(content, m_elevation, Corners::all(), qRound(visual.outlineShape.radius));
+        content = visual.outlineShape.bounds.toEnclosingRect();
+        m_node->update(content, m_elevation, Corners::all(),
+                       base::roundToInt(visual.outlineShape.radius));
         return;
     }
-    content = visual.shape.bounds.toAlignedRect();
+    content = visual.shape.bounds.toEnclosingRect();
     const int radius = m_window->isPopup() && m_window->rootSurface()
             ? m_window->rootSurface()->backgroundBlurRadius()
             : (visual.mode == scene::WindowVisualMode::PreserveClient

@@ -7,26 +7,22 @@
 
 #include "auth/login_sessions.h"
 #include "auth/secret.h"
+#include "base/signal.h"
 
-#include <QObject>
-#include <QString>
+#include <string>
 
 namespace cutefish::auth {
 
-class AuthBackend : public QObject
+class AuthBackend
 {
-    Q_OBJECT
-
 public:
-    explicit AuthBackend(QObject *parent = nullptr)
-        : QObject(parent)
-    {
-    }
-
-    ~AuthBackend() override = default;
+    AuthBackend() = default;
+    AuthBackend(const AuthBackend &) = delete;
+    AuthBackend &operator=(const AuthBackend &) = delete;
+    virtual ~AuthBackend() = default;
 
     // Who the screen offers to authenticate as. Empty means the UI should ask.
-    virtual QString defaultUserName() const = 0;
+    virtual std::string defaultUserName() const = 0;
 
     // Open the conversation with the authentication service. Called once, after
     // the UI exists, so a prompt or an early error has somewhere to go.
@@ -34,7 +30,7 @@ public:
 
     // Check one credential. The Secret is moved in and dies with the backend's
     // conversation; there is no copy left for the caller to worry about.
-    virtual void authenticate(const QString &userName, Secret secret) = 0;
+    virtual void authenticate(const std::string &userName, Secret secret) = 0;
 
     // Drop any conversation in progress and return to the initial state. Must
     // leave no credential behind.
@@ -46,20 +42,19 @@ public:
     // backend starts one; the others ignore it.
     virtual void setSession(const LoginSession &) { }
 
-Q_SIGNALS:
     // The service asked something. Informational: the UI shows one password
     // field regardless, and an empty prompt means "the default".
-    void promptChanged(const QString &prompt);
+    base::Signal<const std::string &> promptChanged;
 
     // The credential was accepted. accept() may now be called, exactly once.
-    void succeeded();
+    base::Signal<> succeeded;
 
     // The credential was rejected, or the conversation failed. The UI clears
     // the field and shows `message`, which never contains the credential.
-    void failed(const QString &message);
+    base::Signal<const std::string &> failed;
 
     // Whether a check is in flight. The UI disables input while it is.
-    void busyChanged(bool busy);
+    base::Signal<bool> busyChanged;
 };
 
 } // namespace cutefish::auth

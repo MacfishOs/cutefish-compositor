@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/geometry.h"
 #include "auth/auth_controller.h"
 #include "auth/auth_ui.h"
 #include "auth/auth_view.h"
 #include "compositor/compositor.h"
+#include "core/main_loop.h"
 #include "core/preferences.h"
 #include "fake_backend.h"
 #include "fake_renderer.h"
@@ -14,16 +16,20 @@
 #include "scene/node.h"
 #include "session/secure_container.h"
 #include "session/session_controller.h"
-#include <QFile>
-#include <QCoreApplication>
-#include <QSettings>
-#include <QSignalSpy>
-#include <QTemporaryDir>
-#include <QTest>
+#include "base/settings.h"
+#include "loop_test_util.h"
+#include "temporary_directory.h"
+#include <array>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <linux/input-event-codes.h>
+#include <optional>
 #include <tuple>
 
+#include <gtest/gtest.h>
+
+#include "ui/bitmap.h"
 #include "ui/embedded_window.h"
 #include "ui/text_field.h"
 #include "ui/view.h"
@@ -36,10 +42,23 @@ ui::TextField *focusedField(const auth::AuthUi &ui)
     return dynamic_cast<ui::TextField *>(ui.focusView());
 }
 
-QString fieldText(const auth::AuthUi &ui)
+std::string fieldText(const auth::AuthUi &ui)
 {
     const ui::TextField *field = focusedField(ui);
-    return field ? QString::fromStdString(field->text()) : QString();
+    return field ? field->text() : std::string();
+}
+
+// Pixels of renderImage() in premultiplied 0xAARRGGBB.
+template<typename Image>
+bool isPainted(const Image &image, int x, int y)
+{
+    return (image.pixel(x, y) >> 24) != 0;
+}
+
+template<typename Image>
+base::Size sizeOf(const Image &image)
+{
+    return base::Size(image.width(), image.height());
 }
 
 ui::View *findView(ui::View *view, const std::string &name)
@@ -54,702 +73,719 @@ ui::View *findView(ui::View *view, const std::string &name)
 }
 
 // The view's rect in panel coordinates.
-QRectF panelRect(const ui::View *view)
+base::RectF panelRect(const ui::View *view)
 {
     const ui::PointF origin = view->mapToWindow({0, 0});
-    return QRectF(origin.x, origin.y, view->geometry().width, view->geometry().height);
+    return base::RectF(origin.x, origin.y, view->geometry().width, view->geometry().height);
 }
+
+using Rgba = std::array<uint8_t, 4>;
+
+constexpr Rgba kRed {255, 0, 0, 255};
+constexpr Rgba kGreen {0, 255, 0, 255};
+constexpr Rgba kBlue {0, 0, 255, 255};
+
+// The R, G, B, A bytes of a texture's pixel.
+Rgba pixelAt(const testsupport::FakeTexture *texture, int x, int y)
+{
+    const uint8_t *pixel =
+            texture->pixels().data() + (size_t(y) * size_t(texture->size().width()) + x) * 4;
+    return {pixel[0], pixel[1], pixel[2], pixel[3]};
+}
+
+// An opaque image of `left`, `right` from column `split` on, saved as PNG.
+bool savePng(const std::string &path, uint32_t left, uint32_t right = 0, int split = 80)
+{
+    ui::Bitmap image(80, 40, ui::Bitmap::Format::Argb32Premultiplied);
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x)
+            image.setPixel(x, y, x < split ? left : right);
+    }
+    return image.savePng(path);
+}
+
+// The settings the lock screen reads come from a scratch configuration home.
+struct ConfigurationHome {
+    test::TemporaryDirectory directory;
+    ConfigurationHome() { setConfigHomeForTesting(directory.path()); }
+};
+const ConfigurationHome configurationHome;
 
 } // namespace
 
-class AuthUiTest : public QObject
+
+TEST(AuthUiTest, WallpaperIsSharpPerOutputAndFailureKeepsShield)
 {
-    Q_OBJECT
-private slots:
-
-    void wallpaperIsSharpPerOutputAndFailureKeepsShield()
-    {
-        QTemporaryDir files;
-        QVERIFY(files.isValid());
-        const QString path = files.filePath(QStringLiteral("wallpaper.png"));
-        QImage source(80, 40, QImage::Format_RGB32);
-        source.fill(Qt::red);
-        for (int y = 0; y < source.height(); ++y)
-            for (int x = 40; x < source.width(); ++x)
-                source.setPixelColor(x, y, Qt::blue);
-        QVERIFY(source.save(path));
-        QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
-        settings.beginGroup(QStringLiteral("Appearance"));
-        settings.setValue(QStringLiteral("Wallpaper"), path);
-        settings.sync();
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        secure.setOutputs({{QStringLiteral("one"), QRect(0, 0, 640, 320)},
-                           {QStringLiteral("two"), QRect(640, 0, 320, 640)}});
-        secure.setBlocked(true);
-        testsupport::FakeRenderer renderer;
-        const auto rendered = [&] {
-            renderer.calls.clear();
-            root.render(renderer);
-            return renderer.calls.size();
-        };
-        QTRY_COMPARE(rendered(), 4);
-        QCOMPARE(renderer.calls.at(0).kind, QStringLiteral("fill"));
-        QCOMPARE(renderer.calls.at(0).color.a, 1.0f);
-        const auto *texture = static_cast<testsupport::FakeTexture *>(renderer.calls.at(1).texture);
-        QCOMPARE(texture->size(), QSize(640, 320));
-        QImage image(texture->pixels().data(), 640, 320, QImage::Format_RGBA8888_Premultiplied);
-        // Only the scaling softens the edge; a blur would carry red far into the blue.
-        QCOMPARE(image.pixelColor(0, 160), QColor(Qt::red));
-        QCOMPARE(image.pixelColor(300, 160), QColor(Qt::red));
-        QCOMPARE(image.pixelColor(340, 160), QColor(Qt::blue));
-        QCOMPARE(renderer.calls.at(3).texture->size(), QSize(320, 640));
-        secure.setBlocked(false);
-        settings.setValue(QStringLiteral("Wallpaper"), files.filePath(QStringLiteral("missing")));
-        settings.sync();
-        secure.setBlocked(true);
-        QCOMPARE(rendered(), 2);
-        for (const auto &call : renderer.calls) {
-            QCOMPARE(call.kind, QStringLiteral("fill"));
-            QCOMPARE(call.color.a, 1.0f);
-            QCOMPARE(call.color.r, 0.0f);
-        }
-        settings.clear();
-        settings.sync();
-    }
-
-    void prewarmedUiRepeatsKeysAndUpdatesCursor()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        scene::Node applications;
-        compositor::Compositor compositor(&applications);
-        input::Seat seat(&compositor);
-        seat.setSessionGate(&controller);
-        input::InputManager input(&seat);
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
-        ui.refresh();
-        auto *window = ui.window();
-        QVERIFY(window);
-        QVERIFY(!root.isVisible());
-        QVERIFY(!ui.renderImage().isNull());
-        QCOMPARE(backend.startCount, 0);
-        QVERIFY(controller.requestLock());
-        ui.refresh();
-        QCOMPARE(ui.window(), window);
-        QCOMPARE(backend.startCount, 1);
-        auto *field = focusedField(ui);
-        QVERIFY(field);
-        field->setText("abcdefghij");
-        input.onKey({}, KEY_BACKSPACE, true);
-        QCOMPARE(fieldText(ui).size(), 9);
-        QTRY_VERIFY_WITH_TIMEOUT(fieldText(ui).size() < 9, 1000);
-        input.onKey({}, KEY_BACKSPACE, false);
-        const QString remaining = fieldText(ui);
-        QTest::qWait(120);
-        QCOMPARE(fieldText(ui), remaining);
-        QSignalSpy cursors(&ui, &auth::AuthUi::cursorShapeChanged);
-        const QPointF fieldCenter = ui.fieldBounds().center()
-                + secure.authContainer()->children().front()->absolutePosition();
-        ui.onPointerMotion({}, fieldCenter);
-        QVERIFY(!cursors.isEmpty());
-        QCOMPARE(cursors.last().at(0).value<Qt::CursorShape>(), Qt::IBeamCursor);
-        ui.onPointerMotion({}, QPointF(0, 0));
-        QCOMPARE(cursors.last().at(0).value<Qt::CursorShape>(), Qt::ArrowCursor);
-        input.onKey({}, KEY_BACKSPACE, true);
-        controller.notifyFramePresented();
-        QVERIFY(controller.requestUnlock());
-        const QString beforeUnlock = fieldText(ui);
-        QTest::qWait(600);
-        QCOMPARE(fieldText(ui), beforeUnlock);
-        input.onKey({}, KEY_BACKSPACE, false);
-        seat.shutdown();
-    }
-
-    void wallpaperFollowsSettingsWhileUnlocked()
-    {
-        QTemporaryDir files;
-        QVERIFY(files.isValid());
-        const auto save = [&](const QString &name, const QColor &color) {
-            QImage image(80, 40, QImage::Format_RGB32);
-            image.fill(color);
-            const QString path = files.filePath(name);
-            return image.save(path) ? path : QString();
-        };
-        QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
-        settings.beginGroup(QStringLiteral("Appearance"));
-        settings.setValue(QStringLiteral("Wallpaper"), save(QStringLiteral("red.png"), Qt::red));
-        settings.sync();
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        secure.setOutputs({{QStringLiteral("one"), QRect(0, 0, 640, 320)}});
-        testsupport::FakeRenderer renderer;
-        const auto shown = [&] {
-            renderer.calls.clear();
-            secure.shieldContainer()->render(renderer);
-            for (const auto &call : renderer.calls) {
-                if (const auto *texture = static_cast<testsupport::FakeTexture *>(call.texture)) {
-                    QImage image(texture->pixels().data(), texture->size().width(),
-                                 texture->size().height(), QImage::Format_RGBA8888_Premultiplied);
-                    return image.pixelColor(0, 0);
-                }
-            }
-            return QColor();
-        };
-        QTRY_COMPARE(shown(), QColor(Qt::red));
-        // Picked up from the settings file, with no lock to prompt a reread.
-        settings.setValue(QStringLiteral("Wallpaper"), save(QStringLiteral("blue.png"), Qt::blue));
-        settings.sync();
-        QTRY_COMPARE(shown(), QColor(Qt::blue));
-        // The same file, rewritten in place.
-        save(QStringLiteral("blue.png"), Qt::green);
-        QTRY_COMPARE(shown(), QColor(Qt::green));
-        settings.clear();
-        settings.sync();
-    }
-
-    void preparedPanelIdlesUntilTheNextLock()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        QVERIFY(ui.isRefreshPending());
-        ui.refresh();
-        QVERIFY(ui.window());
-        QVERIFY(!ui.renderImage().isNull());
-        // Nothing wakes the compositor for a hidden panel, not even the caret.
-        QVERIFY(!ui.window()->hasKeyboardFocus());
-        QTest::qWait(100);
-        QVERIFY(!ui.isRefreshPending());
-        QVERIFY(controller.requestLock());
-        QVERIFY(ui.isRefreshPending());
-        // Locked, it waits for input or a scene change instead of polling.
-        QTest::qWait(100);
-        QVERIFY(!ui.isRefreshPending());
-        QVERIFY(ui.window()->hasKeyboardFocus());
-        QVERIFY(focusedField(ui));
-        ui.controller()->authenticate(QStringLiteral("valid"));
-        backend.succeed();
-        controller.notifyFramePresented();
-        QTRY_COMPARE(controller.state(), session::SessionState::Unlocking);
-        controller.notifyFramePresented();
-        QCOMPARE(controller.state(), session::SessionState::Active);
-        // Prepared again for the next lock, then idle. The preparation renders
-        // the panel once more, which takes longer than 100 ms under ASan.
-        QTRY_VERIFY_WITH_TIMEOUT(!ui.isRefreshPending(), 5000);
-        QTest::qWait(100);
-        QVERIFY(!ui.isRefreshPending());
-        QVERIFY(ui.isPanelDrawn());
-        QVERIFY(ui.window());
-        QVERIFY(!ui.window()->hasKeyboardFocus());
-        QCOMPARE(ui.controller()->state(), auth::AuthController::Idle);
-    }
-
-    void panelFollowsOutputChanges()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        QTest::qWait(50);
-        QVERIFY(!ui.isPanelDrawn());
-        QVERIFY(!ui.isRefreshPending());
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        QTRY_VERIFY(ui.isPanelDrawn());
-        const QSize size = ui.renderImage().size();
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600), 2}});
-        QTRY_COMPARE(ui.renderImage().size(), size * 2);
-    }
-
-    void offscreenRenderingAndDirectInput()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        scene::Node applications;
-        compositor::Compositor compositor(&applications);
-        input::Seat seat(&compositor);
-        seat.setSessionGate(&controller);
-        input::InputManager input(&seat);
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
-        QVERIFY(controller.requestLock());
-        controller.notifyFramePresented();
-        ui.refresh();
-        QVERIFY(ui.window());
-        const QImage image = ui.renderImage();
-        QVERIFY(!image.isNull());
-        bool painted = false;
-        for (int y = 0; y < image.height(); ++y)
-            for (int x = 0; x < image.width(); ++x)
-                painted |= qAlpha(image.pixel(x, y)) != 0;
-        QVERIFY(painted);
-        input.onKey({}, KEY_A, true);
-        input.onKey({}, KEY_A, false);
-        input.onKey({}, KEY_ENTER, true);
-        input.onKey({}, KEY_ENTER, false);
-        QCOMPARE(backend.authenticateCount, 1);
-        QCOMPARE(backend.lastSecret, QStringLiteral("a"));
-        backend.reject();
-        QCOMPARE(controller.state(), session::SessionState::Locked);
-        backend.succeed();
-        QCOMPARE(controller.state(), session::SessionState::Locked);
-        ui.controller()->authenticate(QStringLiteral("valid"));
-        backend.succeed();
-        backend.succeed();
-        QCOMPARE(backend.acceptCount, 1);
-        QCOMPARE(controller.state(), session::SessionState::Unlocking);
-        QVERIFY(root.isVisible());
-        controller.notifyFramePresented();
-        QCOMPARE(controller.state(), session::SessionState::Active);
-        QVERIFY(controller.requestLock());
-        controller.notifyFramePresented();
-        ui.refresh();
-        QCOMPARE(ui.controller()->state(), auth::AuthController::Idle);
-        seat.shutdown();
-    }
-
-    void submittedPasswordStaysUntilRejected()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        scene::Node applications;
-        compositor::Compositor compositor(&applications);
-        input::Seat seat(&compositor);
-        seat.setSessionGate(&controller);
-        input::InputManager input(&seat);
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
-        QVERIFY(controller.requestLock());
-        controller.notifyFramePresented();
-        ui.refresh();
-        auto *field = focusedField(ui);
-        QVERIFY(field);
-        const auto submit = [&](int key) {
-            input.onKey({}, key, true);
-            input.onKey({}, key, false);
-            input.onKey({}, KEY_ENTER, true);
-            input.onKey({}, KEY_ENTER, false);
-        };
-        submit(KEY_A);
-        QCOMPARE(backend.authenticateCount, 1);
-        QCOMPARE(field->text(), std::string("a"));
-        QVERIFY(!field->isEnabled());
-        backend.reject();
-        QCOMPARE(field->text(), std::string());
-        QVERIFY(field->isEnabled());
-        QVERIFY(field->hasFocus());
-        submit(KEY_B);
-        QCOMPARE(backend.lastSecret, QStringLiteral("b"));
-        backend.succeed();
-        QCOMPARE(controller.state(), session::SessionState::Unlocking);
-        QCOMPARE(field->text(), std::string("b"));
-        QVERIFY(!field->isEnabled());
-        seat.shutdown();
-    }
-
-    void panelIsDrawnAtTheOutputDensity()
-    {
-        const auto paintedArea = [](double scale) {
-            scene::Node root;
-            session::SecureContainer secure(&root);
-            session::SessionController controller(&secure);
-            controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600), scale}});
-            FakeBackend backend;
-            auth::AuthUi ui(&controller, nullptr, &backend);
-            ui.refresh();
-            const QImage image = ui.renderImage();
-            QRect painted;
-            for (int y = 0; y < image.height(); ++y)
-                for (int x = 0; x < image.width(); ++x)
-                    if (qAlpha(image.pixel(x, y)) != 0)
-                        painted |= QRect(x, y, 1, 1);
-            return std::tuple(image.size(), image.devicePixelRatio(), painted);
-        };
-        const auto [plainSize, plainRatio, plain] = paintedArea(1);
-        const auto [denseSize, denseRatio, dense] = paintedArea(1.5);
-        QCOMPARE(plainSize, QSize(480, 600));
-        QCOMPARE(plainRatio, 1.0);
-        // One texel per device pixel, and the content itself drawn larger, not
-        // a logical-size drawing in the corner of a larger image.
-        QCOMPARE(denseSize, QSize(720, 900));
-        QCOMPARE(denseRatio, 1.5);
-        QVERIFY(!plain.isEmpty());
-        QVERIFY(std::abs(dense.width() - plain.width() * 1.5) <= 2);
-        QVERIFY(std::abs(dense.height() - plain.height() * 1.5) <= 2);
-        QVERIFY(std::abs(dense.left() - plain.left() * 1.5) <= 2);
-    }
-
-    void choiceMenuClosesOnAPressElsewhere()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure, nullptr, session::SessionState::Login);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        ui.refresh();
-        ui.controller()->setSessions({{QStringLiteral("cutefish-wayland"), QStringLiteral("Cutefish"), {}, {}},
-                                      {QStringLiteral("plasma"), QStringLiteral("Plasma"), {}, {}}});
-        ui.window()->updateLayout();
-        ui::View *screen = ui.window()->contentView();
-        ui::View *button = findView(screen, "session-menu-button");
-        ui::View *list = findView(screen, "session-menu-list");
-        QVERIFY(button && list);
-        QVERIFY(!list->isVisible());
-        const QPointF panel = secure.authContainer()->children().front()->absolutePosition();
-        const auto click = [&](QPointF point) {
-            ui.onPointerMotion({}, panel + point);
-            ui.onPointerButton({}, panel + point, BTN_LEFT, true);
-            ui.onPointerButton({}, panel + point, BTN_LEFT, false);
-        };
-        const QPointF onButton = panelRect(button).center();
-        click(onButton);
-        QVERIFY(list->isVisible());
-        // The panel is as tall as the output and the menu is at its bottom:
-        // the list opens upward rather than being cut off.
-        ui.window()->updateLayout();
-        QVERIFY(panelRect(list).bottom() <= panelRect(button).top());
-        // Elsewhere closes it; on the button it toggles as before.
-        click({20, 20});
-        QVERIFY(!list->isVisible());
-        click(onButton);
-        QVERIFY(list->isVisible());
-        click(onButton);
-        QVERIFY(!list->isVisible());
-        // A row picks its session and closes the list.
-        click(onButton);
-        ui.window()->updateLayout();
-        const QRectF rows = panelRect(list);
-        click(QPointF(rows.center().x(), rows.top() + 6 + 30 + 15));
-        QVERIFY(!list->isVisible());
-        QCOMPARE(ui.controller()->sessionIndex(), 1);
-    }
-
-    void passwordPillIsOnWholeDevicePixels()
-    {
-        // The field lands half a device pixel off the grid at 1.5, where an
-        // unsnapped rounded rect would draw its border heavier on one side.
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 601), 1.5}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        ui.refresh();
-        const QImage image = ui.renderImage();
-        QVERIFY(!image.isNull());
-        const QRectF field = ui.fieldBounds();
-        QCOMPARE(std::fmod(field.top() * 1.5, 1.0), 0.5);
-        const int centre = qRound(field.center().x() * 1.5);
-        int top = -1, bottom = -1;
-        for (int y = qRound(field.top() * 1.5) - 3; y < qRound(field.bottom() * 1.5) + 3; ++y) {
-            if (qAlpha(image.pixel(centre, y)) != 0) {
-                bottom = y;
-                if (top < 0)
-                    top = y;
-            }
-        }
-        QVERIFY(top > 0 && bottom > top + 4);
-        // Whole device pixels on both sides: the border is as heavy at the bottom as at the top.
-        QCOMPARE(image.pixel(centre, bottom), image.pixel(centre, top));
-        QVERIFY(image.pixel(centre, top) != image.pixel(centre, top + 1));
-        const QRgb fill = image.pixel(centre, (top + bottom) / 2);
-        for (int y = top + 1; y < bottom; ++y)
-            QCOMPARE(image.pixel(centre, y), fill);
-    }
-
-    void outputChangesReuseOneOffscreenWindow()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        controller.requestLock();
-        ui.refresh();
-        auto *window = ui.window();
-        QVERIFY(window);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)},
-                               {QStringLiteral("two"), QRect(800, 0, 640, 480)}});
-        ui.refresh();
-        QCOMPARE(ui.window(), window);
-        QCOMPARE(secure.authContainer()->children().size(), size_t(1));
-        controller.setOutputs({{QStringLiteral("two"), QRect(800, 0, 640, 480)}});
-        ui.refresh();
-        QCOMPARE(ui.window(), window);
-        QVERIFY(QRect(800, 0, 640, 480)
-                        .contains(secure.authContainer()->children().front()->geometry()));
-        controller.setOutputs({});
-        ui.refresh();
-        QVERIFY(ui.renderImage().isNull());
-        controller.setOutputs({{QStringLiteral("two"), QRect(0, 0, 640, 480)}});
-        ui.refresh();
-        QVERIFY(!ui.renderImage().isNull());
-        QCOMPARE(ui.window(), window);
-    }
-
-    void panelTextureFollowsTheImageSize()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        controller.requestLock();
-        ui.refresh();
-        secure.finishTransition();
-        testsupport::FakeRenderer renderer;
-        // The panel is drawn last, above the shield and its wallpaper.
-        const auto panelTexture = [&]() -> const render::Texture * {
-            renderer.calls.clear();
-            root.render(renderer);
-            for (auto call = renderer.calls.crbegin(); call != renderer.calls.crend(); ++call) {
-                if (call->texture)
-                    return call->texture;
-            }
-            return nullptr;
-        };
-        const render::Texture *texture = panelTexture();
-        QVERIFY(texture);
-        QCOMPARE(texture->size(), QSize(480, 600));
-        // A denser output redraws the panel larger. The renderer takes the
-        // texture's own size for an update, so the texture has to be replaced.
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600), 2}});
-        ui.refresh();
-        texture = panelTexture();
-        QVERIFY(texture);
-        QCOMPARE(ui.renderImage().size(), QSize(960, 1200));
-        QCOMPARE(texture->size(), QSize(960, 1200));
-    }
-
-    void textureFailureKeepsCompositorShield()
-    {
-        class FailedRenderer : public testsupport::FakeRenderer
-        {
-        public:
-            std::unique_ptr<render::Texture> createTexture(const QSize &, const uint8_t *, int,
-                                                           render::PixelFormat) override
-            {
-                return {};
-            }
-        } renderer;
-
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        controller.requestLock();
-        ui.refresh();
-        // Once the lock has faded in, the shield alone covers the output.
-        secure.finishTransition();
+    test::TemporaryDirectory files;
+    ASSERT_TRUE(files.isValid());
+    const std::string path = files.filePath("wallpaper.png");
+    ASSERT_TRUE(savePng(path, 0xffff0000, 0xff0000ff, 40));
+    base::Settings settings(preferencesFile("services"));
+    settings.setValue("Appearance/Wallpaper", path);
+    settings.sync();
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    secure.setOutputs({{"one", base::Rect(0, 0, 640, 320)},
+                       {"two", base::Rect(640, 0, 320, 640)}});
+    secure.setBlocked(true);
+    testsupport::FakeRenderer renderer;
+    const auto rendered = [&] {
+        renderer.calls.clear();
         root.render(renderer);
-        QCOMPARE(renderer.calls.size(), 1);
-        QCOMPARE(renderer.calls.front().kind, QStringLiteral("fill"));
-        QCOMPARE(renderer.calls.front().color.a, 1.0f);
-        QCOMPARE(renderer.calls.front().color.r, 0.0f);
-        QVERIFY(controller.isBlocked());
+        return renderer.calls.size();
+    };
+    EXPECT_TRUE(test::runUntil([&] { return rendered() == 4; }));
+    EXPECT_EQ(renderer.calls.at(0).kind, "fill");
+    EXPECT_EQ(renderer.calls.at(0).color.a, 1.0f);
+    const auto *texture = static_cast<testsupport::FakeTexture *>(renderer.calls.at(1).texture);
+    EXPECT_EQ(texture->size(), base::Size(640, 320));
+    // Only the scaling softens the edge; a blur would carry red far into the blue.
+    EXPECT_EQ(pixelAt(texture, 0, 160), kRed);
+    EXPECT_EQ(pixelAt(texture, 300, 160), kRed);
+    EXPECT_EQ(pixelAt(texture, 340, 160), kBlue);
+    EXPECT_EQ(renderer.calls.at(3).texture->size(), base::Size(320, 640));
+    secure.setBlocked(false);
+    settings.setValue("Appearance/Wallpaper", files.filePath("missing"));
+    settings.sync();
+    secure.setBlocked(true);
+    EXPECT_EQ(rendered(), 2);
+    for (const auto &call : renderer.calls) {
+        EXPECT_EQ(call.kind, "fill");
+        EXPECT_EQ(call.color.a, 1.0f);
+        EXPECT_EQ(call.color.r, 0.0f);
     }
-
-    void successDuringLockingWaitsForSecurePresentation()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        controller.requestLock();
-        ui.refresh();
-        ui.controller()->authenticate(QStringLiteral("valid"));
-        backend.succeed();
-        QCOMPARE(controller.state(), session::SessionState::Locking);
-        controller.notifyFramePresented();
-        ui.refresh();
-        QCOMPARE(controller.state(), session::SessionState::Unlocking);
-        backend.succeed();
-        QCOMPARE(backend.acceptCount, 1);
-        controller.notifyFramePresented();
-        QCOMPARE(controller.state(), session::SessionState::Active);
-    }
-
-    void lockingCoversEveryOutput()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        controller.requestLock();
-        ui.refresh();
-        QVERIFY(root.isVisible());
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)},
-                               {QStringLiteral("two"), QRect(800, 0, 640, 480)}});
-        ui.refresh();
-        QCOMPARE(secure.shieldContainer()->children().size(), size_t(2));
-        controller.notifyOutputPresented(QStringLiteral("one"));
-        QCOMPARE(controller.state(), session::SessionState::Locking);
-        controller.notifyOutputPresented(QStringLiteral("two"));
-        QCOMPARE(controller.state(), session::SessionState::Locked);
-        controller.setOutputs({});
-        ui.refresh();
-        QVERIFY(controller.isBlocked());
-        controller.setOutputs({{QStringLiteral("two"), QRect(0, 0, 640, 480)}});
-        ui.refresh();
-        QVERIFY(root.isVisible());
-        QCOMPARE(secure.shieldContainer()->children().size(), size_t(1));
-    }
-
-    void typedPasswordIsEditedAndRetriedAfterARejection()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        scene::Node applications;
-        compositor::Compositor compositor(&applications);
-        input::Seat seat(&compositor);
-        seat.setSessionGate(&controller);
-        input::InputManager input(&seat);
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
-        QVERIFY(controller.requestLock());
-        ui.refresh();
-        const auto type = [&](std::initializer_list<uint32_t> keys) {
-            for (uint32_t key : keys) {
-                input.onKey({}, key, true);
-                input.onKey({}, key, false);
-            }
-        };
-        const quint64 empty = ui.imageGeneration();
-        type({KEY_P, KEY_W, KEY_D, KEY_X, KEY_BACKSPACE});
-        QCOMPARE(fieldText(ui), QStringLiteral("pwd"));
-        QVERIFY(!ui.renderImage().isNull());
-        QVERIFY(ui.imageGeneration() > empty);
-        type({KEY_ENTER});
-        QCOMPARE(backend.authenticateCount, 1);
-        QCOMPARE(backend.lastSecret, QStringLiteral("pwd"));
-        const QRectF field = ui.fieldBounds();
-        backend.reject();
-        QVERIFY(ui.controller()->failed());
-        // The field shakes, and comes back to rest where it was.
-        QTRY_VERIFY_WITH_TIMEOUT((ui.renderImage(), ui.fieldBounds() != field), 1000);
-        QTRY_COMPARE_WITH_TIMEOUT((ui.renderImage(), ui.fieldBounds()), field, 2000);
-        // A rejection clears the field, so the next attempt starts empty.
-        type({KEY_O, KEY_K, KEY_ENTER});
-        QCOMPARE(backend.authenticateCount, 2);
-        QCOMPARE(backend.lastSecret, QStringLiteral("ok"));
-        backend.succeed();
-        controller.notifyFramePresented();
-        QTRY_COMPARE(controller.state(), session::SessionState::Unlocking);
-        seat.shutdown();
-    }
-
-    void submitButtonAsksForAPointingHand()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        scene::Node applications;
-        compositor::Compositor compositor(&applications);
-        input::Seat seat(&compositor);
-        seat.setSessionGate(&controller);
-        input::InputManager input(&seat);
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
-        QVERIFY(controller.requestLock());
-        ui.refresh();
-        QSignalSpy cursors(&ui, &auth::AuthUi::cursorShapeChanged);
-        const QPointF panel = secure.authContainer()->children().front()->absolutePosition();
-        const QRectF field = ui.fieldBounds();
-        const QPointF go = panel + QPointF(field.right() - 4 - 12, field.center().y());
-        // Nothing to submit: the button takes no pointer.
-        ui.onPointerMotion({}, go);
-        QVERIFY(cursors.isEmpty() || cursors.last().at(0).value<Qt::CursorShape>() == Qt::ArrowCursor);
-        input.onKey({}, KEY_A, true);
-        input.onKey({}, KEY_A, false);
-        ui.onPointerMotion({}, go + QPointF(1, 0));
-        QCOMPARE(cursors.last().at(0).value<Qt::CursorShape>(), Qt::PointingHandCursor);
-        ui.onPointerButton({}, go, BTN_LEFT, true);
-        ui.onPointerButton({}, go, BTN_LEFT, false);
-        QCOMPARE(backend.authenticateCount, 1);
-        QCOMPARE(backend.lastSecret, QStringLiteral("a"));
-        seat.shutdown();
-    }
-
-    void panelOpensOnThePointersScreen()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        const QRect one(0, 0, 800, 600);
-        const QRect two(800, 0, 1000, 700);
-        controller.setOutputs({{QStringLiteral("one"), one}, {QStringLiteral("two"), two, 1, true}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        QPointF pointer(-10, -10);
-        ui.setPointerLocator([&] {
-            return pointer;
-        });
-        QVERIFY(controller.requestLock());
-        QTRY_VERIFY(ui.isPanelDrawn());
-        const scene::Node *panel = secure.authContainer()->children().front();
-        // With the pointer on no screen, the panel takes the primary one.
-        QVERIFY(two.contains(panel->absoluteGeometry()));
-        pointer = QPointF(100, 100);
-        ui.onPointerMotion({}, pointer);
-        QVERIFY(ui.isRefreshPending());
-        QTRY_VERIFY(one.contains(panel->absoluteGeometry()));
-        // Moving within that screen leaves the panel where it is.
-        const QRect placed = panel->absoluteGeometry();
-        pointer = QPointF(300, 300);
-        ui.onPointerMotion({}, pointer);
-        QTest::qWait(50);
-        QCOMPARE(panel->absoluteGeometry(), placed);
-    }
-
-    void loginUsesSameOffscreenScreenAndStaysBlockedForHandoff()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure, nullptr, session::SessionState::Login);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}});
-        FakeBackend backend;
-        auth::AuthUi ui(&controller, nullptr, &backend);
-        ui.refresh();
-        QVERIFY(!ui.renderImage().isNull());
-        QCOMPARE(ui.controller()->mode(), auth::AuthController::Login);
-        ui.controller()->authenticate(QStringLiteral("valid"));
-        backend.succeed();
-        QCOMPARE(backend.acceptCount, 1);
-        QCOMPARE(controller.state(), session::SessionState::Login);
-        QVERIFY(root.isVisible());
-    }
-};
-
-int main(int argc, char **argv)
-{
-    QCoreApplication app(argc, argv);
-    QTemporaryDir configuration;
-    qputenv("XDG_CONFIG_HOME", configuration.path().toUtf8());
-    AuthUiTest test;
-    return QTest::qExec(&test, argc, argv);
+    std::filesystem::remove(settings.path());
 }
 
-#include "auth_ui_test.moc"
+TEST(AuthUiTest, PrewarmedUiRepeatsKeysAndUpdatesCursor)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    scene::Node applications;
+    compositor::Compositor compositor(&applications);
+    input::Seat seat(&compositor);
+    seat.setSessionGate(&controller);
+    input::InputManager input(&seat);
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
+    ui.refresh();
+    auto *window = ui.window();
+    ASSERT_TRUE(window);
+    EXPECT_TRUE(!root.isVisible());
+    EXPECT_TRUE(!ui.renderImage().isNull());
+    EXPECT_EQ(backend.startCount, 0);
+    EXPECT_TRUE(controller.requestLock());
+    ui.refresh();
+    EXPECT_EQ(ui.window(), window);
+    EXPECT_EQ(backend.startCount, 1);
+    auto *field = focusedField(ui);
+    ASSERT_TRUE(field);
+    field->setText("abcdefghij");
+    input.onKey({}, KEY_BACKSPACE, true);
+    EXPECT_EQ(fieldText(ui).size(), 9u);
+    EXPECT_TRUE(test::runUntil([&] { return fieldText(ui).size() < 9; },
+                               std::chrono::milliseconds(1000)));
+    input.onKey({}, KEY_BACKSPACE, false);
+    const std::string remaining = fieldText(ui);
+    test::runFor(std::chrono::milliseconds(120));
+    EXPECT_EQ(fieldText(ui), remaining);
+    std::vector<input::CursorShape> cursors;
+    auto cursorSubscription = ui.cursorShapeChanged.connect(
+            [&](input::CursorShape shape) { cursors.push_back(shape); });
+    const base::PointF fieldCenter = ui.fieldBounds().center()
+            + base::PointF(secure.authContainer()->children().front()->absolutePosition());
+    ui.onPointerMotion({}, fieldCenter);
+    EXPECT_TRUE(!cursors.empty());
+    EXPECT_EQ(cursors.back(), input::CursorShape::Text);
+    ui.onPointerMotion({}, base::PointF(0, 0));
+    EXPECT_EQ(cursors.back(), input::CursorShape::Default);
+    input.onKey({}, KEY_BACKSPACE, true);
+    controller.notifyFramePresented();
+    EXPECT_TRUE(controller.requestUnlock());
+    const std::string beforeUnlock = fieldText(ui);
+    test::runFor(std::chrono::milliseconds(600));
+    EXPECT_EQ(fieldText(ui), beforeUnlock);
+    input.onKey({}, KEY_BACKSPACE, false);
+    seat.shutdown();
+}
+
+TEST(AuthUiTest, WallpaperFollowsSettingsWhileUnlocked)
+{
+    test::TemporaryDirectory files;
+    ASSERT_TRUE(files.isValid());
+    const auto save = [&](const std::string &name, uint32_t color) {
+        const std::string path = files.filePath(name);
+        return savePng(path, color) ? path : std::string();
+    };
+    base::Settings settings(preferencesFile("services"));
+    settings.setValue("Appearance/Wallpaper", save("red.png", 0xffff0000));
+    settings.sync();
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    secure.setOutputs({{"one", base::Rect(0, 0, 640, 320)}});
+    testsupport::FakeRenderer renderer;
+    const auto shown = [&] {
+        renderer.calls.clear();
+        secure.shieldContainer()->render(renderer);
+        for (const auto &call : renderer.calls) {
+            if (const auto *texture = static_cast<testsupport::FakeTexture *>(call.texture))
+                return std::optional<Rgba>(pixelAt(texture, 0, 0));
+        }
+        return std::optional<Rgba>();
+    };
+    EXPECT_TRUE(test::runUntil([&] { return shown() == kRed; }));
+    // Picked up from the settings file, with no lock to prompt a reread.
+    settings.setValue("Appearance/Wallpaper", save("blue.png", 0xff0000ff));
+    settings.sync();
+    EXPECT_TRUE(test::runUntil([&] { return shown() == kBlue; }));
+    // The same file, rewritten in place.
+    save("blue.png", 0xff00ff00);
+    EXPECT_TRUE(test::runUntil([&] { return shown() == kGreen; }));
+    std::filesystem::remove(settings.path());
+}
+
+TEST(AuthUiTest, PreparedPanelIdlesUntilTheNextLock)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    EXPECT_TRUE(ui.isRefreshPending());
+    ui.refresh();
+    EXPECT_TRUE(ui.window());
+    EXPECT_TRUE(!ui.renderImage().isNull());
+    // Nothing wakes the compositor for a hidden panel, not even the caret.
+    EXPECT_TRUE(!ui.window()->hasKeyboardFocus());
+    test::runFor(std::chrono::milliseconds(100));
+    EXPECT_TRUE(!ui.isRefreshPending());
+    EXPECT_TRUE(controller.requestLock());
+    EXPECT_TRUE(ui.isRefreshPending());
+    // Locked, it waits for input or a scene change instead of polling.
+    test::runFor(std::chrono::milliseconds(100));
+    EXPECT_TRUE(!ui.isRefreshPending());
+    EXPECT_TRUE(ui.window()->hasKeyboardFocus());
+    EXPECT_TRUE(focusedField(ui));
+    ui.controller()->authenticate("valid");
+    backend.succeed();
+    controller.notifyFramePresented();
+    EXPECT_TRUE(test::runUntil(
+            [&] { return controller.state() == session::SessionState::Unlocking; }));
+    controller.notifyFramePresented();
+    EXPECT_EQ(controller.state(), session::SessionState::Active);
+    // Prepared again for the next lock, then idle. The preparation renders
+    // the panel once more, which takes longer than 100 ms under ASan.
+    EXPECT_TRUE(test::runUntil([&] { return !ui.isRefreshPending(); },
+                               std::chrono::milliseconds(5000)));
+    test::runFor(std::chrono::milliseconds(100));
+    EXPECT_TRUE(!ui.isRefreshPending());
+    EXPECT_TRUE(ui.isPanelDrawn());
+    EXPECT_TRUE(ui.window());
+    EXPECT_TRUE(!ui.window()->hasKeyboardFocus());
+    EXPECT_EQ(ui.controller()->state(), auth::AuthController::Idle);
+}
+
+TEST(AuthUiTest, PanelFollowsOutputChanges)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_TRUE(!ui.isPanelDrawn());
+    EXPECT_TRUE(!ui.isRefreshPending());
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    EXPECT_TRUE(test::runUntil([&] { return ui.isPanelDrawn(); }));
+    const base::Size size = sizeOf(ui.renderImage());
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600), 2}});
+    EXPECT_TRUE(test::runUntil([&] {
+        return sizeOf(ui.renderImage()) == base::Size(size.width() * 2, size.height() * 2);
+    }));
+}
+
+TEST(AuthUiTest, OffscreenRenderingAndDirectInput)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    scene::Node applications;
+    compositor::Compositor compositor(&applications);
+    input::Seat seat(&compositor);
+    seat.setSessionGate(&controller);
+    input::InputManager input(&seat);
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
+    EXPECT_TRUE(controller.requestLock());
+    controller.notifyFramePresented();
+    ui.refresh();
+    EXPECT_TRUE(ui.window());
+    const auto image = ui.renderImage();
+    EXPECT_TRUE(!image.isNull());
+    bool painted = false;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            painted |= isPainted(image, x, y);
+    EXPECT_TRUE(painted);
+    input.onKey({}, KEY_A, true);
+    input.onKey({}, KEY_A, false);
+    input.onKey({}, KEY_ENTER, true);
+    input.onKey({}, KEY_ENTER, false);
+    EXPECT_EQ(backend.authenticateCount, 1);
+    EXPECT_EQ(backend.lastSecret, std::string("a"));
+    backend.reject();
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
+    backend.succeed();
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
+    ui.controller()->authenticate("valid");
+    backend.succeed();
+    backend.succeed();
+    EXPECT_EQ(backend.acceptCount, 1);
+    EXPECT_EQ(controller.state(), session::SessionState::Unlocking);
+    EXPECT_TRUE(root.isVisible());
+    controller.notifyFramePresented();
+    EXPECT_EQ(controller.state(), session::SessionState::Active);
+    EXPECT_TRUE(controller.requestLock());
+    controller.notifyFramePresented();
+    ui.refresh();
+    EXPECT_EQ(ui.controller()->state(), auth::AuthController::Idle);
+    seat.shutdown();
+}
+
+TEST(AuthUiTest, SubmittedPasswordStaysUntilRejected)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    scene::Node applications;
+    compositor::Compositor compositor(&applications);
+    input::Seat seat(&compositor);
+    seat.setSessionGate(&controller);
+    input::InputManager input(&seat);
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
+    EXPECT_TRUE(controller.requestLock());
+    controller.notifyFramePresented();
+    ui.refresh();
+    auto *field = focusedField(ui);
+    ASSERT_TRUE(field);
+    const auto submit = [&](int key) {
+        input.onKey({}, key, true);
+        input.onKey({}, key, false);
+        input.onKey({}, KEY_ENTER, true);
+        input.onKey({}, KEY_ENTER, false);
+    };
+    submit(KEY_A);
+    EXPECT_EQ(backend.authenticateCount, 1);
+    EXPECT_EQ(field->text(), std::string("a"));
+    EXPECT_TRUE(!field->isEnabled());
+    backend.reject();
+    EXPECT_EQ(field->text(), std::string());
+    EXPECT_TRUE(field->isEnabled());
+    EXPECT_TRUE(field->hasFocus());
+    submit(KEY_B);
+    EXPECT_EQ(backend.lastSecret, std::string("b"));
+    backend.succeed();
+    EXPECT_EQ(controller.state(), session::SessionState::Unlocking);
+    EXPECT_EQ(field->text(), std::string("b"));
+    EXPECT_TRUE(!field->isEnabled());
+    seat.shutdown();
+}
+
+TEST(AuthUiTest, PanelIsDrawnAtTheOutputDensity)
+{
+    const auto paintedArea = [](double scale) {
+        scene::Node root;
+        session::SecureContainer secure(&root);
+        session::SessionController controller(&secure);
+        controller.setOutputs({{"one", base::Rect(0, 0, 800, 600), scale}});
+        FakeBackend backend;
+        auth::AuthUi ui(&controller, nullptr, &backend);
+        ui.refresh();
+        const auto image = ui.renderImage();
+        base::Rect painted;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (isPainted(image, x, y))
+                    painted |= base::Rect(x, y, 1, 1);
+        return std::tuple(sizeOf(image), painted);
+    };
+    const auto [plainSize, plain] = paintedArea(1);
+    const auto [denseSize, dense] = paintedArea(1.5);
+    EXPECT_EQ(plainSize, base::Size(480, 600));
+    // One texel per device pixel, and the content itself drawn larger, not
+    // a logical-size drawing in the corner of a larger image.
+    EXPECT_EQ(denseSize, base::Size(720, 900));
+    EXPECT_TRUE(!plain.isEmpty());
+    EXPECT_TRUE(std::abs(dense.width() - plain.width() * 1.5) <= 2);
+    EXPECT_TRUE(std::abs(dense.height() - plain.height() * 1.5) <= 2);
+    EXPECT_TRUE(std::abs(dense.left() - plain.left() * 1.5) <= 2);
+}
+
+TEST(AuthUiTest, ChoiceMenuClosesOnAPressElsewhere)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure, nullptr, session::SessionState::Login);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    ui.refresh();
+    ui.controller()->setSessions({{"cutefish-wayland", "Cutefish", {}, {}},
+                                  {"plasma", "Plasma", {}, {}}});
+    ui.window()->updateLayout();
+    ui::View *screen = ui.window()->contentView();
+    ui::View *button = findView(screen, "session-menu-button");
+    ui::View *list = findView(screen, "session-menu-list");
+    EXPECT_TRUE(button && list);
+    EXPECT_TRUE(!list->isVisible());
+    const base::PointF panel(secure.authContainer()->children().front()->absolutePosition());
+    const auto click = [&](base::PointF point) {
+        ui.onPointerMotion({}, panel + point);
+        ui.onPointerButton({}, panel + point, BTN_LEFT, true);
+        ui.onPointerButton({}, panel + point, BTN_LEFT, false);
+    };
+    const base::PointF onButton = panelRect(button).center();
+    click(onButton);
+    EXPECT_TRUE(list->isVisible());
+    // The panel is as tall as the output and the menu is at its bottom:
+    // the list opens upward rather than being cut off.
+    ui.window()->updateLayout();
+    EXPECT_TRUE(panelRect(list).bottom() <= panelRect(button).top());
+    // Elsewhere closes it; on the button it toggles as before.
+    click({20, 20});
+    EXPECT_TRUE(!list->isVisible());
+    click(onButton);
+    EXPECT_TRUE(list->isVisible());
+    click(onButton);
+    EXPECT_TRUE(!list->isVisible());
+    // A row picks its session and closes the list.
+    click(onButton);
+    ui.window()->updateLayout();
+    const base::RectF rows = panelRect(list);
+    click(base::PointF(rows.center().x(), rows.top() + 6 + 30 + 15));
+    EXPECT_TRUE(!list->isVisible());
+    EXPECT_EQ(ui.controller()->sessionIndex(), 1);
+}
+
+TEST(AuthUiTest, PasswordPillIsOnWholeDevicePixels)
+{
+    // The field lands half a device pixel off the grid at 1.5, where an
+    // unsnapped rounded rect would draw its border heavier on one side.
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 601), 1.5}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    ui.refresh();
+    const auto image = ui.renderImage();
+    EXPECT_TRUE(!image.isNull());
+    const base::RectF field = ui.fieldBounds();
+    EXPECT_EQ(std::fmod(field.y() * 1.5, 1.0), 0.5);
+    const int centre = base::roundToInt(field.center().x() * 1.5);
+    int top = -1, bottom = -1;
+    for (int y = base::roundToInt(field.y() * 1.5) - 3; y < base::roundToInt(field.bottom() * 1.5) + 3;
+         ++y) {
+        if (isPainted(image, centre, y)) {
+            bottom = y;
+            if (top < 0)
+                top = y;
+        }
+    }
+    EXPECT_TRUE(top > 0 && bottom > top + 4);
+    // Whole device pixels on both sides: the border is as heavy at the bottom as at the top.
+    EXPECT_EQ(image.pixel(centre, bottom), image.pixel(centre, top));
+    EXPECT_TRUE(image.pixel(centre, top) != image.pixel(centre, top + 1));
+    const auto fill = image.pixel(centre, (top + bottom) / 2);
+    for (int y = top + 1; y < bottom; ++y)
+        EXPECT_EQ(image.pixel(centre, y), fill);
+}
+
+TEST(AuthUiTest, OutputChangesReuseOneOffscreenWindow)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    controller.requestLock();
+    ui.refresh();
+    auto *window = ui.window();
+    ASSERT_TRUE(window);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)},
+                           {"two", base::Rect(800, 0, 640, 480)}});
+    ui.refresh();
+    EXPECT_EQ(ui.window(), window);
+    EXPECT_EQ(secure.authContainer()->children().size(), size_t(1));
+    controller.setOutputs({{"two", base::Rect(800, 0, 640, 480)}});
+    ui.refresh();
+    EXPECT_EQ(ui.window(), window);
+    EXPECT_TRUE(base::Rect(800, 0, 640, 480)
+                    .contains(secure.authContainer()->children().front()->geometry()));
+    controller.setOutputs({});
+    ui.refresh();
+    EXPECT_TRUE(ui.renderImage().isNull());
+    controller.setOutputs({{"two", base::Rect(0, 0, 640, 480)}});
+    ui.refresh();
+    EXPECT_TRUE(!ui.renderImage().isNull());
+    EXPECT_EQ(ui.window(), window);
+}
+
+TEST(AuthUiTest, PanelTextureFollowsTheImageSize)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    controller.requestLock();
+    ui.refresh();
+    secure.finishTransition();
+    testsupport::FakeRenderer renderer;
+    // The panel is drawn last, above the shield and its wallpaper.
+    const auto panelTexture = [&]() -> const render::Texture * {
+        renderer.calls.clear();
+        root.render(renderer);
+        for (auto call = renderer.calls.crbegin(); call != renderer.calls.crend(); ++call) {
+            if (call->texture)
+                return call->texture;
+        }
+        return nullptr;
+    };
+    const render::Texture *texture = panelTexture();
+    ASSERT_TRUE(texture);
+    EXPECT_EQ(texture->size(), base::Size(480, 600));
+    // A denser output redraws the panel larger. The renderer takes the
+    // texture's own size for an update, so the texture has to be replaced.
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600), 2}});
+    ui.refresh();
+    texture = panelTexture();
+    ASSERT_TRUE(texture);
+    EXPECT_EQ(sizeOf(ui.renderImage()), base::Size(960, 1200));
+    EXPECT_EQ(texture->size(), base::Size(960, 1200));
+}
+
+TEST(AuthUiTest, TextureFailureKeepsCompositorShield)
+{
+    class FailedRenderer : public testsupport::FakeRenderer
+    {
+    public:
+        std::unique_ptr<render::Texture> createTexture(const base::Size &, const uint8_t *, int,
+                                                       render::PixelFormat) override
+        {
+            return {};
+        }
+    } renderer;
+
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    controller.requestLock();
+    ui.refresh();
+    // Once the lock has faded in, the shield alone covers the output.
+    secure.finishTransition();
+    root.render(renderer);
+    EXPECT_EQ(renderer.calls.size(), 1);
+    EXPECT_EQ(renderer.calls.front().kind, "fill");
+    EXPECT_EQ(renderer.calls.front().color.a, 1.0f);
+    EXPECT_EQ(renderer.calls.front().color.r, 0.0f);
+    EXPECT_TRUE(controller.isBlocked());
+}
+
+TEST(AuthUiTest, SuccessDuringLockingWaitsForSecurePresentation)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    controller.requestLock();
+    ui.refresh();
+    ui.controller()->authenticate("valid");
+    backend.succeed();
+    EXPECT_EQ(controller.state(), session::SessionState::Locking);
+    controller.notifyFramePresented();
+    ui.refresh();
+    EXPECT_EQ(controller.state(), session::SessionState::Unlocking);
+    backend.succeed();
+    EXPECT_EQ(backend.acceptCount, 1);
+    controller.notifyFramePresented();
+    EXPECT_EQ(controller.state(), session::SessionState::Active);
+}
+
+TEST(AuthUiTest, LockingCoversEveryOutput)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    controller.requestLock();
+    ui.refresh();
+    EXPECT_TRUE(root.isVisible());
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)},
+                           {"two", base::Rect(800, 0, 640, 480)}});
+    ui.refresh();
+    EXPECT_EQ(secure.shieldContainer()->children().size(), size_t(2));
+    controller.notifyOutputPresented("one");
+    EXPECT_EQ(controller.state(), session::SessionState::Locking);
+    controller.notifyOutputPresented("two");
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
+    controller.setOutputs({});
+    ui.refresh();
+    EXPECT_TRUE(controller.isBlocked());
+    controller.setOutputs({{"two", base::Rect(0, 0, 640, 480)}});
+    ui.refresh();
+    EXPECT_TRUE(root.isVisible());
+    EXPECT_EQ(secure.shieldContainer()->children().size(), size_t(1));
+}
+
+TEST(AuthUiTest, TypedPasswordIsEditedAndRetriedAfterARejection)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    scene::Node applications;
+    compositor::Compositor compositor(&applications);
+    input::Seat seat(&compositor);
+    seat.setSessionGate(&controller);
+    input::InputManager input(&seat);
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
+    EXPECT_TRUE(controller.requestLock());
+    ui.refresh();
+    const auto type = [&](std::initializer_list<uint32_t> keys) {
+        for (uint32_t key : keys) {
+            input.onKey({}, key, true);
+            input.onKey({}, key, false);
+        }
+    };
+    const uint64_t empty = ui.imageGeneration();
+    type({KEY_P, KEY_W, KEY_D, KEY_X, KEY_BACKSPACE});
+    EXPECT_EQ(fieldText(ui), "pwd");
+    EXPECT_TRUE(!ui.renderImage().isNull());
+    EXPECT_TRUE(ui.imageGeneration() > empty);
+    type({KEY_ENTER});
+    EXPECT_EQ(backend.authenticateCount, 1);
+    EXPECT_EQ(backend.lastSecret, std::string("pwd"));
+    const base::RectF field = ui.fieldBounds();
+    backend.reject();
+    EXPECT_TRUE(ui.controller()->failed());
+    // The field shakes, and comes back to rest where it was.
+    const auto fieldNow = [&] {
+        ui.renderImage();
+        return ui.fieldBounds();
+    };
+    EXPECT_TRUE(test::runUntil([&] { return !base::fuzzyCompare(fieldNow(), field); },
+                               std::chrono::milliseconds(1000)));
+    EXPECT_TRUE(test::runUntil([&] { return base::fuzzyCompare(fieldNow(), field); },
+                               std::chrono::milliseconds(2000)));
+    // A rejection clears the field, so the next attempt starts empty.
+    type({KEY_O, KEY_K, KEY_ENTER});
+    EXPECT_EQ(backend.authenticateCount, 2);
+    EXPECT_EQ(backend.lastSecret, std::string("ok"));
+    backend.succeed();
+    controller.notifyFramePresented();
+    EXPECT_TRUE(test::runUntil(
+            [&] { return controller.state() == session::SessionState::Unlocking; }));
+    seat.shutdown();
+}
+
+TEST(AuthUiTest, SubmitButtonAsksForAPointingHand)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    scene::Node applications;
+    compositor::Compositor compositor(&applications);
+    input::Seat seat(&compositor);
+    seat.setSessionGate(&controller);
+    input::InputManager input(&seat);
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
+    EXPECT_TRUE(controller.requestLock());
+    ui.refresh();
+    std::vector<input::CursorShape> cursors;
+    auto cursorSubscription = ui.cursorShapeChanged.connect(
+            [&](input::CursorShape shape) { cursors.push_back(shape); });
+    const base::PointF panel(secure.authContainer()->children().front()->absolutePosition());
+    const base::RectF field = ui.fieldBounds();
+    const base::PointF go = panel + base::PointF(field.right() - 4 - 12, field.center().y());
+    // Nothing to submit: the button takes no pointer.
+    ui.onPointerMotion({}, go);
+    EXPECT_TRUE(cursors.empty() || cursors.back() == input::CursorShape::Default);
+    input.onKey({}, KEY_A, true);
+    input.onKey({}, KEY_A, false);
+    ui.onPointerMotion({}, go + base::PointF(1, 0));
+    EXPECT_EQ(cursors.back(), input::CursorShape::Pointer);
+    ui.onPointerButton({}, go, BTN_LEFT, true);
+    ui.onPointerButton({}, go, BTN_LEFT, false);
+    EXPECT_EQ(backend.authenticateCount, 1);
+    EXPECT_EQ(backend.lastSecret, std::string("a"));
+    seat.shutdown();
+}
+
+TEST(AuthUiTest, PanelOpensOnThePointersScreen)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    const base::Rect one(0, 0, 800, 600);
+    const base::Rect two(800, 0, 1000, 700);
+    controller.setOutputs({{"one", one}, {"two", two, 1, true}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    base::PointF pointer(-10, -10);
+    ui.setPointerLocator([&] {
+        return pointer;
+    });
+    EXPECT_TRUE(controller.requestLock());
+    EXPECT_TRUE(test::runUntil([&] { return ui.isPanelDrawn(); }));
+    const scene::Node *panel = secure.authContainer()->children().front();
+    // With the pointer on no screen, the panel takes the primary one.
+    EXPECT_TRUE(two.contains(panel->absoluteGeometry()));
+    pointer = base::PointF(100, 100);
+    ui.onPointerMotion({}, pointer);
+    EXPECT_TRUE(ui.isRefreshPending());
+    EXPECT_TRUE(test::runUntil([&] { return one.contains(panel->absoluteGeometry()); }));
+    // Moving within that screen leaves the panel where it is.
+    const base::Rect placed = panel->absoluteGeometry();
+    pointer = base::PointF(300, 300);
+    ui.onPointerMotion({}, pointer);
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_EQ(panel->absoluteGeometry(), placed);
+}
+
+TEST(AuthUiTest, LoginUsesSameOffscreenScreenAndStaysBlockedForHandoff)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure, nullptr, session::SessionState::Login);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    ui.refresh();
+    EXPECT_TRUE(!ui.renderImage().isNull());
+    EXPECT_EQ(ui.controller()->mode(), auth::AuthController::Login);
+    ui.controller()->authenticate("valid");
+    backend.succeed();
+    EXPECT_EQ(backend.acceptCount, 1);
+    EXPECT_EQ(controller.state(), session::SessionState::Login);
+    EXPECT_TRUE(root.isVisible());
+}
+

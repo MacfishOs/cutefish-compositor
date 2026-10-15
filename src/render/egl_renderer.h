@@ -26,6 +26,8 @@
 #include "render/gl_render_pass.h"
 #include "render/gpu_timer.h"
 #include "render/renderer.h"
+#include "base/region.h"
+#include "base/transform.h"
 
 struct gbm_device;
 struct gbm_surface;
@@ -43,7 +45,7 @@ public:
     // matched against it through EGL_NATIVE_VISUAL_ID.
     static std::unique_ptr<EglRenderer> create(gbm_device *device, uint32_t format);
 
-    std::unique_ptr<EglRenderTarget> createTarget(gbm_surface *surface, const QSize &size);
+    std::unique_ptr<EglRenderTarget> createTarget(gbm_surface *surface, const base::Size &size);
 
     // Called before an output destroys its target. Retire renderer-owned
     // textures while this target/context still exists and forget borrowed pointers.
@@ -53,8 +55,8 @@ public:
     bool beginFrame(RenderTarget *target) override;
     bool endFrame() override;
     void cancelFrame() override;
-    void prepareDamage(const QRegion &damage, const std::vector<QRect> &samples) override;
-    bool repaints(const QRect &logical) const override;
+    void prepareDamage(const base::Region &damage, const std::vector<base::Rect> &samples) override;
+    bool repaints(const base::Rect &logical) const override;
 
     void waitFence(const SyncFence &fence) override;
     SyncFence createReleaseFence() override;
@@ -76,52 +78,52 @@ public:
     std::optional<GpuTimer::Time> drawnAt(const GpuTimer::Mark &mark);
 
     void clear(const Color &color) override;
-    void fillRect(const QRect &rect, const Color &color) override;
-    void drawRoundedOutline(const RoundedShape &shape, const Color &color, qreal widthPx) override;
-    void fillRectF(const QRectF &rect, const Color &color) override;
-    void drawTextureF(Texture *texture, const QRectF &target, float alpha) override;
-    void drawTextureTransformed(Texture *texture, const QRectF &target, const QTransform &transform,
+    void fillRect(const base::Rect &rect, const Color &color) override;
+    void drawRoundedOutline(const RoundedShape &shape, const Color &color, double widthPx) override;
+    void fillRectF(const base::RectF &rect, const Color &color) override;
+    void drawTextureF(Texture *texture, const base::RectF &target, float alpha) override;
+    void drawTextureTransformed(Texture *texture, const base::RectF &target, const base::AffineTransform &transform,
                                 float alpha) override;
     bool keepsBackdrop(uint64_t scope, uint64_t owner) const override;
     void beginBackdropPass(uint64_t scope, const std::vector<uint64_t> &fresh) override;
-    void drawBackgroundBlur(const QRect &bounds, int radius, const QRect &clip,
-                            const GlassParams &glass = {}, const QPainterPath &shape = {},
+    void drawBackgroundBlur(const base::Rect &bounds, int radius, const base::Rect &clip,
+                            const GlassParams &glass = {}, const ui::Path &shape = {},
                             uint64_t owner = 0) override;
-    void drawTexture(Texture *texture, const QRect &target, float alpha) override;
-    void drawTextureMapped(Texture *texture, const QRect &target, float alpha,
-                           const QTransform &mapping) override;
+    void drawTexture(Texture *texture, const base::Rect &target, float alpha) override;
+    void drawTextureMapped(Texture *texture, const base::Rect &target, float alpha,
+                           const base::AffineTransform &mapping) override;
     void drawTextureMappedRects(Texture *texture, const std::vector<MappedRect> &rects,
                                 float alpha) override;
 
-    std::unique_ptr<Texture> createTexture(const QSize &size, const uint8_t *pixels, int stride,
+    std::unique_ptr<Texture> createTexture(const base::Size &size, const uint8_t *pixels, int stride,
                                            PixelFormat format) override;
     bool updateTexture(Texture *texture, const uint8_t *pixels, int stride,
                        PixelFormat format) override;
     bool updateTexture(Texture *texture, const uint8_t *pixels, int stride, PixelFormat format,
-                       const QRegion &damage) override;
+                       const base::Region &damage) override;
     using Renderer::createTexture;
 
-    QImage captureFrame(const std::function<void()> &paint) override;
-    QImage captureImage(const OutputRenderContext &context, const QSize &size,
+    ui::Bitmap captureFrame(const std::function<void()> &paint) override;
+    ui::Bitmap captureImage(const OutputRenderContext &context, const base::Size &size,
                         const std::function<void()> &paint) override;
     std::shared_ptr<PendingImage> captureFrameLater(const std::function<void()> &paint) override;
     std::shared_ptr<PendingImage> captureImageLater(const OutputRenderContext &context,
-                                                    const QSize &size,
+                                                    const base::Size &size,
                                                     const std::function<void()> &paint) override;
-    bool captureToDmaBuf(const OutputRenderContext &context, const QSize &size,
+    bool captureToDmaBuf(const OutputRenderContext &context, const base::Size &size,
                          const DmaBufAttributes &attributes,
                          const std::function<void()> &paint) override;
     const DmaBufFormats &captureDmaBufFormats() const override;
     dev_t captureDmaBufDevice() const override;
-    bool copyOutputFrame(const QSize &size) override;
-    QImage renderToImage(const QSize &size, const std::function<void()> &paint) override;
-    bool renderToTexture(std::unique_ptr<Texture> &texture, const QRect &bounds,
+    bool copyOutputFrame(const base::Size &size) override;
+    ui::Bitmap renderToImage(const base::Size &size, const std::function<void()> &paint) override;
+    bool renderToTexture(std::unique_ptr<Texture> &texture, const base::Rect &bounds,
                          const std::function<void()> &paint) override;
-    bool renderToTexture(std::unique_ptr<Texture> &texture, const QRect &bounds,
-                         const QRect &repaint, const std::function<void()> &paint) override;
+    bool renderToTexture(std::unique_ptr<Texture> &texture, const base::Rect &bounds,
+                         const base::Rect &repaint, const std::function<void()> &paint) override;
     void enableTrilinearFiltering(Texture *texture) override;
     void limitMipmapLevel(Texture *texture, int level) override;
-    std::unique_ptr<Texture> renderShadow(const QSize &size, const std::vector<ShadowLobe> &lobes,
+    std::unique_ptr<Texture> renderShadow(const base::Size &size, const std::vector<ShadowLobe> &lobes,
                                           const std::function<void()> &paintCaster) override;
 
     // DmaBufDevice.
@@ -131,19 +133,19 @@ public:
 
     std::shared_ptr<Texture> importDmaBuf(const DmaBufAttributes &attributes) override;
 
-    QSize viewportSize() const override { return m_pass.viewport(); }
+    base::Size viewportSize() const override { return m_pass.viewport(); }
 
     EGLDisplay eglDisplay() const { return m_context->display(); }
 
     EGLConfig eglConfig() const { return m_context->config(); }
 
-    QByteArray eglVendor() const { return m_context->vendor(); }
+    const std::string &eglVendor() const { return m_context->vendor(); }
 
-    QByteArray eglVersion() const { return m_context->version(); }
+    const std::string &eglVersion() const { return m_context->version(); }
 
-    QByteArray glesRenderer() const { return m_context->renderer(); }
+    const std::string &glesRenderer() const { return m_context->renderer(); }
 
-    QByteArray glesVersion() const { return m_context->glVersion(); }
+    const std::string &glesVersion() const { return m_context->glVersion(); }
 
 private:
     friend class EglRendererTestAccess;
@@ -153,7 +155,7 @@ private:
                       const char *backdropOverride = nullptr);
     bool makeCurrent(EglRenderTarget *target);
     bool makeContextCurrent();
-    void applyRepaint(const QRect &repaint);
+    void applyRepaint(const base::Rect &repaint);
 
     // What the clip shader was last given through one program. Every draw
     // wants the clip stack, and most draws in a row want the same one, so the
@@ -198,8 +200,8 @@ private:
         float lastHasAlpha = -1;
     };
     void resolveTextureUniforms(TextureUniforms &uniforms, const GlProgram &program);
-    void drawTextureMappedF(Texture *texture, const QRectF &target, float alpha,
-                            const QTransform &mapping, const QTransform &geometry = QTransform());
+    void drawTextureMappedF(Texture *texture, const base::RectF &target, float alpha,
+                            const base::AffineTransform &mapping, const base::AffineTransform &geometry = base::AffineTransform());
 
     // Two triangles of a texture draw: positions in clip space and texture
     // coordinates, in quadFor()'s corner order.
@@ -209,18 +211,18 @@ private:
     };
     // Where a mapped draw lands and what it samples once native-density
     // texels are put on physical pixels.
-    void alignTextureDraw(const Texture *texture, const QRectF &target, const QTransform &mapping,
-                          QRectF &aligned, QTransform &texelMapping) const;
-    void textureQuad(const GlTexture &texture, const QRectF &target, const QTransform &mapping,
-                     const QTransform &geometry, TextureQuad &quad) const;
+    void alignTextureDraw(const Texture *texture, const base::RectF &target, const base::AffineTransform &mapping,
+                          base::RectF &aligned, base::AffineTransform &texelMapping) const;
+    void textureQuad(const GlTexture &texture, const base::RectF &target, const base::AffineTransform &mapping,
+                     const base::AffineTransform &geometry, TextureQuad &quad) const;
     // One draw of up to sixteen quads of `texture`.
     void drawTextureQuads(GlTexture *texture, const TextureQuad *quads, size_t count,
                           float alpha);
     void applyRoundedClip(const GlProgram &program);
-    void fillColorRects(std::initializer_list<QRectF> rects, const Color &color);
-    void quadFor(const QRectF &rect, float *vertices) const;
+    void fillColorRects(std::initializer_list<base::RectF> rects, const Color &color);
+    void quadFor(const base::RectF &rect, float *vertices) const;
     // Corners in triangle-strip order: top left, top right, bottom left, bottom right.
-    void quadFor(const std::array<QPointF, 4> &corners, float *vertices) const;
+    void quadFor(const std::array<base::PointF, 4> &corners, float *vertices) const;
 
     std::shared_ptr<EglContext> m_context;
     EglFence m_fences;
@@ -242,10 +244,10 @@ private:
     TextureUniforms m_textureUniforms;
     TextureUniforms m_externalUniforms;
     RoundedShape m_outlineShape;
-    qreal m_outlineWidth = 0;
+    double m_outlineWidth = 0;
     EglSwapState m_swapState;
     // The scissor of a partial repaint, in target pixels.
-    std::optional<QRect> m_repaint;
+    std::optional<base::Rect> m_repaint;
     // The framebuffer the current frame composites into.
     unsigned int m_frameFramebuffer = 0;
     EglRenderTarget *m_current = nullptr;

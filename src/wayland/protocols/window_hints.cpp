@@ -9,6 +9,7 @@
 
 #include <cutefish-window-hints-v1-server-protocol.h>
 
+#include "base/strings.h"
 #include "compositor/surface.h"
 #include "wayland/server_util.h"
 
@@ -72,7 +73,7 @@ void setServerResize(wl_client *, wl_resource *resource, wl_resource *surface, u
 
 void setRestoreId(wl_client *, wl_resource *, wl_resource *surface, const char *id)
 {
-    getUserDataAs<compositor::Surface>(surface)->setRestoreId(QString::fromUtf8(id));
+    getUserDataAs<compositor::Surface>(surface)->setRestoreId(base::strings::sanitizedUtf8(id));
 }
 
 void setRestoreSize(wl_client *, wl_resource *resource, wl_resource *surface, int32_t width,
@@ -83,7 +84,7 @@ void setRestoreSize(wl_client *, wl_resource *resource, wl_resource *surface, in
                                "restore size must not be negative");
         return;
     }
-    getUserDataAs<compositor::Surface>(surface)->setRestoreSize(QSize(width, height));
+    getUserDataAs<compositor::Surface>(surface)->setRestoreSize(base::Size(width, height));
 }
 
 const struct cutefish_window_hints_v1_interface implementation = {

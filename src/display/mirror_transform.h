@@ -12,8 +12,7 @@
 
 #include <optional>
 
-#include <QPointF>
-#include <QRect>
+#include "base/geometry.h"
 
 #include "display/display_types.h"
 
@@ -23,18 +22,18 @@ class MirrorTransform
 {
 public:
     MirrorTransform() = default;
-    MirrorTransform(QRect logicalBounds, QRect nativeContent, DisplayRotation rotation);
+    MirrorTransform(base::Rect logicalBounds, base::Rect nativeContent, DisplayRotation rotation);
 
     bool isValid() const;
-    QPointF logicalToNative(const QPointF& point) const;
-    std::optional<QPointF> nativeToLogical(const QPointF& point) const;
+    base::PointF logicalToNative(const base::PointF& point) const;
+    std::optional<base::PointF> nativeToLogical(const base::PointF& point) const;
 
 private:
-    QPointF rotate(const QPointF& normalized) const;
-    QPointF unrotate(const QPointF& normalized) const;
+    base::PointF rotate(const base::PointF& normalized) const;
+    base::PointF unrotate(const base::PointF& normalized) const;
 
-    QRect m_logicalBounds;
-    QRect m_nativeContent;
+    base::Rect m_logicalBounds;
+    base::Rect m_nativeContent;
     DisplayRotation m_rotation = DisplayRotation::Normal;
 };
 

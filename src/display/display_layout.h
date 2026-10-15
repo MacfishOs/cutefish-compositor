@@ -5,15 +5,15 @@
 // Upstream: chromium/src/ui/display/display_layout.h
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: IDs and geometry use Qt value types, and validation
+// Adapted for Cutefish: IDs and geometry are plain value types, and validation
 // returns a normalized immutable result rather than mutating display objects.
 
 #pragma once
 
-#include <QHash>
-#include <QList>
-#include <QRect>
-#include <QString>
+#include <map>
+#include <vector>
+
+#include "base/geometry.h"
 
 #include "display/display_types.h"
 
@@ -29,12 +29,13 @@ public:
     struct Result {
         bool succeeded = false;
         DisplayError error;
-        QHash<DisplayId, QRect> bounds;
-        QList<DisplayPlacement> placements;
+        std::map<DisplayId, base::Rect> bounds;
+        std::vector<DisplayPlacement> placements;
     };
 
-    static Result resolve(const DisplayId& primary, const QHash<DisplayId, QSize>& displaySizes,
-                          const QList<DisplayPlacement>& placements,
+    static Result resolve(const DisplayId& primary,
+                          const std::map<DisplayId, base::Size>& displaySizes,
+                          const std::vector<DisplayPlacement>& placements,
                           int minimumSharedEdge = preferredMinimumSharedEdge);
 };
 

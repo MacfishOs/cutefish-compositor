@@ -3,28 +3,25 @@
 // found in the LICENSE file.
 
 #include "input/touchpad_settings.h"
+#include "core/logging.h"
 
-#include <QDBusError>
-#include <QDebug>
+#include <algorithm>
 #include <cmath>
 
 #include "core/preferences.h"
+#include "input/dbus_export.h"
 
 namespace cutefish::input {
-namespace {
-constexpr auto service = "com.cutefish.Touchpad1";
-constexpr auto path = "/com/cutefish/Touchpad1";
-} // namespace
 
-TouchpadSettings::TouchpadSettings(QObject *parent, const QString &settingsFile)
-    : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
-                                       : settingsFile,
-                 QSettings::IniFormat)
+static constexpr auto service = "com.cutefish.Touchpad1";
+static constexpr auto path = "/com/cutefish/Touchpad1";
+static constexpr auto group = "Touchpad/";
+
+TouchpadSettings::TouchpadSettings(const std::string &settingsFile)
+    : m_settings(settingsFile.empty() ? preferencesFile("compositor") : settingsFile)
 {
-    m_settings.beginGroup(QStringLiteral("Touchpad"));
     const auto flag = [this](const char *key, bool fallback) {
-        return m_settings.value(QLatin1String(key), fallback).toBool();
+        return m_settings.boolValue(group + std::string(key), fallback);
     };
     m_enabled = flag("enabled", m_enabled);
     m_disableWithMouse = flag("disableWithMouse", m_disableWithMouse);
@@ -33,53 +30,86 @@ TouchpadSettings::TouchpadSettings(QObject *parent, const QString &settingsFile)
     m_tapDragging = flag("tapDragging", m_tapDragging);
     m_naturalScroll = flag("naturalScroll", m_naturalScroll);
     m_twoFingerSecondaryClick = flag("twoFingerSecondaryClick", m_twoFingerSecondaryClick);
-    bool valid = false;
-    const double speed =
-            m_settings.value(QStringLiteral("pointerAcceleration"), 0).toDouble(&valid);
-    if (valid && std::isfinite(speed))
-        m_pointerAcceleration = qBound(-1.0, speed, 1.0);
-    const double scroll =
-            m_settings.value(QStringLiteral("scrollSpeed"), kDefaultScrollSpeed).toDouble(&valid);
-    if (valid && std::isfinite(scroll))
-        m_scrollSpeed = qBound(kMinimumScrollSpeed, scroll, kMaximumScrollSpeed);
+    const double speed = m_settings.doubleValue("Touchpad/pointerAcceleration", NAN);
+    if (std::isfinite(speed))
+        m_pointerAcceleration = std::clamp(speed, -1.0, 1.0);
+    const double scroll = m_settings.doubleValue("Touchpad/scrollSpeed", kDefaultScrollSpeed);
+    if (std::isfinite(scroll))
+        m_scrollSpeed = std::clamp(scroll, kMinimumScrollSpeed, kMaximumScrollSpeed);
 }
 
-TouchpadSettings::~TouchpadSettings()
-{
-    if (m_registered) {
-        auto bus = QDBusConnection::sessionBus();
-        bus.unregisterObject(QLatin1String(path));
-        bus.unregisterService(QLatin1String(service));
-    }
-}
+TouchpadSettings::~TouchpadSettings() = default;
 
 bool TouchpadSettings::registerService()
 {
-    if (m_registered)
+    if (m_object)
         return true;
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.registerObject(QLatin1String(path), this,
-                            QDBusConnection::ExportAllProperties | QDBusConnection::ExportAllSlots
-                                    | QDBusConnection::ExportAllSignals)) {
-        qWarning() << "Cannot export touchpad settings:" << bus.lastError().message();
+    auto exported = DBusExport::create(service, path, service);
+    if (!exported) {
+        CF_WARNING(cfInput) << "Cannot export touchpad settings: no session bus";
         return false;
     }
-    if (!bus.registerService(QLatin1String(service))) {
-        qWarning() << "Cannot register touchpad settings:" << bus.lastError().message();
-        bus.unregisterObject(QLatin1String(path));
+    base::dbus::Object &object = exported->object();
+    object.addProperty("available", [this] { return m_available; });
+    object.addProperty("enabled", [this] { return m_enabled; });
+    object.addProperty("disableWithMouse", [this] { return m_disableWithMouse; });
+    object.addProperty("disableWhileTyping", [this] { return m_disableWhileTyping; });
+    object.addProperty("tapToClick", [this] { return m_tapToClick; });
+    object.addProperty("tapDragging", [this] { return m_tapDragging; });
+    object.addProperty("naturalScroll", [this] { return m_naturalScroll; });
+    object.addProperty("pointerAcceleration", [this] { return m_pointerAcceleration; });
+    object.addProperty("scrollSpeed", [this] { return m_scrollSpeed; });
+    object.addProperty("secondaryClickConfigurable",
+                       [this] { return m_secondaryClickConfigurable; });
+    object.addProperty("twoFingerSecondaryClick", [this] { return m_twoFingerSecondaryClick; });
+    object.addMethod("setEnabled", [this](bool enabled) { setEnabled(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setDisableWithMouse", [this](bool enabled) { setDisableWithMouse(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setDisableWhileTyping",
+                     [this](bool enabled) { setDisableWhileTyping(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setTapToClick", [this](bool enabled) { setTapToClick(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setTapDragging", [this](bool enabled) { setTapDragging(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setNaturalScroll", [this](bool enabled) { setNaturalScroll(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setPointerAcceleration",
+                     [this](double value) { setPointerAcceleration(value); },
+                     base::dbus::ArgumentNames{{"value"}, {}});
+    object.addMethod("setScrollSpeed", [this](double value) { setScrollSpeed(value); },
+                     base::dbus::ArgumentNames{{"value"}, {}});
+    object.addMethod("setTwoFingerSecondaryClick",
+                     [this](bool enabled) { setTwoFingerSecondaryClick(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    for (const char *member :
+         {"availableChanged", "enabledChanged", "disableWithMouseChanged",
+          "disableWhileTypingChanged", "tapToClickChanged", "tapDraggingChanged",
+          "naturalScrollChanged", "pointerAccelerationChanged", "scrollSpeedChanged",
+          "secondaryClickConfigurableChanged", "twoFingerSecondaryClickChanged",
+          "settingsChanged"})
+        object.addSignal(member, "");
+    if (!exported->publish("touchpad settings"))
         return false;
-    }
-    m_registered = true;
+    m_object = std::move(exported);
     return true;
 }
 
-void TouchpadSettings::save(const QString &key, const QVariant &value)
+template<typename T>
+void TouchpadSettings::save(const std::string &key, T value)
 {
-    m_settings.setValue(key, value);
-    m_settings.sync();
-    if (m_settings.status() != QSettings::NoError)
-        qWarning() << "Cannot persist touchpad settings to" << m_settings.fileName();
-    emit settingsChanged();
+    m_settings.setValue(group + key, value);
+    if (!m_settings.sync())
+        CF_WARNING(cfInput) << "Cannot persist touchpad settings to" << m_settings.path();
+    notify(settingsChanged, "settingsChanged");
+}
+
+void TouchpadSettings::notify(const base::Signal<> &signal, const char *member)
+{
+    signal();
+    if (m_object)
+        m_object->emitSignal(member);
 }
 
 void TouchpadSettings::setAvailable(bool available)
@@ -87,7 +117,7 @@ void TouchpadSettings::setAvailable(bool available)
     if (m_available == available)
         return;
     m_available = available;
-    emit availableChanged();
+    notify(availableChanged, "availableChanged");
 }
 
 void TouchpadSettings::setSecondaryClickConfigurable(bool configurable)
@@ -95,7 +125,7 @@ void TouchpadSettings::setSecondaryClickConfigurable(bool configurable)
     if (m_secondaryClickConfigurable == configurable)
         return;
     m_secondaryClickConfigurable = configurable;
-    emit secondaryClickConfigurableChanged();
+    notify(secondaryClickConfigurableChanged, "secondaryClickConfigurableChanged");
 }
 
 void TouchpadSettings::setEnabled(bool enabled)
@@ -103,8 +133,8 @@ void TouchpadSettings::setEnabled(bool enabled)
     if (m_enabled == enabled)
         return;
     m_enabled = enabled;
-    save(QStringLiteral("enabled"), enabled);
-    emit enabledChanged();
+    save("enabled", enabled);
+    notify(enabledChanged, "enabledChanged");
 }
 
 void TouchpadSettings::setDisableWithMouse(bool enabled)
@@ -112,8 +142,8 @@ void TouchpadSettings::setDisableWithMouse(bool enabled)
     if (m_disableWithMouse == enabled)
         return;
     m_disableWithMouse = enabled;
-    save(QStringLiteral("disableWithMouse"), enabled);
-    emit disableWithMouseChanged();
+    save("disableWithMouse", enabled);
+    notify(disableWithMouseChanged, "disableWithMouseChanged");
 }
 
 void TouchpadSettings::setDisableWhileTyping(bool enabled)
@@ -121,8 +151,8 @@ void TouchpadSettings::setDisableWhileTyping(bool enabled)
     if (m_disableWhileTyping == enabled)
         return;
     m_disableWhileTyping = enabled;
-    save(QStringLiteral("disableWhileTyping"), enabled);
-    emit disableWhileTypingChanged();
+    save("disableWhileTyping", enabled);
+    notify(disableWhileTypingChanged, "disableWhileTypingChanged");
 }
 
 void TouchpadSettings::setTapToClick(bool enabled)
@@ -130,8 +160,8 @@ void TouchpadSettings::setTapToClick(bool enabled)
     if (m_tapToClick == enabled)
         return;
     m_tapToClick = enabled;
-    save(QStringLiteral("tapToClick"), enabled);
-    emit tapToClickChanged();
+    save("tapToClick", enabled);
+    notify(tapToClickChanged, "tapToClickChanged");
 }
 
 void TouchpadSettings::setTapDragging(bool enabled)
@@ -139,8 +169,8 @@ void TouchpadSettings::setTapDragging(bool enabled)
     if (m_tapDragging == enabled)
         return;
     m_tapDragging = enabled;
-    save(QStringLiteral("tapDragging"), enabled);
-    emit tapDraggingChanged();
+    save("tapDragging", enabled);
+    notify(tapDraggingChanged, "tapDraggingChanged");
 }
 
 void TouchpadSettings::setNaturalScroll(bool enabled)
@@ -148,32 +178,32 @@ void TouchpadSettings::setNaturalScroll(bool enabled)
     if (m_naturalScroll == enabled)
         return;
     m_naturalScroll = enabled;
-    save(QStringLiteral("naturalScroll"), enabled);
-    emit naturalScrollChanged();
+    save("naturalScroll", enabled);
+    notify(naturalScrollChanged, "naturalScrollChanged");
 }
 
 void TouchpadSettings::setPointerAcceleration(double value)
 {
     if (!std::isfinite(value))
         return;
-    value = qBound(-1.0, value, 1.0);
+    value = std::clamp(value, -1.0, 1.0);
     if (m_pointerAcceleration == value)
         return;
     m_pointerAcceleration = value;
-    save(QStringLiteral("pointerAcceleration"), value);
-    emit pointerAccelerationChanged();
+    save("pointerAcceleration", value);
+    notify(pointerAccelerationChanged, "pointerAccelerationChanged");
 }
 
 void TouchpadSettings::setScrollSpeed(double value)
 {
     if (!std::isfinite(value))
         return;
-    value = qBound(kMinimumScrollSpeed, value, kMaximumScrollSpeed);
+    value = std::clamp(value, kMinimumScrollSpeed, kMaximumScrollSpeed);
     if (m_scrollSpeed == value)
         return;
     m_scrollSpeed = value;
-    save(QStringLiteral("scrollSpeed"), value);
-    emit scrollSpeedChanged();
+    save("scrollSpeed", value);
+    notify(scrollSpeedChanged, "scrollSpeedChanged");
 }
 
 void TouchpadSettings::setTwoFingerSecondaryClick(bool enabled)
@@ -181,7 +211,7 @@ void TouchpadSettings::setTwoFingerSecondaryClick(bool enabled)
     if (m_twoFingerSecondaryClick == enabled)
         return;
     m_twoFingerSecondaryClick = enabled;
-    save(QStringLiteral("twoFingerSecondaryClick"), enabled);
-    emit twoFingerSecondaryClickChanged();
+    save("twoFingerSecondaryClick", enabled);
+    notify(twoFingerSecondaryClickChanged, "twoFingerSecondaryClickChanged");
 }
 } // namespace cutefish::input

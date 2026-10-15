@@ -20,9 +20,6 @@
 #ifndef CUTEFISH_BACKEND_DRM_SCANOUT_CONTROLLER_H_
 #define CUTEFISH_BACKEND_DRM_SCANOUT_CONTROLLER_H_
 
-#include <QRect>
-#include <QSize>
-
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -30,6 +27,7 @@
 #include "backend/drm/drm_device_api.h"
 #include "backend/drm/drm_plane.h"
 #include "backend/drm/drm_properties.h"
+#include "base/geometry.h"
 #include "render/color_transform.h"
 #include "render/scanout.h"
 #include "render/sync_fence.h"
@@ -43,8 +41,8 @@ struct PlaneContent {
     uint32_t framebufferId = 0;
     uint32_t format = 0;
     uint64_t modifier = 0;
-    QRect displayRect;
-    QRect sourceRect;
+    base::Rect displayRect;
+    base::Rect sourceRect;
     // Owned: a frame can be committed again after the plan that produced it
     // is gone, and KMS dups the fd on every commit.
     std::shared_ptr<render::SyncFence> acquireFence;
@@ -71,7 +69,7 @@ public:
         DrmPropertyMap crtcProperties;
         DrmPropertyMap connectorProperties;
         std::vector<DrmPlane> planes;
-        QSize modeSize;
+        base::Size modeSize;
     };
 
     ScanoutController(DrmDeviceApi *device, Config config);

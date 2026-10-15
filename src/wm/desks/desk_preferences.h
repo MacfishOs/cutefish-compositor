@@ -13,7 +13,9 @@
 #ifndef CUTEFISH_WM_DESKS_DESK_PREFERENCES_H_
 #define CUTEFISH_WM_DESKS_DESK_PREFERENCES_H_
 
-#include <QSettings>
+#include <string>
+
+#include "base/settings.h"
 
 #include "wm/desks/desks_controller.h"
 
@@ -22,8 +24,10 @@ namespace cutefish::wm {
 class DeskPreferences : public DesksObserver
 {
 public:
-    // Restores the desks, then keeps the file up to date.
+    // Restores the desks, then keeps the file up to date: the compositor's
+    // preferences file, or `file`.
     explicit DeskPreferences(DesksController *desks);
+    DeskPreferences(DesksController *desks, const std::string &file);
     DeskPreferences(const DeskPreferences &) = delete;
     DeskPreferences &operator=(const DeskPreferences &) = delete;
     ~DeskPreferences() override;
@@ -38,7 +42,7 @@ private:
     void save();
 
     DesksController *m_desks = nullptr;
-    QSettings m_settings;
+    base::Settings m_settings;
     bool m_restoring = false;
 };
 

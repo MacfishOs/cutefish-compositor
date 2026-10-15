@@ -12,8 +12,8 @@
 
 #include <optional>
 
-#include <QObject>
-#include <QTimer>
+#include "base/signal.h"
+#include "base/timer.h"
 
 #include "display/display_configurator.h"
 #include "display/display_manager.h"
@@ -21,23 +21,24 @@
 
 namespace cutefish::display {
 
-class DisplayConfigurationController : public QObject
+class DisplayConfigurationController
 {
-    Q_OBJECT
-
 public:
     explicit DisplayConfigurationController(DisplayManager *manager,
                                             NativeDisplayDelegate *delegate,
-                                            DisplayPreferences preferences = DisplayPreferences(),
-                                            QObject *parent = nullptr);
+                                            DisplayPreferences preferences = DisplayPreferences());
+    DisplayConfigurationController(const DisplayConfigurationController &) = delete;
+    DisplayConfigurationController &operator=(const DisplayConfigurationController &) = delete;
 
-    QString test(const DisplayConfiguration &request);
+    std::string test(const DisplayConfiguration &request);
     // A zero timeout commits and persists immediately, without a preview.
-    QString apply(const DisplayConfiguration &request, const QString &owner, int timeoutMs = 15000);
-    void confirm(const QString &previewToken, const QString &owner);
-    void revert(const QString &previewToken, const QString &owner);
-    QString setPower(const QList<DisplayId> &displays, NativeDisplayDelegate::PowerState state);
-    void ownerDisconnected(const QString &owner);
+    std::string apply(const DisplayConfiguration &request, const std::string &owner,
+                      int timeoutMs = 15000);
+    void confirm(const std::string &previewToken, const std::string &owner);
+    void revert(const std::string &previewToken, const std::string &owner);
+    std::string setPower(const std::vector<DisplayId> &displays,
+                         NativeDisplayDelegate::PowerState state);
+    void ownerDisconnected(const std::string &owner);
     void hardwareInvalidated(uint64_t generation);
 
     std::optional<AppliedConfiguration> recoveryState() const
@@ -49,24 +50,26 @@ public:
 
     bool busy() const { return m_operationActive; }
 
-    QString previewToken() const;
+    std::string previewToken() const;
 
-    qint64 previewDeadlineMs() const { return m_preview ? m_preview->deadlineMs : 0; }
+    int64_t previewDeadlineMs() const { return m_preview ? m_preview->deadlineMs : 0; }
 
-    QString previewOwner() const;
+    std::string previewOwner() const;
 
-signals:
-    void operationFinished(QString operationToken, cutefish::display::ConfigurationResult result);
-    void previewChanged(QString previewToken, qint64 deadlineMs);
+    // The operation's token and its result.
+    base::Signal<const std::string &, const ConfigurationResult &> operationFinished;
+    // The preview's token and its deadline in milliseconds since the epoch;
+    // an empty token when no preview is pending.
+    base::Signal<const std::string &, int64_t> previewChanged;
 
 private:
     struct Preview {
-        QString token;
-        QString owner;
+        std::string token;
+        std::string owner;
         DisplayConfiguration requested;
         DisplayConfiguration rollbackRequest;
         AppliedConfiguration rollbackApplied;
-        qint64 deadlineMs = 0;
+        int64_t deadlineMs = 0;
     };
 
     static AppliedConfiguration makeApplied(const HardwareSnapshot &hardware,
@@ -74,15 +77,17 @@ private:
                                             uint64_t revision);
     static DisplayConfiguration makeRequest(const HardwareSnapshot &hardware,
                                             const AppliedConfiguration &applied);
-    QString nextToken(const char *prefix) const;
-    void finish(const QString &operationToken, ConfigurationResult result);
-    void startRevert(DisplayErrorCode reason, QString message, QString failedOperation = {});
+    std::string nextToken(const char *prefix) const;
+    void finish(const std::string &operationToken, ConfigurationResult result);
+    void startRevert(DisplayErrorCode reason, std::string message,
+                     std::string failedOperation = {});
 
     DisplayManager *m_manager = nullptr;
     NativeDisplayDelegate *m_delegate = nullptr;
     DisplayConfigurator m_configurator;
     DisplayPreferences m_preferences;
-    QTimer m_previewTimer;
+    base::Timer m_previewTimer;
+    base::Subscription m_hardwareInvalidated;
     std::optional<Preview> m_preview;
     bool m_operationActive = false;
     bool m_topologyPending = false;
@@ -90,5 +95,3 @@ private:
 };
 
 } // namespace cutefish::display
-
-Q_DECLARE_METATYPE(cutefish::display::ConfigurationResult)

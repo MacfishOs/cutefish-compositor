@@ -11,17 +11,16 @@
 // Built as is, it runs seeded random inputs or replays the files it is given.
 // Linked with -fsanitize=fuzzer, LLVMFuzzerTestOneInput drives it instead.
 
-#include <QCoreApplication>
-#include <QFile>
-#include <QTemporaryDir>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <sys/mman.h>
@@ -32,7 +31,12 @@
 
 #include <wayland-client.h>
 
+#include "base/event_loop.h"
+#include "base/file.h"
+#include "core/main_loop.h"
+#include "core/preferences.h"
 #include "protocol_interfaces.h"
+#include "temporary_directory.h"
 
 #include "compositor/compositor.h"
 #include "compositor/output.h"
@@ -68,7 +72,7 @@ public:
 
     bool canControlComputer(const wl_client *) const override { return true; }
 
-    bool showsSystemDialogs(qint64) const override { return true; }
+    bool showsSystemDialogs(int64_t) const override { return true; }
 };
 
 // The compositor's protocol side without a renderer, as exo's
@@ -78,12 +82,13 @@ class ServerEnvironment
 public:
     ServerEnvironment()
     {
-        for (const char *variable : {"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"})
-            qputenv(variable, m_home.path().toUtf8());
-        m_scene.setSize(QSize(1280, 800));
-        m_manager.setBounds(QSize(1280, 800));
-        m_windowManager.setOutputBounds(QRect(0, 0, 1280, 800));
-        m_output.pixelSize = QSize(1280, 800);
+        for (const char *variable : {"XDG_DATA_HOME", "XDG_RUNTIME_DIR"})
+            setenv(variable, m_home.path().c_str(), 1);
+        cutefish::setConfigHomeForTesting(m_home.path());
+        m_scene.setSize(cutefish::base::Size(1280, 800));
+        m_manager.setBounds(cutefish::base::Size(1280, 800));
+        m_windowManager.setOutputBounds(cutefish::base::Rect(0, 0, 1280, 800));
+        m_output.pixelSize = cutefish::base::Size(1280, 800);
         m_output.refreshMilliHz = 60000;
 
         wayland::ProtocolGlobals::Dependencies dependencies;
@@ -95,8 +100,10 @@ public:
         dependencies.inputMethodPopupLayer = m_popups;
         dependencies.security = &m_security;
         m_globals = std::make_unique<wayland::ProtocolGlobals>(dependencies);
-        if (!m_globals->initialize())
-            qFatal("The protocol globals did not initialize");
+        if (!m_globals->initialize()) {
+            std::fprintf(stderr, "The protocol globals did not initialize\n");
+            std::abort();
+        }
         m_outputGlobal = wayland::createOutputGlobal(m_server.display(), &m_output);
     }
 
@@ -134,7 +141,7 @@ public:
         while (!done && std::chrono::steady_clock::now() < deadline) {
             m_server.dispatch(std::chrono::milliseconds(1));
             m_server.flush();
-            QCoreApplication::processEvents();
+            core::mainLoop()->dispatch();
         }
         if (!done) {
             std::fprintf(stderr, "The compositor stopped answering\n");
@@ -149,16 +156,16 @@ public:
     {
         for (int i = 0; i < 10; ++i)
             m_server.dispatch(std::chrono::milliseconds(0));
-        QCoreApplication::processEvents();
+        core::mainLoop()->dispatch();
     }
 
 private:
-    QTemporaryDir m_home;
+    test::TemporaryDirectory m_home;
     scene::Scene m_scene;
     scene::Node *m_surfaces =
-            m_scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            m_scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node *m_popups =
-            m_scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("popups")));
+            m_scene.root()->addChild(std::make_unique<scene::Node>("popups"));
     compositor::Compositor m_compositor {m_surfaces};
     input::Seat m_seat {&m_compositor};
     input::InputManager m_manager {&m_seat};
@@ -461,10 +468,7 @@ private:
 
 ServerEnvironment &environment()
 {
-    static int argc = 1;
-    static char name[] = "protocol-fuzzer";
-    static char *argv[] = {name, nullptr};
-    static QCoreApplication application(argc, argv);
+    static core::MainLoop mainLoop;
     static ServerEnvironment environment;
     return environment;
 }
@@ -504,13 +508,12 @@ int main(int argc, char **argv)
         seed = unsigned(std::strtoul(argv[3], nullptr, 10));
     } else if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
-            QFile file(QString::fromLocal8Bit(argv[i]));
-            if (!file.open(QIODevice::ReadOnly)) {
+            const std::optional<std::string> data = base::file::read(argv[i]);
+            if (!data) {
                 std::fprintf(stderr, "Cannot read %s\n", argv[i]);
                 return 1;
             }
-            const QByteArray data = file.readAll();
-            runInput(reinterpret_cast<const uint8_t *>(data.constData()), size_t(data.size()));
+            runInput(reinterpret_cast<const uint8_t *>(data->data()), data->size());
         }
         return 0;
     }
@@ -521,13 +524,14 @@ int main(int argc, char **argv)
         for (uint8_t &value : data)
             value = uint8_t(random());
         // What reproduces a crash: replay this file.
-        QFile last(QStringLiteral("protocol-fuzzer-last-input"));
-        if (last.open(QIODevice::WriteOnly))
-            last.write(reinterpret_cast<const char *>(data.data()), qint64(data.size()));
-        last.close();
+        {
+            std::ofstream last("protocol-fuzzer-last-input", std::ios::binary | std::ios::trunc);
+            last.write(reinterpret_cast<const char *>(data.data()), std::streamsize(data.size()));
+        }
         runInput(data.data(), data.size());
     }
-    QFile::remove(QStringLiteral("protocol-fuzzer-last-input"));
+    std::error_code error;
+    std::filesystem::remove("protocol-fuzzer-last-input", error);
     return 0;
 }
 #endif

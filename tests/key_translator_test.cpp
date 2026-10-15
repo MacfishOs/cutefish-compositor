@@ -346,8 +346,8 @@ TEST_F(KeyTranslatorTest, DeliveredKeysIncludeTheSentModifiers)
 
 TEST(IsTerminal, KnownTerminalsAreRecognised)
 {
-    EXPECT_TRUE(isTerminal(QStringLiteral("cutefish-terminal")));
-    EXPECT_TRUE(isTerminal(QStringLiteral("org.gnome.Console")));
-    EXPECT_FALSE(isTerminal(QStringLiteral("google-chrome")));
-    EXPECT_FALSE(isTerminal(QStringLiteral("code")));
+    EXPECT_TRUE(isTerminal("cutefish-terminal"));
+    EXPECT_TRUE(isTerminal("org.gnome.Console"));
+    EXPECT_FALSE(isTerminal("google-chrome"));
+    EXPECT_FALSE(isTerminal("code"));
 }

@@ -21,25 +21,25 @@ DrmCommitCoordinator::DrmCommitCoordinator(DrmDeviceApi *device)
 {
 }
 
-QString drmCommitMessage(DrmCommitStatus status)
+std::string drmCommitMessage(DrmCommitStatus status)
 {
     switch (status) {
     case DrmCommitStatus::Success:
-        return QStringLiteral("DRM configuration succeeded");
+        return "DRM configuration succeeded";
     case DrmCommitStatus::InvalidRequest:
-        return QStringLiteral("Invalid or conflicting DRM resources");
+        return "Invalid or conflicting DRM resources";
     case DrmCommitStatus::TransferUnavailable:
-        return QStringLiteral("No cross-device scanout transfer supports this mode");
+        return "No cross-device scanout transfer supports this mode";
     case DrmCommitStatus::PreparationFailed:
-        return QStringLiteral("DRM target or mode allocation failed");
+        return "DRM target or mode allocation failed";
     case DrmCommitStatus::TestFailed:
-        return QStringLiteral("Combined DRM TEST_ONLY failed");
+        return "Combined DRM TEST_ONLY failed";
     case DrmCommitStatus::Invalidated:
-        return QStringLiteral("DRM routes or session changed before commit");
+        return "DRM routes or session changed before commit";
     case DrmCommitStatus::RollbackFailed:
-        return QStringLiteral("DRM compensation failed; scanout state requires reprobe");
+        return "DRM compensation failed; scanout state requires reprobe";
     case DrmCommitStatus::CommitFailed:
-        return QStringLiteral("DRM commit failed after TEST_ONLY succeeded");
+        return "DRM commit failed after TEST_ONLY succeeded";
     }
     return {};
 }

@@ -8,13 +8,115 @@
 #include <cmath>
 #include <cutefish-surface-blur-v1-server-protocol.h>
 #include <limits>
+#include <vector>
 
+#include "base/geometry.h"
 #include "compositor/surface.h"
 #include "wayland/server_util.h"
 
 namespace cutefish::wayland {
 
 namespace {
+
+// Keeps the shape's established bounds and emptiness: it starts with a move to
+// the origin, a move replaces a move, empty segments are dropped and closing
+// an empty path does nothing.
+class ShapeBuilder
+{
+public:
+    void moveTo(base::PointF point)
+    {
+        m_requireMove = false;
+        if (m_elements.back().type == Type::Move)
+            m_elements.back().point = point;
+        else
+            m_elements.push_back({Type::Move, point});
+        m_start = m_elements.size() - 1;
+    }
+
+    void lineTo(base::PointF point)
+    {
+        maybeMoveTo();
+        if (base::fuzzyCompare(point, m_elements.back().point))
+            return;
+        m_elements.push_back({Type::Line, point});
+    }
+
+    void cubicTo(base::PointF first, base::PointF second, base::PointF end)
+    {
+        maybeMoveTo();
+        if (base::fuzzyCompare(m_elements.back().point, first) && base::fuzzyCompare(first, second)
+            && base::fuzzyCompare(second, end))
+            return;
+        m_elements.push_back({Type::Cubic, first});
+        m_elements.push_back({Type::CubicData, second});
+        m_elements.push_back({Type::CubicData, end});
+    }
+
+    void close()
+    {
+        if (m_elements.size() == 1 && m_elements.front().type == Type::Move)
+            return;
+        m_requireMove = true;
+        const base::PointF first = m_elements[m_start].point;
+        base::PointF &last = m_elements.back().point;
+        if (first.x() == last.x() && first.y() == last.y())
+            return;
+        if (base::fuzzyCompare(first.x(), last.x()) && base::fuzzyCompare(first.y(), last.y()))
+            last = first;
+        else
+            m_elements.push_back({Type::Line, first});
+    }
+
+    ui::Path path() const
+    {
+        ui::Path path;
+        path.setFillRule(ui::Path::FillRule::Winding);
+        for (size_t i = 0; i < m_elements.size(); ++i) {
+            const base::PointF point = m_elements[i].point;
+            switch (m_elements[i].type) {
+            case Type::Move:
+                path.moveTo(point.x(), point.y());
+                break;
+            case Type::Line:
+                path.lineTo(point.x(), point.y());
+                break;
+            case Type::Cubic: {
+                const base::PointF second = m_elements[i + 1].point;
+                const base::PointF end = m_elements[i + 2].point;
+                path.cubicTo(point.x(), point.y(), second.x(), second.y(), end.x(), end.y());
+                i += 2;
+                break;
+            }
+            case Type::CubicData:
+                break;
+            }
+        }
+        return path;
+    }
+
+private:
+    enum class Type { Move, Line, Cubic, CubicData };
+
+    struct Element {
+        Type type;
+        base::PointF point;
+    };
+
+    // A close is followed by a move to where it ended, without starting a
+    // new subpath for the next close.
+    void maybeMoveTo()
+    {
+        if (!m_requireMove)
+            return;
+        m_elements.push_back({Type::Move, m_elements.back().point});
+        m_requireMove = false;
+    }
+
+    std::vector<Element> m_elements {{Type::Move, base::PointF()}};
+    size_t m_start = 0;
+    bool m_requireMove = false;
+};
 
 void destroy(wl_client *, wl_resource *resource)
 {
@@ -139,11 +241,10 @@ void setShape(wl_client *, wl_resource *resource, wl_resource *surfaceResource, 
     if (array->size % sizeof(int32_t) || count > kMaxValues)
         return invalid();
 
-    QPainterPath path;
-    path.setFillRule(Qt::WindingFill);
+    ShapeBuilder path;
     size_t i = 0;
     const auto point = [&] {
-        const QPointF result(wl_fixed_to_double(values[i]), wl_fixed_to_double(values[i + 1]));
+        const base::PointF result(wl_fixed_to_double(values[i]), wl_fixed_to_double(values[i + 1]));
         i += 2;
         return result;
     };
@@ -152,9 +253,8 @@ void setShape(wl_client *, wl_resource *resource, wl_resource *surfaceResource, 
         const size_t points = command == CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CUBIC_TO ? 3
                 : command == CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CLOSE                ? 0
                                                                                         : 1;
-        if (command > CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CLOSE || count - i < points * 2
-            || (path.elementCount() == 0
-                && command != CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO))
+        // A shape may start with a line or a curve, from the origin.
+        if (command > CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CLOSE || count - i < points * 2)
             return invalid();
         switch (command) {
         case CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO:
@@ -164,17 +264,17 @@ void setShape(wl_client *, wl_resource *resource, wl_resource *surfaceResource, 
             path.lineTo(point());
             break;
         case CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CUBIC_TO: {
-            const QPointF first = point();
-            const QPointF second = point();
+            const base::PointF first = point();
+            const base::PointF second = point();
             path.cubicTo(first, second, point());
             break;
         }
         case CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CLOSE:
-            path.closeSubpath();
+            path.close();
             break;
         }
     }
-    getUserDataAs<compositor::Surface>(surfaceResource)->setBackgroundBlurShape(path);
+    getUserDataAs<compositor::Surface>(surfaceResource)->setBackgroundBlurShape(path.path());
 }
 
 void unsetShape(wl_client *, wl_resource *, wl_resource *surfaceResource)

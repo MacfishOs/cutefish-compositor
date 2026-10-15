@@ -13,8 +13,7 @@
 
 #include <cstdint>
 #include <optional>
-
-#include <QList>
+#include <vector>
 
 namespace cutefish::backend {
 
@@ -27,7 +26,7 @@ struct DrmRouteCandidate {
 struct DrmCrtcCandidate {
     uint32_t crtcId = 0;
     int index = -1;
-    QList<uint32_t> primaryPlanes;
+    std::vector<uint32_t> primaryPlanes;
 };
 
 struct DrmRouteAssignment {
@@ -40,9 +39,9 @@ struct DrmRouteAssignment {
 class DrmConfigurationPlanner
 {
 public:
-    static std::optional<QList<DrmRouteAssignment>> assign(const QList<DrmRouteCandidate> &routes,
-                                                           const QList<DrmCrtcCandidate> &crtcs,
-                                                           int alternative = 0);
+    static std::optional<std::vector<DrmRouteAssignment>>
+    assign(const std::vector<DrmRouteCandidate> &routes, const std::vector<DrmCrtcCandidate> &crtcs,
+           int alternative = 0);
 };
 
 } // namespace cutefish::backend

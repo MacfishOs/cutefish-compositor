@@ -5,88 +5,131 @@
 #include "switcher/application_info.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <sys/stat.h>
 
-#include <QDateTime>
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QLocale>
-#include <QStandardPaths>
+#include "base/application_registry.h"
+#include "base/file.h"
+#include "base/locale.h"
+#include "base/strings.h"
 
 namespace cutefish::switcher {
 
 namespace {
 
 struct DesktopEntry {
-    QString name;
-    QString icon;
-    QString startupWmClass;
+    std::string name;
+    std::string icon;
+    std::string startupWmClass;
     bool valid = false;
 };
 
+std::string trimmed(std::string_view text)
+{
+    return std::string(base::strings::trimmed(text));
+}
+
+bool isFile(const std::string &path)
+{
+    struct stat info;
+    return stat(path.c_str(), &info) == 0 && S_ISREG(info.st_mode);
+}
+
 // The [Desktop Entry] group's Name in the user's language, Icon and
 // StartupWMClass.
-DesktopEntry readDesktopEntry(const QString &path)
+DesktopEntry readDesktopEntry(const std::string &path)
 {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    const std::optional<std::string> contents = base::file::read(path);
+    if (!contents)
         return {};
-    const QString locale = QLocale::system().name();
-    const QString language = locale.section(QLatin1Char('_'), 0, 0);
+    const std::string locale = base::Locale::system().name();
+    const std::string language = locale.substr(0, locale.find('_'));
     DesktopEntry entry;
-    QString localized;
-    QString languageOnly;
+    std::string localized;
+    std::string languageOnly;
     bool inGroup = false;
-    while (!file.atEnd()) {
-        const QString line = QString::fromUtf8(file.readLine()).trimmed();
-        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+    size_t start = 0;
+    while (start < contents->size()) {
+        size_t end = contents->find('\n', start);
+        if (end == std::string::npos)
+            end = contents->size();
+        const std::string line = trimmed(std::string_view(*contents).substr(start, end - start));
+        start = end + 1;
+        if (line.empty() || line.front() == '#')
             continue;
-        if (line.startsWith(QLatin1Char('['))) {
+        if (line.front() == '[') {
             if (inGroup)
                 break;
-            inGroup = line == QLatin1String("[Desktop Entry]");
+            inGroup = line == "[Desktop Entry]";
             continue;
         }
-        const qsizetype separator = line.indexOf(QLatin1Char('='));
-        if (!inGroup || separator <= 0)
+        const size_t separator = line.find('=');
+        if (!inGroup || separator == 0 || separator == std::string::npos)
             continue;
-        const QString key = line.left(separator).trimmed();
-        const QString value = line.mid(separator + 1).trimmed();
-        if (key == QLatin1String("Name"))
+        const std::string key = trimmed(std::string_view(line).substr(0, separator));
+        const std::string value = trimmed(std::string_view(line).substr(separator + 1));
+        if (key == "Name")
             entry.name = value;
-        else if (key == QStringLiteral("Name[%1]").arg(locale))
+        else if (key == "Name[" + locale + "]")
             localized = value;
-        else if (key == QStringLiteral("Name[%1]").arg(language))
+        else if (key == "Name[" + language + "]")
             languageOnly = value;
-        else if (key == QLatin1String("Icon"))
+        else if (key == "Icon")
             entry.icon = value;
-        else if (key == QLatin1String("StartupWMClass"))
+        else if (key == "StartupWMClass")
             entry.startupWmClass = value;
     }
-    if (!localized.isEmpty())
+    if (!localized.empty())
         entry.name = localized;
-    else if (!languageOnly.isEmpty())
+    else if (!languageOnly.empty())
         entry.name = languageOnly;
-    entry.valid = !entry.name.isEmpty();
+    entry.valid = !entry.name.empty();
     return entry;
 }
 
-// Installing or removing an application changes its directory.
-qint64 applicationsStamp()
+// The directory's *.desktop files, sorted by name ignoring case.
+std::vector<std::string> desktopFiles(const std::string &directory)
 {
-    qint64 stamp = 0;
-    for (const QString &directory :
-         QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation)) {
-        stamp = std::max(stamp, QFileInfo(directory).lastModified().toMSecsSinceEpoch());
+    std::vector<std::string> names;
+    std::error_code error;
+    for (const auto &item : std::filesystem::directory_iterator(directory, error)) {
+        const std::string name = item.path().filename().string();
+        if (name.starts_with('.') || !name.ends_with(".desktop") || !isFile(item.path().string()))
+            continue;
+        names.push_back(name);
     }
-    return stamp;
+    std::sort(names.begin(), names.end(), base::strings::LessIgnoreAsciiCase());
+    return names;
 }
 
 } // namespace
 
+ApplicationInfoCache::ApplicationInfoCache()
+    : ApplicationInfoCache(base::ApplicationRegistry::desktopPaths())
+{
+}
+
+ApplicationInfoCache::ApplicationInfoCache(std::vector<std::string> directories)
+    : m_directories(std::move(directories))
+{
+}
+
+// Installing or removing an application changes its directory.
+int64_t ApplicationInfoCache::applicationsStamp() const
+{
+    int64_t stamp = 0;
+    for (const std::string &directory : m_directories) {
+        struct stat info;
+        if (stat(directory.c_str(), &info) == 0)
+            stamp = std::max(stamp, int64_t(info.st_mtim.tv_sec) * 1000
+                                            + info.st_mtim.tv_nsec / 1000000);
+    }
+    return stamp;
+}
+
 void ApplicationInfoCache::refresh()
 {
-    const qint64 stamp = applicationsStamp();
+    const int64_t stamp = applicationsStamp();
     if (stamp == m_stamp)
         return;
     m_stamp = stamp;
@@ -94,51 +137,54 @@ void ApplicationInfoCache::refresh()
     m_wmClasses.reset();
 }
 
-ApplicationInfo ApplicationInfoCache::lookup(const QString &applicationId,
-                                             const QString &fallbackName)
+ApplicationInfo ApplicationInfoCache::lookup(const std::string &applicationId,
+                                             const std::string &fallbackName)
 {
-    if (applicationId.isEmpty())
+    if (applicationId.empty())
         return {fallbackName, kFallbackIcon};
     if (m_stamp < 0)
         refresh();
-    if (const ApplicationInfo *cached = m_cache.object(applicationId))
+    if (const ApplicationInfo *cached = m_cache.find(applicationId))
         return *cached;
 
     DesktopEntry entry;
-    for (const QString &candidate : {applicationId, applicationId.toLower()}) {
-        const QString path = QStandardPaths::locate(QStandardPaths::ApplicationsLocation,
-                                                    candidate + QLatin1String(".desktop"));
-        if (!path.isEmpty() && (entry = readDesktopEntry(path)).valid)
+    for (const std::string &candidate : {applicationId, base::strings::toAsciiLower(applicationId)}) {
+        for (const std::string &directory : m_directories) {
+            const std::string path = directory + '/' + candidate + ".desktop";
+            if (isFile(path)) {
+                entry = readDesktopEntry(path);
+                break;
+            }
+        }
+        if (entry.valid)
             break;
     }
     // An X11 class, or a Wayland id that is not the entry's file name.
     if (!entry.valid) {
-        const QString path = wmClasses().value(applicationId.toLower());
-        if (!path.isEmpty())
-            entry = readDesktopEntry(path);
+        const auto &classes = wmClasses();
+        if (const auto found = classes.find(base::strings::toAsciiLower(applicationId)); found != classes.end())
+            entry = readDesktopEntry(found->second);
     }
+
     ApplicationInfo info;
     info.name = entry.valid ? entry.name : applicationId;
-    info.icon = entry.valid && !entry.icon.isEmpty() ? entry.icon : kFallbackIcon;
-    m_cache.insert(applicationId, new ApplicationInfo(info));
+    info.icon = entry.valid && !entry.icon.empty() ? entry.icon : kFallbackIcon;
+    m_cache.insert(applicationId, std::make_unique<ApplicationInfo>(info));
     return info;
 }
 
-const QHash<QString, QString> &ApplicationInfoCache::wmClasses()
+const std::unordered_map<std::string, std::string> &ApplicationInfoCache::wmClasses()
 {
     if (m_wmClasses)
         return *m_wmClasses;
     m_wmClasses.emplace();
     // Reversed, so an entry in an earlier directory shadows a later one.
-    QStringList directories =
-            QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
-    std::reverse(directories.begin(), directories.end());
-    for (const QString &directory : directories) {
-        const QDir dir(directory);
-        for (const QString &file : dir.entryList({QStringLiteral("*.desktop")}, QDir::Files)) {
-            const DesktopEntry entry = readDesktopEntry(dir.filePath(file));
-            if (entry.valid && !entry.startupWmClass.isEmpty())
-                m_wmClasses->insert(entry.startupWmClass.toLower(), dir.filePath(file));
+    for (auto directory = m_directories.rbegin(); directory != m_directories.rend(); ++directory) {
+        for (const std::string &file : desktopFiles(*directory)) {
+            const std::string path = *directory + '/' + file;
+            const DesktopEntry entry = readDesktopEntry(path);
+            if (entry.valid && !entry.startupWmClass.empty())
+                (*m_wmClasses)[base::strings::toAsciiLower(entry.startupWmClass)] = path;
         }
     }
     return *m_wmClasses;

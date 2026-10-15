@@ -2,47 +2,33 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <QDBusConnection>
-#include <QDBusInterface>
-#include <QDBusReply>
-#include <QFile>
-#include <QSignalSpy>
-#include <QStandardPaths>
-#include <QTemporaryDir>
+#include <cstdlib>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <unistd.h>
+#include <vector>
 
+#include "base/file.h"
+#include "base/strings.h"
 #include "clipboard_test_util.h"
 #include "core/process_environment.h"
-#include "input/input_method_settings.h"
+#include "temporary_directory.h"
 #include "wayland/input_method_launcher.h"
 #include "wayland/privileged_client.h"
 #include "wayland/protocols/input_method.h"
 
 using namespace clipboard_test;
-using cutefish::input::findInputMethodProviders;
-using cutefish::input::InputMethodSettings;
-using cutefish::input::parseDesktopExec;
 
 namespace {
-void writeFile(const QString &path, const QByteArray &contents)
-{
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QFile file(path);
-    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
-    file.write(contents);
-}
+using Lines = std::vector<std::string>;
 
-QByteArray provider(const QByteArray &exec, const QByteArray &extra = {})
+Lines lines(const std::string &path)
 {
-    return "[Desktop Entry]\nType=Application\nName=IME\nName[zh_CN]=输入法\nExec=" + exec
-            + "\nX-KDE-Wayland-VirtualKeyboard=true\n" + extra + "[Desktop Action x]\nExec=no\n";
-}
-
-QStringList lines(const QString &path)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
+    const std::optional<std::string> contents = base::file::read(path);
+    if (!contents)
         return {};
-    return QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    return base::strings::split(*contents, '\n', base::strings::SplitBehavior::SkipEmptyParts);
 }
 
 struct LauncherHarness : Harness {
@@ -50,8 +36,8 @@ struct LauncherHarness : Harness {
     scene::Node popupLayer;
     wayland::InputMethodManager manager {server.display(), &waylandSeat, &popupLayer};
     wayland::InputMethodLauncher launcher {server.display()};
-    QTemporaryDir directory;
-    QString log = directory.filePath(QStringLiteral("log"));
+    test::TemporaryDirectory directory;
+    std::string log = directory.filePath("log");
 
     LauncherHarness()
     {
@@ -71,104 +57,26 @@ struct LauncherHarness : Harness {
         manager.shutdown();
     }
 
-    QStringList command(const char *mode) const
+    std::vector<std::string> command(const char *mode) const
     {
-        return {QStringLiteral(CUTEFISH_LAUNCHED_CLIENT), QString::fromLatin1(mode), log};
+        return {CUTEFISH_LAUNCHED_CLIENT, mode, log};
     }
 };
 } // namespace
 
-TEST(InputMethodSettings, ParsesDesktopExec)
-{
-    EXPECT_EQ(QStringList({"/usr/libexec/fcitx5-wayland-launcher", "--reopen"}),
-              parseDesktopExec(QStringLiteral("/usr/libexec/fcitx5-wayland-launcher --reopen")));
-    EXPECT_EQ(QStringList({"/opt/My IME/ime", "--x", "a\"b", "100%"}),
-              parseDesktopExec(QStringLiteral(R"("/opt/My IME/ime" --x %U "a\\"b" 100%%)")));
-    EXPECT_EQ(QStringList({"ime", "a b"}), parseDesktopExec(QStringLiteral(R"(ime "a\sb")")));
-    EXPECT_TRUE(parseDesktopExec(QStringLiteral(R"("unterminated)")).isEmpty());
-}
-
-TEST(InputMethodSettings, FindsProvidersWithXdgPrecedence)
-{
-    QTemporaryDir user, system;
-    ASSERT_TRUE(user.isValid() && system.isValid());
-    writeFile(system.filePath("fcitx.desktop"), provider("sh --flag %f"));
-    writeFile(system.filePath("vendor/ime.desktop"), provider("/bin/sh"));
-    writeFile(system.filePath("shadowed.desktop"), provider("sh"));
-    writeFile(user.filePath("shadowed.desktop"), "[Desktop Entry]\nType=Application\nExec=sh\n");
-    writeFile(system.filePath("hidden.desktop"), provider("sh", "Hidden=true\n"));
-    writeFile(system.filePath("tryexec.desktop"), provider("sh", "TryExec=/no/such/ime\n"));
-    writeFile(system.filePath("missing.desktop"), provider("/no/such/ime"));
-    writeFile(system.filePath("plain.desktop"), "[Desktop Entry]\nType=Application\nExec=sh\n");
-
-    const auto providers = findInputMethodProviders({user.path(), system.path()});
-    ASSERT_EQ(2, providers.size());
-    EXPECT_EQ(QStringLiteral("fcitx.desktop"), providers.at(0).id);
-    EXPECT_EQ(QStandardPaths::findExecutable("sh"), providers.at(0).command.first());
-    EXPECT_EQ(QStringList({"--flag"}), providers.at(0).command.mid(1));
-    EXPECT_EQ(QStringLiteral("vendor-ime.desktop"), providers.at(1).id);
-}
-
-TEST(InputMethodSettings, PersistsValidSelectionsOnly)
-{
-    QTemporaryDir directory, applications;
-    ASSERT_TRUE(directory.isValid() && applications.isValid());
-    writeFile(applications.filePath("ime.desktop"), provider("/bin/sh -c true"));
-    const QString file = directory.filePath("compositor.conf");
-    {
-        InputMethodSettings settings(nullptr, file, {applications.path()});
-        EXPECT_TRUE(settings.inputMethod().isEmpty());
-        EXPECT_TRUE(settings.command().isEmpty());
-        EXPECT_EQ(QStringList({"ime.desktop"}), settings.availableInputMethods());
-        QSignalSpy changed(&settings, &InputMethodSettings::inputMethodChanged);
-        QSignalSpy command(&settings, &InputMethodSettings::commandChanged);
-        EXPECT_FALSE(settings.setInputMethod("other.desktop"));
-        EXPECT_TRUE(settings.setInputMethod("ime.desktop"));
-        EXPECT_TRUE(settings.setInputMethod("ime.desktop"));
-        EXPECT_EQ(1, changed.count());
-        EXPECT_EQ(2, command.count());
-        EXPECT_EQ(QStringList({"/bin/sh", "-c", "true"}), settings.command());
-    }
-    InputMethodSettings restored(nullptr, file, {applications.path()});
-    EXPECT_EQ(QStringLiteral("ime.desktop"), restored.inputMethod());
-    QFile::remove(applications.filePath("ime.desktop"));
-    EXPECT_TRUE(restored.inputMethod().isEmpty());
-    EXPECT_TRUE(restored.setInputMethod({}));
-}
-
-TEST(InputMethodSettings, ExportsTheSessionService)
-{
-    if (!QDBusConnection::sessionBus().isConnected())
-        GTEST_SKIP() << "No session bus";
-    QTemporaryDir directory, applications;
-    writeFile(applications.filePath("ime.desktop"), provider("/bin/sh"));
-    InputMethodSettings settings(nullptr, directory.filePath("compositor.conf"),
-                                 {applications.path()});
-    ASSERT_TRUE(settings.registerService());
-    QDBusInterface remote("com.cutefish.InputMethod1", "/com/cutefish/InputMethod1",
-                          "com.cutefish.InputMethod1");
-    ASSERT_TRUE(remote.isValid());
-    QDBusReply<QStringList> available = remote.call("availableInputMethods");
-    EXPECT_EQ(QStringList({"ime.desktop"}), available.value());
-    QDBusReply<bool> rejected = remote.call("setInputMethod", QStringLiteral("nope.desktop"));
-    EXPECT_FALSE(rejected.value());
-    QDBusReply<bool> accepted = remote.call("setInputMethod", QStringLiteral("ime.desktop"));
-    EXPECT_TRUE(accepted.value());
-    EXPECT_EQ(QStringLiteral("ime.desktop"), remote.property("inputMethod").toString());
-    settings.setRunning(true);
-    EXPECT_TRUE(remote.property("running").toBool());
-}
-
 TEST(InputMethodLauncher, OnlyTheLaunchedConnectionIsTheInputMethod)
 {
     LauncherHarness h;
-    QSignalSpy running(&h.launcher, &wayland::InputMethodLauncher::runningChanged);
+    int running = 0;
+    const auto runningChanged = h.launcher.runningChanged.connect([&] {
+        ++running;
+    });
     h.launcher.setCommand(h.command("stay"));
     EXPECT_TRUE(h.launcher.isRunning());
     ASSERT_TRUE(h.until([&] {
         return lines(h.log).size() == 1;
     }));
-    EXPECT_EQ(QStringList({"ime"}), lines(h.log));
+    EXPECT_EQ(Lines({"ime"}), lines(h.log));
 
     auto &app = h.addClient();
     EXPECT_FALSE(h.launcher.isInputMethod(app.serverClient));
@@ -187,7 +95,7 @@ TEST(InputMethodLauncher, OnlyTheLaunchedConnectionIsTheInputMethod)
 
     h.launcher.setCommand({});
     EXPECT_FALSE(h.launcher.isRunning());
-    EXPECT_EQ(2, running.count());
+    EXPECT_EQ(2, running);
 }
 
 TEST(InputMethodLauncher, RestartsALostConnectionWithALimit)
@@ -204,7 +112,7 @@ TEST(InputMethodLauncher, RestartsALostConnectionWithALimit)
                 return false;
             },
             500);
-    EXPECT_EQ(6, lines(h.log).size());
+    EXPECT_EQ(6u, lines(h.log).size());
     EXPECT_FALSE(h.launcher.isRunning());
 
     // Selecting the same method again restarts one that gave up.
@@ -219,18 +127,21 @@ TEST(InputMethodLauncher, RestartTakesTheCurrentEnvironment)
 {
     // How the input method learns an X11 display Xwayland only opened later.
     LauncherHarness h;
-    auto environment = QProcessEnvironment::systemEnvironment();
-    environment.remove(QStringLiteral("DISPLAY"));
+    std::vector<std::string> environment;
+    for (char **entry = environ; *entry; ++entry) {
+        if (!std::string_view(*entry).starts_with("DISPLAY="))
+            environment.emplace_back(*entry);
+    }
     h.launcher.setEnvironment(environment);
     h.launcher.setCommand(h.command("display"));
     ASSERT_TRUE(h.until([&] {
-        return lines(h.log) == QStringList({"-"}) && h.launcher.isRunning();
+        return lines(h.log) == Lines({"-"}) && h.launcher.isRunning();
     }));
-    environment.insert(QStringLiteral("DISPLAY"), QStringLiteral(":7"));
+    environment.emplace_back("DISPLAY=:7");
     h.launcher.setEnvironment(environment);
     h.launcher.restart();
     ASSERT_TRUE(h.until([&] {
-        return lines(h.log) == QStringList({"-", ":7"}) && h.launcher.isRunning();
+        return lines(h.log) == Lines({"-", ":7"}) && h.launcher.isRunning();
     }));
 }
 
@@ -238,30 +149,24 @@ TEST(InputMethodLauncher, TheCompositorsOwnQtPlatformStaysWithIt)
 {
     // The compositor's Qt renders offscreen; an input method's settings window
     // started from it inherited that and opened nowhere.
-    qunsetenv("QT_QPA_PLATFORM");
+    unsetenv("QT_QPA_PLATFORM");
     cutefish::setPrivateEnvironment("QT_QPA_PLATFORM", "offscreen");
-    EXPECT_EQ(qgetenv("QT_QPA_PLATFORM"), "offscreen");
+    ASSERT_TRUE(getenv("QT_QPA_PLATFORM"));
+    EXPECT_EQ(std::string_view(getenv("QT_QPA_PLATFORM")), "offscreen");
     LauncherHarness h;
     h.launcher.setCommand(h.command("platform"));
     ASSERT_TRUE(h.until([&] {
-        return lines(h.log) == QStringList({"-"}) && h.launcher.isRunning();
+        return lines(h.log) == Lines({"-"}) && h.launcher.isRunning();
     }));
 }
 
 TEST(InputMethodLauncher, MissingProgramDoesNotLeaveAConnection)
 {
     LauncherHarness h;
-    h.launcher.setCommand({QStringLiteral("/no/such/input-method")});
+    h.launcher.setCommand({"/no/such/input-method"});
     ASSERT_TRUE(h.until(
             [&] {
                 return !h.launcher.isRunning();
             },
             5000));
-}
-
-int main(int argc, char **argv)
-{
-    QCoreApplication app(argc, argv);
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

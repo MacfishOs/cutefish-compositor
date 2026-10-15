@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/sub_surface.h"
 #include "compositor/surface.h"
@@ -41,12 +42,12 @@ public:
     struct Down {
         compositor::Surface* surface;
         int32_t id;
-        QPointF location;
+        base::PointF location;
     };
 
     std::vector<std::string> calls;
     std::vector<Down> downs;
-    std::vector<std::pair<int32_t, QPointF>> motions;
+    std::vector<std::pair<int32_t, base::PointF>> motions;
     std::vector<int32_t> ups;
     // Surfaces this delegate will accept; empty means all of them.
     std::vector<compositor::Surface*> acceptable;
@@ -60,7 +61,7 @@ public:
     }
 
     void onTouchDown(compositor::Surface* surface, Timestamp, int32_t id,
-                     const QPointF& location) override
+                     const base::PointF& location) override
     {
         calls.push_back("down");
         downs.push_back({surface, id, location});
@@ -72,7 +73,7 @@ public:
         ups.push_back(id);
     }
 
-    void onTouchMotion(Timestamp, int32_t id, const QPointF& location) override
+    void onTouchMotion(Timestamp, int32_t id, const base::PointF& location) override
     {
         calls.push_back("motion");
         motions.push_back({id, location});
@@ -88,14 +89,14 @@ class TouchTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node* surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     std::shared_ptr<compositor::ShmPool> pool = testsupport::makePool(1 << 20);
     Seat seat {&compositor};
 
-    void SetUp() override { scene.setSize(QSize(800, 600)); }
+    void SetUp() override { scene.setSize(base::Size(800, 600)); }
 
-    void map(compositor::Surface* surface, const QPoint& position, const QSize& size)
+    void map(compositor::Surface* surface, const base::Point& position, const base::Size& size)
     {
         auto buffer = pool->createBuffer(size, 0, size.width() * 4,
                                          render::PixelFormat::Bgrx8888, nullptr);
@@ -116,33 +117,33 @@ using Calls = std::vector<std::string>;
 TEST_F(TouchTest, OnTouchDown)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(100, 100), QSize(50, 40));
+    map(surface.get(), base::Point(100, 100), base::Size(50, 40));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
     // Nothing is under the point: no client hears of it.
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
     seat.onTouchFrame();
     EXPECT_TRUE(delegate.calls.empty());
 
-    seat.onTouchDown(at(2), 2, QPointF(120, 110));
+    seat.onTouchDown(at(2), 2, base::PointF(120, 110));
     seat.onTouchFrame();
     ASSERT_EQ(1u, delegate.downs.size());
     EXPECT_EQ(surface.get(), delegate.downs[0].surface);
     EXPECT_EQ(2, delegate.downs[0].id);
-    EXPECT_EQ(QPointF(20, 10), delegate.downs[0].location);
+    EXPECT_EQ(base::PointF(20, 10), delegate.downs[0].location);
     EXPECT_EQ(Calls({"down", "frame"}), delegate.calls);
 }
 
 TEST_F(TouchTest, OnTouchUp)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
-    seat.onTouchDown(at(1), 2, QPointF(20, 20));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
+    seat.onTouchDown(at(1), 2, base::PointF(20, 20));
     seat.onTouchFrame();
     seat.onTouchUp(at(2), 1);
     seat.onTouchFrame();
@@ -157,25 +158,25 @@ TEST_F(TouchTest, OnTouchMotionStaysWithTheSurfaceItWentDownOn)
 {
     auto surface = compositor.createSurface();
     auto other = compositor.createSurface();
-    map(surface.get(), QPoint(100, 100), QSize(50, 50));
-    map(other.get(), QPoint(300, 100), QSize(50, 50));
+    map(surface.get(), base::Point(100, 100), base::Size(50, 50));
+    map(other.get(), base::Point(300, 100), base::Size(50, 50));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(110, 110));
+    seat.onTouchDown(at(1), 1, base::PointF(110, 110));
     seat.onTouchFrame();
     // Over another surface, and off every surface, the point still reports
     // relative to where it went down.
-    seat.onTouchMotion(at(2), 1, QPointF(310, 120));
-    seat.onTouchMotion(at(3), 1, QPointF(50, 60));
+    seat.onTouchMotion(at(2), 1, base::PointF(310, 120));
+    seat.onTouchMotion(at(3), 1, base::PointF(50, 60));
     seat.onTouchFrame();
     ASSERT_EQ(2u, delegate.motions.size());
-    EXPECT_EQ(QPointF(210, 20), delegate.motions[0].second);
-    EXPECT_EQ(QPointF(-50, -40), delegate.motions[1].second);
+    EXPECT_EQ(base::PointF(210, 20), delegate.motions[0].second);
+    EXPECT_EQ(base::PointF(-50, -40), delegate.motions[1].second);
     EXPECT_EQ(Calls({"down", "frame", "motion", "motion", "frame"}), delegate.calls);
 
     // A point that never went down on this client's surfaces is not reported.
-    seat.onTouchMotion(at(4), 7, QPointF(120, 120));
+    seat.onTouchMotion(at(4), 7, base::PointF(120, 120));
     seat.onTouchFrame();
     EXPECT_EQ(2u, delegate.motions.size());
 }
@@ -183,18 +184,18 @@ TEST_F(TouchTest, OnTouchMotionStaysWithTheSurfaceItWentDownOn)
 TEST_F(TouchTest, OnTouchCancel)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
-    seat.onTouchDown(at(1), 2, QPointF(20, 20));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
+    seat.onTouchDown(at(1), 2, base::PointF(20, 20));
     seat.onTouchFrame();
     seat.onTouchCancel();
     EXPECT_EQ(Calls({"down", "down", "frame", "cancel"}), delegate.calls);
     // Nothing more is sent for the cancelled points.
     seat.onTouchUp(at(2), 1);
-    seat.onTouchMotion(at(2), 2, QPointF(30, 30));
+    seat.onTouchMotion(at(2), 2, base::PointF(30, 30));
     seat.onTouchFrame();
     EXPECT_EQ(Calls({"down", "down", "frame", "cancel"}), delegate.calls);
     // A cancel with nothing down tells the client nothing.
@@ -205,11 +206,11 @@ TEST_F(TouchTest, OnTouchCancel)
 TEST_F(TouchTest, OnTouchCancelWhenSurfaceDestroying)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
     seat.onTouchFrame();
     surface.reset();
     EXPECT_EQ(Calls({"down", "frame", "cancel"}), delegate.calls);
@@ -221,11 +222,11 @@ TEST_F(TouchTest, OnTouchCancelWhenSurfaceDestroying)
 TEST_F(TouchTest, OnTouchCancelNotTriggeredAfterTouchReleased)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
     seat.onTouchFrame();
     seat.onTouchUp(at(2), 1);
     seat.onTouchFrame();
@@ -237,13 +238,13 @@ TEST_F(TouchTest, TouchMultiple2Surfaces)
 {
     auto first = compositor.createSurface();
     auto second = compositor.createSurface();
-    map(first.get(), QPoint(0, 0), QSize(100, 100));
-    map(second.get(), QPoint(200, 0), QSize(100, 100));
+    map(first.get(), base::Point(0, 0), base::Size(100, 100));
+    map(second.get(), base::Point(200, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
-    seat.onTouchDown(at(1), 2, QPointF(210, 10));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
+    seat.onTouchDown(at(1), 2, base::PointF(210, 10));
     seat.onTouchFrame();
     ASSERT_EQ(2u, delegate.downs.size());
     EXPECT_EQ(first.get(), delegate.downs[0].surface);
@@ -258,16 +259,16 @@ TEST_F(TouchTest, ATouchIgnoresSurfacesItsClientDoesNotOwn)
 {
     auto mine = compositor.createSurface();
     auto theirs = compositor.createSurface();
-    map(mine.get(), QPoint(0, 0), QSize(100, 100));
-    map(theirs.get(), QPoint(200, 0), QSize(100, 100));
+    map(mine.get(), base::Point(0, 0), base::Size(100, 100));
+    map(theirs.get(), base::Point(200, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     delegate.acceptable = {mine.get()};
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(250, 50));
+    seat.onTouchDown(at(1), 1, base::PointF(250, 50));
     seat.onTouchFrame();
     EXPECT_TRUE(delegate.calls.empty());
-    seat.onTouchDown(at(2), 2, QPointF(50, 50));
+    seat.onTouchDown(at(2), 2, base::PointF(50, 50));
     seat.onTouchFrame();
     ASSERT_EQ(1u, delegate.downs.size());
     EXPECT_EQ(mine.get(), delegate.downs[0].surface);
@@ -278,17 +279,17 @@ TEST_F(TouchTest, APointGoesDownOnTheSubsurfaceItHits)
     auto parent = compositor.createSurface();
     auto child = compositor.createSurface();
     auto sub = compositor::SubSurface::create(child.get(), parent.get());
-    sub->setPosition(QPoint(50, 60));
-    map(child.get(), QPoint(0, 0), QSize(40, 40));
-    map(parent.get(), QPoint(0, 0), QSize(200, 200));
+    sub->setPosition(base::Point(50, 60));
+    map(child.get(), base::Point(0, 0), base::Size(40, 40));
+    map(parent.get(), base::Point(0, 0), base::Size(200, 200));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(60, 70));
+    seat.onTouchDown(at(1), 1, base::PointF(60, 70));
     seat.onTouchFrame();
     ASSERT_EQ(1u, delegate.downs.size());
     EXPECT_EQ(child.get(), delegate.downs[0].surface);
-    EXPECT_EQ(QPointF(10, 10), delegate.downs[0].location);
+    EXPECT_EQ(base::PointF(10, 10), delegate.downs[0].location);
 }
 
 TEST_F(TouchTest, TheSeatFindsTheNewestPointOnAWindow)
@@ -296,24 +297,24 @@ TEST_F(TouchTest, TheSeatFindsTheNewestPointOnAWindow)
     auto parent = compositor.createSurface();
     auto child = compositor.createSurface();
     auto sub = compositor::SubSurface::create(child.get(), parent.get());
-    sub->setPosition(QPoint(50, 60));
-    map(child.get(), QPoint(0, 0), QSize(40, 40));
-    map(parent.get(), QPoint(0, 0), QSize(200, 200));
+    sub->setPosition(base::Point(50, 60));
+    map(child.get(), base::Point(0, 0), base::Size(40, 40));
+    map(parent.get(), base::Point(0, 0), base::Size(200, 200));
     auto other = compositor.createSurface();
-    map(other.get(), QPoint(300, 0), QSize(100, 100));
+    map(other.get(), base::Point(300, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
     EXPECT_FALSE(seat.touchPointOn(parent.get()));
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
     // A point on a subsurface is on the window too.
-    seat.onTouchDown(at(2), 2, QPointF(60, 70));
-    seat.onTouchDown(at(3), 3, QPointF(310, 10));
-    seat.onTouchMotion(at(4), 2, QPointF(65, 75));
+    seat.onTouchDown(at(2), 2, base::PointF(60, 70));
+    seat.onTouchDown(at(3), 3, base::PointF(310, 10));
+    seat.onTouchMotion(at(4), 2, base::PointF(65, 75));
     auto point = seat.touchPointOn(parent.get());
     ASSERT_TRUE(point);
     EXPECT_EQ(2, point->id);
-    EXPECT_EQ(QPointF(65, 75), point->location);
+    EXPECT_EQ(base::PointF(65, 75), point->location);
     EXPECT_EQ(3, seat.touchPointOn(other.get())->id);
 
     seat.onTouchUp(at(5), 2);
@@ -324,9 +325,9 @@ TEST_F(TouchTest, TheSeatFindsTheNewestPointOnAWindow)
 TEST_F(TouchTest, TakingAPointCancelsTheClientsThatHaveIt)
 {
     auto first = compositor.createSurface();
-    map(first.get(), QPoint(0, 0), QSize(100, 100));
+    map(first.get(), base::Point(0, 0), base::Size(100, 100));
     auto second = compositor.createSurface();
-    map(second.get(), QPoint(200, 0), QSize(100, 100));
+    map(second.get(), base::Point(200, 0), base::Size(100, 100));
     FakeTouchDelegate firstClient;
     firstClient.acceptable = {first.get()};
     Touch firstTouch(&firstClient, &seat);
@@ -334,9 +335,9 @@ TEST_F(TouchTest, TakingAPointCancelsTheClientsThatHaveIt)
     secondClient.acceptable = {second.get()};
     Touch secondTouch(&secondClient, &seat);
 
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
-    seat.onTouchDown(at(1), 2, QPointF(20, 20));
-    seat.onTouchDown(at(1), 3, QPointF(210, 10));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
+    seat.onTouchDown(at(1), 2, base::PointF(20, 20));
+    seat.onTouchDown(at(1), 3, base::PointF(210, 10));
     seat.onTouchFrame();
     seat.takeTouchPoint(1);
     EXPECT_EQ("cancel", firstClient.calls.back());
@@ -345,7 +346,7 @@ TEST_F(TouchTest, TakingAPointCancelsTheClientsThatHaveIt)
     EXPECT_FALSE(seat.touchPointOn(first.get()));
     EXPECT_EQ(3, seat.touchPointOn(second.get())->id);
 
-    seat.onTouchMotion(at(2), 1, QPointF(30, 30));
+    seat.onTouchMotion(at(2), 1, base::PointF(30, 30));
     seat.onTouchUp(at(2), 2);
     seat.onTouchFrame();
     EXPECT_EQ("cancel", firstClient.calls.back());
@@ -354,16 +355,16 @@ TEST_F(TouchTest, TakingAPointCancelsTheClientsThatHaveIt)
 TEST_F(TouchTest, AFrameOnlyFollowsSomethingSent)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(100, 100));
+    map(surface.get(), base::Point(0, 0), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
 
     seat.onTouchFrame();
     EXPECT_TRUE(delegate.calls.empty());
     // Several points of one device frame make one client frame.
-    seat.onTouchDown(at(1), 1, QPointF(10, 10));
-    seat.onTouchDown(at(1), 2, QPointF(20, 20));
-    seat.onTouchMotion(at(1), 1, QPointF(11, 11));
+    seat.onTouchDown(at(1), 1, base::PointF(10, 10));
+    seat.onTouchDown(at(1), 2, base::PointF(20, 20));
+    seat.onTouchMotion(at(1), 1, base::PointF(11, 11));
     seat.onTouchFrame();
     seat.onTouchFrame();
     EXPECT_EQ(Calls({"down", "down", "motion", "frame"}), delegate.calls);
@@ -378,26 +379,26 @@ struct RecordingSink : EventSink {
     std::vector<std::string> calls;
     std::vector<std::pair<uint32_t, bool>> buttons;
 
-    bool onPointerMotion(Timestamp, const QPointF&) override
+    bool onPointerMotion(Timestamp, const base::PointF&) override
     {
         calls.push_back("pointer-motion");
         return true;
     }
 
-    bool onPointerButton(Timestamp, const QPointF&, uint32_t code, bool pressed) override
+    bool onPointerButton(Timestamp, const base::PointF&, uint32_t code, bool pressed) override
     {
         calls.push_back("pointer-button");
         buttons.push_back({code, pressed});
         return true;
     }
 
-    bool onTouchDown(Timestamp, int32_t, const QPointF&) override
+    bool onTouchDown(Timestamp, int32_t, const base::PointF&) override
     {
         calls.push_back("touch-down");
         return take;
     }
 
-    bool onTouchMotion(Timestamp, int32_t id, const QPointF&) override
+    bool onTouchMotion(Timestamp, int32_t id, const base::PointF&) override
     {
         calls.push_back("touch-motion " + std::to_string(id));
         return takeOnMotion;
@@ -441,55 +442,55 @@ private:
 TEST_F(TouchTest, ThePanelSpansTheDesktopWithoutDisplayConfiguration)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(400, 300), QSize(100, 100));
+    map(surface.get(), base::Point(400, 300), base::Size(100, 100));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
+    manager.setBounds(base::Size(800, 600));
 
-    manager.onTouchDown(at(1), 1, QPointF(0.5, 0.5));
+    manager.onTouchDown(at(1), 1, base::PointF(0.5, 0.5));
     manager.onTouchFrame(at(1));
     ASSERT_EQ(1u, delegate.downs.size());
-    EXPECT_EQ(QPointF(0, 0), delegate.downs[0].location);
-    manager.onTouchMotion(at(2), 1, QPointF(0.75, 0.75));
+    EXPECT_EQ(base::PointF(0, 0), delegate.downs[0].location);
+    manager.onTouchMotion(at(2), 1, base::PointF(0.75, 0.75));
     manager.onTouchUp(at(3), 1);
     manager.onTouchFrame(at(3));
     ASSERT_EQ(1u, delegate.motions.size());
-    EXPECT_EQ(QPointF(200, 150), delegate.motions[0].second);
+    EXPECT_EQ(base::PointF(200, 150), delegate.motions[0].second);
     EXPECT_EQ(Calls({"down", "frame", "motion", "up", "frame"}), delegate.calls);
 }
 
 TEST_F(TouchTest, ATouchHidesTheCursorUntilTheMouseMoves)
 {
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
+    manager.setBounds(base::Size(800, 600));
     EXPECT_FALSE(seat.cursorHiddenByTouch());
-    manager.onTouchDown(at(1), 1, QPointF(0.5, 0.5));
+    manager.onTouchDown(at(1), 1, base::PointF(0.5, 0.5));
     manager.onTouchUp(at(2), 1);
     manager.onTouchFrame(at(2));
     EXPECT_TRUE(seat.cursorHiddenByTouch());
-    manager.onPointerMotion(at(3), QPointF(1, 0));
+    manager.onPointerMotion(at(3), base::PointF(1, 0));
     EXPECT_FALSE(seat.cursorHiddenByTouch());
 }
 
 TEST_F(TouchTest, TheEventSinkCanTakeAWholePoint)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(400, 300));
+    map(surface.get(), base::Point(0, 0), base::Size(400, 300));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
     RecordingSink sink;
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
+    manager.setBounds(base::Size(800, 600));
     manager.setEventSink(&sink);
 
     sink.take = true;
-    manager.onTouchDown(at(1), 1, QPointF(0.1, 0.1));
+    manager.onTouchDown(at(1), 1, base::PointF(0.1, 0.1));
     // A second point the sink leaves alone goes to the client.
     sink.take = false;
-    manager.onTouchDown(at(1), 2, QPointF(0.2, 0.2));
+    manager.onTouchDown(at(1), 2, base::PointF(0.2, 0.2));
     manager.onTouchFrame(at(1));
-    manager.onTouchMotion(at(2), 1, QPointF(0.3, 0.3));
+    manager.onTouchMotion(at(2), 1, base::PointF(0.3, 0.3));
     manager.onTouchUp(at(3), 1);
     manager.onTouchUp(at(3), 2);
     manager.onTouchFrame(at(3));
@@ -504,21 +505,21 @@ TEST_F(TouchTest, TheEventSinkCanTakeAWholePoint)
 TEST_F(TouchTest, TheEventSinkCanTakeAPointAClientHas)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(400, 300));
+    map(surface.get(), base::Point(0, 0), base::Size(400, 300));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
     RecordingSink sink;
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
+    manager.setBounds(base::Size(800, 600));
     manager.setEventSink(&sink);
 
-    manager.onTouchDown(at(1), 1, QPointF(0.1, 0.1));
-    manager.onTouchMotion(at(2), 1, QPointF(0.15, 0.1));
+    manager.onTouchDown(at(1), 1, base::PointF(0.1, 0.1));
+    manager.onTouchMotion(at(2), 1, base::PointF(0.15, 0.1));
     manager.onTouchFrame(at(2));
     sink.takeOnMotion = true;
-    manager.onTouchMotion(at(3), 1, QPointF(0.2, 0.1));
+    manager.onTouchMotion(at(3), 1, base::PointF(0.2, 0.1));
     sink.takeOnMotion = false;
-    manager.onTouchMotion(at(4), 1, QPointF(0.25, 0.1));
+    manager.onTouchMotion(at(4), 1, base::PointF(0.25, 0.1));
     manager.onTouchUp(at(5), 1);
     manager.onTouchFrame(at(5));
     EXPECT_EQ(Calls({"touch-down", "touch-motion 1", "touch-motion 1", "touch-motion 1",
@@ -531,22 +532,22 @@ TEST_F(TouchTest, TheEventSinkCanTakeAPointAClientHas)
 TEST_F(TouchTest, ALockedSessionTakesTheFirstPointAsItsPointer)
 {
     auto surface = compositor.createSurface();
-    map(surface.get(), QPoint(0, 0), QSize(400, 300));
+    map(surface.get(), base::Point(0, 0), base::Size(400, 300));
     FakeTouchDelegate delegate;
     Touch touch(&delegate, &seat);
     RecordingSink lockScreen;
     LockedGate gate(&lockScreen);
     seat.setSessionGate(&gate);
     InputManager manager(&seat);
-    manager.setBounds(QSize(800, 600));
+    manager.setBounds(base::Size(800, 600));
 
     // A point down before the lock is cancelled for its client.
-    manager.onTouchDown(at(1), 1, QPointF(0.1, 0.1));
+    manager.onTouchDown(at(1), 1, base::PointF(0.1, 0.1));
     manager.onTouchFrame(at(1));
     gate.locked = true;
-    manager.onTouchDown(at(2), 2, QPointF(0.5, 0.5));
-    manager.onTouchDown(at(2), 3, QPointF(0.6, 0.6));
-    manager.onTouchMotion(at(3), 2, QPointF(0.55, 0.5));
+    manager.onTouchDown(at(2), 2, base::PointF(0.5, 0.5));
+    manager.onTouchDown(at(2), 3, base::PointF(0.6, 0.6));
+    manager.onTouchMotion(at(3), 2, base::PointF(0.55, 0.5));
     manager.onTouchUp(at(4), 3);
     manager.onTouchUp(at(4), 2);
     manager.onTouchFrame(at(4));

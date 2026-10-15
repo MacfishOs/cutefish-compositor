@@ -4,9 +4,10 @@
 
 #include "wm/dock_preferences.h"
 
-#include <QDir>
-#include <QFileInfo>
+#include <filesystem>
+#include <system_error>
 
+#include "core/main_loop.h"
 #include "core/preferences.h"
 #include "wm/dock_layout_manager.h"
 #include "wm/window_manager.h"
@@ -30,32 +31,30 @@ DockAutoHideBehavior behaviorFromSetting(int visibility)
 
 } // namespace
 
-DockPreferences::DockPreferences(DockLayoutManager &layout, WindowManager &manager,
-                                 QObject *parent)
-    : QObject(parent)
-    , m_layout(layout)
+DockPreferences::DockPreferences(DockLayoutManager &layout, WindowManager &manager)
+    : m_layout(layout)
     , m_manager(manager)
-    , m_settings(preferencesFile(QStringLiteral("shell")), QSettings::IniFormat)
+    , m_settings(preferencesFile("shell"))
 {
-    m_settings.beginGroup(QStringLiteral("Dock"));
-    const auto directory = QFileInfo(m_settings.fileName()).absolutePath();
-    QDir().mkpath(directory);
-    m_watcher.addPath(directory);
-    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, &DockPreferences::reload);
-    connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, &DockPreferences::reload);
+    const std::string directory = std::filesystem::path(m_settings.path()).parent_path();
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    // The directory is watched, so a file the dock replaces or has not
+    // written yet is followed too.
+    m_watch = base::FileWatch::file(
+            m_settings.path(),
+            [this] {
+                reload();
+            },
+            core::mainLoop());
     reload();
 }
 
 void DockPreferences::reload()
 {
-    m_settings.sync();
-    if (!m_watcher.files().contains(m_settings.fileName())
-        && QFileInfo::exists(m_settings.fileName()))
-        m_watcher.addPath(m_settings.fileName());
-    m_layout.setBehavior(
-            behaviorFromSetting(m_settings.value(QStringLiteral("Visibility"), 0).toInt()));
-    m_manager.setDockTransitionsAbovePanels(
-            m_settings.value(QStringLiteral("MinimizedArea"), true).toBool());
+    m_settings.reload();
+    m_layout.setBehavior(behaviorFromSetting(int(m_settings.intValue("Dock/Visibility", 0))));
+    m_manager.setDockTransitionsAbovePanels(m_settings.boolValue("Dock/MinimizedArea", true));
 }
 
 } // namespace cutefish::wm

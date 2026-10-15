@@ -4,103 +4,90 @@
 
 #include "input/touchscreen_settings.h"
 
-#include <QCoreApplication>
-#include <QDBusInterface>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QEventLoop>
-#include <QSignalSpy>
-#include <QTemporaryDir>
-#include <QTimer>
 #include <gtest/gtest.h>
 
+#include "base/event_loop.h"
+#include "input_test_util.h"
+
+using cutefish::base::EventLoop;
 using cutefish::input::TouchscreenSettings;
+using input_test::RemoteObject;
+using input_test::TemporaryDirectory;
+using Names = std::vector<std::string>;
 
 namespace {
-const QString elan = QStringLiteral("ELAN2514:00 04F3:2AF1");
-const QString wacom = QStringLiteral("Wacom HID 5256 Finger");
+const std::string elan = "ELAN2514:00 04F3:2AF1";
+const std::string wacom = "Wacom HID 5256 Finger";
 } // namespace
 
 TEST(TouchscreenSettings, EveryDeviceStartsEnabled)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    TouchscreenSettings settings(nullptr, directory.filePath(QStringLiteral("compositor.conf")));
-    EXPECT_TRUE(settings.devices().isEmpty());
-    EXPECT_TRUE(settings.disabledDevices().isEmpty());
+    TouchscreenSettings settings(directory.filePath("compositor.conf"));
+    EXPECT_TRUE(settings.devices().empty());
+    EXPECT_TRUE(settings.disabledDevices().empty());
     EXPECT_TRUE(settings.deviceEnabled(elan));
 }
 
 TEST(TouchscreenSettings, PersistsPerDeviceAndNotifiesOnlyOnChanges)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     {
-        TouchscreenSettings settings(nullptr, file);
-        QSignalSpy changes(&settings, &TouchscreenSettings::settingsChanged);
-        QSignalSpy disabled(&settings, &TouchscreenSettings::disabledDevicesChanged);
+        TouchscreenSettings settings(file);
+        int changes = 0;
+        auto changesCounter = settings.settingsChanged.connect([&changes] { ++changes; });
+        int disabled = 0;
+        auto disabledCounter = settings.disabledDevicesChanged.connect([&disabled] { ++disabled; });
         settings.setDeviceEnabled(elan, false);
         settings.setDeviceEnabled(elan, false);
         settings.setDeviceEnabled(wacom, true);
-        settings.setDeviceEnabled(QString(), false);
-        EXPECT_EQ(changes.count(), 1);
-        EXPECT_EQ(disabled.count(), 1);
+        settings.setDeviceEnabled({}, false);
+        EXPECT_EQ(changes, 1);
+        EXPECT_EQ(disabled, 1);
         EXPECT_FALSE(settings.deviceEnabled(elan));
         EXPECT_TRUE(settings.deviceEnabled(wacom));
 
-        QSignalSpy devices(&settings, &TouchscreenSettings::devicesChanged);
+        int devices = 0;
+        auto devicesCounter = settings.devicesChanged.connect([&devices] { ++devices; });
         settings.setDevices({elan});
         settings.setDevices({elan});
         settings.setDevices({});
-        EXPECT_EQ(devices.count(), 2);
-        EXPECT_EQ(changes.count(), 1);
+        EXPECT_EQ(devices, 2);
+        EXPECT_EQ(changes, 1);
     }
     {
-        TouchscreenSettings restored(nullptr, file);
-        EXPECT_EQ(restored.disabledDevices(), QStringList{elan});
-        EXPECT_TRUE(restored.devices().isEmpty());
+        TouchscreenSettings restored(file);
+        EXPECT_EQ(restored.disabledDevices(), Names {elan});
+        EXPECT_TRUE(restored.devices().empty());
         restored.setDeviceEnabled(elan, true);
     }
-    TouchscreenSettings restored(nullptr, file);
-    EXPECT_TRUE(restored.disabledDevices().isEmpty());
+    TouchscreenSettings restored(file);
+    EXPECT_TRUE(restored.disabledDevices().empty());
 }
 
 TEST(TouchscreenSettings, DBusPropertiesMethodsAndServiceRestart)
 {
-    ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
-    QTemporaryDir directory;
+    EventLoop loop;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     for (int iteration = 0; iteration < 2; ++iteration) {
-        TouchscreenSettings settings(nullptr, file);
+        TouchscreenSettings settings(file);
         ASSERT_TRUE(settings.registerService());
-        QDBusInterface proxy(QStringLiteral("com.cutefish.Touchscreen1"),
-                             QStringLiteral("/com/cutefish/Touchscreen1"),
-                             QStringLiteral("com.cutefish.Touchscreen1"));
+        RemoteObject proxy(loop, "com.cutefish.Touchscreen1", "/com/cutefish/Touchscreen1",
+                           "com.cutefish.Touchscreen1");
         ASSERT_TRUE(proxy.isValid());
-        EXPECT_EQ(proxy.property("disabledDevices").toStringList().isEmpty(), iteration == 0);
+        EXPECT_EQ(proxy.property<Names>("disabledDevices").value_or(Names {"?"}).empty(),
+                  iteration == 0);
         settings.setDevices({elan, wacom});
-        EXPECT_EQ(proxy.property("devices").toStringList(), (QStringList{elan, wacom}));
+        EXPECT_EQ(proxy.property<Names>("devices"), (Names {elan, wacom}));
 
-        QDBusPendingCallWatcher watcher(
-                proxy.asyncCall(QStringLiteral("setDeviceEnabled"), wacom, false));
-        QEventLoop loop;
-        QObject::connect(&watcher, &QDBusPendingCallWatcher::finished, &loop, &QEventLoop::quit);
-        QTimer::singleShot(2000, &loop, &QEventLoop::quit);
-        if (!watcher.isFinished())
-            loop.exec();
-        ASSERT_TRUE(watcher.isFinished());
-        const QDBusPendingReply<> reply = watcher;
-        EXPECT_FALSE(reply.isError()) << reply.error().message().toStdString();
-        EXPECT_EQ(proxy.property("disabledDevices").toStringList(), QStringList{wacom});
+        const auto reply = proxy.call("setDeviceEnabled", wacom, false);
+        EXPECT_FALSE(reply.isError()) << reply.error().message;
+        EXPECT_EQ(proxy.property<Names>("disabledDevices"), Names {wacom});
         EXPECT_FALSE(settings.deviceEnabled(wacom));
     }
-}
-
-int main(int argc, char **argv)
-{
-    QCoreApplication application(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

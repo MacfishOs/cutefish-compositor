@@ -75,14 +75,14 @@ TEST_F(SubSurfaceTest, SynchronizedCommitRemainsCachedAndParentAppliesIt)
     parent->commit();
     EXPECT_EQ(b, child->buffer());
     EXPECT_EQ(2, child->bufferScale());
-    EXPECT_TRUE(child->damageRegion().contains(QRect(QPoint(), a->size())));
-    EXPECT_TRUE(child->damageRegion().contains(QRect(QPoint(), child->contentSize())));
+    EXPECT_TRUE(child->damageRegion().intersects(base::Rect(a->size())));
+    EXPECT_TRUE(child->damageRegion().intersects(base::Rect(child->contentSize())));
     EXPECT_TRUE(child->updateTexture(renderer));
     child->damage({1, 2, 3, 4});
     child->commit();
     EXPECT_TRUE(child->damageRegion().isEmpty());
     parent->commit();
-    EXPECT_EQ(QRegion(QRect(1, 2, 3, 4)), child->damageRegion());
+    EXPECT_EQ(base::Region(base::Rect(1, 2, 3, 4)), child->damageRegion());
 }
 
 TEST_F(SubSurfaceTest, ParentDoesNotApplyUncommittedPendingState)
@@ -108,12 +108,12 @@ TEST_F(SubSurfaceTest, DesynchronizedGrowthReachesTheParentHitRegion)
     sub->setCommitBehavior(false);
     sub->setPosition({8, 8});
     parent->commit();
-    ASSERT_FALSE(parent->hitTestRegion().contains(QPoint(30, 30)));
+    ASSERT_FALSE(parent->hitTestRegion().contains(base::Point(30, 30)));
     // The parent's region gates hit testing of its children. Exo recommits
     // the tree from the root after a desynchronized commit, so it grows too.
     child->attach(b, {});
     child->commit();
-    EXPECT_TRUE(parent->hitTestRegion().contains(QPoint(30, 30)));
+    EXPECT_TRUE(parent->hitTestRegion().contains(base::Point(30, 30)));
 }
 
 TEST_F(SubSurfaceTest, InheritedSynchronizationAndSyncToDesync)
@@ -153,22 +153,22 @@ TEST_F(SubSurfaceTest, DesyncFlushesCacheButNotPending)
 
 TEST_F(SubSurfaceTest, SetPosition)
 {
-    EXPECT_EQ(QPoint(), child->position());
+    EXPECT_EQ(base::Point(), child->position());
     sub->setPosition({10, 10});
     child->commit();
-    EXPECT_EQ(QPoint(), child->position());
+    EXPECT_EQ(base::Point(), child->position());
     parent->commit();
-    EXPECT_EQ(QPoint(10, 10), child->position());
+    EXPECT_EQ(base::Point(10, 10), child->position());
     sub->setCommitBehavior(false);
     sub->setPosition({20, 20});
     child->commit();
-    EXPECT_EQ(QPoint(10, 10), child->position());
+    EXPECT_EQ(base::Point(10, 10), child->position());
     parent->commit();
-    EXPECT_EQ(QPoint(20, 20), child->position());
+    EXPECT_EQ(base::Point(20, 20), child->position());
     sub.reset();
     sub = SubSurface::create(child.get(), parent.get());
     parent->commit();
-    EXPECT_EQ(QPoint(), child->position());
+    EXPECT_EQ(base::Point(), child->position());
 }
 
 TEST_F(SubSurfaceTest, CachedParentLayoutDoesNotReadLaterPendingPosition)
@@ -179,10 +179,10 @@ TEST_F(SubSurfaceTest, CachedParentLayoutDoesNotReadLaterPendingPosition)
     parent->commit();
     sub->setPosition({20, 20});
     root->commit();
-    EXPECT_EQ(QPoint(10, 10), child->position());
+    EXPECT_EQ(base::Point(10, 10), child->position());
     parent->commit();
     root->commit();
-    EXPECT_EQ(QPoint(20, 20), child->position());
+    EXPECT_EQ(base::Point(20, 20), child->position());
 }
 
 TEST_F(SubSurfaceTest, PlaceAboveParent)
@@ -349,13 +349,13 @@ TEST_F(SubSurfaceTest, AttachOffsetSynchronizedSubsurface)
     child->commit();
     child->attach(a, {1, 2});
     child->commit();
-    EXPECT_EQ(QPoint(), child->offset());
+    EXPECT_EQ(base::Point(), child->offset());
     parent->commit();
-    EXPECT_EQ(QPoint(2, 4), child->offset());
+    EXPECT_EQ(base::Point(2, 4), child->offset());
     child->attach(a, {1, 2});
     child->commit();
     parent->commit();
-    EXPECT_EQ(QPoint(3, 6), child->offset());
+    EXPECT_EQ(base::Point(3, 6), child->offset());
 }
 
 TEST_F(SubSurfaceTest, OtherSurfaceUploadCannotReleaseCachedStorage)
@@ -411,7 +411,8 @@ TEST_F(SubSurfaceTest, CacheMergesCallbacksDamageAndLastBuffer)
     parent->attach(a, {});
     parent->commit();
     EXPECT_EQ(b, child->buffer());
-    EXPECT_EQ(QRegion(QRect(0, 0, 2, 2)) + QRegion(QRect(10, 10, 2, 2)), child->damageRegion());
+    EXPECT_EQ(base::Region(base::Rect(0, 0, 2, 2)) + base::Region(base::Rect(10, 10, 2, 2)),
+              child->damageRegion());
     EXPECT_TRUE(fired.empty());
     compositor.updateTextures(renderer);
     compositor.frameSubmitted();
@@ -423,17 +424,17 @@ TEST_F(SubSurfaceTest, AttachOffsetDesynchronizedSubsurface)
 {
     child->attach(a, {});
     sub->setCommitBehavior(false);
-    EXPECT_EQ(QPoint(), child->offset());
+    EXPECT_EQ(base::Point(), child->offset());
 
     child->attach(a, {1, 2});
     // The parent's commit does not apply a desynchronized child's pending state.
     parent->commit();
-    EXPECT_EQ(QPoint(), child->offset());
+    EXPECT_EQ(base::Point(), child->offset());
 
     // An uncommitted attachment is replaced, offset included.
     child->attach(a, {10, 20});
     child->commit();
-    EXPECT_EQ(QPoint(10, 20), child->offset());
+    EXPECT_EQ(base::Point(10, 20), child->offset());
 }
 
 } // namespace
@@ -444,7 +445,7 @@ TEST_F(SubSurfaceTest, BackgroundBlurWaitsForSynchronizedParentCommit)
     child->commit();
     EXPECT_TRUE(child->backgroundBlurRect().isEmpty());
     parent->commit();
-    EXPECT_EQ(child->backgroundBlurRect(), QRect(0, 0, 16, 16));
+    EXPECT_EQ(child->backgroundBlurRect(), base::Rect(0, 0, 16, 16));
     child->setBackgroundBlur({}, 0);
     child->commit();
     EXPECT_FALSE(child->backgroundBlurRect().isEmpty());

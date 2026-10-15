@@ -17,10 +17,10 @@
 #include <map>
 #include <optional>
 
-#include <QPointF>
-#include <QRegion>
 
 #include "compositor/surface_observer.h"
+#include "base/geometry.h"
+#include "base/region.h"
 
 namespace cutefish::input {
 
@@ -56,7 +56,7 @@ public:
 
     // Where motion from `from` to `to`, both in output coordinates, ends under
     // the active confinement.
-    QPointF confine(const QPointF &from, const QPointF &to) const;
+    base::PointF confine(const base::PointF &from, const base::PointF &to) const;
 
     // Exo's UnconstrainPointerByUserAction: breaks the active constraint and
     // refuses any until a click permits them again, so an application cannot
@@ -68,7 +68,7 @@ public:
 
     // Moves the pointer, with a motion event, where a lock's cursor hint puts
     // it once the lock ends. Set by the input manager.
-    std::function<void(const QPointF &)> warp;
+    std::function<void(const base::PointF &)> warp;
 
     // compositor::SurfaceObserver:
     void onSurfaceDestroying(compositor::Surface *surface) override;
@@ -78,11 +78,11 @@ private:
 
     // The delegate's region clipped to its surface's input region, in surface
     // coordinates.
-    QRegion effectiveRegion(PointerConstraintDelegate *delegate) const;
+    base::Region effectiveRegion(PointerConstraintDelegate *delegate) const;
 
     // Where the active lock's cursor hint puts the pointer, in output
     // coordinates.
-    std::optional<QPointF> hintPosition() const;
+    std::optional<base::PointF> hintPosition() const;
 
     // Exo's UnconstrainPointer and RemoveConstraintDelegate.
     void deactivate();

@@ -10,8 +10,11 @@
 
 #include "display/display_configuration_controller.h"
 
-#include <QDateTime>
-#include <QUuid>
+#include <algorithm>
+#include <chrono>
+
+#include "base/uuid.h"
+#include "core/main_loop.h"
 
 namespace cutefish::display {
 namespace {
@@ -29,45 +32,42 @@ const DisplaySnapshot *snapshotForId(const HardwareSnapshot &hardware, const Dis
 
 DisplayConfigurationController::DisplayConfigurationController(DisplayManager *manager,
                                                                NativeDisplayDelegate *delegate,
-                                                               DisplayPreferences preferences,
-                                                               QObject *parent)
-    : QObject(parent)
-    , m_manager(manager)
+                                                               DisplayPreferences preferences)
+    : m_manager(manager)
     , m_delegate(delegate)
-    , m_configurator(delegate, this)
+    , m_configurator(delegate)
     , m_preferences(std::move(preferences))
+    , m_previewTimer(core::mainLoop())
 {
-    qRegisterMetaType<ConfigurationResult>();
     m_previewTimer.setSingleShot(true);
-    connect(&m_previewTimer, &QTimer::timeout, this, [this] {
-        startRevert(DisplayErrorCode::Cancelled, QStringLiteral("Display preview timed out"));
-    });
-    connect(m_delegate, &NativeDisplayDelegate::hardwareInvalidated, this,
-            &DisplayConfigurationController::hardwareInvalidated);
+    m_previewTimer.onTimeout = [this] {
+        startRevert(DisplayErrorCode::Cancelled, "Display preview timed out");
+    };
+    m_hardwareInvalidated = m_delegate->hardwareInvalidated.connect(
+            [this](uint64_t generation) { hardwareInvalidated(generation); });
 }
 
-QString DisplayConfigurationController::nextToken(const char *prefix) const
+std::string DisplayConfigurationController::nextToken(const char *prefix) const
 {
-    return QString::fromLatin1(prefix) + QLatin1Char('-')
-            + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    return std::string(prefix) + '-' + base::Uuid::generate().toString();
 }
 
-void DisplayConfigurationController::finish(const QString &operationToken,
+void DisplayConfigurationController::finish(const std::string &operationToken,
                                             ConfigurationResult result)
 {
     m_operationActive = false;
-    emit operationFinished(operationToken, std::move(result));
+    operationFinished(operationToken, std::move(result));
 }
 
-QString DisplayConfigurationController::test(const DisplayConfiguration &request)
+std::string DisplayConfigurationController::test(const DisplayConfiguration &request)
 {
-    const QString token = nextToken("test");
+    const std::string token = nextToken("test");
     if (m_operationActive || m_preview || m_manager->isPublishing() || m_topologyPending) {
-        emit operationFinished(
+        operationFinished(
                 token,
                 {false,
                  false,
-                 {DisplayErrorCode::Busy, QStringLiteral("A display preview is active"), {}},
+                 {DisplayErrorCode::Busy, "A display preview is active", {}},
                  std::nullopt});
         return token;
     }
@@ -75,7 +75,7 @@ QString DisplayConfigurationController::test(const DisplayConfiguration &request
         finish(token,
                {false,
                 false,
-                {DisplayErrorCode::Unavailable, QStringLiteral("No display hardware state"), {}},
+                {DisplayErrorCode::Unavailable, "No display hardware state", {}},
                 std::nullopt});
         return token;
     }
@@ -90,17 +90,17 @@ QString DisplayConfigurationController::test(const DisplayConfiguration &request
     return token;
 }
 
-QString DisplayConfigurationController::apply(const DisplayConfiguration &request,
-                                              const QString &owner, int timeoutMs)
+std::string DisplayConfigurationController::apply(const DisplayConfiguration &request,
+                                              const std::string &owner, int timeoutMs)
 {
-    const QString operationToken = nextToken("apply");
+    const std::string operationToken = nextToken("apply");
     if (m_operationActive || m_preview || m_manager->isPublishing()
-        || (m_topologyPending && owner != QStringLiteral("topology"))) {
-        emit operationFinished(
+        || (m_topologyPending && owner != "topology")) {
+        operationFinished(
                 operationToken,
                 {false,
                  false,
-                 {DisplayErrorCode::Busy, QStringLiteral("A display transaction is active"), {}},
+                 {DisplayErrorCode::Busy, "A display transaction is active", {}},
                  std::nullopt});
         return operationToken;
     }
@@ -108,14 +108,14 @@ QString DisplayConfigurationController::apply(const DisplayConfiguration &reques
         finish(operationToken,
                {false,
                 false,
-                {DisplayErrorCode::Unavailable, QStringLiteral("No applied display state"), {}},
+                {DisplayErrorCode::Unavailable, "No applied display state", {}},
                 std::nullopt});
         return operationToken;
     }
     const auto hardware = *m_manager->hardware();
     const auto previous = *m_manager->applied();
     auto exactRequest = request;
-    exactRequest.allowModeFallback = owner == QStringLiteral("topology") && timeoutMs < 0;
+    exactRequest.allowModeFallback = owner == "topology" && timeoutMs < 0;
     const auto validated = DisplayConfigurationValidator::validateExtended(
             hardware, previous.revision, exactRequest);
     if (!validated.succeeded) {
@@ -156,7 +156,7 @@ QString DisplayConfigurationController::apply(const DisplayConfiguration &reques
                             result.succeeded = false;
                             result.error = {
                                     DisplayErrorCode::StaleConfiguration,
-                                    QStringLiteral("Hardware changed during recovery publication"),
+                                    "Hardware changed during recovery publication",
                                     {}};
                         }
                         finish(operationToken, std::move(result));
@@ -169,7 +169,9 @@ QString DisplayConfigurationController::apply(const DisplayConfiguration &reques
                 preview.requested = validated.normalized;
                 preview.rollbackApplied = previous;
                 preview.rollbackRequest = makeRequest(hardware, previous);
-                preview.deadlineMs = QDateTime::currentMSecsSinceEpoch() + std::max(1, timeoutMs);
+                const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch());
+                preview.deadlineMs = now.count() + std::max(1, timeoutMs);
                 m_preview = std::move(preview);
                 DisplayError error;
                 if (!m_manager->installApplied(applied, &error)) {
@@ -183,7 +185,7 @@ QString DisplayConfigurationController::apply(const DisplayConfiguration &reques
                            {false,
                             false,
                             {DisplayErrorCode::StaleConfiguration,
-                             QStringLiteral("Hardware changed during publication"),
+                             "Hardware changed during publication",
                              {}},
                             applied});
                     return;
@@ -199,24 +201,24 @@ QString DisplayConfigurationController::apply(const DisplayConfiguration &reques
                     finish(operationToken, std::move(result));
                     return;
                 }
-                m_previewTimer.start(std::max(1, timeoutMs));
+                m_previewTimer.start(std::chrono::milliseconds(std::max(1, timeoutMs)));
                 result.applied = applied;
                 m_operationActive = false;
-                emit previewChanged(m_preview->token, m_preview->deadlineMs);
-                emit operationFinished(operationToken, std::move(result));
+                previewChanged(m_preview->token, m_preview->deadlineMs);
+                operationFinished(operationToken, std::move(result));
             });
     return operationToken;
 }
 
-void DisplayConfigurationController::confirm(const QString &token, const QString &owner)
+void DisplayConfigurationController::confirm(const std::string &token, const std::string &owner)
 {
-    const QString operationToken = nextToken("confirm");
+    const std::string operationToken = nextToken("confirm");
     if (!m_preview || m_preview->token != token || m_preview->owner != owner) {
-        emit operationFinished(operationToken,
+        operationFinished(operationToken,
                                {false,
                                 false,
                                 {DisplayErrorCode::Cancelled,
-                                 QStringLiteral("The preview token is not owned by this client"),
+                                 "The preview token is not owned by this client",
                                  {}},
                                 std::nullopt});
         return;
@@ -229,44 +231,44 @@ void DisplayConfigurationController::confirm(const QString &token, const QString
     }
     m_previewTimer.stop();
     m_preview.reset();
-    emit previewChanged({}, 0);
+    previewChanged({}, 0);
     finish(operationToken, {true, false, {}, m_manager->applied()});
 }
 
-void DisplayConfigurationController::revert(const QString &token, const QString &owner)
+void DisplayConfigurationController::revert(const std::string &token, const std::string &owner)
 {
     if (!m_preview || m_preview->token != token || m_preview->owner != owner) {
-        emit operationFinished(nextToken("revert"),
+        operationFinished(nextToken("revert"),
                                {false,
                                 false,
                                 {DisplayErrorCode::Cancelled,
-                                 QStringLiteral("The preview token is not owned by this client"),
+                                 "The preview token is not owned by this client",
                                  {}},
                                 std::nullopt});
         return;
     }
-    startRevert(DisplayErrorCode::Cancelled, QStringLiteral("Display preview reverted"));
+    startRevert(DisplayErrorCode::Cancelled, "Display preview reverted");
 }
 
-void DisplayConfigurationController::startRevert(DisplayErrorCode reason, QString message,
-                                                 QString failedOperation)
+void DisplayConfigurationController::startRevert(DisplayErrorCode reason, std::string message,
+                                                 std::string failedOperation)
 {
     if (!m_preview || m_operationActive)
         return;
     m_previewTimer.stop();
-    const QString operationToken =
-            failedOperation.isEmpty() ? nextToken("revert") : failedOperation;
+    const std::string operationToken =
+            failedOperation.empty() ? nextToken("revert") : failedOperation;
     Preview preview = *m_preview;
     m_operationActive = true;
     const auto hardware = m_manager->hardware();
     if (!hardware || hardware->topologyGeneration != preview.rollbackApplied.topologyGeneration) {
         m_preview.reset();
-        emit previewChanged({}, 0);
+        previewChanged({}, 0);
         finish(operationToken,
                {false,
                 false,
                 {DisplayErrorCode::RevertFailed,
-                 QStringLiteral("Display topology changed during preview"),
+                 "Display topology changed during preview",
                  {}},
                 std::nullopt});
         return;
@@ -278,7 +280,7 @@ void DisplayConfigurationController::startRevert(DisplayErrorCode reason, QStrin
             [this, operationToken, preview, reason, failedOperation,
              message = std::move(message)](ConfigurationResult result) mutable {
                 m_preview.reset();
-                emit previewChanged({}, 0);
+                previewChanged({}, 0);
                 if (!result.succeeded) {
                     result.error.code = DisplayErrorCode::RevertFailed;
                     finish(operationToken, std::move(result));
@@ -293,20 +295,20 @@ void DisplayConfigurationController::startRevert(DisplayErrorCode reason, QStrin
                     return;
                 }
                 finish(operationToken,
-                       {failedOperation.isEmpty(), false, {reason, message, {}}, restored});
+                       {failedOperation.empty(), false, {reason, message, {}}, restored});
             });
 }
 
-QString DisplayConfigurationController::setPower(const QList<DisplayId> &displays,
+std::string DisplayConfigurationController::setPower(const std::vector<DisplayId> &displays,
                                                  NativeDisplayDelegate::PowerState state)
 {
-    const QString token = nextToken("power");
+    const std::string token = nextToken("power");
     if (m_operationActive || m_preview || m_manager->isPublishing() || m_topologyPending) {
-        emit operationFinished(
+        operationFinished(
                 token,
                 {false,
                  false,
-                 {DisplayErrorCode::Busy, QStringLiteral("A display transaction is active"), {}},
+                 {DisplayErrorCode::Busy, "A display transaction is active", {}},
                  std::nullopt});
         return token;
     }
@@ -317,10 +319,10 @@ QString DisplayConfigurationController::setPower(const QList<DisplayId> &display
     return token;
 }
 
-void DisplayConfigurationController::ownerDisconnected(const QString &owner)
+void DisplayConfigurationController::ownerDisconnected(const std::string &owner)
 {
     if (m_preview && m_preview->owner == owner)
-        startRevert(DisplayErrorCode::Cancelled, QStringLiteral("Display client disconnected"));
+        startRevert(DisplayErrorCode::Cancelled, "Display client disconnected");
 }
 
 void DisplayConfigurationController::hardwareInvalidated(uint64_t)
@@ -329,18 +331,18 @@ void DisplayConfigurationController::hardwareInvalidated(uint64_t)
     m_previewTimer.stop();
     if (m_preview) {
         m_preview.reset();
-        emit previewChanged({}, 0);
+        previewChanged({}, 0);
     }
 }
 
-QString DisplayConfigurationController::previewToken() const
+std::string DisplayConfigurationController::previewToken() const
 {
-    return m_preview ? m_preview->token : QString();
+    return m_preview ? m_preview->token : std::string();
 }
 
-QString DisplayConfigurationController::previewOwner() const
+std::string DisplayConfigurationController::previewOwner() const
 {
-    return m_preview ? m_preview->owner : QString();
+    return m_preview ? m_preview->owner : std::string();
 }
 
 AppliedConfiguration
@@ -364,18 +366,20 @@ DisplayConfigurationController::makeApplied(const HardwareSnapshot &hardware,
         if (!request.enabled)
             continue;
         bool destinationOnly = false;
-        QList<DisplayId> destinations {request.display};
+        std::vector<DisplayId> destinations {request.display};
         for (const auto &group : validated.normalized.mirrorGroups) {
-            if (group.first() == request.display)
+            if (group.front() == request.display)
                 destinations = group;
-            else if (group.mid(1).contains(request.display))
+            else if (std::find(group.begin() + 1, group.end(), request.display) != group.end())
                 destinationOnly = true;
         }
         if (destinationOnly)
             continue;
-        const QRect bounds = validated.logicalBounds.value(request.display);
+        const auto found = validated.logicalBounds.find(request.display);
+        const base::Rect bounds =
+                found == validated.logicalBounds.end() ? base::Rect() : found->second;
         const auto *physical = snapshotForId(hardware, request.display);
-        applied.logicalDisplays.append(
+        applied.logicalDisplays.push_back(
                 {request.display, destinations,
                  physical ? physical->connectorName : request.display.value(), bounds, bounds,
                  request.scale, request.rotation, request.display == validated.normalized.primary});
@@ -392,7 +396,7 @@ DisplayConfigurationController::makeRequest(const HardwareSnapshot &hardware,
     for (const auto &physical : applied.physicalDisplays) {
         const LogicalDisplay *logical = nullptr;
         for (const auto &candidate : applied.logicalDisplays) {
-            if (candidate.destinations.contains(physical.sessionId)) {
+            if (candidate.hasDestination(physical.sessionId)) {
                 logical = &candidate;
                 break;
             }
@@ -400,16 +404,16 @@ DisplayConfigurationController::makeRequest(const HardwareSnapshot &hardware,
         const auto mode = physical.currentMode ? physical.currentMode : physical.nativeMode;
         if (!mode)
             continue;
-        result.displays.append({physical.sessionId, logical != nullptr, *mode,
-                                logical ? logical->scale : compositor::OutputScale(),
-                                logical ? logical->rotation : DisplayRotation::Normal});
+        result.displays.push_back({physical.sessionId, logical != nullptr, *mode,
+                                   logical ? logical->scale : compositor::OutputScale(),
+                                   logical ? logical->rotation : DisplayRotation::Normal});
         if (logical && logical->primary)
-            result.primary = logical->destinations.first();
+            result.primary = logical->destinations.front();
     }
     result.placements = applied.placements;
     for (const auto &logical : applied.logicalDisplays) {
         if (logical.destinations.size() > 1)
-            result.mirrorGroups.append(logical.destinations);
+            result.mirrorGroups.push_back(logical.destinations);
     }
     return result;
 }

@@ -10,9 +10,8 @@
 #include <functional>
 #include <vector>
 
-#include <QObject>
-#include <QPointF>
-
+#include "base/geometry.h"
+#include "base/timer.h"
 #include "input/event_sink.h"
 
 namespace cutefish::compositor {
@@ -28,13 +27,10 @@ namespace cutefish::wm {
 class Window;
 class WindowManager;
 
-class DemoController : public QObject, public input::EventSink
+class DemoController : public input::EventSink
 {
-    Q_OBJECT
-
 public:
-    DemoController(WindowManager* manager, input::InputManager* input,
-                   QObject* parent = nullptr);
+    DemoController(WindowManager* manager, input::InputManager* input);
     ~DemoController() override;
 
     // Creates a Window for every mapped, roleless root surface that does not
@@ -47,12 +43,12 @@ public:
     void startScript(int stepIntervalMs = 700);
 
     // input::EventSink: shortcuts first, then the window manager's own policy.
-    bool onPointerMotion(input::Timestamp timestamp, const QPointF& location) override;
-    bool onPointerButton(input::Timestamp timestamp, const QPointF& location,
+    bool onPointerMotion(input::Timestamp timestamp, const base::PointF &location) override;
+    bool onPointerButton(input::Timestamp timestamp, const base::PointF &location,
                          uint32_t evdevButton, bool pressed) override;
     bool onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
-    bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF& location) override;
-    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const QPointF& location) override;
+    bool onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
+    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
     bool onTouchUp(input::Timestamp timestamp, int32_t id) override;
     void onTouchCancel(input::Timestamp timestamp) override;
 
@@ -73,10 +69,11 @@ private:
     input::InputManager* m_input = nullptr;
 
     Window* m_scriptTarget = nullptr;
-    QPointF m_dragAnchor;
+    base::PointF m_dragAnchor;
     std::vector<std::function<void()>> m_script;
     size_t m_scriptStep = 0;
     int m_scriptIntervalMs = 0;
+    base::Timer m_scriptTimer;
     bool m_scriptRunning = false;
 };
 

@@ -2,13 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <filesystem>
+#include <iterator>
 #include <signal.h>
-
-#include <QDir>
 
 #include "clipboard_test_util.h"
 
 using namespace clipboard_test;
+
+namespace {
+
+int openFdCount()
+{
+    return int(std::distance(std::filesystem::directory_iterator("/proc/self/fd"),
+                             std::filesystem::directory_iterator()));
+}
+
+// A write to a peer that went away fails instead of ending the test.
+const bool sigpipeIgnored = [] {
+    signal(SIGPIPE, SIG_IGN);
+    return true;
+}();
+
+} // namespace
 
 TEST(ClipboardProtocol, RealBytesOpaqueFormatsRepeatedReceivesAndIdleProgress)
 {
@@ -279,8 +295,7 @@ TEST(ClipboardProtocol, AnotherSeatCannotPublishOrReceiveThisSeatsSelection)
 
 TEST(ClipboardProtocol, RecipientDisconnectDuringForwardedTransferDoesNotRetainFds)
 {
-    const auto before =
-        QDir("/proc/self/fd").entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size();
+    const int before = openFdCount();
     {
         Harness h;
         auto& a = h.addClient();
@@ -304,16 +319,7 @@ TEST(ClipboardProtocol, RecipientDisconnectDuringForwardedTransferDoesNotRetainF
         }));
         EXPECT_TRUE(h.seat.selection()->source());
     }
-    EXPECT_EQ(before,
-              QDir("/proc/self/fd").entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size());
-}
-
-int main(int argc, char** argv)
-{
-    QCoreApplication app(argc, argv);
-    signal(SIGPIPE, SIG_IGN);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    EXPECT_EQ(before, openFdCount());
 }
 
 // Exo's DataDeviceTest.ClipboardFocusedSurfaceDestroyed: once the focused

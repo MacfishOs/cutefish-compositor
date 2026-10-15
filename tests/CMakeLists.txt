@@ -2,29 +2,37 @@ find_package(GTest)
 if(NOT GTest_FOUND)
     message(FATAL_ERROR "BUILD_TESTING=ON needs GoogleTest (Debian: libgtest-dev)")
 endif()
-find_package(Qt6 REQUIRED COMPONENTS Test)
+# The Qt Widgets and Quick clients stand for third-party Qt applications. They,
+# and the tests that run them, are built only when those modules are installed.
+find_package(Qt6 QUIET COMPONENTS Widgets Quick)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
+find_program(DBUS_RUN_SESSION dbus-run-session REQUIRED)
 
-# A test that neither defines main() nor makes an application object of its
-# own gets gtest_qt_main.cpp, whose QCoreApplication owns the single-shot
-# timers the code under test leaves pending.
+# loop_test_util.h: waiting on the main loop in every test.
+add_library(cutefish-test-loop STATIC loop_test_util.cpp)
+target_link_libraries(cutefish-test-loop PUBLIC cutefish-core)
+
+# cutefish_add_test(name [DBUS] libraries...)
+# A GoogleTest binary on gtest_toolkit_main.cpp, whose main loop runs the
+# timers, fd watches, posted tasks and sd-bus connections of the code under
+# test while it waits (loop_test_util.h). DBUS runs it on a private session
+# bus.
 function(cutefish_add_test name)
-    file(STRINGS ${name}.cpp own_main REGEX "^int main\\(")
-    file(STRINGS ${name}.cpp own_app
-         REGEX "(new Q(Core|Gui)Application)|(Q(Core|Gui)Application (app|application)[ ({])")
-    if(own_main)
-        add_executable(${name} ${name}.cpp)
-        target_link_libraries(${name} PRIVATE GTest::gtest ${ARGN})
-    elseif(own_app)
-        add_executable(${name} ${name}.cpp)
-        target_link_libraries(${name} PRIVATE GTest::gtest GTest::gtest_main ${ARGN})
-    else()
-        add_executable(${name} ${name}.cpp gtest_qt_main.cpp)
-        target_link_libraries(${name} PRIVATE GTest::gtest Qt6::Core ${ARGN})
-    endif()
+    cmake_parse_arguments(PARSE_ARGV 1 arg "DBUS" "" "")
+    add_executable(${name} ${name}.cpp gtest_toolkit_main.cpp)
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME ${name} COMMAND ${name})
+    target_link_libraries(${name} PRIVATE GTest::gtest cutefish-core cutefish-test-loop
+        ${arg_UNPARSED_ARGUMENTS})
+    if(arg_DBUS)
+        add_test(NAME ${name} COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:${name}>)
+    else()
+        add_test(NAME ${name} COMMAND ${name})
+    endif()
 endfunction()
+
+cutefish_add_test(main_loop_test cutefish-toolkit-host)
+cutefish_add_test(core_test)
+target_sources(core_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/compositor_options.cpp)
 
 cutefish_add_test(image_capture_test cutefish-compositor-core cutefish-session PkgConfig::WaylandClient)
 cutefish_add_test(serial_tracker_test cutefish-wayland)
@@ -34,32 +42,39 @@ cutefish_add_test(scene_test cutefish-scene)
 cutefish_add_test(shm_pool_test cutefish-compositor-core)
 cutefish_add_test(buffer_test cutefish-compositor-core)
 cutefish_add_test(surface_test cutefish-compositor-core)
-cutefish_add_test(wayland_protocol_test cutefish-compositor-core cutefish-wayland-dmabuf PkgConfig::WaylandClient)
+cutefish_add_test(wayland_protocol_test cutefish-compositor-core cutefish-wayland-dmabuf
+    PkgConfig::WaylandClient)
 cutefish_add_test(xkb_tracker_test cutefish-input)
 cutefish_add_test(key_translator_test cutefish-input)
 cutefish_add_test(input_test cutefish-input)
 cutefish_add_test(computer_control_test cutefish-computer-control)
 cutefish_add_test(touch_test cutefish-input)
-cutefish_add_test(pointer_acceleration_test cutefish-mouse-settings)
-cutefish_add_test(touchpad_click_test cutefish-mouse-settings)
+foreach(test pointer_acceleration_test touchpad_click_test)
+    add_executable(${test} ${test}.cpp)
+    target_link_libraries(${test} PRIVATE cutefish-mouse-settings GTest::gtest_main)
+    add_test(NAME ${test} COMMAND ${test})
+endforeach()
 add_executable(mouse_settings_test mouse_settings_test.cpp)
-target_link_libraries(mouse_settings_test PRIVATE cutefish-mouse-settings Qt6::Test GTest::gtest)
-find_program(DBUS_RUN_SESSION dbus-run-session REQUIRED)
+target_include_directories(mouse_settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(mouse_settings_test PRIVATE cutefish-mouse-settings GTest::gtest_main)
 add_test(NAME mouse_settings_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:mouse_settings_test>)
 add_executable(touchpad_settings_test touchpad_settings_test.cpp)
-target_link_libraries(touchpad_settings_test PRIVATE cutefish-mouse-settings Qt6::Test GTest::gtest)
+target_include_directories(touchpad_settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(touchpad_settings_test PRIVATE cutefish-mouse-settings GTest::gtest_main)
 add_test(NAME touchpad_settings_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:touchpad_settings_test>)
 add_executable(touchscreen_settings_test touchscreen_settings_test.cpp)
-target_link_libraries(touchscreen_settings_test PRIVATE cutefish-mouse-settings Qt6::Test GTest::gtest)
+target_include_directories(touchscreen_settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(touchscreen_settings_test PRIVATE cutefish-mouse-settings GTest::gtest_main)
 add_test(NAME touchscreen_settings_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:touchscreen_settings_test>)
 add_executable(keyboard_settings_test keyboard_settings_test.cpp)
-target_link_libraries(keyboard_settings_test PRIVATE cutefish-keyboard-settings Qt6::Test GTest::gtest)
+target_include_directories(keyboard_settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(keyboard_settings_test PRIVATE cutefish-keyboard-settings GTest::gtest_main)
 add_test(NAME keyboard_settings_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:keyboard_settings_test>)
 cutefish_add_test(drm_selection_test cutefish-backend)
 cutefish_add_test(drm_properties_test cutefish-backend)
 cutefish_add_test(drm_configuration_planner_test cutefish-fake-drm)
 cutefish_add_test(drm_multi_device_planner_test cutefish-backend)
-cutefish_add_test(drm_hotplug_monitor_test cutefish-backend Qt6::Test)
+cutefish_add_test(drm_hotplug_monitor_test cutefish-backend)
 cutefish_add_test(libseat_session_test cutefish-backend)
 
 # Manual wl_shm client. Not registered with ctest: it needs a running
@@ -76,7 +91,7 @@ cutefish_add_test(xdg_positioner_test cutefish-wayland-shell)
 cutefish_add_test(qt_hardware_integration_test cutefish-wayland-shell)
 cutefish_add_test(shell_surface_test cutefish-decoration)
 cutefish_add_test(decoration_test cutefish-decoration)
-cutefish_add_test(text_test cutefish-decoration)
+cutefish_add_test(text_test cutefish-decoration PkgConfig::TitleText)
 cutefish_add_test(xdg_shell_protocol_test cutefish-wayland-shell cutefish-wayland-input
     PkgConfig::WaylandClient)
 cutefish_add_test(protocol_binding_test cutefish-wayland-globals PkgConfig::WaylandClient)
@@ -86,8 +101,7 @@ set_tests_properties(protocol_binding_test PROPERTIES TIMEOUT 60)
 option(CUTEFISH_LIBFUZZER "Build protocol_fuzzer for libFuzzer" OFF)
 add_executable(protocol_fuzzer protocol_fuzzer.cpp)
 target_include_directories(protocol_fuzzer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(protocol_fuzzer PRIVATE cutefish-wayland-globals PkgConfig::WaylandClient
-    Qt6::Core)
+target_link_libraries(protocol_fuzzer PRIVATE cutefish-wayland-globals PkgConfig::WaylandClient)
 if(CUTEFISH_LIBFUZZER)
     target_compile_definitions(protocol_fuzzer PRIVATE CUTEFISH_LIBFUZZER)
     target_compile_options(protocol_fuzzer PRIVATE -fsanitize=fuzzer,address)
@@ -105,16 +119,10 @@ cutefish_add_test(foreign_toplevel_list_test cutefish-wayland-private-shell cute
 cutefish_add_test(private_shell_protocol_test cutefish-wayland-private-shell
     cutefish-wayland-shell cutefish-wayland-input PkgConfig::WaylandClient)
 cutefish_add_test(work_area_test cutefish-wm)
-add_executable(dock_layout_test dock_layout_test.cpp)
-target_include_directories(dock_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(dock_layout_test PRIVATE cutefish-wm GTest::gtest)
-add_test(NAME dock_layout_test COMMAND dock_layout_test)
+cutefish_add_test(dock_layout_test cutefish-wm)
 cutefish_add_test(session_lock_test cutefish-session cutefish-wm cutefish-scene cutefish-decoration)
-add_executable(accelerator_test accelerator_test.cpp)
-target_include_directories(accelerator_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(accelerator_test PRIVATE cutefish-accelerators cutefish-session cutefish-wm
-    cutefish-scene Qt6::Test GTest::gtest)
-add_test(NAME accelerator_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:accelerator_test>)
+cutefish_add_test(accelerator_test DBUS cutefish-accelerators cutefish-session cutefish-wm
+    cutefish-scene)
 cutefish_add_test(xdg_decoration_protocol_test cutefish-wayland-shell cutefish-wayland-input
     cutefish-decoration PkgConfig::WaylandClient)
 add_executable(cutefish-subsurface-demo manual/subsurface_client.cpp)
@@ -148,16 +156,17 @@ cutefish_add_test(output_scheduler_test cutefish-output-scheduler cutefish-compo
 cutefish_add_test(clipboard_protocol_test cutefish-wayland-input PkgConfig::WaylandClient)
 set_tests_properties(clipboard_protocol_test PROPERTIES TIMEOUT 30)
 
-# Widgets and Quick are used by the external Wayland test clients.
-find_package(Qt6 REQUIRED COMPONENTS Widgets Quick)
-add_executable(clipboard-qt-client clipboard/qt_client.cpp)
-target_link_libraries(clipboard-qt-client PRIVATE Qt6::Widgets)
-cutefish_add_test(clipboard_toolkit_test cutefish-wayland-input cutefish-wayland-shell PkgConfig::WaylandClient)
-target_compile_definitions(clipboard_toolkit_test PRIVATE
-    QT_CLIPBOARD_CLIENT="$<TARGET_FILE:clipboard-qt-client>"
-    GTK_CLIPBOARD_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/clipboard/gtk_client.py")
-add_dependencies(clipboard_toolkit_test clipboard-qt-client)
-set_tests_properties(clipboard_toolkit_test PROPERTIES TIMEOUT 70)
+if(Qt6Widgets_FOUND)
+    add_executable(clipboard-qt-client clipboard/qt_client.cpp)
+    target_link_libraries(clipboard-qt-client PRIVATE Qt6::Widgets)
+    cutefish_add_test(clipboard_toolkit_test cutefish-wayland-input cutefish-wayland-shell
+        PkgConfig::WaylandClient)
+    target_compile_definitions(clipboard_toolkit_test PRIVATE
+        QT_CLIPBOARD_CLIENT="$<TARGET_FILE:clipboard-qt-client>"
+        GTK_CLIPBOARD_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/clipboard/gtk_client.py")
+    add_dependencies(clipboard_toolkit_test clipboard-qt-client)
+    set_tests_properties(clipboard_toolkit_test PROPERTIES TIMEOUT 70)
+endif()
 cutefish_add_test(selection_test cutefish-input)
 
 cutefish_add_test(dmabuf_test cutefish-wayland-dmabuf cutefish-compositor-core
@@ -165,14 +174,14 @@ cutefish_add_test(dmabuf_test cutefish-wayland-dmabuf cutefish-compositor-core
 
 cutefish_add_test(shadow_test cutefish-decoration)
 cutefish_add_test(shadow_controller_test cutefish-decoration)
-cutefish_add_test(shadow_pixel_test cutefish-decoration cutefish-render Qt6::Gui)
+cutefish_add_test(shadow_pixel_test cutefish-decoration cutefish-render)
 set_tests_properties(shadow_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 
 cutefish_add_test(motion_test cutefish-scene)
 cutefish_add_test(window_animation_test cutefish-scene)
 cutefish_add_test(screen_transition_node_test cutefish-scene)
 cutefish_add_test(desk_switch_node_test cutefish-scene)
-cutefish_add_test(desks_test cutefish-wm Qt6::Test)
+cutefish_add_test(desks_test cutefish-wm)
 cutefish_add_test(overview_layout_test cutefish-wm)
 cutefish_add_test(overview_node_test cutefish-scene)
 cutefish_add_test(overview_test cutefish-wm)
@@ -205,21 +214,25 @@ cutefish_add_test(dnd_protocol_test cutefish-cursor cutefish-wayland-input
 cutefish_add_test(data_control_protocol_test cutefish-wayland-input cutefish-wayland-private-shell
     cutefish-wayland-shell PkgConfig::WaylandClient)
 
-add_executable(dnd-qt-client dnd/qt_client.cpp)
-target_link_libraries(dnd-qt-client PRIVATE Qt6::Widgets)
-cutefish_add_test(dnd_toolkit_test cutefish-wayland-input cutefish-wayland-shell PkgConfig::WaylandClient)
-target_compile_definitions(dnd_toolkit_test PRIVATE
-    QT_DND_CLIENT="$<TARGET_FILE:dnd-qt-client>"
-    GTK_DND_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/dnd/gtk_client.py")
-add_dependencies(dnd_toolkit_test dnd-qt-client)
-set_tests_properties(dnd_toolkit_test PROPERTIES TIMEOUT 70)
+if(Qt6Widgets_FOUND)
+    add_executable(dnd-qt-client dnd/qt_client.cpp)
+    target_link_libraries(dnd-qt-client PRIVATE Qt6::Widgets)
+    cutefish_add_test(dnd_toolkit_test cutefish-wayland-input cutefish-wayland-shell
+        PkgConfig::WaylandClient)
+    target_compile_definitions(dnd_toolkit_test PRIVATE
+        QT_DND_CLIENT="$<TARGET_FILE:dnd-qt-client>"
+        GTK_DND_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/dnd/gtk_client.py")
+    add_dependencies(dnd_toolkit_test dnd-qt-client)
+    set_tests_properties(dnd_toolkit_test PROPERTIES TIMEOUT 70)
+endif()
 
 set_tests_properties(private_shell_protocol_test PROPERTIES TIMEOUT 60)
 
 cutefish_add_test(viewporter_test cutefish-compositor-core)
 cutefish_add_test(viewporter_protocol_test cutefish-compositor-core PkgConfig::WaylandClient)
 set_tests_properties(viewporter_protocol_test PROPERTIES TIMEOUT 30)
-cutefish_add_test(viewporter_pixel_test cutefish-compositor-core cutefish-input cutefish-render Qt6::Gui PkgConfig::Gbm PkgConfig::Libdrm)
+cutefish_add_test(viewporter_pixel_test cutefish-compositor-core cutefish-input cutefish-render
+    PkgConfig::Gbm PkgConfig::Libdrm)
 set_tests_properties(viewporter_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 
 cutefish_add_test(fractional_scale_protocol_test cutefish-compositor-core PkgConfig::WaylandClient)
@@ -231,36 +244,38 @@ set_tests_properties(fractional_scale_pixel_test PROPERTIES ENVIRONMENT "LIBGL_A
 cutefish_add_test(output_scale_test cutefish-input)
 cutefish_add_test(display_types_test cutefish-display)
 cutefish_add_test(edid_test cutefish-display)
+cutefish_add_test(display_preferences_test cutefish-display)
 cutefish_add_test(recommended_scale_test cutefish-display)
 cutefish_add_test(display_transform_test cutefish-display)
 cutefish_add_test(mirror_transform_test cutefish-display)
 cutefish_add_test(display_layout_test cutefish-display)
 cutefish_add_test(chromeos_display_layout_test cutefish-display)
 cutefish_add_test(display_configuration_validator_test cutefish-display)
-cutefish_add_test(display_manager_test cutefish-display Qt6::Test)
+cutefish_add_test(display_manager_test cutefish-display)
 cutefish_add_test(native_display_delegate_test cutefish-display)
 target_sources(native_display_delegate_test PRIVATE
     fake_native_display_delegate.cpp fake_native_display_delegate.h)
-cutefish_add_test(display_configuration_controller_test cutefish-display Qt6::Test)
+cutefish_add_test(display_configuration_controller_test cutefish-display)
 target_sources(display_configuration_controller_test PRIVATE
     fake_native_display_delegate.cpp fake_native_display_delegate.h)
 cutefish_add_test(night_light_test cutefish-display)
-add_executable(display_config_service_test display_config_service_test.cpp
+cutefish_add_test(display_config_service_test DBUS cutefish-display-ipc)
+target_sources(display_config_service_test PRIVATE
     fake_native_display_delegate.cpp fake_native_display_delegate.h)
-target_include_directories(display_config_service_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(display_config_service_test PRIVATE cutefish-display-ipc Qt6::Test)
-add_test(NAME display_config_service_test
-    COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:display_config_service_test>)
 
-add_executable(scaling-quick-client scaling/quick_client.cpp)
-target_link_libraries(scaling-quick-client PRIVATE Qt6::Quick)
-add_executable(scaling-qt-client scaling/qt_client.cpp)
-target_link_libraries(scaling-qt-client PRIVATE Qt6::Widgets)
-cutefish_add_test(fractional_scale_toolkit_test cutefish-wayland-input cutefish-wayland-shell PkgConfig::WaylandClient)
-target_compile_definitions(fractional_scale_toolkit_test PRIVATE QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"
-    QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>")
-add_dependencies(fractional_scale_toolkit_test scaling-qt-client scaling-quick-client)
-set_tests_properties(fractional_scale_toolkit_test PROPERTIES TIMEOUT 30)
+if(Qt6Widgets_FOUND AND Qt6Quick_FOUND)
+    add_executable(scaling-quick-client scaling/quick_client.cpp)
+    target_link_libraries(scaling-quick-client PRIVATE Qt6::Quick)
+    add_executable(scaling-qt-client scaling/qt_client.cpp)
+    target_link_libraries(scaling-qt-client PRIVATE Qt6::Widgets)
+    cutefish_add_test(fractional_scale_toolkit_test cutefish-wayland-input cutefish-wayland-shell
+        PkgConfig::WaylandClient)
+    target_compile_definitions(fractional_scale_toolkit_test PRIVATE
+        QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"
+        QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>")
+    add_dependencies(fractional_scale_toolkit_test scaling-qt-client scaling-quick-client)
+    set_tests_properties(fractional_scale_toolkit_test PROPERTIES TIMEOUT 30)
+endif()
 
 cutefish_add_test(presentation_test cutefish-compositor-core)
 cutefish_add_test(presentation_protocol_test cutefish-compositor-core PkgConfig::WaylandClient)
@@ -274,17 +289,22 @@ set_tests_properties(drm_output_test PROPERTIES TIMEOUT 60 ENVIRONMENT "LIBGL_AL
 cutefish_add_test(window_visual_test cutefish-decoration)
 cutefish_add_test(window_visual_pixel_test cutefish-decoration cutefish-render)
 set_tests_properties(window_visual_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
-add_executable(fishui-resize-client visuals/fishui_client.cpp)
-target_link_libraries(fishui-resize-client PRIVATE Qt6::Quick)
-cutefish_add_test(window_visual_toolkit_test cutefish-wayland-input cutefish-wayland-shell
-    cutefish-decoration cutefish-render PkgConfig::WaylandClient)
-target_compile_definitions(window_visual_toolkit_test PRIVATE
-    QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"
-    FISHUI_RESIZE_CLIENT="$<TARGET_FILE:fishui-resize-client>"
-    ELECTRON_VISUAL_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/visuals/electron_client.js")
-add_dependencies(window_visual_toolkit_test scaling-qt-client fishui-resize-client)
-set_tests_properties(window_visual_toolkit_test PROPERTIES TIMEOUT 70
-    ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
+if(Qt6Widgets_FOUND AND Qt6Quick_FOUND)
+    add_executable(fishui-resize-client visuals/fishui_client.cpp)
+    target_link_libraries(fishui-resize-client PRIVATE Qt6::Quick)
+    cutefish_add_test(window_visual_toolkit_test cutefish-wayland-input cutefish-wayland-shell
+        cutefish-decoration cutefish-render PkgConfig::WaylandClient)
+    target_compile_definitions(window_visual_toolkit_test PRIVATE
+        QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"
+        QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>"
+        FISHUI_RESIZE_CLIENT="$<TARGET_FILE:fishui-resize-client>"
+        QT_QML_IMPORTS_PATH="${QT6_INSTALL_PREFIX}/${QT6_INSTALL_QML}"
+        ELECTRON_VISUAL_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/visuals/electron_client.js")
+    add_dependencies(window_visual_toolkit_test scaling-qt-client scaling-quick-client
+        fishui-resize-client)
+    set_tests_properties(window_visual_toolkit_test PROPERTIES TIMEOUT 70
+        ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
+endif()
 
 if(CUTEFISH_ENABLE_XWAYLAND)
     cutefish_add_test(xwayland_test cutefish-xwayland cutefish-wayland-shell cutefish-wayland-input cutefish-render cutefish-decoration PkgConfig::WaylandClient)
@@ -292,17 +312,22 @@ if(CUTEFISH_ENABLE_XWAYLAND)
     target_compile_definitions(xwayland_test PRIVATE XWAYLAND_FAULT_PATH="$<TARGET_FILE:xwayland-startup-fault>")
     add_executable(x11-test-client xwayland/x11_client.cpp)
     target_link_libraries(x11-test-client PRIVATE PkgConfig::Xcb)
-    target_compile_definitions(xwayland_test PRIVATE X11_TEST_CLIENT="$<TARGET_FILE:x11-test-client>")
-    target_compile_definitions(xwayland_test PRIVATE QT_CLIPBOARD_CLIENT="$<TARGET_FILE:clipboard-qt-client>")
-    target_compile_definitions(xwayland_test PRIVATE
-        QT_DND_CLIENT="$<TARGET_FILE:dnd-qt-client>"
+    target_compile_definitions(xwayland_test PRIVATE X11_TEST_CLIENT="$<TARGET_FILE:x11-test-client>"
         GTK_DND_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/dnd/gtk_client.py")
-    add_dependencies(xwayland_test xwayland-startup-fault x11-test-client clipboard-qt-client
-        dnd-qt-client)
+    add_dependencies(xwayland_test xwayland-startup-fault x11-test-client)
+    # Empty without Qt Widgets: the cases that run the Qt clients skip.
+    if(Qt6Widgets_FOUND)
+        target_compile_definitions(xwayland_test PRIVATE
+            QT_CLIPBOARD_CLIENT="$<TARGET_FILE:clipboard-qt-client>"
+            QT_DND_CLIENT="$<TARGET_FILE:dnd-qt-client>")
+        add_dependencies(xwayland_test clipboard-qt-client dnd-qt-client)
+    else()
+        target_compile_definitions(xwayland_test PRIVATE QT_CLIPBOARD_CLIENT="" QT_DND_CLIENT="")
+    endif()
     set_tests_properties(xwayland_test PROPERTIES TIMEOUT 90 ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 endif()
 
-cutefish_add_test(display_runtime_test cutefish-display-runtime cutefish-session Qt6::Test)
+cutefish_add_test(display_runtime_test cutefish-display-runtime cutefish-session)
 
 cutefish_add_test(capture_pixel_test cutefish-render)
 cutefish_add_test(render_internals_test cutefish-render PkgConfig::Gbm PkgConfig::Libdrm)
@@ -324,69 +349,43 @@ cutefish_add_test(damage_gbm_test cutefish-scene cutefish-render PkgConfig::Gbm)
 cutefish_add_test(dmabuf_format_gbm_test cutefish-render PkgConfig::Gbm)
 cutefish_add_test(capture_dmabuf_gbm_test cutefish-render PkgConfig::Gbm PkgConfig::Libdrm)
 
-target_compile_definitions(window_visual_toolkit_test PRIVATE QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>")
-add_dependencies(window_visual_toolkit_test scaling-quick-client)
-
 cutefish_add_test(idle_notify_protocol_test cutefish-wayland-input PkgConfig::WaylandClient)
 
-add_executable(auth_controller_test auth_controller_test.cpp)
-target_link_libraries(auth_controller_test PRIVATE cutefish-auth Qt6::Test)
-add_test(NAME auth_controller_test COMMAND auth_controller_test)
-set_tests_properties(auth_controller_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-add_executable(switcher_view_test switcher_view_test.cpp)
-target_include_directories(switcher_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(switcher_view_test PRIVATE cutefish-switcher Qt6::Test)
-add_test(NAME switcher_view_test COMMAND switcher_view_test)
+cutefish_add_test(auth_controller_test cutefish-auth)
+cutefish_add_test(switcher_view_test cutefish-switcher)
 cutefish_add_test(panel_gpu_pixel_test cutefish-auth cutefish-render)
 target_include_directories(panel_gpu_pixel_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(panel_gpu_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 cutefish_add_test(switcher_gpu_pixel_test cutefish-switcher cutefish-render)
-target_include_directories(switcher_gpu_pixel_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(switcher_gpu_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
-add_executable(auth_ui_test auth_ui_test.cpp)
-target_link_libraries(auth_ui_test PRIVATE cutefish-auth Qt6::Test)
-add_test(NAME auth_ui_test COMMAND auth_ui_test)
-add_executable(greetd_backend_test greetd_backend_test.cpp)
-target_link_libraries(greetd_backend_test PRIVATE cutefish-auth Qt6::Test)
-add_test(NAME greetd_backend_test COMMAND greetd_backend_test)
-add_executable(screen_saver_service_test screen_saver_service_test.cpp)
-target_link_libraries(screen_saver_service_test PRIVATE cutefish-session Qt6::Test)
-add_test(NAME screen_saver_service_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:screen_saver_service_test>)
-add_executable(applications_service_test applications_service_test.cpp)
-target_include_directories(applications_service_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(applications_service_test PRIVATE cutefish-session Qt6::Test)
-add_test(NAME applications_service_test
-    COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:applications_service_test>)
+cutefish_add_test(auth_ui_test cutefish-auth)
+cutefish_add_test(greetd_backend_test cutefish-auth)
+cutefish_add_test(screen_saver_service_test DBUS cutefish-session)
+cutefish_add_test(applications_service_test DBUS cutefish-session)
 
-add_executable(window_debug_service_test window_debug_service_test.cpp)
-target_include_directories(window_debug_service_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(window_debug_service_test PRIVATE cutefish-session Qt6::Test)
-add_test(NAME window_debug_service_test
-    COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:window_debug_service_test>)
+cutefish_add_test(window_debug_service_test DBUS cutefish-session)
 
-add_executable(sleep_lock_test sleep_lock_test.cpp)
-target_link_libraries(sleep_lock_test PRIVATE cutefish-session Qt6::Test)
-add_test(NAME sleep_lock_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:sleep_lock_test>)
+cutefish_add_test(sleep_lock_test DBUS cutefish-session)
 
-add_executable(power_button_test power_button_test.cpp)
-target_link_libraries(power_button_test PRIVATE cutefish-session Qt6::Test)
-add_test(NAME power_button_test COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:power_button_test>)
+cutefish_add_test(power_button_test DBUS cutefish-session)
 
 cutefish_add_test(input_method_protocol_test cutefish-wayland-input PkgConfig::WaylandClient)
 set_tests_properties(input_method_protocol_test PROPERTIES TIMEOUT 45)
 
+add_executable(input_method_settings_test input_method_settings_test.cpp)
+target_include_directories(input_method_settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(input_method_settings_test PRIVATE cutefish-input-method-settings
+    GTest::gtest_main)
+add_test(NAME input_method_settings_test
+    COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:input_method_settings_test>)
+
 add_executable(input_method_launched_client input_method/launched_client.cpp)
 target_link_libraries(input_method_launched_client PRIVATE PkgConfig::WaylandClient)
-add_executable(input_method_launcher_test input_method_launcher_test.cpp)
-target_include_directories(input_method_launcher_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(input_method_launcher_test PRIVATE cutefish-wayland-input
-    cutefish-wayland-private-shell cutefish-input-method-settings PkgConfig::WaylandClient
-    Qt6::Test GTest::gtest)
+cutefish_add_test(input_method_launcher_test DBUS cutefish-wayland-input
+    cutefish-wayland-private-shell PkgConfig::WaylandClient)
 target_compile_definitions(input_method_launcher_test PRIVATE
     CUTEFISH_LAUNCHED_CLIENT="$<TARGET_FILE:input_method_launched_client>")
 add_dependencies(input_method_launcher_test input_method_launched_client)
-add_test(NAME input_method_launcher_test
-    COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:input_method_launcher_test>)
 set_tests_properties(input_method_launcher_test PROPERTIES TIMEOUT 60)
 
 # Sanitizer builds run several times slower than the per-test timeouts above

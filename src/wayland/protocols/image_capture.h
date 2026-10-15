@@ -4,12 +4,12 @@
 
 #pragma once
 
-#include <QObject>
-#include <QRect>
-#include <QString>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
+
+#include "base/geometry.h"
 
 struct wl_client;
 struct wl_display;
@@ -30,7 +30,7 @@ class Node;
 
 namespace cutefish::wayland {
 
-class ImageCaptureManager : public QObject
+class ImageCaptureManager
 {
 public:
     using Authorize = std::function<bool(const wl_client *)>;
@@ -55,7 +55,7 @@ public:
         std::function<void(bool cursors)> scene;
         std::function<Composited()> composited;
         std::function<void()> cursors;
-        std::function<QRect()> cursorBounds;
+        std::function<base::Rect()> cursorBounds;
         const scene::Node *root = nullptr;
     };
 
@@ -64,6 +64,8 @@ public:
     ImageCaptureManager(wl_display *display, Authorize authorize, std::function<void()> repaint,
                         Authorize bindable = {});
     ~ImageCaptureManager();
+    ImageCaptureManager(const ImageCaptureManager &) = delete;
+    ImageCaptureManager &operator=(const ImageCaptureManager &) = delete;
 
     // Releases the globals; must run before the display is destroyed.
     void shutdown();
@@ -99,7 +101,7 @@ public:
     wl_global *sourceGlobal() const;
     wl_global *toplevelSourceGlobal() const;
     wl_global *copyGlobal() const;
-    bool hasPending(const QString &output) const;
+    bool hasPending(const std::string &output) const;
     void renderPending(render::Renderer &renderer, const Painters &painters);
     void renderPending(render::Renderer &renderer, const std::function<void(bool)> &paint);
 

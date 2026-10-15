@@ -4,24 +4,24 @@
 
 #include "input/touchpad_settings.h"
 
-#include <QCoreApplication>
-#include <QDBusInterface>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QEventLoop>
-#include <QSignalSpy>
-#include <QTemporaryDir>
-#include <QTimer>
 #include <gtest/gtest.h>
 #include <limits>
 
+#include "base/event_loop.h"
+#include "base/settings.h"
+#include "input_test_util.h"
+
+using cutefish::base::EventLoop;
+using cutefish::base::Settings;
 using cutefish::input::TouchpadSettings;
+using input_test::RemoteObject;
+using input_test::TemporaryDirectory;
 
 TEST(TouchpadSettings, DefaultsFollowChromiumAndLibinput)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    TouchpadSettings settings(nullptr, directory.filePath(QStringLiteral("compositor.conf")));
+    TouchpadSettings settings(directory.filePath("compositor.conf"));
     EXPECT_FALSE(settings.available());
     EXPECT_TRUE(settings.enabled());
     EXPECT_FALSE(settings.disableWithMouse());
@@ -37,12 +37,13 @@ TEST(TouchpadSettings, DefaultsFollowChromiumAndLibinput)
 
 TEST(TouchpadSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     {
-        TouchpadSettings settings(nullptr, file);
-        QSignalSpy changes(&settings, &TouchpadSettings::settingsChanged);
+        TouchpadSettings settings(file);
+        int changes = 0;
+        auto changesCounter = settings.settingsChanged.connect([&changes] { ++changes; });
         settings.setEnabled(false);
         settings.setEnabled(false);
         settings.setDisableWithMouse(true);
@@ -54,20 +55,23 @@ TEST(TouchpadSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
         settings.setScrollSpeed(0.75);
         settings.setTwoFingerSecondaryClick(false);
         settings.setTwoFingerSecondaryClick(false);
-        EXPECT_EQ(changes.count(), 9);
-        QSignalSpy availability(&settings, &TouchpadSettings::availableChanged);
+        EXPECT_EQ(changes, 9);
+        int availability = 0;
+        auto availabilityCounter =
+                settings.availableChanged.connect([&availability] { ++availability; });
         settings.setAvailable(true);
         settings.setAvailable(true);
         settings.setAvailable(false);
-        EXPECT_EQ(availability.count(), 2);
-        QSignalSpy configurable(&settings,
-                                &TouchpadSettings::secondaryClickConfigurableChanged);
+        EXPECT_EQ(availability, 2);
+        int configurable = 0;
+        auto configurableCounter = settings.secondaryClickConfigurableChanged.connect(
+                [&configurable] { ++configurable; });
         settings.setSecondaryClickConfigurable(true);
         settings.setSecondaryClickConfigurable(true);
-        EXPECT_EQ(configurable.count(), 1);
-        EXPECT_EQ(changes.count(), 9);
+        EXPECT_EQ(configurable, 1);
+        EXPECT_EQ(changes, 9);
     }
-    TouchpadSettings restored(nullptr, file);
+    TouchpadSettings restored(file);
     EXPECT_FALSE(restored.enabled());
     EXPECT_TRUE(restored.disableWithMouse());
     EXPECT_FALSE(restored.disableWhileTyping());
@@ -83,22 +87,22 @@ TEST(TouchpadSettings, PersistsWithoutDevicesAndNotifiesOnlyOnChanges)
 
 TEST(TouchpadSettings, RejectsNonFiniteSpeedAndClampsRange)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     {
-        QSettings stored(file, QSettings::IniFormat);
-        stored.beginGroup(QStringLiteral("Touchpad"));
-        stored.setValue(QStringLiteral("pointerAcceleration"), QStringLiteral("nan"));
-        stored.setValue(QStringLiteral("scrollSpeed"), QStringLiteral("inf"));
+        Settings stored(file);
+        stored.setValue("Touchpad/pointerAcceleration", "nan");
+        stored.setValue("Touchpad/scrollSpeed", "inf");
     }
-    TouchpadSettings settings(nullptr, file);
+    TouchpadSettings settings(file);
     EXPECT_DOUBLE_EQ(settings.pointerAcceleration(), 0);
     EXPECT_DOUBLE_EQ(settings.scrollSpeed(), TouchpadSettings::kDefaultScrollSpeed);
-    QSignalSpy changes(&settings, &TouchpadSettings::settingsChanged);
+    int changes = 0;
+        auto changesCounter = settings.settingsChanged.connect([&changes] { ++changes; });
     settings.setPointerAcceleration(std::numeric_limits<double>::quiet_NaN());
     settings.setPointerAcceleration(std::numeric_limits<double>::infinity());
-    EXPECT_EQ(changes.count(), 0);
+    EXPECT_EQ(changes, 0);
     settings.setPointerAcceleration(10);
     EXPECT_DOUBLE_EQ(settings.pointerAcceleration(), 1);
     settings.setPointerAcceleration(-10);
@@ -108,63 +112,47 @@ TEST(TouchpadSettings, RejectsNonFiniteSpeedAndClampsRange)
     EXPECT_DOUBLE_EQ(settings.scrollSpeed(), TouchpadSettings::kMinimumScrollSpeed);
     settings.setScrollSpeed(100);
     EXPECT_DOUBLE_EQ(settings.scrollSpeed(), TouchpadSettings::kMaximumScrollSpeed);
-    EXPECT_EQ(changes.count(), 4);
+    EXPECT_EQ(changes, 4);
 }
 
 TEST(TouchpadSettings, DBusPropertiesMethodsAndServiceRestart)
 {
-    ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
-    QTemporaryDir directory;
+    EventLoop loop;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     for (int iteration = 0; iteration < 2; ++iteration) {
-        TouchpadSettings settings(nullptr, file);
+        TouchpadSettings settings(file);
         ASSERT_TRUE(settings.registerService());
-        QDBusInterface proxy(QStringLiteral("com.cutefish.Touchpad1"),
-                             QStringLiteral("/com/cutefish/Touchpad1"),
-                             QStringLiteral("com.cutefish.Touchpad1"));
+        RemoteObject proxy(loop, "com.cutefish.Touchpad1", "/com/cutefish/Touchpad1",
+                           "com.cutefish.Touchpad1");
         ASSERT_TRUE(proxy.isValid());
-        EXPECT_EQ(proxy.property("tapToClick").toBool(), iteration != 0);
-        const auto invoke = [&proxy](const QString &method, const QVariant &value) {
-            QDBusPendingCallWatcher watcher(proxy.asyncCall(method, value));
-            QEventLoop loop;
-            QObject::connect(&watcher, &QDBusPendingCallWatcher::finished, &loop,
-                             &QEventLoop::quit);
-            QTimer::singleShot(2000, &loop, &QEventLoop::quit);
-            if (!watcher.isFinished())
-                loop.exec();
-            EXPECT_TRUE(watcher.isFinished());
-            const QDBusPendingReply<> reply = watcher;
-            EXPECT_FALSE(reply.isError()) << reply.error().message().toStdString();
+        EXPECT_EQ(proxy.property<bool>("tapToClick"), iteration != 0);
+        const auto invoke = [&proxy](const std::string &method, auto value) {
+            const auto reply = proxy.call(method, value);
+            EXPECT_FALSE(reply.isError()) << method << ": " << reply.error().message;
         };
-        invoke(QStringLiteral("setEnabled"), false);
-        invoke(QStringLiteral("setDisableWithMouse"), true);
-        invoke(QStringLiteral("setDisableWhileTyping"), false);
-        invoke(QStringLiteral("setTapToClick"), true);
-        invoke(QStringLiteral("setTapDragging"), true);
-        invoke(QStringLiteral("setNaturalScroll"), false);
-        invoke(QStringLiteral("setPointerAcceleration"), -0.6);
-        invoke(QStringLiteral("setScrollSpeed"), 1.25);
-        invoke(QStringLiteral("setTwoFingerSecondaryClick"), false);
-        EXPECT_FALSE(proxy.property("enabled").toBool());
-        EXPECT_TRUE(proxy.property("disableWithMouse").toBool());
-        EXPECT_FALSE(proxy.property("disableWhileTyping").toBool());
-        EXPECT_TRUE(proxy.property("tapToClick").toBool());
-        EXPECT_TRUE(proxy.property("tapDragging").toBool());
-        EXPECT_FALSE(proxy.property("naturalScroll").toBool());
-        EXPECT_DOUBLE_EQ(proxy.property("pointerAcceleration").toDouble(), -0.6);
-        EXPECT_DOUBLE_EQ(proxy.property("scrollSpeed").toDouble(), 1.25);
-        EXPECT_FALSE(proxy.property("twoFingerSecondaryClick").toBool());
+        invoke("setEnabled", false);
+        invoke("setDisableWithMouse", true);
+        invoke("setDisableWhileTyping", false);
+        invoke("setTapToClick", true);
+        invoke("setTapDragging", true);
+        invoke("setNaturalScroll", false);
+        invoke("setPointerAcceleration", -0.6);
+        invoke("setScrollSpeed", 1.25);
+        invoke("setTwoFingerSecondaryClick", false);
+        EXPECT_EQ(proxy.property<bool>("enabled"), false);
+        EXPECT_EQ(proxy.property<bool>("disableWithMouse"), true);
+        EXPECT_EQ(proxy.property<bool>("disableWhileTyping"), false);
+        EXPECT_EQ(proxy.property<bool>("tapToClick"), true);
+        EXPECT_EQ(proxy.property<bool>("tapDragging"), true);
+        EXPECT_EQ(proxy.property<bool>("naturalScroll"), false);
+        EXPECT_EQ(proxy.property<double>("pointerAcceleration"), -0.6);
+        EXPECT_EQ(proxy.property<double>("scrollSpeed"), 1.25);
+        EXPECT_EQ(proxy.property<bool>("twoFingerSecondaryClick"), false);
         settings.setAvailable(true);
-        EXPECT_TRUE(proxy.property("available").toBool());
+        EXPECT_EQ(proxy.property<bool>("available"), true);
         settings.setSecondaryClickConfigurable(true);
-        EXPECT_TRUE(proxy.property("secondaryClickConfigurable").toBool());
+        EXPECT_EQ(proxy.property<bool>("secondaryClickConfigurable"), true);
     }
-}
-
-int main(int argc, char **argv)
-{
-    QCoreApplication application(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

@@ -9,6 +9,7 @@
 #include "render/gl_program.h"
 #include "render/gl_render_pass.h"
 #include "render/shape_mask.h"
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -31,10 +32,10 @@ public:
     void beginPass(uint64_t scope, const std::vector<uint64_t> &fresh);
     // `lens` is the exact device rectangle; it is rounded outward to pixels here.
     // With a `scope`, the blurred backdrop is kept for the next pass, by `owner`.
-    void draw(Renderer &renderer, const QRectF &lens, int radius, const QRect &clip,
-              const GlassParams &glass, double scale, const QPainterPath &shape,
+    void draw(Renderer &renderer, const base::RectF &lens, int radius, const base::Rect &clip,
+              const GlassParams &glass, double scale, const ui::Path &shape,
               const std::vector<BackdropSource> &sources, std::vector<RoundedShape> &clips,
-              const std::function<void(const QRectF &, float *)> &quadFor,
+              const std::function<void(const base::RectF &, float *)> &quadFor,
               const std::function<void(const GlProgram &)> &applyRoundedClip,
               uint64_t scope = 0, uint64_t owner = 0);
 
@@ -43,8 +44,8 @@ private:
     // frame do not reallocate each other's textures; plain blurs share them.
     struct Scratch {
         // Empty for a plain blur, whose textures serve any coverage.
-        QSize coverage;
-        QSize size;
+        base::Size coverage;
+        base::Size size;
         uint64_t used = 0;
         std::unique_ptr<Texture> capture;
         std::unique_ptr<Texture> opaqueCapture;
@@ -54,7 +55,7 @@ private:
     };
     // `shape` is relative to its own bounds, so a moving popup keeps its mask.
     struct Mask {
-        QPainterPath shape;
+        ui::Path shape;
         ShapeRaster raster;
         uint64_t used = 0;
         std::unique_ptr<Texture> texture;
@@ -64,9 +65,9 @@ private:
     struct Kept {
         uint64_t scope = 0;
         uint64_t owner = 0;
-        QRect coverage;
-        QSize reduced;
-        QSize allocated;
+        base::Rect coverage;
+        base::Size reduced;
+        base::Size allocated;
         float sigma = 0;
         // A surface drawn twice in one pass keeps only its first blur.
         bool drawn = false;
@@ -74,18 +75,18 @@ private:
         std::unique_ptr<Texture> result;
     };
 
-    Scratch &scratch(const QSize &coverage, const QSize &size);
+    Scratch &scratch(const base::Size &coverage, const base::Size &size);
     // Copies `coverage` of the target into `textures.source`, reduced to `reduced`.
     bool captureBackdrop(Renderer &renderer, Scratch &textures,
-                         const std::vector<BackdropSource> &sources, const QRect &coverage,
-                         const QSize &reduced, const QRect &allocatedBounds);
+                         const std::vector<BackdropSource> &sources, const base::Rect &coverage,
+                         const base::Size &reduced, const base::Rect &allocatedBounds);
     // Copies `coverage` of a lone upright source into the top left of the
     // bound pass at `reduced` in one blit. False when it cannot, and nothing is drawn.
-    bool blitReduced(const std::vector<BackdropSource> &sources, const QRect &coverage,
-                     const QSize &reduced, unsigned int destination);
-    Texture *mask(Renderer &renderer, const QPainterPath &shape, const ShapeRaster &raster);
+    bool blitReduced(const std::vector<BackdropSource> &sources, const base::Rect &coverage,
+                     const base::Size &reduced, unsigned int destination);
+    Texture *mask(Renderer &renderer, const ui::Path &shape, const ShapeRaster &raster);
     void applyGlassMaterial(const GlProgram &program, const GlassParams &glass,
-                            const QSize &coverage, double scale);
+                            const base::Size &coverage, double scale);
 
     // Skia's kMaxLinearSigma, in texels of the glass capture.
     static constexpr float kMaxGlassSigma = 4;

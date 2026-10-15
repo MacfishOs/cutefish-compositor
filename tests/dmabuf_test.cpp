@@ -9,10 +9,6 @@
 
 #include <gtest/gtest.h>
 
-#include <QCoreApplication>
-#include <QDeadlineTimer>
-#include <QTemporaryDir>
-
 #include <drm_fourcc.h>
 #include <linux-dmabuf-v1-client-protocol.h>
 #include <wayland-client.h>
@@ -27,8 +23,11 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <functional>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -36,9 +35,11 @@
 #include "compositor/dmabuf_buffer.h"
 #include "compositor/surface.h"
 #include "fake_renderer.h"
+#include "loop_test_util.h"
 #include "render/dmabuf.h"
 #include "scene/scene.h"
 #include "scene/surface_node.h"
+#include "temporary_directory.h"
 #include "wayland/protocols/dmabuf_feedback_manager.h"
 #include "wayland/protocols/linux_dmabuf.h"
 #include "wayland/protocols/wl_compositor.h"
@@ -55,17 +56,17 @@ constexpr uint64_t kModifierB = 0x0100000000000002ull;
 class FakeDmaBufTexture : public render::Texture
 {
 public:
-    FakeDmaBufTexture(const QSize& size, render::PixelFormat format)
+    FakeDmaBufTexture(const base::Size& size, render::PixelFormat format)
         : m_size(size)
         , m_format(format)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
     render::PixelFormat format() const override { return m_format; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
     render::PixelFormat m_format;
 };
 
@@ -75,7 +76,7 @@ class FakeDmaBufDevice : public render::DmaBufDevice
 {
 public:
     struct ImportRecord {
-        QSize size;
+        base::Size size;
         uint32_t format = 0;
         uint64_t modifier = 0;
         bool yInvert = false;
@@ -212,17 +213,17 @@ struct ClientContext {
     ClientResult* result = nullptr;
 };
 
-// Runs a client on its own thread so the server can keep dispatching on the Qt
+// Runs a client on its own thread so the server can keep dispatching on the
 // event loop of the main thread.
 class TestClient
 {
 public:
     using Body = std::function<void(ClientContext&)>;
 
-    void start(const QString& socketName, Body body, uint32_t bindVersion)
+    void start(const std::string& socketName, Body body, uint32_t bindVersion)
     {
         m_thread = std::thread(
-            [this, name = socketName.toStdString(), body = std::move(body), bindVersion] {
+            [this, name = socketName, body = std::move(body), bindVersion] {
                 run(name, body, bindVersion);
             });
     }
@@ -427,16 +428,11 @@ protected:
     void SetUp() override
     {
         ASSERT_TRUE(m_runtimeDir.isValid());
-        m_previousRuntime = qgetenv("XDG_RUNTIME_DIR");
-        qputenv("XDG_RUNTIME_DIR", m_runtimeDir.path().toUtf8());
+        if (const char* previous = std::getenv("XDG_RUNTIME_DIR"))
+            m_previousRuntime = previous;
+        setenv("XDG_RUNTIME_DIR", m_runtimeDir.path().c_str(), 1);
 
-        static int argc = 1;
-        static char arg0[] = "dmabuf_test";
-        static char* argv[] = { arg0, nullptr };
-        if (!QCoreApplication::instance())
-            new QCoreApplication(argc, argv);
-
-        m_scene.setSize(QSize(800, 600));
+        m_scene.setSize(base::Size(800, 600));
         m_compositor = std::make_unique<compositor::Compositor>(m_scene.root());
         m_compositor->setDmaBufDevice(&m_device);
 
@@ -455,20 +451,14 @@ protected:
         m_dmabufGlobal.reset();
         m_server.reset();
         m_compositor.reset();
-        if (m_previousRuntime.isNull()) qunsetenv("XDG_RUNTIME_DIR");
-        else qputenv("XDG_RUNTIME_DIR", m_previousRuntime);
+        if (!m_previousRuntime) unsetenv("XDG_RUNTIME_DIR");
+        else setenv("XDG_RUNTIME_DIR", m_previousRuntime->c_str(), 1);
     }
 
     template<class Predicate>
     bool waitFor(Predicate predicate, int timeoutMs = 5000)
     {
-        QDeadlineTimer deadline(timeoutMs);
-        while (!predicate()) {
-            if (deadline.hasExpired())
-                return false;
-            QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents, 5);
-        }
-        return true;
+        return cutefish::test::runUntil(predicate, std::chrono::milliseconds(timeoutMs));
     }
 
     bool runClient(TestClient& client, TestClient::Body body, uint32_t bindVersion = 4)
@@ -481,8 +471,8 @@ protected:
         return ok && !client.result.failed;
     }
 
-    QTemporaryDir m_runtimeDir;
-    QByteArray m_previousRuntime;
+    cutefish::test::TemporaryDirectory m_runtimeDir;
+    std::optional<std::string> m_previousRuntime;
     scene::Scene m_scene;
     FakeDmaBufDevice m_device;
     std::unique_ptr<compositor::Compositor> m_compositor;
@@ -728,7 +718,7 @@ TEST_F(DmaBufTest, CreateImmedImportsTheBufferAndTheSurfaceSamplesIt)
 
     ASSERT_EQ(m_device.imports.size(), 1u);
     const auto& import = m_device.imports.front();
-    EXPECT_EQ(import.size, QSize(32, 16));
+    EXPECT_EQ(import.size, base::Size(32, 16));
     EXPECT_EQ(import.format, uint32_t(DRM_FORMAT_ARGB8888));
     EXPECT_EQ(import.modifier, kModifierA);
     EXPECT_FALSE(import.yInvert);
@@ -744,7 +734,7 @@ TEST_F(DmaBufTest, CreateImmedImportsTheBufferAndTheSurfaceSamplesIt)
     ASSERT_TRUE(surface->node()->texture());
     // Sampled straight from the client's DMA-BUF: nothing was uploaded.
     EXPECT_EQ(renderer.createdTextures, 0);
-    EXPECT_EQ(surface->node()->texture()->size(), QSize(32, 16));
+    EXPECT_EQ(surface->node()->texture()->size(), base::Size(32, 16));
 
     client.result.release();
     ASSERT_TRUE(waitFor([&client] { return client.result.finished.load(); }));
@@ -1002,7 +992,7 @@ TEST_F(DmaBufTest, DestructionIsSafeWithoutAConnection)
 ////////////////////////////////////////////////////////////////////////////////
 // Buffer lifetime, independent of the protocol.
 
-render::DmaBufAttributes makeAttributes(const QSize& size)
+render::DmaBufAttributes makeAttributes(const base::Size& size)
 {
     render::DmaBufAttributes attributes;
     attributes.size = size;
@@ -1019,14 +1009,14 @@ render::DmaBufAttributes makeAttributes(const QSize& size)
 TEST(DmaBufBufferTest, TheImportedTextureIsReusedAcrossCommits)
 {
     FakeDmaBufDevice device;
-    auto buffer = compositor::DmaBufBuffer::create(&device, makeAttributes(QSize(8, 8)));
+    auto buffer = compositor::DmaBufBuffer::create(&device, makeAttributes(base::Size(8, 8)));
     ASSERT_TRUE(buffer);
 
     EXPECT_EQ(device.imports.size(), 1u);
     EXPECT_EQ(buffer->pixels(), nullptr);
     EXPECT_EQ(buffer->stride(), 32);
     ASSERT_TRUE(buffer->texture());
-    EXPECT_EQ(buffer->texture()->size(), QSize(8, 8));
+    EXPECT_EQ(buffer->texture()->size(), base::Size(8, 8));
     // Imported once; later commits reuse it rather than importing again.
     EXPECT_EQ(buffer->texture().get(), buffer->texture().get());
     EXPECT_EQ(buffer->attributes().modifier, kModifierA);
@@ -1036,7 +1026,7 @@ TEST(DmaBufBufferTest, TheImportedTextureIsReusedAcrossCommits)
 TEST(DmaBufBufferTest, ReleaseWaitsForDetachBecauseClientStorageIsSampled)
 {
     FakeDmaBufDevice device;
-    auto buffer = compositor::DmaBufBuffer::create(&device, makeAttributes(QSize(8, 8)));
+    auto buffer = compositor::DmaBufBuffer::create(&device, makeAttributes(base::Size(8, 8)));
     ASSERT_TRUE(buffer);
 
     int releases = 0;
@@ -1060,7 +1050,7 @@ TEST(DmaBufBufferTest, AFailedImportProducesNoBufferAndClosesThePlaneFds)
     FakeDmaBufDevice device;
     device.failImports = true;
 
-    render::DmaBufAttributes attributes = makeAttributes(QSize(8, 8));
+    render::DmaBufAttributes attributes = makeAttributes(base::Size(8, 8));
     const int fd = attributes.planes.front().fd.get();
     EXPECT_GE(fcntl(fd, F_GETFD), 0);
 
@@ -1072,7 +1062,7 @@ TEST(DmaBufBufferTest, AFailedImportProducesNoBufferAndClosesThePlaneFds)
 
 TEST(DmaBufBufferTest, WithoutADeviceNoBufferIsCreated)
 {
-    EXPECT_FALSE(compositor::DmaBufBuffer::create(nullptr, makeAttributes(QSize(8, 8))));
+    EXPECT_FALSE(compositor::DmaBufBuffer::create(nullptr, makeAttributes(base::Size(8, 8))));
 }
 
 } // namespace
@@ -1081,7 +1071,7 @@ TEST(DmaBufBufferTest, ViewportOnlyCommitKeepsImportAndReleaseOwnership)
 {
     FakeDmaBufDevice device;
     std::shared_ptr<compositor::DmaBufBuffer> buffer =
-        compositor::DmaBufBuffer::create(&device, makeAttributes(QSize(32, 16)));
+        compositor::DmaBufBuffer::create(&device, makeAttributes(base::Size(32, 16)));
     ASSERT_TRUE(buffer);
     scene::Scene scene;
     compositor::Compositor compositor(scene.root());
@@ -1096,8 +1086,8 @@ TEST(DmaBufBufferTest, ViewportOnlyCommitKeepsImportAndReleaseOwnership)
     surface->updateTexture(renderer);
     auto scanout = surface->node()->scanoutBuffer();
     auto* texture = surface->node()->texture();
-    surface->setCrop(QRectF(4, 2, 16, 8));
-    surface->setViewport(QSize(32, 16));
+    surface->setCrop(base::RectF(4, 2, 16, 8));
+    surface->setViewport(base::Size(32, 16));
     surface->commit();
     EXPECT_FALSE(surface->updateTexture(renderer));
     EXPECT_EQ(surface->node()->texture(), texture);

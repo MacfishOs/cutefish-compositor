@@ -4,34 +4,21 @@
 
 #pragma once
 
-#include <QDBusConnection>
-#include <QObject>
-#include <QSettings>
+#include <memory>
+#include <string>
+
+#include "base/settings.h"
+#include "base/signal.h"
 
 namespace cutefish::input {
+
+class DBusExport;
 
 // The touchpad half of Chromium's TouchpadSettingsEvdev, plus libinput's
 // disable-while-typing and disable-with-an-external-mouse modes. Exported as
 // com.cutefish.Touchpad1 for Settings.
-class TouchpadSettings : public QObject
+class TouchpadSettings
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.Touchpad1")
-    Q_PROPERTY(bool available READ available NOTIFY availableChanged)
-    Q_PROPERTY(bool enabled READ enabled NOTIFY enabledChanged)
-    Q_PROPERTY(bool disableWithMouse READ disableWithMouse NOTIFY disableWithMouseChanged)
-    Q_PROPERTY(bool disableWhileTyping READ disableWhileTyping NOTIFY disableWhileTypingChanged)
-    Q_PROPERTY(bool tapToClick READ tapToClick NOTIFY tapToClickChanged)
-    Q_PROPERTY(bool tapDragging READ tapDragging NOTIFY tapDraggingChanged)
-    Q_PROPERTY(bool naturalScroll READ naturalScroll NOTIFY naturalScrollChanged)
-    Q_PROPERTY(
-            double pointerAcceleration READ pointerAcceleration NOTIFY pointerAccelerationChanged)
-    Q_PROPERTY(double scrollSpeed READ scrollSpeed NOTIFY scrollSpeedChanged)
-    Q_PROPERTY(bool secondaryClickConfigurable READ secondaryClickConfigurable NOTIFY
-                       secondaryClickConfigurableChanged)
-    Q_PROPERTY(bool twoFingerSecondaryClick READ twoFingerSecondaryClick NOTIFY
-                       twoFingerSecondaryClickChanged)
-
 public:
     // libinput reports two-finger scrolling unaccelerated at about 10.5 units
     // per millimetre of finger travel, and clients move content one logical
@@ -41,8 +28,8 @@ public:
     static constexpr double kMinimumScrollSpeed = 0.1;
     static constexpr double kMaximumScrollSpeed = 2.0;
 
-    explicit TouchpadSettings(QObject *parent = nullptr, const QString &settingsFile = {});
-    ~TouchpadSettings() override;
+    explicit TouchpadSettings(const std::string &settingsFile = {});
+    ~TouchpadSettings();
     bool registerService();
 
     bool available() const { return m_available; }
@@ -71,7 +58,6 @@ public:
     void setAvailable(bool available);
     void setSecondaryClickConfigurable(bool configurable);
 
-public slots:
     void setEnabled(bool enabled);
     void setDisableWithMouse(bool enabled);
     void setDisableWhileTyping(bool enabled);
@@ -82,23 +68,25 @@ public slots:
     void setScrollSpeed(double value);
     void setTwoFingerSecondaryClick(bool enabled);
 
-signals:
-    void availableChanged();
-    void enabledChanged();
-    void disableWithMouseChanged();
-    void disableWhileTypingChanged();
-    void tapToClickChanged();
-    void tapDraggingChanged();
-    void naturalScrollChanged();
-    void pointerAccelerationChanged();
-    void scrollSpeedChanged();
-    void secondaryClickConfigurableChanged();
-    void twoFingerSecondaryClickChanged();
-    void settingsChanged();
+    base::Signal<> availableChanged;
+    base::Signal<> enabledChanged;
+    base::Signal<> disableWithMouseChanged;
+    base::Signal<> disableWhileTypingChanged;
+    base::Signal<> tapToClickChanged;
+    base::Signal<> tapDraggingChanged;
+    base::Signal<> naturalScrollChanged;
+    base::Signal<> pointerAccelerationChanged;
+    base::Signal<> scrollSpeedChanged;
+    base::Signal<> secondaryClickConfigurableChanged;
+    base::Signal<> twoFingerSecondaryClickChanged;
+    base::Signal<> settingsChanged;
 
 private:
-    void save(const QString &key, const QVariant &value);
-    QSettings m_settings;
+    template<typename T>
+    void save(const std::string &key, T value);
+    void notify(const base::Signal<> &signal, const char *member);
+
+    base::Settings m_settings;
     bool m_available = false;
     bool m_enabled = true;
     bool m_disableWithMouse = false;
@@ -110,7 +98,7 @@ private:
     double m_scrollSpeed = kDefaultScrollSpeed;
     bool m_secondaryClickConfigurable = false;
     bool m_twoFingerSecondaryClick = true;
-    bool m_registered = false;
+    std::unique_ptr<DBusExport> m_object;
 };
 
 } // namespace cutefish::input

@@ -23,6 +23,7 @@
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
+#include "base/strings.h"
 #include "input/seat.h"
 #include "wayland/protocols/window_hints.h"
 #include "wayland/protocols/xdg_positioner.h"
@@ -56,7 +57,7 @@ void xdg_positioner_set_size(wl_client*, wl_resource* resource, int32_t width, i
                                "width and height must be positive and non-zero");
         return;
     }
-    getUserDataAs<WaylandPositioner>(resource)->setSize(QSize(width, height));
+    getUserDataAs<WaylandPositioner>(resource)->setSize(base::Size(width, height));
 }
 
 void xdg_positioner_set_anchor_rect(wl_client*, wl_resource* resource, int32_t x, int32_t y,
@@ -88,7 +89,7 @@ void xdg_positioner_set_constraint_adjustment(wl_client*, wl_resource* resource,
 
 void xdg_positioner_set_offset(wl_client*, wl_resource* resource, int32_t x, int32_t y)
 {
-    getUserDataAs<WaylandPositioner>(resource)->setOffset(QPoint(x, y));
+    getUserDataAs<WaylandPositioner>(resource)->setOffset(base::Point(x, y));
 }
 
 // Version 3. Empty, as in Weston and Exo: Cutefish recomputes a popup's
@@ -429,7 +430,7 @@ public:
             // An in-process client, as in the tests, has the compositor's own pid.
             if (pid <= 0 || pid == getpid())
                 return;
-            qCInfo(cfWayland) << "Killing unresponsive client" << pid;
+            CF_INFO(cfWayland) << "Killing unresponsive client" << pid;
             kill(pid, SIGKILL);
         });
     }
@@ -498,13 +499,13 @@ void xdg_toplevel_set_parent(wl_client*, wl_resource* resource, wl_resource* par
 void xdg_toplevel_set_title(wl_client*, wl_resource* resource, const char* title)
 {
     if (ShellSurface* shellSurface = toplevelShellSurface(resource))
-        shellSurface->setTitle(QString::fromUtf8(title));
+        shellSurface->setTitle(base::strings::sanitizedUtf8(title));
 }
 
 void xdg_toplevel_set_app_id(wl_client*, wl_resource* resource, const char* appId)
 {
     if (ShellSurface* shellSurface = toplevelShellSurface(resource))
-        shellSurface->setApplicationId(QString::fromUtf8(appId));
+        shellSurface->setApplicationId(base::strings::sanitizedUtf8(appId));
 }
 
 // Cutefish has no window menu yet. It belongs to the decoration, but nothing
@@ -550,7 +551,7 @@ void xdg_toplevel_set_max_size(wl_client*, wl_resource* resource, int32_t width,
         return;
     }
     if (ShellSurface* shellSurface = toplevelShellSurface(resource))
-        shellSurface->setMaximumSize(QSize(width, height));
+        shellSurface->setMaximumSize(base::Size(width, height));
 }
 
 void xdg_toplevel_set_min_size(wl_client*, wl_resource* resource, int32_t width, int32_t height)
@@ -561,7 +562,7 @@ void xdg_toplevel_set_min_size(wl_client*, wl_resource* resource, int32_t width,
         return;
     }
     if (ShellSurface* shellSurface = toplevelShellSurface(resource))
-        shellSurface->setMinimumSize(QSize(width, height));
+        shellSurface->setMinimumSize(base::Size(width, height));
 }
 
 void xdg_toplevel_set_maximized(wl_client*, wl_resource* resource)
@@ -623,7 +624,7 @@ public:
         wl_resource* popup = m_resource;
 
         surfaceData->shellSurface->setPopupConfigureCallback(
-            [popup, xdgSurface, serialTracker](const QRect& bounds) {
+            [popup, xdgSurface, serialTracker](const base::Rect& bounds) {
                 xdg_popup_send_configure(popup, bounds.x(), bounds.y(), bounds.width(),
                                          bounds.height());
                 return sendSurfaceConfigure(xdgSurface, serialTracker);
@@ -668,10 +669,10 @@ private:
 
 // The work area a popup is positioned inside, in the coordinates of `parent`'s
 // window geometry, which is what xdg_positioner uses.
-QRect popupWorkArea(WaylandXdgShell* shell, ShellSurface* parent)
+base::Rect popupWorkArea(WaylandXdgShell* shell, ShellSurface* parent)
 {
     // Exo constrains popups to display.work_area(), including shell-owned menus.
-    QRect workArea = shell->windowManager()->workAreaFor(nullptr);
+    base::Rect workArea = shell->windowManager()->workAreaFor(nullptr);
     workArea.translate(-parent->absoluteOrigin());
     return workArea;
 }
@@ -785,7 +786,8 @@ void xdg_surface_get_popup(wl_client* client, wl_resource* resource, uint32_t id
     const WaylandPositioner::Result position = positioner->calculateBounds(
         popupWorkArea(surfaceData->shell, parentData->shellSurface.get()));
 
-    if (!surfaceData->shellSurface->setPopup(parentData->shellSurface.get(), position.toRect())) {
+    if (!surfaceData->shellSurface->setPopup(parentData->shellSurface.get(),
+                                             position.toRect())) {
         wl_resource_post_error(resource, XDG_WM_BASE_ERROR_INVALID_POPUP_PARENT,
                                "the popup parent is the popup itself or one of its descendants");
         return;

@@ -4,10 +4,9 @@
 
 #pragma once
 
-#include <QRect>
-#include <QSize>
 
 #include "render/gl_program.h"
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -24,6 +23,6 @@ void setGaussianKernel(const GlProgram &program, float sigma, float stepX, float
 // Keeps the samples of blur_fragment_shader, or of a shader declaring its
 // uClamp, to `texels` of a texture of `size`, as GL_CLAMP_TO_EDGE keeps them
 // to the whole texture. Rows count bottom-up, as GL lays them.
-void setGaussianClamp(const GlProgram &program, const QRect &texels, const QSize &size);
+void setGaussianClamp(const GlProgram &program, const base::Rect &texels, const base::Size &size);
 
 } // namespace cutefish::render

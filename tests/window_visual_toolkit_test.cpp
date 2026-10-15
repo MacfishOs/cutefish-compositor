@@ -9,23 +9,29 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <QFileInfo>
-#include <QImage>
-#include <QLibraryInfo>
-#include <QProcess>
-#include <QProcessEnvironment>
-#include <QStandardPaths>
-#include <QTemporaryDir>
-#include <QUrl>
+#include <cstdlib>
+#include <filesystem>
+#include <map>
+#include <string>
+#include <string_view>
+#include <vector>
 
+#include "base/elapsed_timer.h"
+#include "base/paths.h"
+#include "base/process.h"
+#include "base/strings.h"
+#include "base/url.h"
 #include "clipboard_test_util.h"
 #include "compositor/output.h"
 #include "decoration/decoration.h"
 #include "decoration/decoration_theme.h"
 #include "decoration/shadow_node.h"
 #include "egl_test_util.h"
+#include "process_test_util.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "temporary_directory.h"
+#include "ui/bitmap.h"
 #include "wayland/protocols/wl_output.h"
 #include "wayland/protocols/wl_shm.h"
 #include "wayland/protocols/wl_subcompositor.h"
@@ -44,21 +50,49 @@ using namespace cutefish;
 
 namespace {
 
-void acceptClient(const QString &program, QStringList arguments, scene::WindowVisualMode expected,
+// The bottom-right pixel inside: right() and bottom() are the far edges.
+base::Point lastPixel(const base::Rect &rect)
+{
+    return base::Point(rect.right() - 1, rect.bottom() - 1);
+}
+
+// A frame read back from GL, bottom row first.
+std::vector<uint8_t> readFrame()
+{
+    std::vector<uint8_t> pixels(size_t(1920) * 1080 * 4);
+    glReadPixels(0, 0, 1920, 1080, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    return pixels;
+}
+
+bool saveFrame(std::vector<uint8_t> &pixels, const std::string &path)
+{
+    return ui::Bitmap::wrap(pixels.data(), 1920, 1080, 1920 * 4,
+                            ui::Bitmap::Format::Rgba8888Premultiplied)
+            .mirrored(false, true)
+            .savePng(path);
+}
+
+std::string environmentVariable(const char *name)
+{
+    const char *value = std::getenv(name);
+    return value ? value : "";
+}
+
+bool fishUiInstalled()
+{
+    return std::filesystem::exists(std::string(QT_QML_IMPORTS_PATH) + "/FishUI/qmldir");
+}
+
+void acceptClient(const std::string &program, std::vector<std::string> arguments,
+                  scene::WindowVisualMode expected,
                   bool exerciseResize = false, bool interactiveResize = false,
                   bool eglResize = false, double bufferScale = 1.0, bool exerciseDamage = false)
 {
-    QTemporaryDir runtime;
+    test::TemporaryDirectory runtime;
     ASSERT_TRUE(runtime.isValid());
-    chmod(runtime.path().toLocal8Bit().constData(), 0700);
+    chmod(runtime.path().c_str(), 0700);
 
-    struct RestoreRuntime {
-        QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
-
-        ~RestoreRuntime() { qputenv("XDG_RUNTIME_DIR", previous); }
-    } restore;
-
-    qputenv("XDG_RUNTIME_DIR", runtime.path().toLocal8Bit());
+    const test::ScopedEnvironmentVariable runtimeVariable("XDG_RUNTIME_DIR", runtime.path());
 
     struct DeviceFd {
         int fd = -1;
@@ -75,8 +109,8 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
                                                                             gbm_surface_destroy);
     std::unique_ptr<render::EglRenderer> renderer;
     std::unique_ptr<render::EglRenderTarget> target;
-    const auto devicePath = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-    if (devicePath.isEmpty()) {
+    const std::string devicePath = environmentVariable("CUTEFISH_TEST_DRM_DEVICE");
+    if (devicePath.empty()) {
         renderer = render::EglRendererTestAccess::create();
         ASSERT_NE(renderer, nullptr);
         const EGLint attrs[] = {EGL_WIDTH, 1920, EGL_HEIGHT, 1080, EGL_NONE};
@@ -84,9 +118,9 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
                 eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attrs);
         ASSERT_NE(eglSurface, EGL_NO_SURFACE);
         target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), eglSurface,
-                                                           nullptr, QSize(1920, 1080));
+                                                           nullptr, base::Size(1920, 1080));
     } else {
-        deviceFd.fd = open(devicePath.constData(), O_RDWR | O_CLOEXEC);
+        deviceFd.fd = open(devicePath.c_str(), O_RDWR | O_CLOEXEC);
         ASSERT_GE(deviceFd.fd, 0);
         device.reset(gbm_create_device(deviceFd.fd));
         ASSERT_TRUE(device);
@@ -103,13 +137,13 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
     clipboard_test::Harness h;
     compositor::Output output;
     output.pixelSize = {1920, 1080};
-    output.scale = *compositor::OutputScale::parse(QString::number(bufferScale));
+    output.scale = *compositor::OutputScale::parse(std::to_string(bufferScale));
     h.compositor.setOutputScale(output.scale);
     h.scene.setSize(output.logicalSize());
     decoration::Theme theme;
     decoration::DecorationProvider frames(&theme);
     wm::WindowManager manager(&h.compositor, &h.seat);
-    manager.setOutputBounds({QPoint(), output.logicalSize()});
+    manager.setOutputBounds(base::Rect(output.logicalSize()));
     manager.setFrameProvider(&frames);
     decoration::ShadowProvider shadows(&theme);
     wm::WmShadowControllerDelegate delegate;
@@ -130,55 +164,49 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
     wayland::createViewporterGlobal(h.server.display());
     wayland::createXdgShellGlobal(h.server.display(), &xdg);
     wayland::createXdgDecorationGlobal(h.server.display());
-    ASSERT_TRUE(h.server.addSocket(QStringLiteral("window-visual-toolkit")));
+    ASSERT_TRUE(h.server.addSocket("window-visual-toolkit"));
     ASSERT_TRUE(h.server.start());
 
-    struct Child : QProcess {
-        ~Child()
-        {
-            if (state() != NotRunning) {
-                kill();
-                waitForFinished(2000);
-            }
-        }
-    } client;
+    // Killed and waited for when it goes.
+    base::Process client;
 
-    auto env = QProcessEnvironment::systemEnvironment();
-    for (const auto *name : {"DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
-                             "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS",
-                             "QT_SCALE_FACTOR_ROUNDING_POLICY", "LD_PRELOAD"})
-        env.remove(QString::fromLatin1(name));
-    env.insert("WAYLAND_DISPLAY", h.server.socketName());
-    env.insert("XDG_RUNTIME_DIR", runtime.path());
-    env.insert("XDG_CONFIG_HOME", runtime.path() + "/config");
-    env.insert("QT_QPA_PLATFORM", "wayland");
-    env.insert("CUTEFISH_TEST_SLOW_PAINT", "1");
-    env.insert("GDK_BACKEND", "wayland");
-    env.insert("GSK_RENDERER", "cairo");
-    env.insert("NO_AT_BRIDGE", "1");
-    env.insert("WAYLAND_DEBUG", "1");
+    std::vector<std::string_view> removed = {
+            "DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
+            "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS", "QT_SCALE_FACTOR_ROUNDING_POLICY",
+            "LD_PRELOAD"};
+    std::map<std::string, std::string> env = {
+            {"WAYLAND_DISPLAY", h.server.socketName()},
+            {"XDG_RUNTIME_DIR", runtime.path()},
+            {"XDG_CONFIG_HOME", runtime.path() + "/config"},
+            {"QT_QPA_PLATFORM", "wayland"},
+            {"CUTEFISH_TEST_SLOW_PAINT", "1"},
+            {"GDK_BACKEND", "wayland"},
+            {"GSK_RENDERER", "cairo"},
+            {"NO_AT_BRIDGE", "1"},
+            {"WAYLAND_DEBUG", "1"}};
     if (interactiveResize && !eglResize)
-        env.insert("QT_QUICK_BACKEND", "software");
+        env["QT_QUICK_BACKEND"] = "software";
     if (eglResize) {
-        env.remove("QT_QUICK_BACKEND");
-        env.insert("QSG_RHI_BACKEND", "opengl");
-        const auto libraries = qEnvironmentVariable("CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH");
+        env.erase("QT_QUICK_BACKEND");
+        removed.push_back("QT_QUICK_BACKEND");
+        env["QSG_RHI_BACKEND"] = "opengl";
+        const std::string libraries = environmentVariable("CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH");
         if (libraries != "system")
-            env.insert("LD_LIBRARY_PATH", libraries);
+            env["LD_LIBRARY_PATH"] = libraries;
     }
     if (exerciseDamage) {
-        env.insert("CUTEFISH_TEST_SCROLL", "1");
-        env.insert("QT_QUICK_BACKEND", "software");
+        env["CUTEFISH_TEST_SCROLL"] = "1";
+        env["QT_QUICK_BACKEND"] = "software";
     }
-    client.setProcessEnvironment(env);
+    client.setEnvironment(test::environmentWith(removed, env));
     for (auto &arg : arguments)
-        arg.replace("@PROFILE@", runtime.path() + "/profile");
+        arg = base::strings::replaceAll(arg, "@PROFILE@", runtime.path() + "/profile");
     client.start(program, arguments);
-    QByteArray log;
+    std::string log;
     uint64_t generation = 0;
     ASSERT_TRUE(h.until(
             [&] {
-                log += client.readAllStandardError();
+                log = client.standardError();
                 h.compositor.updateTextures(*renderer);
                 h.compositor.frameSubmitted(++generation);
                 h.compositor.frameDrawn(wayland::nowInMilliseconds(), generation);
@@ -187,24 +215,26 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
                         && manager.windows().front()->rootSurface()->hasContents();
             },
             15000))
-            << log.constData();
+            << log;
     auto *window = manager.windows().front();
     const auto checkRoundedCorners = [&] {
         const auto visual = wm::WindowVisualController::evaluate(*window);
-        const QRectF body = visual.shape.bounds.translated(window->bounds().topLeft());
+        const base::RectF body = visual.shape.bounds.translated(window->bounds().topLeft());
         const double scale = renderer->rasterScale();
-        const QRect pixels(qRound(body.x() * scale), qRound(body.y() * scale),
-                           qRound(body.width() * scale), qRound(body.height() * scale));
-        for (const auto corner :
-             {pixels.topLeft(), pixels.topRight(), pixels.bottomLeft(), pixels.bottomRight()}) {
+        const base::Rect pixels(base::roundToInt(body.x() * scale), base::roundToInt(body.y() * scale),
+                                base::roundToInt(body.width() * scale),
+                                base::roundToInt(body.height() * scale));
+        const base::Point last = lastPixel(pixels);
+        for (const auto corner : {pixels.topLeft(), base::Point(last.x(), pixels.y()),
+                                  base::Point(pixels.x(), last.y()), last}) {
             for (int dx : {0, 2, 4, 6}) {
                 for (int dy : {0, 2, 4, 6}) {
-                    const QPoint sample = corner
-                            + QPoint(corner.x() == pixels.left() ? dx : -dx,
-                                     corner.y() == pixels.top() ? dy : -dy);
-                    const QPointF local = (QPointF(sample) + QPointF(.5, .5)) / scale
-                            - window->bounds().topLeft();
-                    if (!QRect(0, 0, 1920, 1080).contains(sample) || visual.shape.contains(local))
+                    const base::Point sample = corner
+                            + base::Point(corner.x() == pixels.x() ? dx : -dx,
+                                          corner.y() == pixels.y() ? dy : -dy);
+                    const base::PointF local = (base::PointF(sample) + base::PointF(.5, .5)) / scale
+                            - base::PointF(window->bounds().topLeft());
+                    if (!base::Rect(0, 0, 1920, 1080).contains(sample) || visual.shape.contains(local))
                         continue;
                     uint8_t pixel[4] = {};
                     glReadPixels(sample.x(), 1080 - sample.y() - 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
@@ -216,77 +246,78 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
     };
     if (expected == scene::WindowVisualMode::ServerFrame) {
         const auto oldShape = wm::WindowVisualController::evaluate(*window).shape.bounds;
-        const auto nextContent = window->rootSurface()->contentSize() + QSize(40, 24);
-        window->requestBounds(
-                {window->bounds().topLeft(), window->frameInsets().outset(nextContent)});
+        const base::Size nextContent = window->rootSurface()->contentSize() + base::Size(40, 24);
+        window->requestBounds({window->bounds().topLeft(), window->frameInsets().outset(nextContent)});
         EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds, oldShape);
         ASSERT_TRUE(h.until(
                 [&] {
-                    log += client.readAllStandardError();
+                    log = client.standardError();
                     h.compositor.updateTextures(*renderer);
                     h.compositor.frameSubmitted(++generation);
                     h.compositor.frameDrawn(wayland::nowInMilliseconds(), generation);
                     return window->rootSurface()->contentSize() == nextContent;
                 },
                 5000))
-                << log.constData();
+                << log;
         EXPECT_EQ(wm::WindowVisualController::evaluate(*window).shape.bounds.size(),
-                  QSizeF(window->bounds().size()));
+                  base::SizeF(window->bounds().size()));
     }
     if (interactiveResize) {
         static_cast<scene::WindowAnimation *>(window->node())->finish();
         auto *surface = window->rootSurface();
-        const QRect initial = window->bounds();
-        const QPoint fixedCorner = surface->node()->absoluteGeometry().bottomRight();
+        const base::Rect initial = window->bounds();
+        const base::Point fixedCorner = lastPixel(surface->node()->absoluteGeometry());
         ASSERT_TRUE(manager.eventHandler()->beginResize(window, wm::ResizeEdge::TopLeft,
                                                         initial.topLeft()));
-        QElapsedTimer timer;
+        base::ElapsedTimer timer;
         timer.start();
         int step = 0;
         ASSERT_TRUE(h.until(
                 [&] {
-                    log += client.readAllStandardError();
-                    if (step < 30 && timer.elapsed() >= step * 12) {
+                    log = client.standardError();
+                    if (step < 30 && timer.elapsedMs() >= step * 12) {
                         ++step;
                         manager.eventHandler()->onPointerMotion(initial.topLeft()
-                                                                - QPoint(step * 3, step * 2));
+                                                                - base::Point(step * 3, step * 2));
                     }
                     h.compositor.updateTextures(*renderer);
                     if (eglResize)
-                        EXPECT_EQ(surface->bufferSize(), surface->contentSize() * bufferScale);
+                        EXPECT_EQ(surface->bufferSize(),
+                                  base::Size(base::roundToInt(surface->contentSize().width() * bufferScale),
+                                             base::roundToInt(surface->contentSize().height() * bufferScale)));
                     renderer->clear({0, 0, 0, 0});
                     window->node()->render(*renderer);
                     checkRoundedCorners();
                     uint8_t pixel[4] = {};
-                    const QPoint sample = fixedCorner - QPoint(20, 20);
+                    const base::Point sample = fixedCorner - base::Point(20, 20);
                     glReadPixels(sample.x(), 1080 - sample.y() - 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
                                  pixel);
                     EXPECT_GT(pixel[3], 240);
-                    EXPECT_EQ(surface->node()->absoluteGeometry().bottomRight(), fixedCorner)
+                    EXPECT_EQ(lastPixel(surface->node()->absoluteGeometry()), fixedCorner)
                             << "step=" << step << " buffer=" << surface->bufferSize().width();
                     h.compositor.frameSubmitted(++generation);
                     h.compositor.frameDrawn(wayland::nowInMilliseconds(), generation);
                     return step == 30 && surface->contentSize() == window->bounds().size();
                 },
                 5000))
-                << log.constData();
+                << log;
         manager.eventHandler()->completeDrag(wm::ToplevelEventHandler::DragResult::Success);
     }
     if (exerciseResize) {
         static_cast<scene::WindowAnimation *>(window->node())->finish();
-        const QSize baseSize = window->bounds().size();
+        const base::Size baseSize = window->bounds().size();
         for (int step = 0; step < 8; ++step) {
-            const QSize nextSize = baseSize + (step % 2 ? QSize(30, 20) : QSize(100, 80));
-            const QRect initial = window->bounds();
+            const base::Size nextSize = baseSize + (step % 2 ? base::Size(30, 20) : base::Size(100, 80));
+            const base::Rect initial = window->bounds();
             const auto edge = step % 2 ? wm::ResizeEdge::TopLeft : wm::ResizeEdge::BottomRight;
-            const QPoint start = step % 2 ? initial.topLeft() : initial.bottomRight();
+            const base::Point start = step % 2 ? initial.topLeft() : lastPixel(initial);
             ASSERT_TRUE(manager.eventHandler()->beginResize(window, edge, start));
-            const QPoint delta(nextSize.width() - initial.width(),
-                               nextSize.height() - initial.height());
+            const base::Point delta(nextSize.width() - initial.width(),
+                                    nextSize.height() - initial.height());
             manager.eventHandler()->onPointerMotion(start + (step % 2 ? -delta : delta));
             ASSERT_TRUE(h.until(
                     [&] {
-                        log += client.readAllStandardError();
+                        log = client.standardError();
                         h.compositor.updateTextures(*renderer);
                         auto *surface = window->rootSurface();
                         auto *texture = surface->node()->texture();
@@ -296,7 +327,7 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
                         renderer->clear({0, 0, 0, 0});
                         window->node()->render(*renderer);
                         checkRoundedCorners();
-                        const QPoint center = window->bounds().center();
+                        const base::Point center = wm::centerPixel(window->bounds());
                         uint8_t pixel[4] = {};
                         glReadPixels(center.x(), 1080 - center.y() - 1, 1, 1, GL_RGBA,
                                      GL_UNSIGNED_BYTE, pixel);
@@ -313,7 +344,7 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
                                 == window->clientExteriorInsets().outset(nextSize);
                     },
                     5000))
-                    << log.constData();
+                    << log;
             manager.eventHandler()->completeDrag(wm::ToplevelEventHandler::DragResult::Success);
         }
     }
@@ -322,14 +353,13 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
     static_cast<scene::WindowAnimation *>(window->node())->finish();
     renderer->clear({0.2f, 0.3f, 0.4f, 1});
     window->node()->render(*renderer);
-    QImage image(1920, 1080, QImage::Format_RGBA8888);
-    glReadPixels(0, 0, 1920, 1080, GL_RGBA, GL_UNSIGNED_BYTE, image.bits());
+    std::vector<uint8_t> image = readFrame();
     ASSERT_EQ(glGetError(), GLenum(GL_NO_ERROR));
-    const auto artifacts = qgetenv("CUTEFISH_VISUAL_ARTIFACT_DIR");
-    if (!artifacts.isEmpty()) {
-        const QString path =
-                QString::fromLocal8Bit(artifacts) + "/" + QFileInfo(program).fileName();
-        EXPECT_TRUE(image.mirrored().save(path + ".png"));
+    const std::string artifacts = environmentVariable("CUTEFISH_VISUAL_ARTIFACT_DIR");
+    if (!artifacts.empty()) {
+        const std::string path =
+                artifacts + "/" + std::filesystem::path(program).filename().string();
+        EXPECT_TRUE(saveFrame(image, path + ".png"));
         const auto original = manager.visualStyle();
         for (bool light : {true, false}) {
             auto preview = original;
@@ -338,15 +368,14 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
             manager.setVisualStyle(preview);
             renderer->clear({0.2f, 0.3f, 0.4f, 1});
             window->node()->render(*renderer);
-            glReadPixels(0, 0, 1920, 1080, GL_RGBA, GL_UNSIGNED_BYTE, image.bits());
+            image = readFrame();
             ASSERT_EQ(glGetError(), GLenum(GL_NO_ERROR));
-            EXPECT_TRUE(
-                    image.mirrored().save(path + (light ? "-light-edge.png" : "-dark-edge.png")));
+            EXPECT_TRUE(saveFrame(image, path + (light ? "-light-edge.png" : "-dark-edge.png")));
         }
         manager.setVisualStyle(original);
     }
     const auto state = wm::WindowVisualController::evaluate(*window);
-    EXPECT_EQ(state.mode, expected) << log.constData();
+    EXPECT_EQ(state.mode, expected) << log;
     EXPECT_EQ(window->isDecorated(), expected == scene::WindowVisualMode::ServerFrame);
     EXPECT_TRUE(state.clipContent);
     EXPECT_TRUE(state.drawOutline);
@@ -358,21 +387,22 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
     }
     if (exerciseDamage) {
         renderer->setOutputContext(
-                {"toolkit", QRect(QPoint(), output.logicalSize()), {1920, 1080}, bufferScale});
+                {"toolkit", base::Rect(base::Point(), output.logicalSize()), {1920, 1080},
+                 bufferScale});
         scene::DamageTracker damageTracker;
         int partialFrames = 0;
         for (int frame = 0; frame < 8; ++frame) {
             const auto revision = window->rootSurface()->node()->contentRevision();
             ASSERT_TRUE(h.until(
                     [&] {
-                        log += client.readAllStandardError();
+                        log = client.standardError();
                         h.compositor.updateTextures(*renderer);
                         h.compositor.frameSubmitted(++generation);
                         h.compositor.frameDrawn(wayland::nowInMilliseconds(), generation);
                         return window->rootSurface()->node()->contentRevision() != revision;
                     },
                     5000))
-                    << log.constData();
+                    << log;
             const auto damage = damageTracker.update(
                     *h.scene.root(), renderer->outputContext().logicalViewport, bufferScale);
             const auto physical =
@@ -381,21 +411,19 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
             render::EglRendererTestAccess::applyRepaint(*renderer, physical);
             renderer->clear(h.scene.background());
             h.scene.root()->render(*renderer);
-            QImage partial({1920, 1080}, QImage::Format_RGBA8888_Premultiplied);
-            glReadPixels(0, 0, 1920, 1080, GL_RGBA, GL_UNSIGNED_BYTE, partial.bits());
+            const std::vector<uint8_t> partial = readFrame();
             glDisable(GL_SCISSOR_TEST);
             renderer->clear(h.scene.background());
             h.scene.root()->render(*renderer);
-            QImage complete({1920, 1080}, QImage::Format_RGBA8888_Premultiplied);
-            glReadPixels(0, 0, 1920, 1080, GL_RGBA, GL_UNSIGNED_BYTE, complete.bits());
-            EXPECT_EQ(partial, complete) << "frame=" << frame << " scale=" << bufferScale;
+            const std::vector<uint8_t> complete = readFrame();
+            EXPECT_TRUE(partial == complete) << "frame=" << frame << " scale=" << bufferScale;
         }
         EXPECT_GT(partialFrames, 0);
         std::printf("DAMAGE renderer=%s scale=%.2f partial=%d/8\n", glGetString(GL_RENDERER),
                     bufferScale, partialFrames);
     }
     std::printf("OBSERVED %s mode=%d client=%dx%d exterior=%d,%d,%d,%d\n",
-                program.toLocal8Bit().constData(), int(state.mode), window->contentBounds().width(),
+                program.c_str(), int(state.mode), window->contentBounds().width(),
                 window->contentBounds().height(), window->clientExteriorInsets().left,
                 window->clientExteriorInsets().top, window->clientExteriorInsets().right,
                 window->clientExteriorInsets().bottom);
@@ -405,37 +433,37 @@ void acceptClient(const QString &program, QStringList arguments, scene::WindowVi
 
 TEST(WindowVisualToolkit, QtSsd)
 {
-    acceptClient(QStringLiteral(QT_SCALE_CLIENT), {}, scene::WindowVisualMode::ServerFrame);
+    acceptClient(QT_SCALE_CLIENT, {}, scene::WindowVisualMode::ServerFrame);
 }
 
 TEST(WindowVisualToolkit, KonsoleSsd)
 {
-    const auto konsole = QStandardPaths::findExecutable("konsole");
-    if (konsole.isEmpty())
+    const auto konsole = base::paths::findExecutable("konsole");
+    if (konsole.empty())
         GTEST_SKIP() << "Konsole is not installed";
     acceptClient(konsole, {"--separate", "--nofork"}, scene::WindowVisualMode::ServerFrame);
 }
 
 TEST(WindowVisualToolkit, GtkCsd)
 {
-    const auto gtk = QStandardPaths::findExecutable("gtk3-demo");
-    if (gtk.isEmpty())
+    const auto gtk = base::paths::findExecutable("gtk3-demo");
+    if (gtk.empty())
         GTEST_SKIP() << "gtk3-demo is not installed";
     acceptClient(gtk, {}, scene::WindowVisualMode::ServerExterior, true);
 }
 
 TEST(WindowVisualToolkit, Gtk4CsdResize)
 {
-    const auto gtk = QStandardPaths::findExecutable("gtk4-demo");
-    if (gtk.isEmpty())
+    const auto gtk = base::paths::findExecutable("gtk4-demo");
+    if (gtk.empty())
         GTEST_SKIP() << "gtk4-demo is not installed";
     acceptClient(gtk, {}, scene::WindowVisualMode::ServerExterior, true);
 }
 
 TEST(WindowVisualToolkit, ChromiumClientChrome)
 {
-    const auto chromium = QStandardPaths::findExecutable("chromium");
-    if (chromium.isEmpty())
+    const auto chromium = base::paths::findExecutable("chromium");
+    if (chromium.empty())
         GTEST_SKIP() << "Chromium is not installed";
     acceptClient(chromium,
                  {"--ozone-platform=wayland", "--disable-gpu", "--no-first-run",
@@ -447,37 +475,30 @@ TEST(WindowVisualToolkit, ChromiumClientChrome)
 
 TEST(WindowVisualToolkit, ElectronClientChrome)
 {
-    const auto electron = QStandardPaths::findExecutable("electron");
-    if (electron.isEmpty())
+    const auto electron = base::paths::findExecutable("electron");
+    if (electron.empty())
         GTEST_SKIP() << "Electron is not installed";
     acceptClient(electron,
-                 {QStringLiteral(ELECTRON_VISUAL_CLIENT), "--ozone-platform=wayland",
+                 {ELECTRON_VISUAL_CLIENT, "--ozone-platform=wayland",
                   "--disable-gpu", "--user-data-dir=@PROFILE@"},
                  scene::WindowVisualMode::ServerExterior);
 }
 
-int main(int argc, char **argv)
-{
-    QCoreApplication app(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
-
 TEST(WindowVisualToolkit, FishUiInteractiveResize)
 {
-    if (!QFileInfo::exists(QLibraryInfo::path(QLibraryInfo::QmlImportsPath) + "/FishUI/qmldir"))
+    if (!fishUiInstalled())
         GTEST_SKIP() << "FishUI is not installed";
-    acceptClient(QStringLiteral(FISHUI_RESIZE_CLIENT), {}, scene::WindowVisualMode::ServerExterior,
+    acceptClient(FISHUI_RESIZE_CLIENT, {}, scene::WindowVisualMode::ServerExterior,
                  false, true);
 }
 
 TEST(WindowVisualToolkit, FishUiEglInteractiveResize)
 {
-    if (!qEnvironmentVariableIsSet("CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH"))
+    if (!std::getenv("CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH"))
         GTEST_SKIP() << "Set CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH to the test runtime or system";
     for (const double scale : {1.0, 1.25, 1.5, 1.75, 2.0}) {
         SCOPED_TRACE(scale);
-        acceptClient(QStringLiteral(FISHUI_RESIZE_CLIENT), {},
+        acceptClient(FISHUI_RESIZE_CLIENT, {},
                      scene::WindowVisualMode::ServerExterior, false, true, true, scale);
     }
 }
@@ -485,36 +506,35 @@ TEST(WindowVisualToolkit, FishUiEglInteractiveResize)
 TEST(WindowVisualToolkit, QtScrollingDamage)
 {
     for (double scale : {1.25, 1.5})
-        acceptClient(QStringLiteral(QT_SCALE_CLIENT), {}, scene::WindowVisualMode::ServerFrame,
+        acceptClient(QT_SCALE_CLIENT, {}, scene::WindowVisualMode::ServerFrame,
                      false, false, false, scale, true);
 }
 
 TEST(WindowVisualToolkit, QuickScrollingDamage)
 {
     for (double scale : {1.25, 1.5})
-        acceptClient(QStringLiteral(QT_QUICK_SCALE_CLIENT), {},
+        acceptClient(QT_QUICK_SCALE_CLIENT, {},
                      scene::WindowVisualMode::ServerFrame, false, false, false, scale, true);
 }
 
 TEST(WindowVisualToolkit, FishUiScrollingDamage)
 {
-    if (!QFileInfo::exists(QLibraryInfo::path(QLibraryInfo::QmlImportsPath) + "/FishUI/qmldir"))
+    if (!fishUiInstalled())
         GTEST_SKIP() << "FishUI is not installed";
     for (double scale : {1.25, 1.5})
-        acceptClient(QStringLiteral(FISHUI_RESIZE_CLIENT), {},
+        acceptClient(FISHUI_RESIZE_CLIENT, {},
                      scene::WindowVisualMode::ServerExterior, false, true, false, scale, true);
 }
 
 TEST(WindowVisualToolkit, ChromiumScrollingDamage)
 {
-    const auto chromium = QStandardPaths::findExecutable("chromium");
-    if (chromium.isEmpty())
+    const auto chromium = base::paths::findExecutable("chromium");
+    if (chromium.empty())
         GTEST_SKIP() << "Chromium is not installed";
-    const QByteArray html =
+    const std::string html =
             "<body style='height:10000px;background:repeating-linear-gradient(white 0px,white "
             "20px,blue 20px,blue 40px)'><script>setInterval(()=>scrollBy(0,9),50)</script>";
-    const QString page = "data:text/html,"
-            + QString::fromLatin1(QUrl::toPercentEncoding(QString::fromLatin1(html)));
+    const std::string page = "data:text/html," + base::url::percentEncoded(html);
     for (double scale : {1.25, 1.5})
         acceptClient(chromium,
                      {"--ozone-platform=wayland", "--disable-gpu", "--no-first-run",

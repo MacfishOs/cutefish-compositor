@@ -15,6 +15,7 @@
 #include "scene/desk_switch_node.h"
 #include "scene/scene.h"
 #include "scene/slide_out_node.h"
+#include "base/geometry.h"
 
 using namespace cutefish;
 using Node = scene::DeskSwitchNode;
@@ -24,15 +25,15 @@ namespace {
 class FrameTexture : public render::Texture
 {
 public:
-    explicit FrameTexture(QSize size)
+    explicit FrameTexture(base::Size size)
         : m_size(size)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 class FrameRenderer : public testsupport::FakeRenderer
@@ -40,7 +41,7 @@ class FrameRenderer : public testsupport::FakeRenderer
 public:
     int captures = 0;
 
-    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
                          const std::function<void()> &paint) override
     {
         ++captures;
@@ -50,24 +51,24 @@ public:
         return true;
     }
 
-    void drawTextureF(render::Texture *texture, const QRectF &target, float alpha) override
+    void drawTextureF(render::Texture *texture, const base::RectF &target, float alpha) override
     {
         FakeRenderer::drawTextureF(texture, target, alpha);
-        calls.last().target = target;
+        calls.back().target = target;
     }
 
     render::Texture *lastCapture = nullptr;
 };
 
-constexpr QRect kViewport(0, 0, 1000, 800);
+const base::Rect kViewport(0, 0, 1000, 800);
 // Long enough for any of the springs to come to rest.
 constexpr int kSettleMs = 1000;
 
 struct Fixture {
-    qint64 now = 1000;
+    int64_t now = 1000;
     scene::Scene scene;
     scene::Node *container =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::ColorNode *below = static_cast<scene::ColorNode *>(
             container->addChild(std::make_unique<scene::ColorNode>(render::Color {0, 1, 0, 1})));
     Node *node = static_cast<Node *>(container->addChild(std::make_unique<Node>([this] {
@@ -82,8 +83,8 @@ struct Fixture {
     Fixture()
     {
         scene.setSize(kViewport.size());
-        below->setGeometry(QRect(10, 10, 100, 100));
-        above->setGeometry(QRect(20, 20, 100, 100));
+        below->setGeometry(base::Rect(10, 10, 100, 100));
+        above->setGeometry(base::Rect(20, 20, 100, 100));
         node->setGeometry(kViewport);
         node->setEndingScreenshotCallback([this] {
             ++endingTaken;
@@ -93,7 +94,7 @@ struct Fixture {
         });
     }
 
-    Node::Frames frames(render::Texture **texture, const QString &output = QStringLiteral("out"))
+    Node::Frames frames(render::Texture **texture, const std::string &output = "out")
     {
         Node::Frames result;
         auto frame = std::make_unique<FrameTexture>(kViewport.size());
@@ -102,21 +103,21 @@ struct Fixture {
         return result;
     }
 
-    QList<testsupport::FakeRenderer::Call> paint(const QString &output = QStringLiteral("out"),
+    std::vector<testsupport::FakeRenderer::Call> paint(const std::string &output = "out",
                                                  double scale = 1)
     {
         renderer.calls.clear();
-        renderer.setOutputContext({output, kViewport, QSize(1000, 800), scale, 0, 0, {}});
+        renderer.setOutputContext({output, kViewport, base::Size(1000, 800), scale, 0, 0, {}});
         node->render(renderer);
         return renderer.calls;
     }
 
     // Where `texture` was drawn in the last paint, if it was.
     static std::optional<testsupport::FakeRenderer::Call>
-    drawn(const QList<testsupport::FakeRenderer::Call> &calls, render::Texture *texture)
+    drawn(const std::vector<testsupport::FakeRenderer::Call> &calls, render::Texture *texture)
     {
         for (const auto &call : calls) {
-            if (call.kind == QStringLiteral("texture") && call.texture == texture)
+            if (call.kind == "texture" && call.texture == texture)
                 return call;
         }
         return std::nullopt;
@@ -129,7 +130,7 @@ TEST(DeskSwitchNode, TheStartingFrameCoversTheDeskContent)
 {
     Fixture f;
     EXPECT_FALSE(f.node->isActive());
-    EXPECT_TRUE(f.paint().isEmpty());
+    EXPECT_TRUE(f.paint().empty());
 
     render::Texture *starting = nullptr;
     f.node->start(Node::Type::Continuous, 3, 0, 1, f.frames(&starting), 1000);
@@ -145,7 +146,7 @@ TEST(DeskSwitchNode, TheStartingFrameCoversTheDeskContent)
     EXPECT_TRUE(starting->contentOpaque);
 
     // An output the animation did not start on shows the live content.
-    EXPECT_TRUE(f.paint(QStringLiteral("other")).isEmpty());
+    EXPECT_TRUE(f.paint("other").empty());
 }
 
 TEST(DeskSwitchNode, TheCoveredContentIsWhatLiesBelowTheNode)
@@ -153,33 +154,33 @@ TEST(DeskSwitchNode, TheCoveredContentIsWhatLiesBelowTheNode)
     Fixture f;
     f.node->paintCoveredContent(f.renderer);
     ASSERT_EQ(f.renderer.calls.size(), 2);
-    EXPECT_EQ(f.renderer.calls[0].kind, QStringLiteral("clear"));
-    EXPECT_EQ(f.renderer.calls[1].kind, QStringLiteral("fill"));
-    EXPECT_EQ(f.renderer.calls[1].rect, QRect(10, 10, 100, 100));
+    EXPECT_EQ(f.renderer.calls[0].kind, "clear");
+    EXPECT_EQ(f.renderer.calls[1].kind, "fill");
+    EXPECT_EQ(f.renderer.calls[1].rect, base::Rect(10, 10, 100, 100));
 }
 
 TEST(DeskSwitchNode, EveryOutputCopiesTheEndingDeskAtItsNextFrame)
 {
     Fixture f;
     Node::Frames frames;
-    frames[QStringLiteral("a")] = std::make_unique<FrameTexture>(kViewport.size());
-    frames[QStringLiteral("b")] = std::make_unique<FrameTexture>(kViewport.size());
+    frames["a"] = std::make_unique<FrameTexture>(kViewport.size());
+    frames["b"] = std::make_unique<FrameTexture>(kViewport.size());
     f.node->start(Node::Type::Continuous, 2, 0, 1, std::move(frames), 1000);
     f.node->takeEndingScreenshot(1);
     EXPECT_FALSE(f.node->endingScreenshotTaken());
 
     // A capture of the screen copies nothing.
     f.renderer.capturing = true;
-    f.paint(QStringLiteral("a"));
+    f.paint("a");
     EXPECT_EQ(f.renderer.captures, 0);
     f.renderer.capturing = false;
 
-    f.paint(QStringLiteral("a"));
+    f.paint("a");
     EXPECT_EQ(f.renderer.captures, 1);
     EXPECT_EQ(f.endingTaken, 0);
-    f.paint(QStringLiteral("a"));
+    f.paint("a");
     EXPECT_EQ(f.renderer.captures, 1);
-    f.paint(QStringLiteral("b"));
+    f.paint("b");
     EXPECT_EQ(f.renderer.captures, 2);
     EXPECT_EQ(f.endingTaken, 1);
     EXPECT_TRUE(f.node->endingScreenshotTaken());
@@ -237,7 +238,7 @@ TEST(DeskSwitchNode, AQuickSwitchMovesAQuarterAndFadesTheEndingDeskIn)
     EXPECT_EQ(Fixture::drawn(calls, ending)->rect.x(), 250);
     EXPECT_FLOAT_EQ(Fixture::drawn(calls, ending)->alpha, 0);
     // Drawn over the starting desk.
-    EXPECT_EQ(calls.last().texture, ending);
+    EXPECT_EQ(calls.back().texture, ending);
 
     f.now += Node::kQuickFadeInAnimationDurationMs;
     calls = f.paint();
@@ -540,7 +541,7 @@ TEST(DeskSwitchNode, FramesLandOnWholeDevicePixels)
     f.node->takeEndingScreenshot(1);
     f.node->updateSwipeAnimation(-0.1234, 1000);
     f.now = 1000 + Node::kResampleLatencyMs;
-    const double x = Fixture::drawn(f.paint(QStringLiteral("out"), 1.5), starting)->target.x();
+    const double x = Fixture::drawn(f.paint("out", 1.5), starting)->target.x();
     EXPECT_DOUBLE_EQ(x * 1.5, std::round(x * 1.5));
     EXPECT_NEAR(x, -0.1234 * 1050, 1);
 }
@@ -599,10 +600,10 @@ TEST(DeskSwitchNode, RemovalShowsBlackForTheRemovedDeskAndKeepsItsWindowsStill)
 {
     Fixture f;
     render::Texture *still = nullptr;
-    f.node->startRemoval(2, 1, 0, f.frames(&still), {QStringLiteral("out")}, 1000);
+    f.node->startRemoval(2, 1, 0, f.frames(&still), {"out"}, 1000);
     auto calls = f.paint();
     ASSERT_EQ(calls.size(), 2);
-    EXPECT_EQ(calls[0].kind, QStringLiteral("fill"));
+    EXPECT_EQ(calls[0].kind, "fill");
     EXPECT_EQ(calls[1].texture, still);
 
     f.node->takeEndingScreenshot(0);
@@ -612,8 +613,8 @@ TEST(DeskSwitchNode, RemovalShowsBlackForTheRemovedDeskAndKeepsItsWindowsStill)
     f.now += Node::kQuickAnimationDurationMs;
     calls = f.paint();
     EXPECT_EQ(Fixture::drawn(calls, ending)->rect, kViewport);
-    EXPECT_EQ(calls.last().texture, still);
-    EXPECT_EQ(calls.last().rect, kViewport);
+    EXPECT_EQ(calls.back().texture, still);
+    EXPECT_EQ(calls.back().rect, kViewport);
 }
 
 TEST(DeskSwitchNode, HittingTheWallNudgesTheDeskAndComesBack)
@@ -634,22 +635,22 @@ TEST(DeskSwitchNode, HittingTheWallNudgesTheDeskAndComesBack)
 
     f.node->stop();
     EXPECT_FALSE(f.node->isActive());
-    EXPECT_TRUE(f.paint().isEmpty());
+    EXPECT_TRUE(f.paint().empty());
 }
 
 TEST(SlideOutNode, AWindowSentToAnotherDeskSlidesOffTowardsIt)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::SlideOutNode node([&now] {
         return now;
     });
     FrameRenderer renderer;
-    renderer.setOutputContext({QStringLiteral("out"), kViewport, QSize(1000, 800), 1, 0, 0, {}});
+    renderer.setOutputContext({"out", kViewport, base::Size(1000, 800), 1, 0, 0, {}});
     Node::Frames frames;
     auto frame = std::make_unique<FrameTexture>(kViewport.size());
     render::Texture *texture = frame.get();
-    frames[QStringLiteral("out")] = std::move(frame);
-    node.slideOut(std::move(frames), QRect(100, 100, 300, 200), kViewport, /*goingLeft=*/true);
+    frames["out"] = std::move(frame);
+    node.slideOut(std::move(frames), base::Rect(100, 100, 300, 200), kViewport, /*goingLeft=*/true);
     EXPECT_TRUE(node.isActive());
 
     node.render(renderer);
@@ -675,24 +676,24 @@ TEST(DeskSwitchNode, TheDeskContentBelowIsNotDrawnWhereTheNodeCoversIt)
     Fixture f;
     render::Texture *starting = nullptr;
     f.node->start(Node::Type::Continuous, 2, 0, 1, f.frames(&starting), 1000);
-    const auto drawnUnderneath = [&](const QString &output) {
+    const auto drawnUnderneath = [&](const std::string &output) {
         f.renderer.calls.clear();
-        f.renderer.setOutputContext({output, kViewport, QSize(1000, 800), 1, 0, 0, {}});
+        f.renderer.setOutputContext({output, kViewport, base::Size(1000, 800), 1, 0, 0, {}});
         f.container->render(f.renderer);
         bool below = false;
         bool above = false;
         for (const auto &call : f.renderer.calls) {
-            below |= call.kind == QStringLiteral("fill") && call.rect == QRect(10, 10, 100, 100);
-            above |= call.kind == QStringLiteral("fill") && call.rect == QRect(20, 20, 100, 100);
+            below |= call.kind == "fill" && call.rect == base::Rect(10, 10, 100, 100);
+            above |= call.kind == "fill" && call.rect == base::Rect(20, 20, 100, 100);
         }
-        EXPECT_TRUE(above) << qPrintable(output);
+        EXPECT_TRUE(above) << output;
         return below;
     };
-    EXPECT_FALSE(drawnUnderneath(QStringLiteral("out")));
+    EXPECT_FALSE(drawnUnderneath("out"));
     // An output the animation did not start on still shows the live content.
-    EXPECT_TRUE(drawnUnderneath(QStringLiteral("other")));
+    EXPECT_TRUE(drawnUnderneath("other"));
     f.node->stop();
-    EXPECT_TRUE(drawnUnderneath(QStringLiteral("out")));
+    EXPECT_TRUE(drawnUnderneath("out"));
 }
 
 TEST(DeskSwitchNode, TheSceneSkipsItsClearUnderTheCoveringStrip)
@@ -700,16 +701,16 @@ TEST(DeskSwitchNode, TheSceneSkipsItsClearUnderTheCoveringStrip)
     Fixture f;
     render::Texture *starting = nullptr;
     f.node->start(Node::Type::Continuous, 2, 0, 1, f.frames(&starting), 1000);
-    const auto cleared = [&](const QString &output) {
+    const auto cleared = [&](const std::string &output) {
         f.renderer.calls.clear();
-        f.renderer.setOutputContext({output, kViewport, QSize(1000, 800), 1, 0, 0, {}});
+        f.renderer.setOutputContext({output, kViewport, base::Size(1000, 800), 1, 0, 0, {}});
         f.scene.render(f.renderer);
         return std::any_of(f.renderer.calls.begin(), f.renderer.calls.end(), [](const auto &call) {
-            return call.kind == QStringLiteral("clear");
+            return call.kind == "clear";
         });
     };
-    EXPECT_FALSE(cleared(QStringLiteral("out")));
-    EXPECT_TRUE(cleared(QStringLiteral("other")));
+    EXPECT_FALSE(cleared("out"));
+    EXPECT_TRUE(cleared("other"));
     f.node->stop();
-    EXPECT_TRUE(cleared(QStringLiteral("out")));
+    EXPECT_TRUE(cleared("out"));
 }

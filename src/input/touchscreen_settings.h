@@ -4,50 +4,54 @@
 
 #pragma once
 
-#include <QDBusConnection>
-#include <QObject>
-#include <QSettings>
-#include <QStringList>
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "base/settings.h"
+#include "base/signal.h"
 
 namespace cutefish::input {
 
+class DBusExport;
+
 // Lists the connected touchscreens by name and keeps which of them the user
 // turned off. Exported as com.cutefish.Touchscreen1 for Settings.
-class TouchscreenSettings : public QObject
+class TouchscreenSettings
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.Touchscreen1")
-    Q_PROPERTY(QStringList devices READ devices NOTIFY devicesChanged)
-    Q_PROPERTY(QStringList disabledDevices READ disabledDevices NOTIFY disabledDevicesChanged)
-
 public:
-    explicit TouchscreenSettings(QObject *parent = nullptr, const QString &settingsFile = {});
-    ~TouchscreenSettings() override;
+    explicit TouchscreenSettings(const std::string &settingsFile = {});
+    ~TouchscreenSettings();
     bool registerService();
 
-    QStringList devices() const { return m_devices; }
+    const std::vector<std::string> &devices() const { return m_devices; }
 
     // Names, not device nodes, so a choice survives a reboot or a replug.
     // Disabled screens stay listed after they are unplugged.
-    QStringList disabledDevices() const { return m_disabledDevices; }
+    const std::vector<std::string> &disabledDevices() const { return m_disabledDevices; }
 
-    bool deviceEnabled(const QString &name) const { return !m_disabledDevices.contains(name); }
+    bool deviceEnabled(const std::string &name) const
+    {
+        return std::find(m_disabledDevices.begin(), m_disabledDevices.end(), name)
+                == m_disabledDevices.end();
+    }
 
-    void setDevices(const QStringList &devices);
+    void setDevices(const std::vector<std::string> &devices);
 
-public slots:
-    void setDeviceEnabled(const QString &name, bool enabled);
+    void setDeviceEnabled(const std::string &name, bool enabled);
 
-signals:
-    void devicesChanged();
-    void disabledDevicesChanged();
-    void settingsChanged();
+    base::Signal<> devicesChanged;
+    base::Signal<> disabledDevicesChanged;
+    base::Signal<> settingsChanged;
 
 private:
-    QSettings m_settings;
-    QStringList m_devices;
-    QStringList m_disabledDevices;
-    bool m_registered = false;
+    void notify(const base::Signal<> &signal, const char *member);
+
+    base::Settings m_settings;
+    std::vector<std::string> m_devices;
+    std::vector<std::string> m_disabledDevices;
+    std::unique_ptr<DBusExport> m_object;
 };
 
 } // namespace cutefish::input

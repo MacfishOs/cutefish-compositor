@@ -4,14 +4,34 @@
 
 #include "core/preferences.h"
 
-#include <QStandardPaths>
+#include "base/paths.h"
 
 namespace cutefish {
 
-QString preferencesFile(const QString &process)
+namespace {
+
+std::string &testConfigHome()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
-            + QStringLiteral("/cutefish/") + process + QStringLiteral(".conf");
+    static std::string directory;
+    return directory;
+}
+
+} // namespace
+
+std::string preferencesDirectory()
+{
+    const std::string &test = testConfigHome();
+    return (test.empty() ? base::paths::configHome() : test) + "/cutefish";
+}
+
+std::string preferencesFile(std::string_view process)
+{
+    return preferencesDirectory() + '/' + std::string(process) + ".conf";
+}
+
+void setConfigHomeForTesting(std::string configHome)
+{
+    testConfigHome() = std::move(configHome);
 }
 
 } // namespace cutefish

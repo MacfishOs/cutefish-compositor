@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/main_loop.h"
+
 namespace cutefish::display {
 
 namespace {
@@ -19,13 +21,13 @@ constexpr int kAnimationFrameRate = 15;
 
 } // namespace
 
-NightLight::NightLight(Apply apply, Clock clock, QObject *parent)
-    : QObject(parent)
-    , m_apply(std::move(apply))
+NightLight::NightLight(Apply apply, Clock clock)
+    : m_apply(std::move(apply))
     , m_clock(std::move(clock))
+    , m_timer(core::mainLoop())
 {
-    m_timer.setInterval(1000 / kAnimationFrameRate);
-    connect(&m_timer, &QTimer::timeout, this, &NightLight::step);
+    m_timer.setInterval(std::chrono::milliseconds(1000 / kAnimationFrameRate));
+    m_timer.onTimeout = [this] { step(); };
 }
 
 void NightLight::animateTo(double strength, std::chrono::milliseconds duration)

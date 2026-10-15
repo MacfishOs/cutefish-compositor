@@ -48,7 +48,7 @@ GpuTimer::Mark::~Mark()
 GpuTimer::GpuTimer(EglContext &context)
 {
     if (!context.supportsGl("GL_EXT_disjoint_timer_query")
-        || !context.glVersion().startsWith("OpenGL ES 3"))
+        || !context.glVersion().starts_with("OpenGL ES 3"))
         return;
     m_genQueries = reinterpret_cast<void *>(eglGetProcAddress("glGenQueriesEXT"));
     m_getQueryObjectui = reinterpret_cast<void *>(eglGetProcAddress("glGetQueryObjectuivEXT"));

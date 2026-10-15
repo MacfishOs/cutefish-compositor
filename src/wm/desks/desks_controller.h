@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "scene/desk_switch_node.h"
@@ -121,7 +122,7 @@ public:
     bool canRemoveDesks() const;
 
     // Appends a desk; it is not activated.
-    Desk *newDesk(DesksCreationRemovalSource source, const QString &name = QString());
+    Desk *newDesk(DesksCreationRemovalSource source, const std::string &name = {});
 
     // Combines `desk` into the desk on its left, or on its right when it is
     // the first. Removing the active desk slides to that desk first.
@@ -151,7 +152,7 @@ public:
     bool isVisibleOnAllDesks(const Window *window) const;
     void setVisibleOnAllDesks(Window *window, bool visibleOnAllDesks);
 
-    void setDeskName(Desk *desk, const QString &name);
+    void setDeskName(Desk *desk, const std::string &name);
 
     // The desk content nudges against the edge it cannot go past.
     void performHitTheWallAnimation(bool goingLeft);

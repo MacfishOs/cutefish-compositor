@@ -4,48 +4,47 @@
 
 #include "display/display_identity.h"
 
-#include <QHash>
-#include <QSet>
-#include <QUuid>
 #include <algorithm>
+#include <map>
+
+#include "base/uuid.h"
 
 namespace cutefish::display {
 namespace {
-QString baseKey(const DisplaySnapshot &display)
+std::string baseKey(const DisplaySnapshot &display)
 {
     if (display.connectionType == DisplayConnectionType::Virtual)
-        return QStringLiteral("virtual:") + display.portKey;
-    return display.edidKey.isEmpty() ? QStringLiteral("port:") + display.portKey
-                                     : QStringLiteral("edid:") + display.edidKey;
+        return "virtual:" + display.portKey;
+    return display.edidKey.empty() ? "port:" + display.portKey : "edid:" + display.edidKey;
 }
 } // namespace
 
-void DisplayIdentity::rememberPersistentKeys(const QStringList &keys)
+void DisplayIdentity::rememberPersistentKeys(const std::vector<std::string> &keys)
 {
     for (const auto &key : keys) {
-        if (key.startsWith(QStringLiteral("edid:")) && key.contains(QLatin1Char('@')))
-            m_ambiguous.insert(key.section(QLatin1Char('@'), 0, 0));
+        if (key.starts_with("edid:") && key.find('@') != std::string::npos)
+            m_ambiguous.insert(key.substr(0, key.find('@')));
     }
 }
 
-void DisplayIdentity::assign(QList<DisplaySnapshot> &displays)
+void DisplayIdentity::assign(std::vector<DisplaySnapshot> &displays)
 {
     std::sort(displays.begin(), displays.end(), [](const auto &a, const auto &b) {
         return a.portKey < b.portKey;
     });
-    QHash<QString, int> counts;
+    std::map<std::string, int> counts;
     for (const auto &display : displays)
         ++counts[baseKey(display)];
-    QSet<DisplayId> used;
+    std::set<DisplayId> used;
     for (auto &display : displays) {
-        const QString base = baseKey(display);
-        bool duplicate = counts.value(base) > 1 || m_ambiguous.contains(base);
+        const std::string base = baseKey(display);
+        bool duplicate = counts[base] > 1 || m_ambiguous.contains(base);
         for (const auto &known : m_known)
             duplicate |= baseKey(known) == base
-                    && known.persistentKey.startsWith(base + QLatin1Char('@'));
+                    && known.persistentKey.starts_with(base + '@');
         if (duplicate)
             m_ambiguous.insert(base);
-        display.persistentKey = duplicate ? base + QLatin1Char('@') + display.portKey : base;
+        display.persistentKey = duplicate ? base + '@' + display.portKey : base;
         const DisplaySnapshot *match = nullptr;
         for (const auto &known : m_known) {
             if (baseKey(known) == base && known.portKey == display.portKey
@@ -63,8 +62,7 @@ void DisplayIdentity::assign(QList<DisplaySnapshot> &displays)
             }
         }
         display.sessionId = match ? match->sessionId
-                                  : DisplayId(QStringLiteral("output-")
-                                              + QUuid::createUuid().toString(QUuid::WithoutBraces));
+                                  : DisplayId("output-" + base::Uuid::generate().toString());
         used.insert(display.sessionId);
     }
     for (const auto &display : displays) {
@@ -72,7 +70,7 @@ void DisplayIdentity::assign(QList<DisplaySnapshot> &displays)
             return known.sessionId == display.sessionId;
         });
         if (it == m_known.end())
-            m_known.append(display);
+            m_known.push_back(display);
         else
             *it = display;
     }

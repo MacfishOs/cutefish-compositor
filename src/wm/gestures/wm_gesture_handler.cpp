@@ -12,6 +12,7 @@
 #include <cmath>
 #include <utility>
 
+#include "base/geometry.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/overview/overview_controller.h"
 
@@ -57,7 +58,7 @@ void WmGestureHandler::onGestureUpdate(input::Timestamp timestamp,
     // gets it as a first sample, so a flick that libinput reports past the
     // threshold in one event still lets go at speed.
     const double previousTimeMs = std::exchange(m_scroll.timeMs, milliseconds(timestamp));
-    const QPointF delta = update.unacceleratedDelta * kMmPerUnacceleratedUnit;
+    const base::PointF delta = update.unacceleratedDelta * kMmPerUnacceleratedUnit;
     m_scroll.scrollX += delta.x();
     m_scroll.scrollY += delta.y();
 

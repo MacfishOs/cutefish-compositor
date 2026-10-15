@@ -23,10 +23,10 @@
 #include <wayland-server-protocol.h>
 #include <xdg-output-unstable-v1-server-protocol.h>
 
-#include <QTimer>
-
 #include "compositor/output.h"
+#include "base/timer.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "scene/surface_node.h"
 #include "wayland/server_util.h"
 
@@ -46,9 +46,8 @@ struct OutputState {
     std::vector<Binding *> bindings;
     std::shared_ptr<compositor::CaptureSource> capture =
             std::make_shared<compositor::CaptureSource>();
-    // Context of the delayed destruction, which dies with the display.
-    // Braced, or aggregate initialisation copy-initialises it (explicit ctor).
-    QObject lifetime {};
+    // The delayed destruction, which dies with the display.
+    std::unique_ptr<base::Timer> removal;
 };
 
 struct Membership {
@@ -111,7 +110,7 @@ bool showsOn(const compositor::Surface *surface, const OutputState &output)
     const auto *node = surface->node();
     return node && node->isEffectivelyVisible() && !surface->contentSize().isEmpty()
             && node->absoluteGeometry().intersects(
-                    QRect(output.metrics.position, output.metrics.logicalSize()));
+                    base::Rect(output.metrics.position, output.metrics.logicalSize()));
 }
 
 void updateMembership(Binding *binding)
@@ -165,14 +164,14 @@ void sendXdg(Binding *binding, wl_resource *resource, bool initial)
     // A scaled client lays its outputs out in its own units: Xwayland sizes
     // its X11 screen from these.
     const double scale = clientScale(wl_resource_get_client(resource));
-    const QPoint position = (QPointF(metrics.position) * scale).toPoint();
+    const base::Point position = (base::PointF(metrics.position) * scale).toPoint();
     zxdg_output_v1_send_logical_position(resource, position.x(), position.y());
-    const QSize size = (QSizeF(metrics.logicalSize()) * scale).toSize();
+    const base::Size size = (base::SizeF(metrics.logicalSize()) * scale).toSize();
     zxdg_output_v1_send_logical_size(resource, size.width(), size.height());
     if (initial && version >= ZXDG_OUTPUT_V1_NAME_SINCE_VERSION)
-        zxdg_output_v1_send_name(resource, metrics.name.toUtf8().constData());
+        zxdg_output_v1_send_name(resource, metrics.name.c_str());
     if (initial && version >= ZXDG_OUTPUT_V1_DESCRIPTION_SINCE_VERSION)
-        zxdg_output_v1_send_description(resource, metrics.model.toUtf8().constData());
+        zxdg_output_v1_send_description(resource, metrics.model.c_str());
     // wl_output v1 has no done event; its xdg extension retains the legacy delimiter.
     if (version < 3 || wl_resource_get_version(binding->resource) < WL_OUTPUT_DONE_SINCE_VERSION)
         zxdg_output_v1_send_done(resource);
@@ -190,22 +189,23 @@ void sendMetrics(Binding *binding, bool initial)
         return;
     const auto &metrics = binding->output->metrics;
     auto *resource = binding->resource;
-    const QPoint position =
-            (QPointF(metrics.position) * clientScale(wl_resource_get_client(resource))).toPoint();
+    const base::Point position =
+            (base::PointF(metrics.position) * clientScale(wl_resource_get_client(resource)))
+                    .toPoint();
     wl_output_send_geometry(resource, position.x(), position.y(),
                             metrics.physicalSizeMm.width(), metrics.physicalSizeMm.height(),
-                            subpixel(metrics.subpixel), metrics.make.toUtf8().constData(),
-                            metrics.model.toUtf8().constData(), transform(metrics.transform));
+                            subpixel(metrics.subpixel), metrics.make.c_str(),
+                            metrics.model.c_str(), transform(metrics.transform));
     wl_output_send_mode(
             resource, WL_OUTPUT_MODE_CURRENT | (metrics.preferred ? WL_OUTPUT_MODE_PREFERRED : 0),
             metrics.pixelSize.width(), metrics.pixelSize.height(), metrics.refreshMilliHz);
     if (wl_resource_get_version(resource) >= WL_OUTPUT_SCALE_SINCE_VERSION)
         wl_output_send_scale(resource, metrics.scale.integerScale());
     if (initial && wl_resource_get_version(resource) >= WL_OUTPUT_NAME_SINCE_VERSION) {
-        wl_output_send_name(resource, metrics.name.toUtf8().constData());
-        const QString description =
-                metrics.description.isEmpty() ? metrics.model : metrics.description;
-        wl_output_send_description(resource, description.toUtf8().constData());
+        wl_output_send_name(resource, metrics.name.c_str());
+        const std::string &description =
+                metrics.description.empty() ? metrics.model : metrics.description;
+        wl_output_send_description(resource, description.c_str());
     }
     for (auto *extension : binding->extensions)
         sendXdg(binding, extension, false);
@@ -258,7 +258,7 @@ void destroyState(OutputState *state)
         delete binding;
     }
     state->capture->active = false;
-    Q_EMIT state->capture->changed();
+    state->capture->changed();
     delete state;
 }
 
@@ -366,7 +366,7 @@ void updateOutputGlobal(wl_global *global, const compositor::Output *output)
         return;
     state->metrics = *output;
     state->capture->output = *output;
-    Q_EMIT state->capture->changed();
+    state->capture->changed();
     for (auto *binding : state->bindings)
         sendMetrics(binding, false);
 }
@@ -432,7 +432,7 @@ void removeOutputGlobal(wl_global *global)
         return;
     state->active = false;
     state->capture->active = false;
-    Q_EMIT state->capture->changed();
+    state->capture->changed();
     for (auto *binding : state->bindings) {
         for (const auto &member : binding->members) {
             if (*member.token)
@@ -445,10 +445,13 @@ void removeOutputGlobal(wl_global *global)
     // it has not seen withdrawn, and binding a destroyed global is a protocol
     // error that disconnects it. Such late bindings get no events, as upstream.
     wl_global_remove(global);
-    QTimer::singleShot(kRemovedOutputLifetime, &state->lifetime, [state] {
+    state->removal = std::make_unique<base::Timer>(core::mainLoop());
+    state->removal->setSingleShot(true);
+    state->removal->onTimeout = [state] {
         wl_global_destroy(state->global);
         destroyState(state);
-    });
+    };
+    state->removal->start(kRemovedOutputLifetime);
 }
 
 std::shared_ptr<compositor::CaptureSource> outputCaptureSource(wl_resource *resource)
@@ -460,7 +463,7 @@ std::shared_ptr<compositor::CaptureSource> outputCaptureSource(wl_resource *reso
     return binding ? binding->output->capture : nullptr;
 }
 
-std::optional<QString> outputNameFromResource(wl_resource *resource)
+std::optional<std::string> outputNameFromResource(wl_resource *resource)
 {
     if (!resource
         || !wl_resource_instance_of(resource, &wl_output_interface, &outputImplementation)) {

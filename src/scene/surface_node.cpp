@@ -3,11 +3,12 @@
 // found in the LICENSE file.
 
 #include "scene/surface_node.h"
+#include "base/region.h"
 
 namespace cutefish::scene {
 
-SurfaceNode::SurfaceNode(const QString &name)
-    : Node(name)
+SurfaceNode::SurfaceNode(std::string name)
+    : Node(std::move(name))
 {
 }
 
@@ -48,8 +49,8 @@ void SurfaceNode::setOpaque(bool opaque)
     notifyChanged();
 }
 
-void SurfaceNode::setBackgroundBlur(const QRect &rect, int radius, const render::GlassParams &glass,
-                                    const QPainterPath &shape)
+void SurfaceNode::setBackgroundBlur(const base::Rect &rect, int radius, const render::GlassParams &glass,
+                                    const ui::Path &shape)
 {
     if (m_blurRect == rect && m_blurRadius == radius && m_glass == glass && m_blurShape == shape)
         return;
@@ -69,7 +70,7 @@ void SurfaceNode::render(render::Renderer &renderer) const
     Node::render(renderer);
 }
 
-void SurfaceNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
+void SurfaceNode::paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const
 {
     // Content the display controller put on a hardware plane must not also be
     // composited, or the two would blend on top of each other.
@@ -86,13 +87,13 @@ void SurfaceNode::paint(render::Renderer &renderer, const QRect &absoluteGeometr
     if (hasBackgroundBlur() && !renderer.suppressBackgroundBlur)
         renderer.drawBackgroundBlur(m_blurRect.translated(absoluteGeometry.topLeft()), m_blurRadius,
                                     absoluteGeometry, m_glass,
-                                    m_blurShape.translated(absoluteGeometry.topLeft()), damageId());
+                                    m_blurShape.translated(absoluteGeometry.x(), absoluteGeometry.y()), damageId());
     renderer.waitFence(m_acquireFence);
     const float alpha = m_alpha * renderer.opacityScale;
     if (m_contentShape) {
-        const auto region = *m_contentShape & QRegion(QRect(QPoint(), absoluteGeometry.size()));
+        const auto region = *m_contentShape & base::Region(base::Rect(base::Point(), absoluteGeometry.size()));
         for (const auto &rect : region) {
-            renderer.pushRoundedClip({QRectF(rect.translated(absoluteGeometry.topLeft())), 0});
+            renderer.pushRoundedClip({base::RectF(rect.translated(absoluteGeometry.topLeft())), 0});
             renderer.drawTextureMapped(m_texture.get(), absoluteGeometry, alpha, m_textureMapping);
             renderer.popRoundedClip();
         }

@@ -254,7 +254,7 @@ void WaylandPositioner::setGravity(uint32_t gravity)
     std::tie(m_gravityX, m_gravityY) = decomposeGravity(gravity);
 }
 
-WaylandPositioner::Result WaylandPositioner::calculateBounds(const QRect& workArea) const
+WaylandPositioner::Result WaylandPositioner::calculateBounds(const base::Rect& workArea) const
 {
     const ConstraintAdjustment adjustmentsX = maskToConstraintAdjustment(
         m_adjustment, XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X,
@@ -284,9 +284,9 @@ WaylandPositioner::Result WaylandPositioner::calculateBounds(const QRect& workAr
         {m_anchorRect.y(), m_anchorRect.y() + m_anchorRect.height()}, m_size.height(),
         m_offset.y(), m_anchorY, m_gravityY, adjustmentsY, avoidYOcclusion);
 
-    return {QPoint(x.first.start, y.first.start),
-            QSize(std::max(1, x.first.end - x.first.start),
-                  std::max(1, y.first.end - y.first.start))};
+    return {base::Point(x.first.start, y.first.start),
+            base::Size(std::max(1, x.first.end - x.first.start),
+                       std::max(1, y.first.end - y.first.start))};
 }
 
 } // namespace cutefish::wayland

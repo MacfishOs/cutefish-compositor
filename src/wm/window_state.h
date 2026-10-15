@@ -16,8 +16,7 @@
 #include <optional>
 #include <vector>
 
-#include <QRect>
-
+#include "base/geometry.h"
 #include "wm/types.h"
 
 namespace cutefish::scene {
@@ -59,8 +58,8 @@ public:
     // --- Restore bounds ---
 
     bool hasRestoreBounds() const { return m_restoreBounds.has_value(); }
-    QRect restoreBounds() const { return m_restoreBounds.value_or(QRect()); }
-    void setRestoreBounds(const QRect& bounds) { m_restoreBounds = bounds; }
+    base::Rect restoreBounds() const { return m_restoreBounds.value_or(base::Rect()); }
+    void setRestoreBounds(const base::Rect& bounds) { m_restoreBounds = bounds; }
     void clearRestoreBounds() { m_restoreBounds.reset(); }
     void saveCurrentBoundsForRestore();
 
@@ -79,11 +78,11 @@ private:
     void updateBoundsFromState(WindowStateType previous);
     void updateVisibility(WindowStateType previous);
     void updateRestoreHistory(WindowStateType previous);
-    void setBoundsDirect(const QRect& bounds);
+    void setBoundsDirect(const base::Rect& bounds);
 
     Window* m_window = nullptr;
     WindowStateType m_type = WindowStateType::Normal;
-    std::optional<QRect> m_restoreBounds;
+    std::optional<base::Rect> m_restoreBounds;
 
     // Bottom to top. Only states strictly below the current one in the layer
     // order can be on it, so it never grows past the number of states.

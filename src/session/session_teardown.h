@@ -13,7 +13,7 @@
 
 #include <functional>
 
-#include <QtGlobal>
+#include <cstdint>
 
 #include "session/session_controller.h"
 
@@ -61,7 +61,7 @@ private:
     wm::WindowCycleController *m_windowCycle = nullptr;
     // The window active when the session was blocked, by id, which a window
     // closing meanwhile cannot leave dangling.
-    quint64 m_activeBeforeBlock = 0;
+    uint64_t m_activeBeforeBlock = 0;
     std::function<void()> m_cursorReset;
     std::function<void()> m_captureAbort;
 };

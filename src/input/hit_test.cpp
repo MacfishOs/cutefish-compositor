@@ -21,20 +21,16 @@
 
 namespace cutefish::input {
 
-namespace {
-
 // The input region is an integer region, so the fractional part of a pointer
 // location is dropped for the containment test only; the location handed to the
 // client keeps its precision.
-QPoint flooredPoint(const QPointF &point)
+static base::Point flooredPoint(const base::PointF &point)
 {
-    return QPoint(static_cast<int>(std::floor(point.x())), static_cast<int>(std::floor(point.y())));
+    return point.toFlooredPoint();
 }
 
-} // namespace
-
-compositor::Surface *findTargetSurface(compositor::Surface *root, const QPointF &location,
-                                       QPointF *surfaceLocation)
+compositor::Surface *findTargetSurface(compositor::Surface *root, const base::PointF &location,
+                                       base::PointF *surfaceLocation)
 {
     if (!root || !root->isMapped())
         return nullptr;
@@ -51,7 +47,7 @@ compositor::Surface *findTargetSurface(compositor::Surface *root, const QPointF 
         compositor::Surface *surface = it->first;
         if (surface == root)
             continue;
-        const QPointF childLocation = location - QPointF(it->second);
+        const base::PointF childLocation = location - base::PointF(it->second);
         if (compositor::Surface *target =
                     findTargetSurface(surface, childLocation, surfaceLocation)) {
             return target;
@@ -71,7 +67,7 @@ namespace {
 // scene. Recurses through nodes that are not surfaces themselves.
 compositor::Surface *findTargetSurfaceInNodes(compositor::Compositor *compositor,
                                               const std::vector<scene::Node *> &nodes,
-                                              const QPointF &location, QPointF *surfaceLocation,
+                                              const base::PointF &location, base::PointF *surfaceLocation,
                                               bool throughCapture = false)
 {
     for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
@@ -97,7 +93,7 @@ compositor::Surface *findTargetSurfaceInNodes(compositor::Compositor *compositor
         // here at all.
         if (surface->parentSurface())
             continue;
-        const QPointF surfaceRelative = locationInSurface(surface, location);
+        const base::PointF surfaceRelative = locationInSurface(surface, location);
         if (compositor::Surface *target =
                     findTargetSurface(surface, surfaceRelative, surfaceLocation)) {
             return target;
@@ -108,15 +104,15 @@ compositor::Surface *findTargetSurfaceInNodes(compositor::Compositor *compositor
 
 } // namespace
 
-compositor::Surface *findTargetSurface(compositor::Compositor *compositor, const QPointF &location,
-                                       QPointF *surfaceLocation)
+compositor::Surface *findTargetSurface(compositor::Compositor *compositor, const base::PointF &location,
+                                       base::PointF *surfaceLocation)
 {
     return findTargetSurfaceIn(compositor, compositor ? compositor->surfaceContainer() : nullptr,
                                location, surfaceLocation);
 }
 
 compositor::Surface *findTargetSurfaceIn(compositor::Compositor *compositor, scene::Node *container,
-                                         const QPointF &location, QPointF *surfaceLocation)
+                                         const base::PointF &location, base::PointF *surfaceLocation)
 {
     if (!compositor || !container)
         return nullptr;
@@ -146,12 +142,12 @@ bool isInputMethodSurface(const compositor::Compositor *compositor,
 }
 
 compositor::Surface *findCapturedSurfaceIn(compositor::Compositor *compositor,
-                                           scene::Node *container, const QPointF &location)
+                                           scene::Node *container, const base::PointF &location)
 {
     if (!compositor || !container)
         return nullptr;
 
-    QPointF surfaceLocation;
+    base::PointF surfaceLocation;
     return findTargetSurfaceInNodes(compositor, container->children(), location, &surfaceLocation,
                                     true);
 }
@@ -163,7 +159,7 @@ scene::Node *inputRootFor(compositor::Compositor *compositor, const SessionGate 
     return compositor ? compositor->surfaceContainer() : nullptr;
 }
 
-QPointF locationInSurface(const compositor::Surface *surface, const QPointF &location)
+base::PointF locationInSurface(const compositor::Surface *surface, const base::PointF &location)
 {
     const scene::Node *node = surface ? surface->node() : nullptr;
     if (!node)

@@ -9,7 +9,7 @@
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
 // Adapted for Cutefish: there is no quad list and no DisplayResourceProvider,
-// so the strategies run over the scene tree directly. gfx::Rect becomes QRect,
+// so the strategies run over the scene tree directly. gfx::Rect becomes base::Rect,
 // gfx::GpuFence becomes render::SyncFence, and everything ChromeOS-specific -
 // rounded display masks, colour spaces, temporal promotion tracking - is
 // omitted.
@@ -20,17 +20,16 @@
 #include <memory>
 #include <vector>
 
-#include <QRect>
-#include <QSize>
 
 #include "render/presentation.h"
 #include "render/scanout.h"
 #include "render/sync_fence.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
 class Node;
-void removeOccludedPresentation(Node& root, const QSize& logicalSize,
+void removeOccludedPresentation(Node& root, const base::Size& logicalSize,
                                 render::PresentationSubmission& submission);
 
 class SurfaceNode;
@@ -53,11 +52,11 @@ struct OverlayCandidate {
     render::SyncFence acquireFence;
 
     // Where the content lands on the output, in output pixels.
-    QRect displayRect;
+    base::Rect displayRect;
 
     // The region of the buffer to show, in buffer pixels. Scanout requires it
     // to match displayRect's size: no plane scaling is attempted.
-    QRect sourceRect;
+    base::Rect sourceRect;
 
     // No blending needed. Only opaque content may take the primary plane.
     bool opaque = false;
@@ -96,7 +95,7 @@ struct OverlayPlan {
 // do it - format, modifier, plane capabilities, an atomic TEST_ONLY - is the
 // display controller's answer, and a rejection there simply means the content
 // is composited instead.
-OverlayPlan proposeOverlays(Node& root, const QSize& outputSize, size_t maxOverlays,
+OverlayPlan proposeOverlays(Node& root, const base::Size& outputSize, size_t maxOverlays,
                             double outputScale = 1);
 
 } // namespace cutefish::scene

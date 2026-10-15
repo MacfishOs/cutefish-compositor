@@ -11,45 +11,42 @@
 #include "backend/drm/drm_multi_device_planner.h"
 
 #include <algorithm>
-
-#include <QHash>
-#include <QSet>
+#include <map>
+#include <set>
 
 namespace cutefish::backend {
 
 DrmMultiDeviceResult
-DrmMultiDeviceCommitCoordinator::run(const QList<DrmDeviceTransaction> &devices,
+DrmMultiDeviceCommitCoordinator::run(const std::vector<DrmDeviceTransaction> &devices,
                                      uint64_t expectedGeneration,
                                      std::function<uint64_t()> currentGeneration)
 {
-    if (devices.isEmpty() || !currentGeneration)
-        return {false, false, {}, QStringLiteral("No DRM devices were supplied")};
+    if (devices.empty() || !currentGeneration)
+        return {false, false, {}, "No DRM devices were supplied"};
     for (const auto &device : devices) {
         if (currentGeneration() != expectedGeneration)
             return {false, false, device.deviceKey,
-                    QStringLiteral("DRM topology changed during testing")};
+                    "DRM topology changed during testing"};
         if (!device.test || !device.test())
-            return {false, false, device.deviceKey, QStringLiteral("A device test commit failed")};
+            return {false, false, device.deviceKey, "A device test commit failed"};
     }
-    QList<const DrmDeviceTransaction *> committed;
-    const auto recover = [&](const QString &failedDevice) {
-        bool restored = !committed.isEmpty();
+    std::vector<const DrmDeviceTransaction *> committed;
+    const auto recover = [&](const std::string &failedDevice) {
+        bool restored = !committed.empty();
         for (auto it = committed.crbegin(); it != committed.crend(); ++it) {
             const bool success = (*it)->rollback && (*it)->rollback();
             restored = restored && success;
         }
         return DrmMultiDeviceResult {
                 false, restored, failedDevice,
-                committed.isEmpty()
-                        ? QStringLiteral("A device commit was rejected before any changes")
-                        : restored
-                        ? QStringLiteral("A device commit failed and prior devices were restored")
-                        : QStringLiteral("A device commit failed and rollback was incomplete")};
+                committed.empty() ? "A device commit was rejected before any changes"
+                        : restored ? "A device commit failed and prior devices were restored"
+                                   : "A device commit failed and rollback was incomplete"};
     };
     for (const auto &device : devices) {
         if (currentGeneration() != expectedGeneration || !device.commit || !device.commit())
             return recover(device.deviceKey);
-        committed.append(&device);
+        committed.push_back(&device);
         if (currentGeneration() != expectedGeneration)
             return recover(device.deviceKey);
     }
@@ -57,7 +54,7 @@ DrmMultiDeviceCommitCoordinator::run(const QList<DrmDeviceTransaction> &devices,
 }
 
 CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities &capabilities,
-                                        qint64 maximumCpuCopyPixels)
+                                        int64_t maximumCpuCopyPixels)
 {
     if (capabilities.sameDevice)
         return CrossGpuTransfer::Direct;
@@ -71,23 +68,21 @@ CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities &capabilities
     return CrossGpuTransfer::Unavailable;
 }
 
-std::optional<QList<DrmTiledMonitor>> groupDrmTiles(const QList<DrmTileSnapshot> &tiles)
+std::optional<std::vector<DrmTiledMonitor>>
+groupDrmTiles(const std::vector<DrmTileSnapshot> &tiles)
 {
-    QHash<QString, QList<DrmTileSnapshot>> groups;
+    std::map<std::string, std::vector<DrmTileSnapshot>> groups;
     for (const auto &tile : tiles) {
-        if (!tile.groupId.isEmpty())
-            groups[tile.groupId].append(tile);
+        if (!tile.groupId.empty())
+            groups[tile.groupId].push_back(tile);
     }
-    QList<DrmTiledMonitor> result;
-    QStringList keys = groups.keys();
-    std::sort(keys.begin(), keys.end());
-    for (const auto &key : keys) {
-        auto group = groups.value(key);
-        const auto first = group.first();
+    std::vector<DrmTiledMonitor> result;
+    for (auto &[key, group] : groups) {
+        const auto first = group.front();
         if (first.columns < 1 || first.rows < 1 || first.tileSize.isEmpty()
-            || group.size() != first.columns * first.rows)
+            || int(group.size()) != first.columns * first.rows)
             return std::nullopt;
-        QSet<int> positions;
+        std::set<int> positions;
         for (const auto &tile : group) {
             if (tile.columns != first.columns || tile.rows != first.rows
                 || tile.tileSize != first.tileSize || tile.column < 0 || tile.column >= tile.columns
@@ -102,20 +97,20 @@ std::optional<QList<DrmTiledMonitor>> groupDrmTiles(const QList<DrmTileSnapshot>
         });
         DrmTiledMonitor monitor {
                 key,
-                QSize(first.tileSize.width() * first.columns, first.tileSize.height() * first.rows),
+                base::Size(first.tileSize.width() * first.columns, first.tileSize.height() * first.rows),
                 {}};
         for (const auto &tile : group)
-            monitor.connectors.append(tile.connectorId);
-        result.append(monitor);
+            monitor.connectors.push_back(tile.connectorId);
+        result.push_back(monitor);
     }
     return result;
 }
 
-bool hardwareCloneEligible(const QString &firstDevice, const QString &secondDevice,
-                           const QString &firstMode, const QString &secondMode,
+bool hardwareCloneEligible(const std::string &firstDevice, const std::string &secondDevice,
+                           const std::string &firstMode, const std::string &secondMode,
                            uint32_t firstPossibleCrtcs, uint32_t secondPossibleCrtcs)
 {
-    return !firstDevice.isEmpty() && firstDevice == secondDevice && !firstMode.isEmpty()
+    return !firstDevice.empty() && firstDevice == secondDevice && !firstMode.empty()
             && firstMode == secondMode && (firstPossibleCrtcs & secondPossibleCrtcs) != 0;
 }
 

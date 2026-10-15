@@ -5,16 +5,16 @@
 #ifndef CUTEFISH_WM_WINDOW_H_
 #define CUTEFISH_WM_WINDOW_H_
 
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
-#include <QImage>
-#include <QRect>
-#include <QSize>
-#include <QString>
 
+#include "base/geometry.h"
 #include "compositor/surface_observer.h"
+#include "ui/bitmap.h"
 #include "wm/types.h"
 #include "wm/window_frame.h"
 
@@ -57,7 +57,7 @@ class WindowVisualController;
 class Window : public compositor::SurfaceObserver
 {
 public:
-    Window(WindowManager *manager, compositor::Surface *rootSurface, const QString &title = {},
+    Window(WindowManager *manager, compositor::Surface *rootSurface, const std::string &title = {},
            WindowType type = WindowType::Normal);
     Window(const Window &) = delete;
     Window &operator=(const Window &) = delete;
@@ -67,7 +67,7 @@ public:
 
     bool isPopup() const { return m_type == WindowType::Popup; }
 
-    quint64 id() const { return m_id; }
+    uint64_t id() const { return m_id; }
 
     WindowManager *manager() const { return m_manager; }
 
@@ -84,15 +84,15 @@ public:
     // The root of the client's surface tree, inside visualNode().
     scene::Node *surfaceNode() const;
 
-    QString title() const { return m_title; }
+    const std::string &title() const { return m_title; }
 
-    void setTitle(const QString &title);
+    void setTitle(const std::string &title);
 
     // xdg_toplevel.set_app_id. Metadata only; nothing in the window manager
     // keys off it yet.
-    QString applicationId() const { return m_applicationId; }
+    const std::string &applicationId() const { return m_applicationId; }
 
-    void setApplicationId(const QString &id);
+    void setApplicationId(const std::string &id);
 
     bool isShellApplication() const;
     bool skipTaskbar() const;
@@ -100,9 +100,9 @@ public:
     // The process behind the Wayland connection the window's shell surface was
     // created on, or 0 when unknown. Metadata for the task list only: it is
     // never a privilege check.
-    qint64 processId() const { return m_processId; }
+    int64_t processId() const { return m_processId; }
 
-    void setProcessId(qint64 pid) { m_processId = pid; }
+    void setProcessId(int64_t pid) { m_processId = pid; }
 
     // --- Shell role ---
     //
@@ -129,22 +129,22 @@ public:
     // for a shell window; ordinary applications never set it.
     bool hasClientPosition() const { return m_hasClientPosition; }
 
-    QPoint clientPosition() const { return m_clientPosition; }
+    base::Point clientPosition() const { return m_clientPosition; }
 
-    void setClientPosition(const QPoint &position);
+    void setClientPosition(const base::Point &position);
 
     // Where a minimize animation should end: the task-list entry the shell
     // reported, in output coordinates. Null when the shell has not said.
     // Stored for the animation to use; nothing here depends on it.
-    QRect minimizedGeometry() const;
-    void setMinimizedGeometry(const QRect &geometry);
-    void setMinimizedGeometry(Window *panel, const QRect &geometry);
+    base::Rect minimizedGeometry() const;
+    void setMinimizedGeometry(const base::Rect &geometry);
+    void setMinimizedGeometry(Window *panel, const base::Rect &geometry);
 
     // The window as it last looked when it was minimized, for the dock to show
     // in its place. Null while the window is not minimized.
-    const QImage &minimizedSnapshot() const { return m_minimizedSnapshot; }
+    const ui::Bitmap &minimizedSnapshot() const { return m_minimizedSnapshot; }
 
-    void setMinimizedSnapshot(const QImage &snapshot);
+    void setMinimizedSnapshot(const ui::Bitmap &snapshot);
 
     // The minimize animation holds the window on its dock slot until the shell
     // shows the thumbnail there, or kMinimizeHandoffTimeoutMs pass.
@@ -181,10 +181,10 @@ public:
 
     // --- Geometry ---
 
-    QRect bounds() const { return m_bounds; }
+    base::Rect bounds() const { return m_bounds; }
 
     // The client area inside the frame. Equal to bounds() when undecorated.
-    QRect contentBounds() const { return frameInsets().inset(m_bounds); }
+    base::Rect contentBounds() const { return frameInsets().inset(m_bounds); }
 
     // What the frame occupies of bounds(). Null while fullscreen: a fullscreen
     // window has no server decoration.
@@ -193,7 +193,7 @@ public:
     // Sets the logical geometry directly, bypassing the state machine. Use a
     // SetBoundsWMEvent for anything a user or client requested; this is for the
     // state machine, the resizer and initial placement.
-    void setBounds(const QRect &bounds);
+    void setBounds(const base::Rect &bounds);
 
     // Offset from contentBounds().topLeft() to the root surface's origin. The
     // shell surface sets it from the client's window geometry - a CSD client
@@ -201,9 +201,9 @@ public:
     // compensation applied while an asynchronous resize from a top or left edge
     // is in flight. The frame extents are added on top of it here, so the shell
     // surface never has to know about them.
-    QPoint surfaceOrigin() const { return m_surfaceOrigin; }
+    base::Point surfaceOrigin() const { return m_surfaceOrigin; }
 
-    void setSurfaceOrigin(const QPoint &origin);
+    void setSurfaceOrigin(const base::Point &origin);
 
     // What the window actually has on screen right now, in node() coordinates.
     // bounds() is a *request*: during an interactive resize the window manager
@@ -214,22 +214,22 @@ public:
     //
     // Includes real SSD insets around the committed client size. Configure
     // acknowledgements alone do not replace the presented buffer.
-    QRect presentedBounds() const;
+    base::Rect presentedBounds() const;
 
     // Both constrain the client area, which is what xdg_toplevel.set_min_size /
     // set_max_size talk about. An empty maximum size means unbounded.
-    QSize minimumSize() const { return m_minimumSize; }
+    base::Size minimumSize() const { return m_minimumSize; }
 
-    void setMinimumSize(const QSize &size);
+    void setMinimumSize(const base::Size &size);
 
-    QSize maximumSize() const { return m_maximumSize; }
+    base::Size maximumSize() const { return m_maximumSize; }
 
-    void setMaximumSize(const QSize &size);
+    void setMaximumSize(const base::Size &size);
 
     // The same two limits applied to the outer bounds, which is what the
     // resizer and the state machine work in.
-    QSize minimumOuterSize() const;
-    QSize maximumOuterSize() const;
+    base::Size minimumOuterSize() const;
+    base::Size maximumOuterSize() const;
 
     bool isResizable() const { return !isPopup() && m_resizable; }
 
@@ -243,8 +243,8 @@ public:
     // Nothing else reads it: bounds() stays where the client put the window,
     // and that is what its popups, its minimize targets and its work-area
     // reservation are measured from.
-    QPoint presentationOffset() const { return m_presentationOffset; }
-    void setPresentationOffset(const QPoint &offset);
+    base::Point presentationOffset() const { return m_presentationOffset; }
+    void setPresentationOffset(const base::Point &offset);
 
     // A dock parked off screen is not drawn at all, so it cannot land on an
     // output that happens to lie beyond the edge it left through. Distinct
@@ -332,7 +332,7 @@ public:
     // Drawn at `scale` of its size about `anchor`, a point in bounds()
     // coordinates, animated there from what is drawn now unless `animate` is
     // false. Presentation only: bounds, input and the client are unaffected.
-    void setPresentationScale(double scale, const QPointF &anchor, bool animate);
+    void setPresentationScale(double scale, const base::PointF &anchor, bool animate);
 
     bool isActive() const;
     void activate();
@@ -359,7 +359,7 @@ public:
     void minimize();
     void restore();
     void setFullscreen(bool fullscreen);
-    void requestBounds(const QRect &bounds);
+    void requestBounds(const base::Rect &bounds);
 
     // --- Closing ---
 
@@ -466,20 +466,20 @@ private:
     void detachSurfaceNode();
 
     const WindowType m_type;
-    const quint64 m_id;
+    const uint64_t m_id;
     WindowManager *m_manager = nullptr;
     compositor::Surface *m_rootSurface = nullptr;
-    QString m_title;
-    QString m_applicationId;
-    qint64 m_processId = 0;
+    std::string m_title;
+    std::string m_applicationId;
+    int64_t m_processId = 0;
     WindowRole m_role = WindowRole::Normal;
     FocusPolicy m_focusPolicy = FocusPolicy::Normal;
     PanelBehavior m_panelBehavior = PanelBehavior::StayAbove;
-    QPoint m_clientPosition;
-    QRect m_minimizedGeometry;
-    quint64 m_minimizedGeometryPanel = 0;
-    QImage m_minimizedSnapshot;
-    quint64 m_minimizeHandoff = 0;
+    base::Point m_clientPosition;
+    base::Rect m_minimizedGeometry;
+    uint64_t m_minimizedGeometryPanel = 0;
+    ui::Bitmap m_minimizedSnapshot;
+    uint64_t m_minimizeHandoff = 0;
     bool m_hasClientPosition = false;
     CloseCallback m_closeCallback;
     PingCallback m_pingCallback;
@@ -491,15 +491,15 @@ private:
     std::unique_ptr<WindowFrame> m_frame;
     bool m_decorated = false;
 
-    QRect m_bounds;
-    QPoint m_surfaceOrigin;
-    QRect m_surfaceTargetBounds;
-    QPoint m_presentationOffset;
+    base::Rect m_bounds;
+    base::Point m_surfaceOrigin;
+    base::Rect m_surfaceTargetBounds;
+    base::Point m_presentationOffset;
     bool m_presentationHidden = false;
     Insets m_clientExteriorInsets;
     Insets m_clientInputInsets;
-    QSize m_minimumSize {1, 1};
-    QSize m_maximumSize;
+    base::Size m_minimumSize {1, 1};
+    base::Size m_maximumSize;
     bool m_resizable = true;
     bool m_visible = true;
     bool m_hidden = false;

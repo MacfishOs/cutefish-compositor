@@ -13,11 +13,11 @@
 #include <algorithm>
 #include <cmath>
 
-#include <QRegion>
 
 #include "scene/node.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "base/region.h"
 
 namespace cutefish::scene {
 
@@ -56,19 +56,19 @@ bool hasBackgroundBlur(const Node &node)
 // One painted thing, in paint order. Upstream this is a viz::DrawQuad in an
 // AggregatedRenderPass; here the scene tree is walked directly.
 struct SceneItem {
-    QRect bounds;
+    base::Rect bounds;
     bool opaque = false;
     // Non-null when the item is one client buffer a plane could show directly.
     SurfaceNode *surface = nullptr;
     std::shared_ptr<render::PresentationContent> presentation;
 };
 
-void flatten(Node &node, const QRect &outputRect, std::vector<SceneItem> &items)
+void flatten(Node &node, const base::Rect &outputRect, std::vector<SceneItem> &items)
 {
     if (!node.isVisible() && !node.paintsWhenHidden())
         return;
 
-    const QRect bounds = node.absolutePaintBounds().intersected(outputRect);
+    const base::Rect bounds = node.absolutePaintBounds().intersected(outputRect);
 
     // An effect draws its whole subtree itself, so it is one opaque-unknown
     // blob and nothing inside it can reach a plane.
@@ -111,7 +111,7 @@ void flatten(Node &node, const QRect &outputRect, std::vector<SceneItem> &items)
 
 // The buffer maps one-to-one onto `pixels` of the plane: no plane scaling and
 // no source crop, which is all the planner is willing to ask a plane for.
-bool isUnscaled(const SurfaceNode &surface, const QSize &pixels)
+bool isUnscaled(const SurfaceNode &surface, const base::Size &pixels)
 {
     const render::ScanoutBuffer *buffer = surface.scanoutBuffer().get();
     return buffer && !surface.hasContentShape() && surface.alpha() == 1.0f
@@ -124,7 +124,7 @@ bool isUnscaled(const SurfaceNode &surface)
     return isUnscaled(surface, surface.geometry().size());
 }
 
-OverlayCandidate makeCandidate(SurfaceNode &surface, const QRect &bounds, bool opaque, int zOrder)
+OverlayCandidate makeCandidate(SurfaceNode &surface, const base::Rect &bounds, bool opaque, int zOrder)
 {
     OverlayCandidate candidate;
     candidate.buffer = surface.scanoutBuffer();
@@ -132,7 +132,7 @@ OverlayCandidate makeCandidate(SurfaceNode &surface, const QRect &bounds, bool o
     if (surface.acquireFence().isValid() && !candidate.acquireFence.isValid())
         return {};
     candidate.displayRect = bounds;
-    candidate.sourceRect = QRect(QPoint(0, 0), candidate.buffer->scanoutAttributes().size);
+    candidate.sourceRect = base::Rect(base::Point(0, 0), candidate.buffer->scanoutAttributes().size);
     candidate.opaque = opaque;
     candidate.zOrder = zOrder;
     candidate.node = &surface;
@@ -145,8 +145,8 @@ OverlayCandidate makeCandidate(SurfaceNode &surface, const QRect &bounds, bool o
 // reaches through its BlackFullscreenOptimization. `outputRect` is the output
 // in logical coordinates and `outputPixels` its mode: a buffer of the mode's
 // size goes on the plane at any scale, as viz promotes in device space.
-bool proposeFullscreen(std::vector<SceneItem> &items, const QRect &outputRect,
-                       const QSize &outputPixels, OverlayPlan &plan)
+bool proposeFullscreen(std::vector<SceneItem> &items, const base::Rect &outputRect,
+                       const base::Size &outputPixels, OverlayPlan &plan)
 {
     if (items.empty())
         return false;
@@ -157,7 +157,7 @@ bool proposeFullscreen(std::vector<SceneItem> &items, const QRect &outputRect,
     if (!isUnscaled(*top.surface, outputPixels))
         return false;
 
-    plan.primary = makeCandidate(*top.surface, QRect(QPoint(), outputPixels), true, 0);
+    plan.primary = makeCandidate(*top.surface, base::Rect(base::Point(), outputPixels), true, 0);
     return plan.primary.isValid();
 }
 
@@ -196,21 +196,21 @@ void proposeSingleOnTop(std::vector<SceneItem> &items, size_t maxOverlays, Overl
 
 } // namespace
 
-void removeOccludedPresentation(Node &root, const QSize &logicalSize,
+void removeOccludedPresentation(Node &root, const base::Size &logicalSize,
                                 render::PresentationSubmission &submission)
 {
     std::vector<SceneItem> items;
-    flatten(root, QRect(QPoint(), logicalSize), items);
-    QRegion covered;
+    flatten(root, base::Rect(base::Point(), logicalSize), items);
+    base::Region covered;
     for (auto it = items.rbegin(); it != items.rend(); ++it) {
-        if ((QRegion(it->bounds) - covered).isEmpty())
+        if ((base::Region(it->bounds) - covered).isEmpty())
             submission.remove(it->presentation);
         if (it->opaque)
             covered += it->bounds;
     }
 }
 
-OverlayPlan proposeOverlays(Node &root, const QSize &outputSize, size_t maxOverlays,
+OverlayPlan proposeOverlays(Node &root, const base::Size &outputSize, size_t maxOverlays,
                             double outputScale)
 {
     OverlayPlan plan;
@@ -218,8 +218,8 @@ OverlayPlan proposeOverlays(Node &root, const QSize &outputSize, size_t maxOverl
         return plan;
 
     // The logical extent the scene sees, as OutputScale::logicalSize rounds it.
-    const QRect outputRect(QPoint(0, 0),
-                           QSize(int(std::ceil(outputSize.width() / outputScale)),
+    const base::Rect outputRect(base::Point(0, 0),
+                           base::Size(int(std::ceil(outputSize.width() / outputScale)),
                                  int(std::ceil(outputSize.height() / outputScale))));
     std::vector<SceneItem> items;
     flatten(root, outputRect, items);

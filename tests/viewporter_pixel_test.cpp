@@ -8,13 +8,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <string>
 #include <drm_fourcc.h>
 #include <fcntl.h>
 #include <gbm.h>
 #include <gtest/gtest.h>
 #include <vector>
-
-#include <QDir>
 
 #include "compositor/compositor.h"
 #include "compositor/dmabuf_buffer.h"
@@ -54,7 +54,7 @@ protected:
                 eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
         ASSERT_NE(surface, EGL_NO_SURFACE);
         target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface, nullptr,
-                                                           QSize(width, height));
+                                                           base::Size(width, height));
         ASSERT_TRUE(renderer->beginFrame(target.get()));
     }
 
@@ -116,7 +116,7 @@ TEST_F(ViewporterPixelTest, RoundedClipUsesLetterboxOriginAndRotation)
         renderer->setOutputContext(
                 {"mirror", {200, 100, 32, 32}, {128, 128}, 2.0, rotation, 1, {32, 32, 64, 64}});
         renderer->clear({0, 0, 0, 1});
-        renderer->pushRoundedClip({QRectF(200, 100, 32, 32), 4});
+        renderer->pushRoundedClip({base::RectF(200, 100, 32, 32), 4});
         renderer->fillRect({200, 100, 32, 32}, {1, 0, 0, 1});
         renderer->popRoundedClip();
         const auto image = pixels();
@@ -184,8 +184,8 @@ TEST_F(ViewporterPixelTest, ShmGridAllTransformsScalesAndFractionalCrops)
     surface->attach(buffer, {});
     for (int scale : {1, 2}) {
         surface->setBufferScale(scale);
-        surface->setCrop(QRectF(2.25, 6.25, 26.5, 2.5));
-        for (const QSize destination : {QSize(79, 11), QSize(13, 1), QSize(26, 5)}) {
+        surface->setCrop(base::RectF(2.25, 6.25, 26.5, 2.5));
+        for (const base::Size destination : {base::Size(79, 11), base::Size(13, 1), base::Size(26, 5)}) {
             surface->setViewport(destination);
             for (int i = 0; i < 8; ++i) {
                 SCOPED_TRACE(::testing::Message() << "transform=" << i << " scale=" << scale
@@ -202,7 +202,7 @@ TEST_F(ViewporterPixelTest, ShmGridAllTransformsScalesAndFractionalCrops)
                         // Independent inverse transform oracle in raw pixel coordinates.
                         const double u = (2.25 + (x + 0.5) * 26.5 / destination.width()) * scale;
                         const double v = (6.25 + (y + 0.5) * 2.5 / destination.height()) * scale;
-                        const QPointF raw[] = {{u, v},      {128 - v, u},     {128 - u, 64 - v},
+                        const base::PointF raw[] = {{u, v},      {128 - v, u},     {128 - u, 64 - v},
                                                {v, 64 - u}, {128 - u, v},     {v, u},
                                                {u, 64 - v}, {128 - v, 64 - u}};
                         EXPECT_NEAR(channel(image, x, y, 0), (raw[i].x() - 0.5) * 2, 2);
@@ -245,8 +245,8 @@ TEST_F(ViewporterPixelTest, FractionalOutputAllClientTransformsAndCrops)
         surface->attach(buffer, {});
         for (int scale : {1, 2}) {
             surface->setBufferScale(scale);
-            surface->setCrop(QRectF(2.25, 6.25, 26.5, 2.5));
-            for (const QSize destination : {QSize(39, 11), QSize(13, 1), QSize(26, 5)}) {
+            surface->setCrop(base::RectF(2.25, 6.25, 26.5, 2.5));
+            for (const base::Size destination : {base::Size(39, 11), base::Size(13, 1), base::Size(26, 5)}) {
                 surface->setViewport(destination);
                 for (int i = 0; i < 8; ++i) {
                     SCOPED_TRACE(::testing::Message() << "transform=" << i << " scale=" << scale
@@ -267,7 +267,7 @@ TEST_F(ViewporterPixelTest, FractionalOutputAllClientTransformsAndCrops)
                             const double v =
                                     (6.25 + (y + 0.5) / outputScale * 2.5 / destination.height())
                                     * scale;
-                            const QPointF raw[] = {{u, v},      {128 - v, u},     {128 - u, 64 - v},
+                            const base::PointF raw[] = {{u, v},      {128 - v, u},     {128 - u, 64 - v},
                                                    {v, 64 - u}, {128 - u, v},     {v, u},
                                                    {u, 64 - v}, {128 - v, 64 - u}};
                             EXPECT_NEAR(channel(image, x, y, 0), (raw[i].x() - 0.5) * 2, 2);
@@ -309,11 +309,11 @@ TEST_F(ViewporterPixelTest, ParentViewportDoesNotCropChildAndSnapshotRetainsSamp
     auto sub = compositor::SubSurface::create(child.get(), parent.get());
     sub->setPosition({30, 20});
     parent->attach(buffer, {});
-    parent->setCrop(QRectF(8, 0, 8, 8));
-    parent->setViewport(QSize(20, 20));
+    parent->setCrop(base::RectF(8, 0, 8, 8));
+    parent->setViewport(base::Size(20, 20));
     child->attach(buffer, {});
-    child->setCrop(QRectF(0, 0, 8, 8));
-    child->setViewport(QSize(16, 16));
+    child->setCrop(base::RectF(0, 0, 8, 8));
+    child->setViewport(base::Size(16, 16));
     child->commit();
     parent->commit();
     parent->updateTexture(*renderer);
@@ -325,11 +325,11 @@ TEST_F(ViewporterPixelTest, ParentViewportDoesNotCropChildAndSnapshotRetainsSamp
     EXPECT_EQ(channel(image, 38, 28, 0), 255);
     EXPECT_EQ(channel(image, 25, 15, 3), 0);
     std::unique_ptr<render::Texture> snapshot;
-    ASSERT_TRUE(renderer->renderToTexture(snapshot, QRect(0, 0, 50, 40), [&] {
+    ASSERT_TRUE(renderer->renderToTexture(snapshot, base::Rect(0, 0, 50, 40), [&] {
         scene.root()->render(*renderer);
     }));
     renderer->clear({0, 0, 0, 0});
-    renderer->drawTexture(snapshot.get(), QRect(0, 0, 100, 80), 1);
+    renderer->drawTexture(snapshot.get(), base::Rect(0, 0, 100, 80), 1);
     image = pixels();
     EXPECT_EQ(channel(image, 20, 20, 1), 255);
     EXPECT_EQ(channel(image, 76, 56, 0), 255);
@@ -360,11 +360,11 @@ TEST_F(ViewporterPixelTest, FractionalOutputParentChildMappingsAndSnapshot)
     auto sub = compositor::SubSurface::create(child.get(), parent.get());
     sub->setPosition({30, 20});
     parent->attach(buffer, {});
-    parent->setCrop(QRectF(8, 0, 8, 8));
-    parent->setViewport(QSize(20, 20));
+    parent->setCrop(base::RectF(8, 0, 8, 8));
+    parent->setViewport(base::Size(20, 20));
     child->attach(buffer, {});
-    child->setCrop(QRectF(0, 0, 8, 8));
-    child->setViewport(QSize(16, 16));
+    child->setCrop(base::RectF(0, 0, 8, 8));
+    child->setViewport(base::Size(16, 16));
     child->commit();
     parent->commit();
     parent->updateTexture(*renderer);
@@ -376,11 +376,11 @@ TEST_F(ViewporterPixelTest, FractionalOutputParentChildMappingsAndSnapshot)
     EXPECT_EQ(channel(image, 47, 35, 0), 255);
     EXPECT_EQ(channel(image, 31, 18, 3), 0);
     std::unique_ptr<render::Texture> snapshot;
-    ASSERT_TRUE(renderer->renderToTexture(snapshot, QRect(0, 0, 50, 40), [&] {
+    ASSERT_TRUE(renderer->renderToTexture(snapshot, base::Rect(0, 0, 50, 40), [&] {
         scene.root()->render(*renderer);
     }));
     renderer->clear({0, 0, 0, 0});
-    renderer->drawTexture(snapshot.get(), QRect(0, 0, 100, 80), 1);
+    renderer->drawTexture(snapshot.get(), base::Rect(0, 0, 100, 80), 1);
     image = pixels();
     EXPECT_EQ(channel(image, 25, 25, 1), 255);
     EXPECT_EQ(channel(image, 95, 70, 0), 255);
@@ -394,9 +394,9 @@ TEST_F(ViewporterPixelTest, ViewportBlurAndAnimationCaptureAgree)
     compositor::Compositor compositor(scene.root());
     auto surface = compositor.createSurface();
     surface->attach(buffer, {});
-    surface->setCrop(QRectF(2.5, 1.5, 10, 5));
-    surface->setViewport(QSize(80, 60));
-    surface->setBackgroundBlur(QRect(0, 0, 80, 60), 10);
+    surface->setCrop(base::RectF(2.5, 1.5, 10, 5));
+    surface->setViewport(base::Size(80, 60));
+    surface->setBackgroundBlur(base::Rect(0, 0, 80, 60), 10);
     surface->commit();
     surface->setPosition({20, 30});
     surface->updateTexture(*renderer);
@@ -409,12 +409,12 @@ TEST_F(ViewporterPixelTest, ViewportBlurAndAnimationCaptureAgree)
     const auto direct = pixels();
     background();
     std::unique_ptr<render::Texture> snapshot;
-    ASSERT_TRUE(renderer->renderToTexture(snapshot, QRect(0, 0, 128, 128), [&] {
+    ASSERT_TRUE(renderer->renderToTexture(snapshot, base::Rect(0, 0, 128, 128), [&] {
         scene.root()->render(*renderer);
     }));
-    renderer->drawTexture(snapshot.get(), QRect(0, 0, 128, 128), 1);
+    renderer->drawTexture(snapshot.get(), base::Rect(0, 0, 128, 128), 1);
     const auto captured = pixels();
-    for (QPoint point : {QPoint(64, 60), QPoint(59, 60), QPoint(69, 60), QPoint(64, 29)}) {
+    for (base::Point point : {base::Point(64, 60), base::Point(59, 60), base::Point(69, 60), base::Point(64, 29)}) {
         for (int c = 0; c < 4; ++c)
             EXPECT_NEAR(channel(direct, point.x(), point.y(), c),
                         channel(captured, point.x(), point.y(), c), 3);
@@ -433,9 +433,9 @@ TEST_F(ViewporterPixelTest, FractionalOutputBlurCaptureAgree)
     compositor::Compositor compositor(scene.root());
     auto surface = compositor.createSurface();
     surface->attach(buffer, {});
-    surface->setCrop(QRectF(2.5, 1.5, 10, 5));
-    surface->setViewport(QSize(80, 60));
-    surface->setBackgroundBlur(QRect(0, 0, 80, 60), 10);
+    surface->setCrop(base::RectF(2.5, 1.5, 10, 5));
+    surface->setViewport(base::Size(80, 60));
+    surface->setBackgroundBlur(base::Rect(0, 0, 80, 60), 10);
     surface->commit();
     surface->setPosition({20, 30});
     surface->updateTexture(*renderer);
@@ -448,12 +448,12 @@ TEST_F(ViewporterPixelTest, FractionalOutputBlurCaptureAgree)
     const auto direct = pixels();
     background();
     std::unique_ptr<render::Texture> snapshot;
-    ASSERT_TRUE(renderer->renderToTexture(snapshot, QRect(0, 0, 128, 128), [&] {
+    ASSERT_TRUE(renderer->renderToTexture(snapshot, base::Rect(0, 0, 128, 128), [&] {
         scene.root()->render(*renderer);
     }));
-    renderer->drawTexture(snapshot.get(), QRect(0, 0, 128, 128), 1);
+    renderer->drawTexture(snapshot.get(), base::Rect(0, 0, 128, 128), 1);
     const auto captured = pixels();
-    for (QPoint point : {QPoint(96, 90), QPoint(89, 90), QPoint(104, 90), QPoint(96, 43)}) {
+    for (base::Point point : {base::Point(96, 90), base::Point(89, 90), base::Point(104, 90), base::Point(96, 43)}) {
         for (int c = 0; c < 4; ++c)
             EXPECT_NEAR(channel(direct, point.x(), point.y(), c),
                         channel(captured, point.x(), point.y(), c), 3);
@@ -477,9 +477,9 @@ TEST_F(FractionalRgbPixelTest, FractionalOutputBlurCaptureAgree)
     compositor::Compositor compositor(scene.root());
     auto surface = compositor.createSurface();
     surface->attach(buffer, {});
-    surface->setCrop(QRectF(2.5, 1.5, 10, 5));
-    surface->setViewport(QSize(80, 60));
-    surface->setBackgroundBlur(QRect(0, 0, 80, 60), 10);
+    surface->setCrop(base::RectF(2.5, 1.5, 10, 5));
+    surface->setViewport(base::Size(80, 60));
+    surface->setBackgroundBlur(base::Rect(0, 0, 80, 60), 10);
     surface->commit();
     surface->setPosition({20, 30});
     surface->updateTexture(*renderer);
@@ -492,12 +492,12 @@ TEST_F(FractionalRgbPixelTest, FractionalOutputBlurCaptureAgree)
     const auto direct = pixels();
     background();
     std::unique_ptr<render::Texture> snapshot;
-    ASSERT_TRUE(renderer->renderToTexture(snapshot, QRect(0, 0, 128, 128), [&] {
+    ASSERT_TRUE(renderer->renderToTexture(snapshot, base::Rect(0, 0, 128, 128), [&] {
         scene.root()->render(*renderer);
     }));
-    renderer->drawTexture(snapshot.get(), QRect(0, 0, 128, 128), 1);
+    renderer->drawTexture(snapshot.get(), base::Rect(0, 0, 128, 128), 1);
     const auto captured = pixels();
-    for (QPoint point : {QPoint(96, 90), QPoint(89, 90), QPoint(104, 90), QPoint(96, 43)}) {
+    for (base::Point point : {base::Point(96, 90), base::Point(89, 90), base::Point(104, 90), base::Point(96, 43)}) {
         for (int c = 0; c < 4; ++c)
             EXPECT_NEAR(channel(direct, point.x(), point.y(), c),
                         channel(captured, point.x(), point.y(), c), 3);
@@ -511,10 +511,15 @@ TEST_F(ViewporterPixelTest, RealDmaBufImportWhenRenderNodeIsAvailable)
 {
     std::printf("GL renderer: %s\n", glGetString(GL_RENDERER));
     ScopedFd fd;
-    for (const auto &name :
-         QDir(QStringLiteral("/dev/dri")).entryList({QStringLiteral("renderD*")}, QDir::System)) {
-        fd.reset(open((QStringLiteral("/dev/dri/") + name).toLocal8Bit().constData(),
-                      O_RDWR | O_CLOEXEC));
+    std::vector<std::string> nodes;
+    std::error_code error;
+    for (const auto &entry : std::filesystem::directory_iterator("/dev/dri", error)) {
+        if (entry.path().filename().string().starts_with("renderD"))
+            nodes.push_back(entry.path().string());
+    }
+    std::sort(nodes.begin(), nodes.end());
+    for (const auto &node : nodes) {
+        fd.reset(open(node.c_str(), O_RDWR | O_CLOEXEC));
         if (fd.isValid())
             break;
     }
@@ -561,8 +566,8 @@ TEST_F(ViewporterPixelTest, RealDmaBufImportWhenRenderNodeIsAvailable)
     auto surface = compositor.createSurface();
     surface->attach(buffer, {});
     surface->setBufferScale(2);
-    surface->setCrop(QRectF(2, 1, 10, 5));
-    surface->setViewport(QSize(40, 20));
+    surface->setCrop(base::RectF(2, 1, 10, 5));
+    surface->setViewport(base::Size(40, 20));
     for (double outputScale : {1.0, 1.25, 1.5, 1.75, 2.0, 1.0}) {
         renderer->setRasterScale(outputScale);
         for (int i = 0; i < 8; ++i) {
@@ -572,10 +577,10 @@ TEST_F(ViewporterPixelTest, RealDmaBufImportWhenRenderNodeIsAvailable)
             renderer->clear({0, 0, 0, 0});
             scene.root()->render(*renderer);
             const auto image = pixels();
-            for (QPoint point : {QPoint(5, 5), QPoint(20, 10), QPoint(35, 15)}) {
+            for (base::Point point : {base::Point(5, 5), base::Point(20, 10), base::Point(35, 15)}) {
                 const double u = 4 + (point.x() + 0.5) / (2 * outputScale);
                 const double v = 2 + (point.y() + 0.5) / (2 * outputScale);
-                const QPointF raw[] = {{u, v},      {64 - v, u},     {64 - u, 32 - v},
+                const base::PointF raw[] = {{u, v},      {64 - v, u},     {64 - u, 32 - v},
                                        {v, 32 - u}, {64 - u, v},     {v, u},
                                        {u, 32 - v}, {64 - v, 32 - u}};
                 EXPECT_NEAR(channel(image, point.x(), point.y(), 0), (raw[i].x() - 0.5) * 3, 2);
@@ -595,7 +600,7 @@ TEST_F(ViewporterPixelTest, FractionalOutputNativeDensityIntegratedCase)
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(eglSurface, EGL_NO_SURFACE);
     target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), eglSurface, nullptr,
-                                                       QSize(1920, 1080));
+                                                       base::Size(1920, 1080));
     ASSERT_TRUE(renderer->beginFrame(target.get()));
     renderer->setRasterScale(1.5);
     std::vector<uint8_t> storage(1200 * 900 * 4);
@@ -618,7 +623,7 @@ TEST_F(ViewporterPixelTest, FractionalOutputNativeDensityIntegratedCase)
     compositor::Compositor compositor(scene.root());
     auto surface = compositor.createSurface();
     surface->setPosition({100, 50});
-    surface->setViewport(QSize(800, 600));
+    surface->setViewport(base::Size(800, 600));
     surface->attach(buffer, {});
     surface->commit();
     surface->updateTexture(*renderer);
@@ -640,7 +645,7 @@ TEST_F(ViewporterPixelTest, FractionalOutputNativeDensityIntegratedCase)
             }
         }
     }
-    EXPECT_EQ(surface->contentSize(), QSize(800, 600));
+    EXPECT_EQ(surface->contentSize(), base::Size(800, 600));
 }
 
 TEST_F(ViewporterPixelTest, FractionalOutputEdgesAndPhysicalSnapshotAllocation)
@@ -660,12 +665,11 @@ TEST_F(ViewporterPixelTest, FractionalOutputEdgesAndPhysicalSnapshotAllocation)
         // the bounds can round out to, so a move does not reallocate it.
         const int spare = scale != std::floor(scale) ? 1 : 0;
         EXPECT_EQ(snapshot->size(),
-                  QSize(int(std::ceil(17 * scale)) + spare, int(std::ceil(19 * scale)) + spare));
-        EXPECT_EQ(static_cast<render::GlTexture *>(snapshot.get())->contentPixels,
-                  QRectF(QPointF(3, 5) * scale, QSizeF(17, 19) * scale)
-                          .translated(-QRectF(QPointF(3, 5) * scale, QSizeF(17, 19) * scale)
-                                               .toAlignedRect()
-                                               .topLeft()));
+                  base::Size(int(std::ceil(17 * scale)) + spare, int(std::ceil(19 * scale)) + spare));
+        const base::RectF content = base::RectF(3, 5, 17, 19).scaled(scale);
+        const base::Point origin = content.toEnclosingRect().topLeft();
+        EXPECT_TRUE(base::fuzzyCompare(static_cast<render::GlTexture *>(snapshot.get())->contentPixels,
+                                       content.translated(-origin.x(), -origin.y())));
         renderer->drawTexture(snapshot.get(), {3, 5, 17, 19}, 1);
         image = pixels();
         EXPECT_EQ(channel(image, int(10 * scale), int(10 * scale), 1), 255);
@@ -697,11 +701,11 @@ TEST_F(ViewporterPixelTest, FractionalClientCursorAndDragIconPixels)
     auto buffer = pool->createBuffer({30, 24}, 0, 120, render::PixelFormat::Rgba8888, nullptr);
     auto origin = compositor.createSurface();
     origin->attach(buffer, {});
-    origin->setViewport(QSize(80, 80));
+    origin->setViewport(base::Size(80, 80));
     origin->commit();
     auto cursor = compositor.createSurface();
     cursor->attach(buffer, {});
-    cursor->setViewport(QSize(20, 16));
+    cursor->setViewport(base::Size(20, 16));
     cursor->commit();
     cursor->updateTexture(*renderer);
 
@@ -710,15 +714,17 @@ TEST_F(ViewporterPixelTest, FractionalClientCursorAndDragIconPixels)
 
         bool canAcceptPointerEventsForSurface(compositor::Surface *) const override { return true; }
 
-        void onPointerEnter(compositor::Surface *, const QPointF &, input::ButtonFlags) override { }
+        void onPointerEnter(compositor::Surface *, const base::PointF &, input::ButtonFlags) override
+        {
+        }
 
         void onPointerLeave(compositor::Surface *) override { }
 
-        void onPointerMotion(input::Timestamp, const QPointF &) override { }
+        void onPointerMotion(input::Timestamp, const base::PointF &) override { }
 
         void onPointerButton(input::Timestamp, input::ButtonFlags, bool) override { }
 
-        void onPointerScroll(input::Timestamp, const QPointF &, bool) override { }
+        void onPointerScroll(input::Timestamp, const base::PointF &, bool) override { }
 
         void onFingerScrollStop(input::Timestamp) override { }
 
@@ -730,7 +736,7 @@ TEST_F(ViewporterPixelTest, FractionalClientCursorAndDragIconPixels)
     pointer.setCursor(cursor.get(), {2, 3});
     ASSERT_EQ(pointer.cursorSurface(), cursor.get());
     EXPECT_EQ(cursor->node()->parent(), clientCursors);
-    EXPECT_EQ(cursor->position(), QPoint(18, 17));
+    EXPECT_EQ(cursor->position(), base::Point(18, 17));
     renderer->clear({0, 0, 0, 0});
     icons->render(*renderer);
     auto image = pixels();
@@ -738,7 +744,7 @@ TEST_F(ViewporterPixelTest, FractionalClientCursorAndDragIconPixels)
     EXPECT_EQ(channel(image, 26, 30, 3), 0);
     auto icon = compositor.createSurface();
     icon->attach(buffer, {-4, -6});
-    icon->setViewport(QSize(20, 16));
+    icon->setViewport(base::Size(20, 16));
     icon->commit();
     icon->updateTexture(*renderer);
     seat.drag()->start(origin.get(), icon.get(), {}, 0, input::LeftButton);
@@ -746,7 +752,7 @@ TEST_F(ViewporterPixelTest, FractionalClientCursorAndDragIconPixels)
     ASSERT_TRUE(seat.drag()->active());
     EXPECT_EQ(icon->node()->parent(), dragIcons);
     EXPECT_EQ(cursor->node()->parent(), nullptr);
-    EXPECT_EQ(icon->position(), QPoint(46, 44));
+    EXPECT_EQ(icon->position(), base::Point(46, 44));
     EXPECT_EQ(icon->preferredScale(), 180u);
     renderer->clear({0, 0, 0, 0});
     icons->render(*renderer);

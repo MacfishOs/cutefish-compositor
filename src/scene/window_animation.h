@@ -16,12 +16,11 @@
 #include <optional>
 #include <vector>
 
-#include <QImage>
-#include <QRectF>
-
 #include "scene/damage_tracker.h"
 #include "scene/node.h"
 #include "scene/window_visual_node.h"
+#include "base/geometry.h"
+#include "ui/bitmap.h"
 
 namespace cutefish::scene {
 
@@ -68,7 +67,7 @@ public:
     }
 
     struct Sample {
-        QRectF bounds;
+        base::RectF bounds;
         float opacity;
         double progress;
     };
@@ -78,7 +77,7 @@ public:
     // Takes a transition with nothing to animate, so no earlier type lingers.
     void skip(Type type);
     void releaseRenderResources() override;
-    void start(Type type, const QRect &from, const QRect &to, bool requestFrame = true);
+    void start(Type type, const base::Rect &from, const base::Rect &to, bool requestFrame = true);
     void close();
     void setBoundsContentReady(bool ready);
 
@@ -95,16 +94,16 @@ public:
     // any cross-fade, the animation still waits for the client's content, so
     // nothing is drawn at a size the client has not reached. A no-op unless a
     // DragBounds animation is running.
-    void setDragTarget(const QRect &bounds);
+    void setDragTarget(const base::Rect &bounds);
 
     bool isWaitingForBoundsContent() const { return !m_boundsContentReady; }
 
     // Sends a preview on the first minimize frame, then the exact landing image
     // before the finished callback. Both are cropped and capped to maximumPixels.
-    void requestSnapshot(std::function<void(const QImage &)> callback, int maximumPixels);
+    void requestSnapshot(std::function<void(const ui::Bitmap &)> callback, int maximumPixels);
 
     // The dock slot moved while a minimize runs toward it or holds on it.
-    void setMinimizeTarget(const QRect &target);
+    void setMinimizeTarget(const base::Rect &target);
 
     // A minimize that ends by holding its last frame on the dock slot, until
     // releaseHold(): the shell takes over with its thumbnail in its own commit,
@@ -134,7 +133,7 @@ public:
     // Drawn at `scale` of its size about `anchor`, a point in its own
     // geometry, as a window pulled out by a drag is while it is a preview.
     // Animated from the scale drawn now unless `animate` is false.
-    void setPresentationScale(double scale, const QPointF &anchor, bool animate);
+    void setPresentationScale(double scale, const base::PointF &anchor, bool animate);
 
     double presentationScale() const;
 
@@ -149,10 +148,10 @@ public:
     // window's own shadow and outline fade out for the ones the overview
     // gives every window alike.
     struct Presentation {
-        QRectF bounds;
+        base::RectF bounds;
         float opacity = 1;
         double uniform = 0;
-        qreal radius = 0;
+        double radius = 0;
     };
 
     // Draws the window as render() does, but as `presentation` has it, its
@@ -196,7 +195,7 @@ public:
                 && (m_closing || (m_type == Type::Minimize && (m_running || m_holding)));
     }
 
-    bool redrawsSubtree(const QRect &viewport, double scale) const override;
+    bool redrawsSubtree(const base::Rect &viewport, double scale) const override;
 
     // A launcher fading over the whole output keeps what lies under it as a
     // texture while it animates, and draws again only what changed there.
@@ -205,11 +204,11 @@ public:
 
     Content content() const override { return Content::Translucent; }
 
-    QRect absolutePaintBounds() const override;
+    base::Rect absolutePaintBounds() const override;
 
-    static Sample sample(Type type, const QRectF &from, const QRectF &to, double progress,
+    static Sample sample(Type type, const base::RectF &from, const base::RectF &to, double progress,
                          Style style = Style::Window);
-    static int duration(Type type, const QRectF &from, const QRectF &to,
+    static int duration(Type type, const base::RectF &from, const base::RectF &to,
                         Style style = Style::Window);
 
 private:
@@ -232,33 +231,33 @@ private:
     // The shadow and outline shrink away with the window, so what reaches the
     // dock is only the body the thumbnail shows.
     float exteriorOpacity(const Sample &sample) const;
-    render::RoundedShape bodyShape(const QRect &original, const QRectF &bounds) const;
-    static render::RoundedShape transformedShape(render::RoundedShape shape, const QRect &original,
+    render::RoundedShape bodyShape(const base::Rect &original, const base::RectF &bounds) const;
+    static render::RoundedShape transformedShape(render::RoundedShape shape, const base::Rect &original,
                                                  const Sample &sample);
-    void outline(render::Renderer &renderer, const WindowVisualState &visual, const QRect &original,
+    void outline(render::Renderer &renderer, const WindowVisualState &visual, const base::Rect &original,
                  const Sample &sample) const;
     // Maximize and restore swap the window's exterior: a bounds cross-fade
     // carries its corners, shadow and outline over instead of switching them.
     bool morphsExterior() const;
-    qreal morphedRadius(const Sample &sample) const;
+    double morphedRadius(const Sample &sample) const;
     void drawExteriorMorph(render::Renderer &renderer, const Sample &value, float blend) const;
     mutable WindowVisualState m_visual;
     WindowVisualState m_oldVisual;
-    void draw(render::Renderer &renderer, render::Texture *texture, const QRect &coverage,
-              const QRect &original, const Sample &sample, float alpha = 1) const;
+    void draw(render::Renderer &renderer, render::Texture *texture, const base::Rect &coverage,
+              const base::Rect &original, const Sample &sample, float alpha = 1) const;
     // The subtree with its outlying subsurfaces and shadow overflow, which the
     // texture holds.
-    QRect textureCoverage() const;
+    base::Rect textureCoverage() const;
     // Whether m_texture was drawn for this coverage on the output with this
     // viewport and scale, and may be kept, apart from what changed since.
-    bool textureReusable(const QRect &coverage, const QRect &viewport, double scale) const;
+    bool textureReusable(const base::Rect &coverage, const base::Rect &viewport, double scale) const;
     // Whether m_texture still holds what the subtree would draw into it now, so
     // the offscreen pass can be skipped the way viz skips a render pass whose
     // contributing content has not changed (DirectRenderer::CanSkipRenderPass).
     // Otherwise `repaint` is the part to draw again, or empty for all of it.
     // Advances the texture's damage history either way.
-    bool textureIsCurrent(render::Renderer &renderer, const QRect &coverage,
-                          QRect *repaint) const;
+    bool textureIsCurrent(render::Renderer &renderer, const base::Rect &coverage,
+                          base::Rect *repaint) const;
     // Whether any surface in it blurs what is behind it.
     bool hasBackgroundBlurs() const;
     // A settled window whose own content changes frame after frame, as a
@@ -275,7 +274,7 @@ private:
     // What renderPresented() draws during its render().
     mutable std::optional<Presentation> m_presentedAt;
     render::RoundedShape presentedBody(const Presentation &presentation,
-                                       const QRectF &bounds) const;
+                                       const base::RectF &bounds) const;
     void drawPresented(render::Renderer &renderer, const Sample &value) const;
     // The background blurs of the surfaces in it, drawn at `value`.
     void drawPresentedBlurs(render::Renderer &renderer, const Sample &value) const;
@@ -300,7 +299,7 @@ private:
     // blinking twice a second changes every frame that is drawn at all.
     mutable double m_textureDrawnAt = 0;
     mutable double m_textureScale = 0;
-    mutable QRect m_textureViewport;
+    mutable base::Rect m_textureViewport;
     mutable uint64_t m_textureRootRevision = 0;
     // The texture of the other blur mode, for a window with blurs: entering
     // and leaving the overview swap the two rather than draw one again.
@@ -311,10 +310,10 @@ private:
         DamageTracker damage {true};
         bool reusable = false;
         double scale = 0;
-        QRect viewport;
+        base::Rect viewport;
         uint64_t rootRevision = 0;
-        QRect coverage;
-        QRect bounds;
+        base::Rect coverage;
+        base::Rect bounds;
     };
     mutable std::unique_ptr<StashedTexture> m_stashedTexture;
     void swapStashedTexture(bool blurSuppressed) const;
@@ -323,23 +322,23 @@ private:
         std::unique_ptr<render::Texture> texture;
         DamageTracker damage {true};
         double scale = 0;
-        QRect viewport;
+        base::Rect viewport;
         uint64_t rootRevision = 0;
     };
-    mutable std::map<QString, BelowTexture> m_belowTextures;
+    mutable std::map<std::string, BelowTexture> m_belowTextures;
     mutable std::unique_ptr<render::Texture> m_landingTexture;
     mutable std::unique_ptr<render::Texture> m_oldTexture;
-    mutable QRect m_coverage;
-    mutable QRect m_textureBounds;
-    QRect m_oldCoverage;
-    QRect m_oldBounds;
-    QRectF m_from;
-    QRectF m_to;
+    mutable base::Rect m_coverage;
+    mutable base::Rect m_textureBounds;
+    base::Rect m_oldCoverage;
+    base::Rect m_oldBounds;
+    base::RectF m_from;
+    base::RectF m_to;
     // Where the outgoing appearance sits relative to the live geometry, as an
     // origin offset and a size ratio. DragBounds re-derives m_from from these
     // on every frame, which is what keeps the dissolve under the pointer.
-    QPointF m_dragOffset;
-    QSizeF m_dragScale {1, 1};
+    base::PointF m_dragOffset;
+    base::SizeF m_dragScale {1, 1};
     Type m_type = Type::Open;
     Style m_style = Style::Window;
     // The presented state of the launcher this one took over, relative to its snapshot.
@@ -361,21 +360,21 @@ private:
     mutable double m_scaleFrom = 1;
     double m_scaleTo = 1;
     mutable double m_scaleStarted = -1;
-    QPointF m_scaleAnchor;
+    base::PointF m_scaleAnchor;
     mutable Sample m_presented {{}, 1, 0};
-    mutable std::function<void(const QImage &)> m_snapshot;
-    mutable std::function<void(const QImage &)> m_landingSnapshot;
+    mutable std::function<void(const ui::Bitmap &)> m_snapshot;
+    mutable std::function<void(const ui::Bitmap &)> m_landingSnapshot;
     int m_snapshotPixels = 0;
     std::function<void()> m_finished;
     bool m_holdAtEnd = false;
     mutable bool m_holding = false;
     // The window's own bounds and its dock slot, for the exterior fade.
-    QRectF m_dockWindow;
-    QRectF m_dockSlot;
+    base::RectF m_dockWindow;
+    base::RectF m_dockSlot;
 
     struct TargetAdjustment {
-        QPointF position;
-        QSizeF size;
+        base::PointF position;
+        base::SizeF size;
         double progress;
     };
 

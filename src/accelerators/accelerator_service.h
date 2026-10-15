@@ -14,19 +14,19 @@
 #ifndef CUTEFISH_ACCELERATORS_ACCELERATOR_SERVICE_H_
 #define CUTEFISH_ACCELERATORS_ACCELERATOR_SERVICE_H_
 
+#include <memory>
 #include <optional>
-
-#include <QDBusContext>
-#include <QDBusServiceWatcher>
-#include <QJsonObject>
-#include <QObject>
-#include <QString>
+#include <string>
 
 #include "accelerators/accelerator.h"
 #include "accelerators/accelerator_actions.h"
 #include "accelerators/accelerator_configuration.h"
+#include "base/dbus.h"
+#include "base/json.h"
+#include "base/signal.h"
 
 namespace cutefish::input {
+class DBusExport;
 class XkbTracker;
 }
 
@@ -34,46 +34,44 @@ namespace cutefish::accelerators {
 
 class AcceleratorController;
 
-class AcceleratorService : public QObject, protected QDBusContext
+class AcceleratorService
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.Shortcuts1")
-    // "pc", or "command" when Meta is the Command key next to the space bar,
-    // Alt is Option and Ctrl is Control; see input::ShortcutConvention.
-    Q_PROPERTY(QString shortcutConvention READ shortcutConvention NOTIFY acceleratorsChanged)
-
 public:
     AcceleratorService(AcceleratorConfiguration *configuration, AcceleratorController *controller,
-                       const input::XkbTracker *xkb, QObject *parent = nullptr);
-    ~AcceleratorService() override;
+                       const input::XkbTracker *xkb);
+    ~AcceleratorService();
 
     bool registerService();
 
-    QString shortcutConvention() const;
+    // "pc", or "command" when Meta is the Command key next to the space bar,
+    // Alt is Option and Ctrl is Control; see input::ShortcutConvention.
+    std::string shortcutConvention() const;
 
     // JSON for one accelerator, shared with the tests.
-    QJsonObject acceleratorToJson(const Accelerator &accelerator, AcceleratorActionId id) const;
+    base::json::Value acceleratorToJson(const Accelerator &accelerator,
+                                        AcceleratorActionId id) const;
 
-public Q_SLOTS:
     // {"actions": [{"name", "accelerators": [...], "defaults": [...]}]}.
-    QString accelerators();
+    std::string accelerators();
 
     // Every mutation answers {"result": <AcceleratorConfigResult name>,
     // "conflictAction": <action name, when the result names one>}. `keycode`
     // is the evdev code of the key the user pressed, 0 when unknown, and
     // `keysym` the keysym the toolkit reported for it. A Meta keycode with no
     // modifiers binds the Meta tap.
-    QString addAccelerator(const QString &action, uint keycode, uint keysym, uint modifiers);
-    QString removeAccelerator(const QString &action, uint keysym, uint modifiers);
-    QString replaceAccelerator(const QString &action, uint oldKeysym, uint oldModifiers,
-                               uint keycode, uint keysym, uint modifiers);
-    QString restoreDefault(const QString &action);
-    QString restoreAllDefaults();
+    std::string addAccelerator(const std::string &action, uint32_t keycode, uint32_t keysym,
+                               uint32_t modifiers);
+    std::string removeAccelerator(const std::string &action, uint32_t keysym, uint32_t modifiers);
+    std::string replaceAccelerator(const std::string &action, uint32_t oldKeysym,
+                                   uint32_t oldModifiers, uint32_t keycode, uint32_t keysym,
+                                   uint32_t modifiers);
+    std::string restoreDefault(const std::string &action);
+    std::string restoreAllDefaults();
 
     // {"keysym", "keyName", "keyText", "modifierKey"} for a key the recorder
     // saw. A lone Meta (no other modifier) is accepted as a shortcut that
     // triggers on release; other modifiers on their own are not.
-    QString describeKey(uint keycode, uint keysym);
+    std::string describeKey(uint32_t keycode, uint32_t keysym);
 
     // True while the user is recording a shortcut, so that the keys they
     // press do not also trigger anything. Also resets the confirmation
@@ -83,8 +81,7 @@ public Q_SLOTS:
 
     bool hasCustomAccelerators();
 
-Q_SIGNALS:
-    void acceleratorsChanged();
+    base::Signal<> acceleratorsChanged;
 
 private:
     // Which confirmation the last answer asked the user for.
@@ -99,25 +96,28 @@ private:
         AcceleratorActionId action;
     };
 
-    Accelerator resolve(uint keycode, uint keysym, uint modifiers) const;
-    std::optional<AcceleratorConfigResult> validateAction(const QString &name,
+    // Over the bus the caller owns the flag.
+    void preventProcessingAccelerators(bool prevent, const std::string &owner);
+    Accelerator resolve(uint32_t keycode, uint32_t keysym, uint32_t modifiers) const;
+    std::optional<AcceleratorConfigResult> validateAction(const std::string &name,
                                                           AcceleratorActionId *id) const;
     std::optional<AcceleratorConfigResult> validateAccelerator(const Accelerator &accelerator) const;
-    std::optional<QJsonObject> preprocessAddAccelerator(AcceleratorActionId id,
-                                                        const Accelerator &accelerator);
+    std::optional<base::json::Value> preprocessAddAccelerator(AcceleratorActionId id,
+                                                              const Accelerator &accelerator);
     ConflictErrorState maybeHandleNonMetaAccelerator(const Accelerator &accelerator,
                                                      AcceleratorActionId id);
-    QString result(AcceleratorConfigResult result, const QString &conflictAction = {}) const;
-    void setPreventOwner(const QString &owner);
-    void releasePreventOwner(const QString &owner);
+    std::string result(AcceleratorConfigResult result, const std::string &conflictAction = {}) const;
+    void setPreventOwner(const std::string &owner);
+    void releasePreventOwner(const std::string &owner);
 
     AcceleratorConfiguration *m_configuration = nullptr;
     AcceleratorController *m_controller = nullptr;
     const input::XkbTracker *m_xkb = nullptr;
-    bool m_registered = false;
+    std::unique_ptr<input::DBusExport> m_object;
+    base::Subscription m_configurationUpdates;
 
-    QDBusServiceWatcher m_watcher;
-    QString m_preventOwner;
+    std::string m_preventOwner;
+    base::dbus::NameWatch m_preventOwnerWatch;
 
     std::optional<PendingAccelerator> m_pending;
     ConflictErrorState m_conflictState = ConflictErrorState::Standby;

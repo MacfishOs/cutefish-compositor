@@ -13,7 +13,7 @@
 #ifndef CUTEFISH_DECORATION_CAPTION_BUTTON_H_
 #define CUTEFISH_DECORATION_CAPTION_BUTTON_H_
 
-#include <QRect>
+#include "base/geometry.h"
 
 #include "decoration/raster.h"
 
@@ -32,8 +32,8 @@ public:
 
     CaptionButtonType type() const { return m_type; }
 
-    QRect geometry() const { return m_geometry; }
-    void setGeometry(const QRect& geometry) { m_geometry = geometry; }
+    base::Rect geometry() const { return m_geometry; }
+    void setGeometry(const base::Rect& geometry) { m_geometry = geometry; }
 
     bool isHovered() const { return m_hovered; }
     // Returns true when the state changed, so the caller can repaint.
@@ -44,7 +44,7 @@ public:
 
 private:
     CaptionButtonType m_type;
-    QRect m_geometry;
+    base::Rect m_geometry;
     bool m_hovered = false;
     bool m_pressed = false;
 };

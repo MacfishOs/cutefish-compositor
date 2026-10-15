@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <QSize>
+#include "base/geometry.h"
 
 #include "render/renderer.h"
 
@@ -18,10 +18,10 @@ struct WindowVisualStyle {
     explicit WindowVisualStyle(bool dark = false, int accentIndex = 0);
 
     // Clamped so the corners never overlap on a small window.
-    static int radiusFor(const QSize &size);
+    static int radiusFor(const base::Size &size);
 
     int radius; // Logical pixels, all four corners.
-    qreal outlineWidthPx;
+    double outlineWidthPx;
     render::Color activeOutline;
     render::Color inactiveOutline;
     render::Color highlight;

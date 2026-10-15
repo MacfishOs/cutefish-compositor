@@ -12,7 +12,7 @@
 #ifndef CUTEFISH_BACKEND_DRM_DRM_FRAMEBUFFER_H_
 #define CUTEFISH_BACKEND_DRM_DRM_FRAMEBUFFER_H_
 
-#include <QSize>
+#include "base/geometry.h"
 
 #include <cstdint>
 #include <memory>
@@ -67,19 +67,19 @@ public:
 
     // Live framebuffer objects; used by tests and leak checks.
     static int instanceCount();
-    static std::unique_ptr<DrmFramebuffer> fromPixels(DrmDeviceApi *device, const QSize &size,
+    static std::unique_ptr<DrmFramebuffer> fromPixels(DrmDeviceApi *device, const base::Size &size,
                                                       const uint8_t *pixels, uint32_t stride);
 
     uint32_t id() const { return m_id; }
 
-    QSize size() const { return m_size; }
+    base::Size size() const { return m_size; }
 
     uint32_t format() const { return m_format; }
 
     uint64_t modifier() const { return m_modifier; }
 
 private:
-    DrmFramebuffer(DrmDeviceApi *device, uint32_t id, const QSize &size, uint32_t format,
+    DrmFramebuffer(DrmDeviceApi *device, uint32_t id, const base::Size &size, uint32_t format,
                    uint64_t modifier, std::vector<uint32_t> ownedHandles);
 
     static void destroyCallback(gbm_bo *bo, void *data);
@@ -89,7 +89,7 @@ private:
 
     DrmDeviceApi *m_device = nullptr;
     uint32_t m_id = 0;
-    QSize m_size;
+    base::Size m_size;
     uint32_t m_format = 0;
     uint64_t m_modifier = 0;
     // GEM handles this framebuffer imported and must close. Empty for a GBM bo,

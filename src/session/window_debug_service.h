@@ -9,10 +9,12 @@
 
 #pragma once
 
-#include <QDBusConnection>
-#include <QObject>
-#include <QStringList>
+#include "base/dbus.h"
+#include <cstdint>
 #include <functional>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace cutefish::input {
 class InputManager;
@@ -24,14 +26,14 @@ class WindowManager;
 
 namespace cutefish::session {
 
-class WindowDebugService : public QObject
+class WindowDebugService
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.WindowDebug1")
 public:
-    explicit WindowDebugService(wm::WindowManager *manager,
-                                QDBusConnection bus = QDBusConnection::sessionBus());
-    ~WindowDebugService() override;
+    // The session bus when no connection is given.
+    explicit WindowDebugService(wm::WindowManager *manager, base::dbus::Connection *bus = nullptr);
+    WindowDebugService(const WindowDebugService &) = delete;
+    WindowDebugService &operator=(const WindowDebugService &) = delete;
+    ~WindowDebugService();
 
     bool registerService();
 
@@ -41,39 +43,39 @@ public:
 
     // Supplies one scheduling stats line per output, as the compositor logs on
     // seat changes and at exit.
-    void setOutputStats(std::function<QStringList()> stats) { m_outputStats = std::move(stats); }
+    void setOutputStats(std::function<std::vector<std::string>()> stats)
+    {
+        m_outputStats = std::move(stats);
+    }
 
-public slots:
     // Every window bottom to top, as a JSON array. Rects are [x, y, width,
     // height] in logical output coordinates.
-    Q_SCRIPTABLE QString ListWindows() const;
-
+    std::string ListWindows() const;
     // Each goes through the window's state machine, as a user's move would.
     // False when no window has that id.
-    Q_SCRIPTABLE bool MoveWindow(qulonglong id, int x, int y);
-    Q_SCRIPTABLE bool SetWindowBounds(qulonglong id, int x, int y, int width, int height);
-    Q_SCRIPTABLE bool ActivateWindow(qulonglong id);
-    Q_SCRIPTABLE bool MinimizeWindow(qulonglong id);
+    bool MoveWindow(uint64_t id, int x, int y);
+    bool SetWindowBounds(uint64_t id, int x, int y, int width, int height);
+    bool ActivateWindow(uint64_t id);
+    bool MinimizeWindow(uint64_t id);
     // Snaps to the left half when primary, the right half otherwise.
-    Q_SCRIPTABLE bool SnapWindow(qulonglong id, bool primary);
-    Q_SCRIPTABLE bool RestoreWindow(qulonglong id);
-
+    bool SnapWindow(uint64_t id, bool primary);
+    bool RestoreWindow(uint64_t id);
     // The outputs' scheduling counters, one line each, read live. Empty in a
     // headless compositor.
-    Q_SCRIPTABLE QStringList OutputStats() const;
-
+    std::vector<std::string> OutputStats() const;
     // Pointer and keyboard input for driving a headless compositor from a
     // script, in logical output coordinates and evdev codes. False without
     // an input to feed.
-    Q_SCRIPTABLE bool PointerMotion(double x, double y);
-    Q_SCRIPTABLE bool PointerButton(uint button, bool pressed);
-    Q_SCRIPTABLE bool Key(uint code, bool pressed);
+    bool PointerMotion(double x, double y);
+    bool PointerButton(uint32_t button, bool pressed);
+    bool Key(uint32_t code, bool pressed);
 
 private:
     wm::WindowManager *m_manager;
     input::InputManager *m_input = nullptr;
-    std::function<QStringList()> m_outputStats;
-    QDBusConnection m_bus;
+    std::function<std::vector<std::string>()> m_outputStats;
+    base::dbus::Connection *m_bus;
+    std::unique_ptr<base::dbus::Object> m_object;
     bool m_registered = false;
 };
 

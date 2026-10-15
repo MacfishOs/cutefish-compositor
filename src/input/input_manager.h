@@ -14,15 +14,13 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <vector>
 
-#include <QList>
-#include <QObject>
-#include <QPointF>
-#include <QRect>
-#include <QSet>
-#include <QSize>
 
 #include "input/gesture_filter.h"
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/weak_ptr.h"
 #include "input/pointer_gesture_delegate.h"
 #include "input/seat_observer.h"
 #include "input/types.h"
@@ -48,12 +46,11 @@ class Seat;
 //
 // Exo has no equivalent: pointer position belongs to Ash's cursor manager and
 // activation to Ash's activation client.
-class InputManager : public QObject, public SeatObserver
+class InputManager : public SeatObserver
 {
-    Q_OBJECT
 
 public:
-    explicit InputManager(Seat *seat, QObject *parent = nullptr);
+    explicit InputManager(Seat *seat);
     ~InputManager() override;
 
     Seat *seat() const { return m_seat; }
@@ -62,21 +59,21 @@ public:
     // unbounded, which is what the tests use.
     void setDisplayManager(display::DisplayManager *manager) { m_displayManager = manager; }
 
-    void setBounds(const QSize &bounds);
+    void setBounds(const base::Size &bounds);
     // `primary` is where the pointer starts: the first topology with displays
     // puts it at the primary display's centre rather than at the origin, as
     // upstream's DrmCursor::OnWindowAdded places a cursor not yet placed.
-    void setTopology(const QList<QRect> &displays, const QRect &primary = QRect());
+    void setTopology(const std::vector<base::Rect> &displays, const base::Rect &primary = {});
 
-    const QList<QRect> &topology() const { return m_topology; }
+    const std::vector<base::Rect> &topology() const { return m_topology; }
 
-    QSize bounds() const { return m_bounds; }
+    base::Size bounds() const { return m_bounds; }
 
     void setDeviceScale(double scale) { m_deviceScale = scale; }
 
-    void setDeviceBounds(const QSize &bounds) { m_deviceBounds = bounds; }
+    void setDeviceBounds(const base::Size &bounds) { m_deviceBounds = bounds; }
 
-    QSize deviceBounds() const { return m_deviceBounds.isEmpty() ? m_bounds : m_deviceBounds; }
+    base::Size deviceBounds() const { return m_deviceBounds.isEmpty() ? m_bounds : m_deviceBounds; }
 
     // Offered every pointer and key event before the seat sees it. A consumed
     // event is not dispatched to any client. Null in tests that exercise the
@@ -88,7 +85,7 @@ public:
     // Takes touchpad gestures the window manager handles itself.
     void setGestureFilter(GestureFilter *filter) { m_gestureFilter = filter; }
 
-    QPointF pointerPosition() const { return m_pointerPosition; }
+    base::PointF pointerPosition() const { return m_pointerPosition; }
 
     // Whether a pointer button is down, whoever took its press: a window
     // move consumes it before the seat sees it.
@@ -96,7 +93,7 @@ public:
 
     // Places the pointer without generating an event. Used at startup to put it
     // in the middle of the output.
-    void warpPointer(const QPointF &position);
+    void warpPointer(const base::PointF &position);
 
     // Re-targets the still pointer once control returns to the event loop, as
     // aura's WindowEventDispatcher::PostSynthesizeMouseMove: a surface mapped,
@@ -106,31 +103,31 @@ public:
     // The compositor's own cursor, shown wherever no client owns the pointer
     // image. A placeholder until the compositor installs its cursor theme.
     // `hotspot` is its tip, relative to the node's own origin.
-    void setFallbackCursor(scene::Node *node, const QPoint &hotspot);
+    void setFallbackCursor(scene::Node *node, const base::Point &hotspot);
 
     // --- Called by the libinput backend ---
 
     // `delta` is in output pixels; `unaccelerated` is the device's delta before
     // acceleration, which only relative-pointer clients see.
-    void onPointerMotion(Timestamp timestamp, const QPointF &delta, const QPointF &unaccelerated);
+    void onPointerMotion(Timestamp timestamp, const base::PointF &delta, const base::PointF &unaccelerated);
 
-    void onPointerMotion(Timestamp timestamp, const QPointF &delta)
+    void onPointerMotion(Timestamp timestamp, const base::PointF &delta)
     {
         onPointerMotion(timestamp, delta, delta);
     }
-    void onPointerMotionAbsolute(Timestamp timestamp, const QPointF &position);
+    void onPointerMotionAbsolute(Timestamp timestamp, const base::PointF &position);
     // Normalized absolute coordinates map to the current logical desktop extent.
-    void onPointerMotionNormalized(Timestamp timestamp, const QPointF &position);
+    void onPointerMotionNormalized(Timestamp timestamp, const base::PointF &position);
     // A point already in global logical coordinates, from a source other than
     // a device (computer control).
-    void onPointerMotionLogical(Timestamp timestamp, const QPointF &position);
+    void onPointerMotionLogical(Timestamp timestamp, const base::PointF &position);
     void onPointerButton(Timestamp timestamp, uint32_t evdevButton, bool pressed);
-    void onPointerAxis(Timestamp timestamp, const QPointF &offset, bool discrete);
+    void onPointerAxis(Timestamp timestamp, const base::PointF &offset, bool discrete);
     void onPointerAxisStop(Timestamp timestamp);
     // Touchpad gestures. `delta` is in output pixels, like motion.
     void onPointerGestureBegin(Timestamp timestamp, GestureType type, uint32_t fingers);
-    void onPointerGestureUpdate(Timestamp timestamp, GestureType type, const QPointF &delta,
-                                const QPointF &unacceleratedDelta, double scale, double rotation);
+    void onPointerGestureUpdate(Timestamp timestamp, GestureType type, const base::PointF &delta,
+                                const base::PointF &unacceleratedDelta, double scale, double rotation);
     void onPointerGestureEnd(Timestamp timestamp, GestureType type, bool cancelled);
     // `layout` says where the keyboard has its Command key, if any. Under the
     // Command convention a PC keyboard's Alt and Meta trade places, so that
@@ -142,24 +139,25 @@ public:
     // Touchscreen input. `normalized` is the point on the panel, 0..1 across
     // it in its own orientation; the display it belongs to places it on the
     // desktop. A frame closes each batch of points from the device.
-    void onTouchDown(Timestamp timestamp, int32_t id, const QPointF &normalized);
-    void onTouchMotion(Timestamp timestamp, int32_t id, const QPointF &normalized);
+    void onTouchDown(Timestamp timestamp, int32_t id, const base::PointF &normalized);
+    void onTouchMotion(Timestamp timestamp, int32_t id, const base::PointF &normalized);
     void onTouchUp(Timestamp timestamp, int32_t id);
     void onTouchCancel(Timestamp timestamp);
     void onTouchFrame(Timestamp timestamp);
 
-Q_SIGNALS:
-    void userActivity();
+    base::Signal<> userActivity;
     // Every pointer move while the desktop has the input, clamped to the
     // layout, before any sink, drag or grab sees it.
-    void pointerMoved(const QPointF &position);
+    base::Signal<base::PointF> pointerMoved;
 
 private:
+    void synthesizePendingMotion();
+
     void onSurfaceFocused(compositor::Surface *, compositor::Surface *) override { }
 
     void onCursorChanged() override { updateFallbackCursor(); }
 
-    QPointF clamp(const QPointF &position) const;
+    base::PointF clamp(const base::PointF &position) const;
 
     uint32_t positionalKey(uint32_t evdevCode, KeyboardModifierLayout layout) const;
 
@@ -167,11 +165,11 @@ private:
 
     // Moves the pointer towards `target` as far as the active pointer
     // constraint allows.
-    void movePointer(Timestamp timestamp, QPointF target, const RelativeMotion &relative);
-    void moveAbsolute(Timestamp timestamp, const QPointF &target);
+    void movePointer(Timestamp timestamp, base::PointF target, const RelativeMotion &relative);
+    void moveAbsolute(Timestamp timestamp, const base::PointF &target);
 
     void updateFallbackCursor();
-    std::optional<QPointF> touchLocation(const QPointF &normalized) const;
+    std::optional<base::PointF> touchLocation(const base::PointF &normalized) const;
 
     display::DisplayManager *m_displayManager = nullptr;
     Seat *m_seat = nullptr;
@@ -179,34 +177,35 @@ private:
     GestureFilter *m_gestureFilter = nullptr;
     // The gesture in progress went to the filter.
     bool m_gestureClaimed = false;
-    QSet<uint32_t> m_secureKeys;
+    std::set<uint32_t> m_secureKeys;
     // Physical key to the code it went down as, so that its release matches
     // whatever convention is in force by then.
     std::map<uint32_t, uint32_t> m_positionalKeys;
     bool m_motionConsumed = false;
     std::set<uint32_t> m_heldButtons;
     bool m_synthesizePending = false;
-    QSize m_bounds;
-    QList<QRect> m_topology;
-    QSize m_deviceBounds;
+    base::Size m_bounds;
+    std::vector<base::Rect> m_topology;
+    base::Size m_deviceBounds;
     double m_deviceScale = 1;
-    QPointF m_pointerPosition;
+    base::PointF m_pointerPosition;
     bool m_pointerPlaced = false;
     // The last layout with displays, which the pointer position refers to: a
     // reprobe republishes the layout through an empty one.
-    QList<QRect> m_pointerLayout;
+    std::vector<base::Rect> m_pointerLayout;
     // Where the last absolute event put the device, which a lock keeps apart
     // from the pointer.
-    std::optional<QPointF> m_absolutePosition;
+    std::optional<base::PointF> m_absolutePosition;
     // Where each touch point is, for the release that carries no location.
-    std::map<int32_t, QPointF> m_touchLocations;
+    std::map<int32_t, base::PointF> m_touchLocations;
     // Points the event sink took, whose events it keeps getting.
     std::set<int32_t> m_consumedTouches;
     // The point a locked session sees as its pointer: the lock screen takes
     // input the way the mouse gives it, one point at a time.
     std::optional<int32_t> m_secureTouch;
     scene::Node *m_fallbackCursor = nullptr;
-    QPoint m_fallbackCursorHotspot;
+    base::Point m_fallbackCursorHotspot;
+    base::WeakPtrFactory<InputManager> m_weakFactory {this};
 };
 
 } // namespace cutefish::input

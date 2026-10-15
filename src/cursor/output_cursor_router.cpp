@@ -13,18 +13,12 @@
 
 #include <algorithm>
 
-#include <QtMath>
-
 namespace cutefish::cursor {
 
-namespace {
-
-bool contains(const QRect &bounds, const QPointF &position)
+static bool contains(const base::Rect &bounds, const base::PointF &position)
 {
-    return bounds.contains(QPoint(qFloor(position.x()), qFloor(position.y())));
+    return bounds.contains(position.toFlooredPoint());
 }
-
-} // namespace
 
 void OutputCursorRouter::setTargets(std::vector<Target> targets)
 {
@@ -39,10 +33,10 @@ void OutputCursorRouter::setTargets(std::vector<Target> targets)
 bool OutputCursorRouter::upload(int index)
 {
     if (index < 0 || index >= static_cast<int>(m_targets.size()) || !m_targets[index].sink ||
-        m_pixels.isEmpty()) {
+        m_pixels.empty()) {
         return false;
     }
-    m_image.pixels = reinterpret_cast<const uint8_t*>(m_pixels.constData());
+    m_image.pixels = m_pixels.data();
     return m_targets[index].sink->setCursorImage(m_image);
 }
 
@@ -50,10 +44,9 @@ bool OutputCursorRouter::setCursorImage(const render::CursorImage& image)
 {
     if (!image.pixels || image.size.isEmpty() || image.stride <= 0)
         return false;
-    m_pixels =
-        QByteArray(reinterpret_cast<const char*>(image.pixels), image.stride * image.size.height());
+    m_pixels.assign(image.pixels, image.pixels + image.stride * image.size.height());
     m_image = image;
-    m_image.pixels = reinterpret_cast<const uint8_t*>(m_pixels.constData());
+    m_image.pixels = m_pixels.data();
     std::vector<int> targets;
     for (int index = 0; index < static_cast<int>(m_targets.size()); ++index)
         if (contains(m_targets[index].logicalBounds, m_position))
@@ -85,7 +78,7 @@ void OutputCursorRouter::hideCursor()
     m_activeTargets.clear();
 }
 
-void OutputCursorRouter::moveCursor(const QPointF& position)
+void OutputCursorRouter::moveCursor(const base::PointF& position)
 {
     m_position = position;
     std::vector<int> targets;
@@ -105,7 +98,7 @@ void OutputCursorRouter::moveCursor(const QPointF& position)
         m_targets[target].sink->moveCursor(
             m_targets[target].mirrorTransform.isValid()
                 ? m_targets[target].mirrorTransform.logicalToNative(position)
-                : position - m_targets[target].logicalBounds.topLeft());
+                : position - base::PointF(m_targets[target].logicalBounds.topLeft()));
 }
 
 } // namespace cutefish::cursor

@@ -4,6 +4,8 @@
 
 #include "wayland/protocols/cutefish_computer_control.h"
 
+#include "base/strings.h"
+
 #include <cerrno>
 #include <chrono>
 #include <memory>
@@ -12,9 +14,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
-
-#include <QPointF>
-#include <QRect>
 
 #include <cutefish-computer-control-v1-server-protocol.h>
 #include <wayland-server-protocol.h>
@@ -52,14 +51,14 @@ struct ControlResource final : computer_control::ControlClient {
     void window(uint32_t handle, const WindowInfo &window) override
     {
         cutefish_computer_control_v1_send_window(
-                resource, handle, window.applicationId.toUtf8().constData(),
-                window.title.toUtf8().constData(), window.bounds.x(), window.bounds.y(),
+                resource, handle, window.applicationId.c_str(), window.title.c_str(),
+                window.bounds.x(), window.bounds.y(),
                 window.bounds.width(), window.bounds.height(), window.flags);
     }
 
     void windowsDone() override { cutefish_computer_control_v1_send_windows_done(resource); }
 
-    void pointer(const QPointF &position) override
+    void pointer(const base::PointF &position) override
     {
         cutefish_computer_control_v1_send_pointer(resource, wl_fixed_from_double(position.x()),
                                                   wl_fixed_from_double(position.y()));
@@ -151,7 +150,8 @@ void settle(wl_client *client, wl_resource *resource, uint32_t id, uint32_t time
 const struct cutefish_computer_control_v1_interface controlImplementation = {
         destroy,
         [](wl_client *, wl_resource *resource, wl_fixed_t x, wl_fixed_t y) {
-            controlOf(resource)->motion(QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y)));
+            controlOf(resource)->motion(
+                    base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y)));
         },
         [](wl_client *, wl_resource *resource, uint32_t button, uint32_t state) {
             if (const auto press = pressed(resource, state))
@@ -208,7 +208,8 @@ void requestControl(wl_client *client, wl_resource *manager, uint32_t id, const 
                                    [](wl_resource *resource) {
                                        delete getUserDataAs<ControlResource>(resource);
                                    });
-    control->control = controller->request(control, client, QString::fromUtf8(agentName));
+    control->control = controller->request(control, client,
+                                           base::strings::sanitizedUtf8(agentName ? agentName : ""));
 }
 
 const struct cutefish_computer_control_manager_v1_interface managerImplementation = {

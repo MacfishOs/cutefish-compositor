@@ -11,6 +11,8 @@
 #include <set>
 #include <utility>
 
+#include "base/event_loop.h"
+#include "core/main_loop.h"
 #include "wm/desks/desk.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -23,12 +25,13 @@ DeskAnimationBase::DeskAnimationBase(DesksController *controller, int endingDesk
     , m_node(controller->switchNode())
     , m_endingDesk(endingDesk)
     , m_isContinuousGestureAnimation(isContinuousGestureAnimation)
+    , m_screenshotTimeout(core::mainLoop())
 {
     m_screenshotTimeout.setSingleShot(true);
-    m_screenshotTimeout.setInterval(kEndingScreenshotTimeoutMs);
-    m_screenshotTimeout.callOnTimeout(this, [this] {
+    m_screenshotTimeout.setInterval(std::chrono::milliseconds(kEndingScreenshotTimeoutMs));
+    m_screenshotTimeout.onTimeout = [this] {
         activateTargetDeskWithoutAnimation();
-    });
+    };
 }
 
 DeskAnimationBase::~DeskAnimationBase()
@@ -63,15 +66,16 @@ void DeskAnimationBase::launch()
     }
     // Both run from inside a frame, which is no place to change the scene.
     m_node->setEndingScreenshotCallback([this] {
-        QTimer::singleShot(0, this, [this] {
-            onEndingDeskScreenshotTaken();
+        core::mainLoop()->post([animation = m_weakFactory.getWeakPtr()] {
+            if (animation)
+                animation->onEndingDeskScreenshotTaken();
         });
     });
     m_node->setFinishedCallback([this] {
-        QTimer::singleShot(0, this, [this] {
+        core::mainLoop()->post([animation = m_weakFactory.getWeakPtr()] {
             // The fingers or another key press may have taken the strip on meanwhile.
-            if (!m_node->isAnimating() && !m_node->isTracking())
-                onDeskSwitchAnimationFinished();
+            if (animation && !animation->m_node->isAnimating() && !animation->m_node->isTracking())
+                animation->onDeskSwitchAnimationFinished();
         });
     });
 
@@ -244,7 +248,7 @@ bool DeskRemovalAnimation::startNode()
     });
     if (still.empty())
         return false;
-    std::set<QString> outputs;
+    std::set<std::string> outputs;
     for (const auto &[output, frame] : still)
         outputs.insert(output);
     m_node->setGeometry(m_controller->windowManager()->outputBounds());

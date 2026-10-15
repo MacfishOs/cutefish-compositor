@@ -132,7 +132,7 @@ const struct wl_data_source_interface sourceImplementation = {sourceOffer, destr
 
 struct OfferResource {
     OfferResource(clipboard::SelectionController* controller, std::weak_ptr<bool> device)
-        : offer(std::make_unique<clipboard::DataOffer>(controller))
+        : offer(std::make_shared<clipboard::DataOffer>(controller))
         , device(std::move(device))
     {
     }
@@ -145,7 +145,7 @@ struct OfferResource {
 
     ~OfferResource()
     {
-        QObject::disconnect(actionConnection);
+        actionConnection.reset();
         if (drag) {
             if (drag->legacy() && drag->state() == input::DragOffer::State::Dropped)
                 drag->finish();
@@ -153,8 +153,8 @@ struct OfferResource {
         }
     }
 
-    QMetaObject::Connection actionConnection;
-    std::unique_ptr<clipboard::DataOffer> offer;
+    base::Subscription actionConnection;
+    std::shared_ptr<clipboard::DataOffer> offer;
     std::shared_ptr<input::DragOffer> drag;
     std::weak_ptr<bool> device;
 };
@@ -230,35 +230,35 @@ void offerActions(wl_client*, wl_resource* resource, uint32_t actions, uint32_t 
 const struct wl_data_offer_interface offerImplementation = {
     offerAccept, offerReceive, destroyResource, offerFinish, offerActions};
 
-class DeviceResource : public QObject
+class DeviceResource
 {
 public:
     DeviceResource(wl_resource* resourceArg, clipboard::SelectionController* controller,
                    WaylandSeat* seat)
         : resource(resourceArg)
-        , controller(controller)
+        , controller(controller ? controller->weakPtr() : nullptr)
         , seat(seat)
     {
         if (!controller)
             return;
         auto* drag = seat->seat->drag();
-        connect(drag, &input::DragController::ended, this, [this] {
+        dragConnections.push_back(drag->ended.connect([this] {
             ownsDrag = false;
-        });
-        connect(drag, &input::DragController::entered, this,
-                [this](compositor::Surface* surface, const QPointF& location) {
+        }));
+        dragConnections.push_back(drag->entered.connect(
+                [this](compositor::Surface* surface, const base::PointF& location) {
                     enter(surface, location);
-                });
-        connect(drag, &input::DragController::moved, this,
-                [this](input::Timestamp timestamp, const QPointF& location) {
+                }));
+        dragConnections.push_back(drag->moved.connect(
+                [this](input::Timestamp timestamp, const base::PointF& location) {
                     if (dragOffer && !isClientDestroyed(wl_resource_get_client(resource))) {
                         wl_data_device_send_motion(resource, timePointToMilliseconds(timestamp),
                                                    wl_fixed_from_double(location.x()),
                                                    wl_fixed_from_double(location.y()));
                         wl_client_flush(wl_resource_get_client(resource));
                     }
-                });
-        connect(drag, &input::DragController::left, this, [this] {
+                }));
+        dragConnections.push_back(drag->left.connect([this] {
             if (dragOffer) {
                 dragOffer.reset();
                 if (!isClientDestroyed(wl_resource_get_client(resource))) {
@@ -266,27 +266,30 @@ public:
                     wl_client_flush(wl_resource_get_client(resource));
                 }
             }
-        });
-        connect(drag, &input::DragController::dropped, this, [this](input::DragOffer* offer) {
+        }));
+        dragConnections.push_back(drag->dropped.connect([this](input::DragOffer* offer) {
             if (dragOffer.get() == offer && !isClientDestroyed(wl_resource_get_client(resource))) {
                 wl_data_device_send_drop(resource);
                 wl_client_flush(wl_resource_get_client(resource));
             }
-        });
-        connect(controller, &clipboard::SelectionController::selectionChanged, this, [this] {
+        }));
+        selectionChanged = controller->selectionChanged.connect([this] {
             deliver();
         });
-        connect(controller, &clipboard::SelectionController::recipientChanged, this, [this] {
+        recipientChanged = controller->recipientChanged.connect([this] {
             deliver();
         });
     }
 
-    ~DeviceResource() override
+    ~DeviceResource()
     {
-        if (seat)
-            disconnect(seat->seat->drag(), nullptr, this, nullptr);
+        dragConnections.clear();
         lifetime.reset();
         for (auto& weak : offers) {
+            if (auto offer = weak.lock())
+                offer->invalidate();
+        }
+        for (auto& weak : selectionOffers) {
             if (auto offer = weak.lock())
                 offer->invalidate();
         }
@@ -294,7 +297,7 @@ public:
             seat->seat->drag()->cancel();
     }
 
-    void enter(compositor::Surface* surface, const QPointF& location)
+    void enter(compositor::Surface* surface, const base::PointF& location)
     {
         auto* surfaceResource = getSurfaceResource(surface);
         auto* client = wl_resource_get_client(resource);
@@ -330,11 +333,10 @@ public:
                 wl_data_offer_send_source_actions(offer, dragOffer->sourceActions());
                 wl_data_offer_send_action(offer, dragOffer->action());
                 getUserDataAs<OfferResource>(offer)->actionConnection =
-                    connect(dragOffer.get(), &input::DragOffer::actionChanged, dragOffer.get(),
-                            [offer](uint32_t action) {
-                                wl_data_offer_send_action(offer, action);
-                                wl_client_flush(wl_resource_get_client(offer));
-                            });
+                    dragOffer->actionChanged.connect([offer](uint32_t action) {
+                        wl_data_offer_send_action(offer, action);
+                        wl_client_flush(wl_resource_get_client(offer));
+                    });
             }
         }
         wl_data_device_send_enter(
@@ -356,10 +358,12 @@ public:
                 wl_client_post_no_memory(wl_resource_get_client(resource));
                 return;
             }
-            auto data = std::make_unique<OfferResource>(controller, lifetime);
+            auto data = std::make_unique<OfferResource>(controller.get(), lifetime);
             const auto formats = data->offer->formats();
-            connect(this, &QObject::destroyed, data->offer.get(),
-                    &clipboard::DataOffer::invalidate);
+            std::erase_if(selectionOffers, [](const auto& offer) {
+                return offer.expired();
+            });
+            selectionOffers.push_back(data->offer);
             setImplementation(offer, &offerImplementation, std::move(data));
             wl_data_device_send_data_offer(resource, offer);
             for (const auto& mime : formats)
@@ -373,9 +377,13 @@ public:
     bool ownsDrag = false;
     std::shared_ptr<input::DragOffer> dragOffer;
     std::vector<std::weak_ptr<input::DragOffer>> offers;
+    std::vector<std::weak_ptr<clipboard::DataOffer>> selectionOffers;
+    std::vector<base::Subscription> dragConnections;
     wl_resource* resource;
-    QPointer<clipboard::SelectionController> controller;
+    base::WeakPtr<clipboard::SelectionController> controller;
     std::shared_ptr<bool> lifetime = std::make_shared<bool>(true);
+    base::Subscription selectionChanged;
+    base::Subscription recipientChanged;
 };
 
 std::shared_ptr<ExternalSource> getSource(wl_client* client, wl_resource* resource)

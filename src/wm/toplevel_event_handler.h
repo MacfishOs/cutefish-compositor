@@ -22,10 +22,8 @@
 #include <memory>
 #include <optional>
 
-#include <QObject>
-#include <QPointF>
-#include <QRect>
-
+#include "base/geometry.h"
+#include "base/signal.h"
 #include "wm/window_snap.h"
 
 namespace cutefish::wm {
@@ -58,9 +56,9 @@ public:
     // With `touchId` the drag follows that touch point, which `pointerPosition`
     // is then the location of, and ends when it is lifted. Any client that has
     // the point is sent a cancel.
-    bool beginMove(Window *window, const QPointF &pointerPosition,
+    bool beginMove(Window *window, const base::PointF &pointerPosition,
                    std::optional<int32_t> touchId = std::nullopt);
-    bool beginResize(Window *window, ResizeEdge edge, const QPointF &pointerPosition,
+    bool beginResize(Window *window, ResizeEdge edge, const base::PointF &pointerPosition,
                      std::optional<int32_t> touchId = std::nullopt);
 
     bool isDragging() const { return m_resizer != nullptr; }
@@ -78,9 +76,9 @@ public:
     // Each returns true if the event was consumed by the drag. The pointer
     // does not move or end a drag that follows a touch point, nor another
     // touch point one that follows the pointer.
-    bool onPointerMotion(const QPointF &location);
+    bool onPointerMotion(const base::PointF &location);
     bool onPointerButtonReleased();
-    bool onTouchMotion(int32_t id, const QPointF &location);
+    bool onTouchMotion(int32_t id, const base::PointF &location);
     bool onTouchUp(int32_t id);
     // The device cancelled its points: the drag ends where it is, as ash
     // completes a gesture drag on its gesture end.
@@ -94,14 +92,14 @@ public:
     void onWindowRemoving(Window *window);
 
 private:
-    bool beginDrag(Window *window, ResizeEdge edge, const QPointF &pointerPosition,
+    bool beginDrag(Window *window, ResizeEdge edge, const base::PointF &pointerPosition,
                    std::optional<int32_t> touchId);
-    void drag(const QPointF &location);
+    void drag(const base::PointF &location);
     // Applies what the finished drag settled on: an edge it ended against, or
     // the state a window dragged out of a tiled state lands in. Called with
     // the drag already detached from the handler.
-    void settleDrag(WindowResizer *resizer, SnapType snapped, const QRect &initialRestoreBounds);
-    void applyMotion(const QPointF &location);
+    void settleDrag(WindowResizer *resizer, SnapType snapped, const base::Rect &initialRestoreBounds);
+    void applyMotion(const base::PointF &location);
     void holdResize();
     void releaseHeldResize();
 
@@ -112,14 +110,14 @@ private:
     // Every step reconfigures the client and re-announces the window to the
     // shell, and a 1000 Hz mouse would do that a thousand times a second.
     bool m_holdingResize = false;
-    std::optional<QPointF> m_heldResize;
-    QMetaObject::Connection m_frameConnection;
+    std::optional<base::PointF> m_heldResize;
+    std::optional<base::Subscription> m_frameStarted;
     std::unique_ptr<WindowResizer> m_resizer;
     std::optional<int32_t> m_touchId;
     std::unique_ptr<SnapDragController> m_snapController;
     // What the dragged window would restore to, captured before the drag
     // cleared it. Empty unless the drag started from a tiled state.
-    QRect m_initialRestoreBounds;
+    base::Rect m_initialRestoreBounds;
     WindowStateType m_initialStateType = WindowStateType::Normal;
 };
 

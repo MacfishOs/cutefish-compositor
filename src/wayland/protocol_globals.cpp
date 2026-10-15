@@ -4,8 +4,6 @@
 
 #include "wayland/protocol_globals.h"
 
-#include <QCoreApplication>
-#include <QProcessEnvironment>
 
 #include "compositor/compositor.h"
 #include "computer_control/controller.h"
@@ -66,7 +64,11 @@ ProtocolGlobals::ProtocolGlobals(const Dependencies &dependencies)
 {
 }
 
-ProtocolGlobals::~ProtocolGlobals() = default;
+ProtocolGlobals::~ProtocolGlobals()
+{
+    // The launcher outlives the settings it reports to.
+    m_launcherRunning.reset();
+}
 
 bool ProtocolGlobals::initialize()
 {
@@ -105,7 +107,7 @@ bool ProtocolGlobals::registerCoreGlobals()
         || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
         || !createWindowHintsGlobal(display) || !createAppMenuGlobal(display) || !createFractionalScaleGlobal(display)
         || !createXdgOutputManagerGlobal(display) || !createViewporterGlobal(display)) {
-        qCCritical(cfWayland) << "Failed to register the globals";
+        CF_CRITICAL(cfWayland) << "Failed to register the globals";
         return false;
     }
     return true;
@@ -129,7 +131,7 @@ bool ProtocolGlobals::registerInputMethod()
     };
     m_inputMethod->setAuthorizer(authorize);
     if (wm::WindowManager *windows = m_deps.windowManager) {
-        m_inputMethod->setPlacementArea([windows](const QRect &caret) {
+        m_inputMethod->setPlacementArea([windows](const base::Rect &caret) {
             const auto *displays = windows->displayManager();
             const auto *display = displays ? displays->displayForRect(caret) : nullptr;
             return display ? windows->workAreaForOutput(display->bounds)
@@ -140,10 +142,9 @@ bool ProtocolGlobals::registerInputMethod()
     m_privileged->addRestrictedGlobal(m_inputMethod->virtualKeyboardGlobal(), authorize);
 
     m_inputMethodSettings = std::make_unique<input::InputMethodSettings>();
-    QObject::connect(m_inputMethodLauncher.get(), &InputMethodLauncher::runningChanged,
-                     m_inputMethodSettings.get(), [this] {
-                         m_inputMethodSettings->setRunning(m_inputMethodLauncher->isRunning());
-                     });
+    m_launcherRunning = m_inputMethodLauncher->runningChanged.connect([this] {
+        m_inputMethodSettings->setRunning(m_inputMethodLauncher->isRunning());
+    });
     return true;
 }
 
@@ -205,12 +206,12 @@ bool ProtocolGlobals::registerCapture()
     // the list's. A dock's shadow hugs its rounded body, so the room of the
     // surface around that body stays out of the picture.
     m_toplevelList->setShadowBounds([shadows = m_deps.shadowController](const wm::Window *window) {
-        const QRect bounds = window->bounds();
+        const base::Rect bounds = window->bounds();
         const wm::WindowShadow *shadow = shadows ? shadows->shadowForWindow(window) : nullptr;
         if (!shadow || shadow->shadowBounds().isEmpty() || shadow->contentBounds().isEmpty())
             return bounds;
-        return shadow->shadowBounds().translated(bounds.topLeft()
-                                                 - shadow->contentBounds().topLeft());
+        const base::Rect content = shadow->contentBounds();
+        return shadow->shadowBounds().translated(bounds.topLeft() - content.topLeft());
     });
     return true;
 }
@@ -241,7 +242,7 @@ bool ProtocolGlobals::registerPrivateShell()
     wl_display *display = m_deps.server->display();
     if (!createCutefishShellGlobal(display, m_cutefishShell.get())
         || !createCutefishWindowManagementGlobal(display, m_windowManagement.get())) {
-        qCCritical(cfWayland) << "Failed to register the private shell globals";
+        CF_CRITICAL(cfWayland) << "Failed to register the private shell globals";
         return false;
     }
     m_windowManagement->setCaptureSourceExporter(
@@ -265,23 +266,25 @@ bool ProtocolGlobals::registerQtHardwareIntegration()
     return true;
 }
 
-static QProcessEnvironment inputMethodEnvironment(const QString &waylandDisplay,
-                                                  const QString &x11Display,
-                                                  const QString &x11Authority)
+static std::vector<std::string> inputMethodEnvironment(const std::string &waylandDisplay,
+                                                       const std::string &x11Display,
+                                                       const std::string &x11Authority)
 {
     auto environment = childEnvironment();
-    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), waylandDisplay);
-    environment.remove(QStringLiteral("DISPLAY"));
-    environment.remove(QStringLiteral("XAUTHORITY"));
-    if (!x11Display.isEmpty()) {
-        environment.insert(QStringLiteral("DISPLAY"), x11Display);
-        environment.insert(QStringLiteral("XAUTHORITY"), x11Authority);
+    std::erase_if(environment, [](const std::string &entry) {
+        return entry.starts_with("WAYLAND_DISPLAY=") || entry.starts_with("DISPLAY=")
+                || entry.starts_with("XAUTHORITY=");
+    });
+    environment.push_back("WAYLAND_DISPLAY=" + waylandDisplay);
+    if (!x11Display.empty()) {
+        environment.push_back("DISPLAY=" + x11Display);
+        environment.push_back("XAUTHORITY=" + x11Authority);
     }
     return environment;
 }
 
-void ProtocolGlobals::setInputMethodX11Display(const QString &x11Display,
-                                               const QString &x11Authority)
+void ProtocolGlobals::setInputMethodX11Display(const std::string &x11Display,
+                                               const std::string &x11Authority)
 {
     if (!m_deps.launchInputMethod || !m_inputMethodStarted)
         return;
@@ -291,7 +294,8 @@ void ProtocolGlobals::setInputMethodX11Display(const QString &x11Display,
     m_inputMethodLauncher->restart();
 }
 
-void ProtocolGlobals::startInputMethod(const QString &x11Display, const QString &x11Authority)
+void ProtocolGlobals::startInputMethod(const std::string &x11Display,
+                                       const std::string &x11Authority)
 {
     if (!m_deps.launchInputMethod || m_inputMethodStarted)
         return;
@@ -299,21 +303,21 @@ void ProtocolGlobals::startInputMethod(const QString &x11Display, const QString 
 
     m_inputMethodLauncher->setEnvironment(
             inputMethodEnvironment(m_deps.server->socketName(), x11Display, x11Authority));
-    if (!m_deps.inputMethodOverride.isEmpty())
+    if (!m_deps.inputMethodOverride.empty())
         m_inputMethodSettings->overrideInputMethod(m_deps.inputMethodOverride);
     else
         m_inputMethodSettings->registerService();
-    QObject::connect(m_inputMethodSettings.get(), &input::InputMethodSettings::commandChanged,
-                     m_inputMethodLauncher.get(), [this] {
-                         m_inputMethodLauncher->setCommand(m_inputMethodSettings->command());
-                     });
-    m_inputMethodLauncher->setCommand(m_inputMethodSettings->command());
+    const auto applyCommand = [this] {
+        m_inputMethodLauncher->setCommand(m_inputMethodSettings->command());
+    };
+    m_inputMethodCommand = m_inputMethodSettings->commandChanged.connect(applyCommand);
+    applyCommand();
 }
 
 void ProtocolGlobals::sceneChanged()
 {
     if (m_idleInhibition)
-        Q_EMIT m_idleInhibition->sceneChanged();
+        m_idleInhibition->sceneChanged();
     if (m_inputMethod)
         m_inputMethod->sceneChanged();
 }

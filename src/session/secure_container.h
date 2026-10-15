@@ -6,12 +6,11 @@
 #define CUTEFISH_SESSION_SECURE_CONTAINER_H_
 
 #include <optional>
+#include <string>
 #include <vector>
 
-#include <QFileSystemWatcher>
-#include <QList>
-#include <QRect>
-#include <QString>
+#include "base/file_watcher.h"
+#include "base/geometry.h"
 
 namespace cutefish::render {
 class Renderer;
@@ -25,8 +24,8 @@ class Node;
 namespace cutefish::session {
 
 struct SecureOutput {
-    QString name;
-    QRect bounds;
+    std::string name;
+    base::Rect bounds;
     // Device pixels per logical pixel, for content drawn at the output's density.
     double scale = 1;
     bool primary = false;
@@ -87,9 +86,9 @@ public:
     // Asks every node the transition moves for another frame.
     void requestAnimationFrame() const;
 
-    void setOutputs(const QList<SecureOutput> &outputs);
+    void setOutputs(const std::vector<SecureOutput> &outputs);
 
-    const QList<SecureOutput> &outputs() const { return m_outputs; }
+    const std::vector<SecureOutput> &outputs() const { return m_outputs; }
 
     // Every output has its shield, and every shield's wallpaper has finished
     // loading, whether or not it could be read.
@@ -98,8 +97,11 @@ public:
 private:
     void rebuildShield();
     void refreshWallpaper();
-    QFileSystemWatcher m_wallpaperWatcher;
-    QString m_wallpaperKey;
+    std::string m_watchedSettings;
+    std::string m_watchedWallpaper;
+    base::FileWatch m_settingsWatch;
+    base::FileWatch m_wallpaperWatch;
+    std::string m_wallpaperKey;
 
     int transitionDuration() const;
 
@@ -107,7 +109,7 @@ private:
     scene::Node *m_shield = nullptr;
     scene::Node *m_auth = nullptr;
     std::vector<scene::ColorNode *> m_shieldRects;
-    QList<SecureOutput> m_outputs;
+    std::vector<SecureOutput> m_outputs;
     bool m_blocked = false;
     bool m_covered = true;
     bool m_animating = false;

@@ -5,10 +5,12 @@
 #ifndef CUTEFISH_COMPUTER_CONTROL_PERMISSION_CONSENT_H_
 #define CUTEFISH_COMPUTER_CONTROL_PERMISSION_CONSENT_H_
 
-#include <QDBusConnection>
-#include <QObject>
+#include <cstdint>
 #include <functional>
+#include <memory>
+#include <string>
 
+#include "base/dbus.h"
 #include "computer_control/controller.h"
 
 namespace cutefish::computer_control {
@@ -17,25 +19,26 @@ namespace cutefish::computer_control {
 // "computer-control". Any session client can own a bus name first, so the
 // owner's process has to be one that shows system dialogs, and the prompt goes
 // to that owner's unique name.
-class PermissionConsent : public QObject
+class PermissionConsent
 {
-    Q_OBJECT
-
 public:
-    PermissionConsent(std::function<bool(qint64 pid)> showsSystemDialogs,
-                      QDBusConnection bus = QDBusConnection::sessionBus(),
-                      QObject *parent = nullptr);
+    // The session bus when no connection is given.
+    explicit PermissionConsent(std::function<bool(int64_t pid)> showsSystemDialogs,
+                               base::dbus::Connection *bus = nullptr);
+    PermissionConsent(const PermissionConsent &) = delete;
+    PermissionConsent &operator=(const PermissionConsent &) = delete;
+    ~PermissionConsent();
 
     // Environment::askConsent. Must outlive the questions it asks.
-    std::function<void()> ask(const QString &agentName, std::function<void(ConsentResult)> answer);
+    std::function<void()> ask(const std::string &agentName,
+                              std::function<void(ConsentResult)> answer);
 
 private:
     struct Request;
+    void prompt(const std::shared_ptr<Request> &request, const std::string &owner);
 
-    void prompt(const std::shared_ptr<Request> &request, const QString &owner);
-
-    std::function<bool(qint64)> m_showsSystemDialogs;
-    QDBusConnection m_bus;
+    std::function<bool(int64_t)> m_showsSystemDialogs;
+    base::dbus::Connection *m_bus;
 };
 
 } // namespace cutefish::computer_control

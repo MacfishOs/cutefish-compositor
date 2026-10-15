@@ -15,7 +15,7 @@
 
 namespace cutefish::render {
 
-// Small demand/deadline model. No DRM, Qt event loop or buffer ownership.
+// Small demand/deadline model. No DRM, event loop or buffer ownership.
 // Concepts: Viz DisplayScheduler pending swaps and DelayBasedTimeSource deadlines.
 class OutputScheduler
 {

@@ -46,8 +46,9 @@ ShowDesktopController::ShowDesktopController(WindowManager *manager)
     m_manager->activation()->addObserver(this);
     m_manager->desks()->addObserver(this);
     if (compositor::Compositor *compositor = m_manager->compositor())
-        connect(compositor, &compositor::Compositor::frameStarted, this,
-                &ShowDesktopController::advance);
+        m_frameStarted = compositor->frameStarted.connect([this](double frameTimeMs) {
+            advance(frameTimeMs);
+        });
 }
 
 ShowDesktopController::~ShowDesktopController()
@@ -133,17 +134,14 @@ void ShowDesktopController::advance(double frameTimeMs)
         releaseAll();
 }
 
-void ShowDesktopController::onWindowActivated(Window *gainedActive, Window *lostActive)
+void ShowDesktopController::onWindowActivated(Window *gainedActive, Window *)
 {
-    Q_UNUSED(lostActive);
     if (m_active && gainedActive && !gainedActive->isShellWindow())
         exit();
 }
 
-void ShowDesktopController::onDeskActivationChanged(const Desk *activated, const Desk *deactivated)
+void ShowDesktopController::onDeskActivationChanged(const Desk *, const Desk *)
 {
-    Q_UNUSED(activated);
-    Q_UNUSED(deactivated);
     exitImmediately();
 }
 
@@ -153,10 +151,8 @@ void ShowDesktopController::onDeskSwitchAnimationLaunching()
     exitImmediately();
 }
 
-void ShowDesktopController::onWindowBoundsChanged(Window *window, const QRect &oldBounds)
+void ShowDesktopController::onWindowBoundsChanged(Window *, const base::Rect &)
 {
-    Q_UNUSED(window);
-    Q_UNUSED(oldBounds);
     present();
 }
 
@@ -171,31 +167,31 @@ void ShowDesktopController::onWindowDestroying(Window *window)
     release(window);
 }
 
-QPoint ShowDesktopController::awayOffset(const Window *window) const
+base::Point ShowDesktopController::awayOffset(const Window *window) const
 {
     // A dialog goes the way of the window it belongs to, and keeps its place
     // over it.
     const Window *root = transientRoot(window);
-    const QRect output = m_manager->outputBoundsFor(root);
-    const QRect bounds = root->bounds();
+    const base::Rect output = m_manager->outputBoundsFor(root);
+    const base::Rect bounds = root->bounds();
 
     // An edge another output continues past would show the window there.
     const auto continues = [this, &output](int x) {
         for (const WindowManager::OutputArea &area : m_manager->outputAreas()) {
-            if (area.bounds != output && area.bounds.contains(x, output.center().y()))
+            if (area.bounds != output && area.bounds.contains(x, centerPixel(output).y()))
                 return true;
         }
         return false;
     };
-    bool left = bounds.center().x() < output.center().x();
-    if (left && continues(output.left() - 1) && !continues(output.right() + 1))
+    bool left = centerPixel(bounds).x() < centerPixel(output).x();
+    if (left && continues(output.left() - 1) && !continues(output.right()))
         left = false;
-    else if (!left && continues(output.right() + 1) && !continues(output.left() - 1))
+    else if (!left && continues(output.right()) && !continues(output.left() - 1))
         left = true;
 
     const int dx = left ? std::min(0, output.left() + kSliverWidth - (bounds.left() + bounds.width()))
                         : std::max(0, output.left() + output.width() - kSliverWidth - bounds.left());
-    return QPoint(dx, 0);
+    return base::Point(dx, 0);
 }
 
 void ShowDesktopController::slideTo(double target)
@@ -214,7 +210,7 @@ void ShowDesktopController::slideTo(double target)
 void ShowDesktopController::present()
 {
     for (Window *window : m_windows)
-        window->setPresentationOffset((QPointF(awayOffset(window)) * m_progress).toPoint());
+        window->setPresentationOffset((base::PointF(awayOffset(window)) * m_progress).toPoint());
 }
 
 void ShowDesktopController::release(Window *window)
@@ -224,7 +220,7 @@ void ShowDesktopController::release(Window *window)
         return;
     m_windows.erase(it);
     window->removeObserver(this);
-    window->setPresentationOffset(QPoint());
+    window->setPresentationOffset(base::Point());
 }
 
 void ShowDesktopController::releaseAll()

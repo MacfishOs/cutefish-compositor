@@ -16,11 +16,12 @@
 #include <optional>
 #include <set>
 
-#include <QString>
+#include <string>
 
 #include "scene/finger_track.h"
 #include "scene/motion.h"
 #include "scene/node.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
@@ -59,7 +60,7 @@ public:
     };
 
     // Keyed by OutputRenderContext::outputId.
-    using Frames = std::map<QString, std::unique_ptr<render::Texture>>;
+    using Frames = std::map<std::string, std::unique_ptr<render::Texture>>;
 
     static constexpr int kDesksSpacing = 50;
     static constexpr double kEdgePaddingRatio = 0.1;
@@ -82,7 +83,7 @@ public:
     static constexpr double kQuickAnimationTranslationDistanceRatio = 0.25;
     static constexpr int kHitTheWallDurationMs = 150;
 
-    explicit DeskSwitchNode(std::function<qint64()> clock = {});
+    explicit DeskSwitchNode(std::function<int64_t()> clock = {});
 
     // Phase (1). `frames` holds each output's starting desk frame; outputs with
     // none take no part. `desks` is how many desks there are, and `width` the
@@ -93,7 +94,7 @@ public:
     // the removed desk's frame the strip shows black, and `stillFrames` - its
     // windows as they were - stay on top, unmoved, until the removal is done.
     void startRemoval(int desks, int removedDesk, int endingDesk, Frames stillFrames,
-                      std::set<QString> outputs, int width);
+                      std::set<std::string> outputs, int width);
 
     // Phase (2): the ending desk is active, copy it.
     void takeEndingScreenshot(int endingDesk);
@@ -148,7 +149,7 @@ public:
     void render(render::Renderer &renderer) const override;
     Content content() const override { return isActive() ? Content::Opaque : Content::None; }
     bool paintsSubtree() const override { return isActive(); }
-    bool acceptsInput(const QPointF &) const override { return false; }
+    bool acceptsInput(const base::PointF &) const override { return false; }
     // Every output the animation started on is covered in black and frames;
     // the live desk content below need not be drawn there.
     bool occludesOutput(const render::Renderer &renderer) const override;
@@ -188,11 +189,11 @@ private:
     void settle(double now, double from, double target, double velocity, double response);
     double position(double now) const;
     bool hasSettled(double now, double distance, double scale) const;
-    void takeFrame(render::Renderer &renderer, const QRect &viewport) const;
-    void renderStrip(render::Renderer &renderer, const QRect &viewport, double now) const;
-    void renderHitTheWall(render::Renderer &renderer, const QRect &viewport, double now) const;
+    void takeFrame(render::Renderer &renderer, const base::Rect &viewport) const;
+    void renderStrip(render::Renderer &renderer, const base::Rect &viewport, double now) const;
+    void renderHitTheWall(render::Renderer &renderer, const base::Rect &viewport, double now) const;
 
-    std::function<qint64()> m_now;
+    std::function<int64_t()> m_now;
     Type m_type = Type::Continuous;
     int m_desks = 0;
     int m_startingDesk = -1;
@@ -200,8 +201,8 @@ private:
     int m_width = 0;
     // The desks with a place in the strip, in desk order.
     std::set<int> m_strip;
-    mutable std::map<QString, std::map<int, std::unique_ptr<render::Texture>>> m_frames;
-    std::map<QString, std::unique_ptr<render::Texture>> m_stillFrames;
+    mutable std::map<std::string, std::map<int, std::unique_ptr<render::Texture>>> m_frames;
+    std::map<std::string, std::unique_ptr<render::Texture>> m_stillFrames;
     int m_removedDesk = -1;
     mutable int m_captureDesk = -1;
     Motion m_motion = Motion::Still;

@@ -5,25 +5,20 @@
 #pragma once
 
 #include <functional>
+#include <memory>
+#include <optional>
+#include <string>
 
-#include <QObject>
-#include <QSettings>
-
+#include "base/settings.h"
+#include "base/signal.h"
 #include "input/types.h"
 
 namespace cutefish::input {
 
-class KeyboardSettings : public QObject
-{
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.Keyboard1")
-    Q_PROPERTY(bool repeatEnabled READ repeatEnabled NOTIFY repeatEnabledChanged)
-    Q_PROPERTY(int repeatDelay READ repeatDelay NOTIFY repeatDelayChanged)
-    Q_PROPERTY(int repeatInterval READ repeatInterval NOTIFY repeatIntervalChanged)
-    Q_PROPERTY(QString layout READ layout NOTIFY layoutChanged)
-    Q_PROPERTY(QString shortcutConvention READ shortcutConventionName
-                       NOTIFY shortcutConventionChanged)
+class DBusExport;
 
+class KeyboardSettings
+{
 public:
     static constexpr int kMinRepeatDelayMs = 150;
     static constexpr int kMaxRepeatDelayMs = 2000;
@@ -31,10 +26,10 @@ public:
     static constexpr int kMaxRepeatIntervalMs = 2000;
 
     // Compiles and installs a layout name; false when it cannot be used.
-    using LayoutApplier = std::function<bool(const QString &)>;
+    using LayoutApplier = std::function<bool(const std::string &)>;
 
-    explicit KeyboardSettings(QObject *parent = nullptr, const QString &settingsFile = {});
-    ~KeyboardSettings() override;
+    explicit KeyboardSettings(const std::string &settingsFile = {});
+    ~KeyboardSettings();
     bool registerService();
 
     // Installs the saved layout right away. A saved layout that no longer
@@ -49,39 +44,41 @@ public:
 
     // "layout" or "layout-variant", e.g. "de-neo"; the xkb default when the
     // user never picked one.
-    QString layout() const;
+    std::string layout() const;
 
     ShortcutConvention shortcutConvention() const { return m_shortcutConvention; }
 
     // "pc" or "command"; see ShortcutConvention.
-    QString shortcutConventionName() const;
+    std::string shortcutConventionName() const;
 
-public slots:
     void setRepeatEnabled(bool enabled);
     void setRepeatDelay(int milliseconds);
     void setRepeatInterval(int milliseconds);
     // An empty name goes back to the default.
-    bool setLayout(const QString &name);
+    bool setLayout(const std::string &name);
     // False for a name that is not a convention.
-    bool setShortcutConvention(const QString &name);
+    bool setShortcutConvention(const std::string &name);
 
-signals:
-    void repeatEnabledChanged();
-    void repeatDelayChanged();
-    void repeatIntervalChanged();
-    void layoutChanged();
-    void shortcutConventionChanged();
+    base::Signal<> repeatEnabledChanged;
+    base::Signal<> repeatDelayChanged;
+    base::Signal<> repeatIntervalChanged;
+    base::Signal<> layoutChanged;
+    base::Signal<> shortcutConventionChanged;
 
 private:
-    void save(const QString &key, const QVariant &value);
-    QSettings m_settings;
+    // No value removes the key.
+    template<typename T>
+    void save(const std::string &key, const std::optional<T> &value);
+    void notify(const base::Signal<> &signal, const char *member);
+
+    base::Settings m_settings;
     LayoutApplier m_applier;
     bool m_repeatEnabled = true;
     int m_repeatDelay = 0;
     int m_repeatInterval = 0;
-    QString m_layout;
+    std::string m_layout;
     ShortcutConvention m_shortcutConvention = ShortcutConvention::Pc;
-    bool m_registered = false;
+    std::unique_ptr<DBusExport> m_object;
 };
 
 } // namespace cutefish::input

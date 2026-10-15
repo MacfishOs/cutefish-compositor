@@ -8,6 +8,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <format>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -15,6 +18,7 @@
 #include "scene/overview_node.h"
 #include "scene/scene.h"
 #include "scene/window_animation.h"
+#include "base/geometry.h"
 
 using namespace cutefish;
 using Node = scene::OverviewNode;
@@ -25,21 +29,21 @@ namespace {
 class FrameTexture : public render::Texture
 {
 public:
-    explicit FrameTexture(QSize size)
+    explicit FrameTexture(base::Size size)
         : m_size(size)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 class FrameRenderer : public testsupport::FakeRenderer
 {
 public:
-    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
                          const std::function<void()> &paint) override
     {
         paint();
@@ -48,39 +52,39 @@ public:
         return true;
     }
 
-    void drawTextureF(render::Texture *texture, const QRectF &target, float alpha) override
+    void drawTextureF(render::Texture *texture, const base::RectF &target, float alpha) override
     {
         FakeRenderer::drawTextureF(texture, target, alpha);
-        calls.last().target = target;
+        calls.back().target = target;
     }
 
-    QList<render::Texture *> trilinear;
+    std::vector<render::Texture *> trilinear;
 
-    void enableTrilinearFiltering(render::Texture *texture) override { trilinear.append(texture); }
+    void enableTrilinearFiltering(render::Texture *texture) override { trilinear.push_back(texture); }
 
     struct Outline {
-        QRectF bounds;
+        base::RectF bounds;
         float alpha = 0;
     };
-    QList<Outline> outlines;
+    std::vector<Outline> outlines;
 
     void drawRoundedOutline(const render::RoundedShape &shape, const render::Color &color,
-                            qreal) override
+                            double) override
     {
-        outlines.append({shape.bounds, color.a});
+        outlines.push_back({shape.bounds, color.a});
     }
 };
 
-constexpr QRect kViewport(0, 0, 1000, 800);
-constexpr QRect kWindow(100, 100, 400, 300);
-constexpr QRectF kPlace(600, 400, 200, 150);
+const base::Rect kViewport(0, 0, 1000, 800);
+const base::Rect kWindow(100, 100, 400, 300);
+const base::RectF kPlace(600, 400, 200, 150);
 constexpr int kSettleMs = 1500;
 
 struct Fixture {
-    qint64 now = 1000;
+    int64_t now = 1000;
     scene::Scene scene;
     scene::Node *container =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::ColorNode *desktop = static_cast<scene::ColorNode *>(
             container->addChild(std::make_unique<scene::ColorNode>(render::Color {0, 0, 1, 1})));
     scene::WindowAnimation *window = static_cast<scene::WindowAnimation *>(
@@ -91,7 +95,7 @@ struct Fixture {
         return now;
     })));
     FrameRenderer renderer;
-    QList<double> finished;
+    std::vector<double> finished;
 
     Fixture()
     {
@@ -99,23 +103,23 @@ struct Fixture {
         desktop->setGeometry(kViewport);
         window->setGeometry(kWindow);
         window->addChild(std::make_unique<scene::ColorNode>(render::Color {1, 0, 0, 1}))
-                ->setGeometry(QRect(QPoint(), kWindow.size()));
+                ->setGeometry(base::Rect(base::Point(), kWindow.size()));
         // Already open: no animation of its own.
         window->finish();
         node->setGeometry(kViewport);
         node->setBackdrop({desktop});
         node->setItems({item()}, false);
         node->setFinishedCallback([this](double target) {
-            finished.append(target);
+            finished.push_back(target);
         });
     }
 
-    Node::Item item(const QRectF &to = kPlace) const
+    Node::Item item(const base::RectF &to = kPlace) const
     {
         Node::Item item;
         item.windows = {window};
         item.to = to;
-        item.title = QStringLiteral("Window");
+        item.title = "Window";
         return item;
     }
 
@@ -123,7 +127,7 @@ struct Fixture {
     {
         renderer.calls.clear();
         renderer.outlines.clear();
-        renderer.setOutputContext({QStringLiteral("out"), kViewport, kViewport.size(), 1, 0, 0, {}});
+        renderer.setOutputContext({"out", kViewport, kViewport.size(), 1, 0, 0, {}});
         renderer.frameTime = double(now);
         container->render(renderer);
     }
@@ -135,15 +139,15 @@ struct Fixture {
         paint();
     }
 
-    QRectF rect(double progress) const
+    base::RectF rect(double progress) const
     {
         return node->presentedRect(0, progress, double(now));
     }
 };
 
-QRectF lerp(const QRectF &a, const QRectF &b, double t)
+base::RectF lerp(const base::RectF &a, const base::RectF &b, double t)
 {
-    return QRectF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t,
+    return base::RectF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t,
                   a.width() + (b.width() - a.width()) * t,
                   a.height() + (b.height() - a.height()) * t);
 }
@@ -158,19 +162,19 @@ TEST(OverviewNode, AtZeroItCoversNothingAndDrawsNothing)
     EXPECT_FALSE(f.node->occludesOutput(f.renderer));
     f.paint();
     // The desk as it is: the desktop and the window, each drawn once.
-    const QStringList kinds = f.renderer.kinds();
-    EXPECT_EQ(2, kinds.count(QStringLiteral("fill")));
+    const auto kinds = f.renderer.kinds();
+    EXPECT_EQ(2, std::count(kinds.begin(), kinds.end(), "fill"));
 }
 
 TEST(OverviewNode, TheShortcutSetsOffAtOnceAndLandsOnTime)
 {
     Fixture f;
-    const qint64 start = f.now;
+    const int64_t start = f.now;
     f.node->animateTo(1);
     EXPECT_TRUE(f.node->isActive());
     EXPECT_TRUE(f.node->occludesOutput(f.renderer));
     double last = 0;
-    while (f.now - start < qint64(Node::kTransitionDurationMs)) {
+    while (f.now - start < int64_t(Node::kTransitionDurationMs)) {
         f.now += 4;
         f.paint();
         const double progress = f.node->progress(double(f.now));
@@ -187,21 +191,21 @@ TEST(OverviewNode, TheShortcutSetsOffAtOnceAndLandsOnTime)
     // No tail creeping in after its time.
     EXPECT_EQ(1, last);
     f.paint();
-    EXPECT_EQ(QList<double>({1}), f.finished);
+    EXPECT_EQ(std::vector<double>({1}), f.finished);
     EXPECT_TRUE(f.node->isSettled());
     EXPECT_EQ(1, f.node->target());
 
     // And back, to the desk as it was, where it covers nothing again.
     f.node->animateTo(0);
     f.settle();
-    EXPECT_EQ(QList<double>({1, 0}), f.finished);
+    EXPECT_EQ(std::vector<double>({1, 0}), f.finished);
     EXPECT_FALSE(f.node->isActive());
 }
 
 TEST(OverviewNode, AWindowMovesFromWhereItIsToItsPlace)
 {
     Fixture f;
-    EXPECT_EQ(QRectF(kWindow), f.rect(0));
+    EXPECT_EQ(base::RectF(kWindow), f.rect(0));
     EXPECT_EQ(kPlace, f.rect(1));
     EXPECT_EQ(lerp(kWindow, kPlace, 0.5), f.rect(0.5));
 }
@@ -213,12 +217,12 @@ TEST(OverviewNode, TheWindowIsDrawnScaledOntoItsPlace)
     f.paint();
     // The window's texture holds its shadow margins, scaled along with it.
     const double scale = kPlace.width() / kWindow.width();
-    const QRectF coverage = QRectF(kWindow).adjusted(-64, -64, 64, 64);
-    const QRectF expected(kPlace.topLeft() + (coverage.topLeft() - kWindow.topLeft()) * scale,
+    const base::RectF coverage = base::RectF(kWindow).adjusted(-64, -64, 64, 64);
+    const base::RectF expected(kPlace.topLeft() + (coverage.topLeft() - kWindow.topLeft()) * scale,
                           coverage.size() * scale);
     const auto drawn = std::find_if(f.renderer.calls.begin(), f.renderer.calls.end(),
                                     [](const auto &call) {
-                                        return call.kind == QStringLiteral("texture");
+                                        return call.kind == "texture";
                                     });
     ASSERT_NE(f.renderer.calls.end(), drawn);
     EXPECT_EQ(expected, drawn->target);
@@ -227,12 +231,12 @@ TEST(OverviewNode, TheWindowIsDrawnScaledOntoItsPlace)
     // The desktop covers the output: darkened in place, first, with no clear
     // before it and no dim pass over it.
     ASSERT_GE(f.renderer.calls.size(), 2);
-    EXPECT_EQ(QStringLiteral("fill"), f.renderer.calls[0].kind);
+    EXPECT_EQ("fill", f.renderer.calls[0].kind);
     EXPECT_FLOAT_EQ(1 - Node::kDimOpacity, f.renderer.calls[0].color.b);
     EXPECT_FLOAT_EQ(1, f.renderer.calls[0].color.a);
     for (const auto &call : f.renderer.calls) {
         const bool black = call.color.r == 0 && call.color.g == 0 && call.color.b == 0;
-        EXPECT_FALSE(call.kind == QStringLiteral("fill") && black && call.color.a > 0);
+        EXPECT_FALSE(call.kind == "fill" && black && call.color.a > 0);
     }
 }
 
@@ -243,7 +247,7 @@ TEST(OverviewNode, ADesktopShortOfTheOutputIsDrawnOverBlack)
     f.node->jumpTo(1);
     f.paint();
     ASSERT_GE(f.renderer.calls.size(), 2);
-    EXPECT_EQ(QStringLiteral("fill"), f.renderer.calls[0].kind);
+    EXPECT_EQ("fill", f.renderer.calls[0].kind);
     EXPECT_EQ(kViewport, f.renderer.calls[0].rect);
     EXPECT_FLOAT_EQ(0, f.renderer.calls[0].color.b);
     EXPECT_FLOAT_EQ(1, f.renderer.calls[0].color.a);
@@ -302,7 +306,7 @@ TEST(OverviewNode, AHeldReleaseGoesToTheNearerEndAndAFlickGoesOn)
         }
         EXPECT_EQ(flick ? 1 : 0, f.node->endTracking(double(f.now)));
         f.settle();
-        EXPECT_EQ(QList<double>({flick ? 1.0 : 0.0}), f.finished);
+        EXPECT_EQ(std::vector<double>({flick ? 1.0 : 0.0}), f.finished);
     }
 }
 
@@ -320,11 +324,11 @@ TEST(OverviewNode, ReleasedItCarriesOnAtTheFingersSpeed)
     const double speed = (f.node->progress(now + 0.01) - f.node->progress(now)) * 100000;
     EXPECT_NEAR(0.4, speed, 0.02);
     // On the quick curve: the rest of the way within the shorter time.
-    f.now += qint64(Node::kTransitionDurationMs);
+    f.now += int64_t(Node::kTransitionDurationMs);
     f.paint();
-    EXPECT_EQ(QList<double>({1}), f.finished);
+    EXPECT_EQ(std::vector<double>({1}), f.finished);
     f.settle();
-    EXPECT_EQ(QList<double>({1}), f.finished);
+    EXPECT_EQ(std::vector<double>({1}), f.finished);
 }
 
 TEST(OverviewNode, ASlowReleaseSpeedsUpGentlyInsteadOfLunging)
@@ -368,18 +372,18 @@ TEST(OverviewNode, ANewLayoutMovesWindowsThereOnATween)
 {
     Fixture f;
     f.node->jumpTo(1);
-    const QRectF moved(200, 150, 300, 225);
+    const base::RectF moved(200, 150, 300, 225);
     f.node->setItems({f.item(moved)}, true);
     EXPECT_EQ(kPlace, f.rect(1));
     f.now += 100;
-    const QRectF partway = f.rect(1);
+    const base::RectF partway = f.rect(1);
     EXPECT_NE(kPlace, partway);
     EXPECT_NE(moved, partway);
     f.now += kSettleMs;
     EXPECT_EQ(moved, f.rect(1));
 
     // A dragged window heads home from where it was let go.
-    const QRectF dragged(700, 50, 300, 225);
+    const base::RectF dragged(700, 50, 300, 225);
     f.node->setDragged(0, dragged);
     EXPECT_EQ(dragged, f.rect(1));
     f.node->setItems({f.item(moved)}, true);
@@ -392,10 +396,10 @@ TEST(OverviewNode, TheTitleShowsOnceItIsIn)
 {
     Fixture f;
     int painted = 0;
-    f.node->setTextPainter([&painted](const QString &, int, const render::Color &, double, int) {
+    f.node->setTextPainter([&painted](const std::string &, int, const render::Color &, double, int) {
         ++painted;
-        QImage image(60, 16, QImage::Format_RGBA8888_Premultiplied);
-        image.fill(Qt::white);
+        ui::Bitmap image(60, 16, ui::Bitmap::Format::Rgba8888Premultiplied);
+        image.fill(0xffffffff);
         return image;
     });
     f.node->setChrome({0, -1});
@@ -410,15 +414,15 @@ TEST(OverviewNode, TheTitleShowsOnceItIsIn)
     EXPECT_EQ(1, painted);
     // In the middle of the window.
     const auto targets = [&] {
-        QList<QRectF> result;
+        std::vector<base::RectF> result;
         for (const auto &call : f.renderer.calls) {
-            if (call.kind == QStringLiteral("texture"))
-                result.append(call.target);
+            if (call.kind == "texture")
+                result.push_back(call.target);
         }
         return result;
     }();
-    EXPECT_TRUE(std::any_of(targets.begin(), targets.end(), [](const QRectF &target) {
-        return target.size() == QSizeF(60, 16) && kPlace.contains(target)
+    EXPECT_TRUE(std::any_of(targets.begin(), targets.end(), [](const base::RectF &target) {
+        return target.size() == base::SizeF(60, 16) && kPlace.contains(target)
                 && std::abs(target.center().x() - kPlace.center().x()) <= 1
                 && std::abs(target.center().y() - kPlace.center().y()) <= 1;
     }));
@@ -428,21 +432,21 @@ TEST(OverviewNode, EveryWindowGetsTheOverviewsCornersShadowAndOutline)
 {
     Fixture f;
     struct Drawn {
-        QRectF body;
-        qreal radius;
+        base::RectF body;
+        double radius;
         double uniform;
         float opacity;
     };
-    QList<Drawn> shadows;
-    QList<Drawn> outlines;
+    std::vector<Drawn> shadows;
+    std::vector<Drawn> outlines;
     scene::OverviewWindowFrame frame;
     frame.radius = 14;
     frame.shadow = [&](render::Renderer &, const scene::WindowAnimation &,
                        const render::RoundedShape &body, double uniform, float opacity, bool) {
-        shadows.append({body.bounds, body.radius, uniform, opacity});
+        shadows.push_back({body.bounds, body.radius, uniform, opacity});
     };
     frame.outline = [&](render::Renderer &, const render::RoundedShape &body, float opacity) {
-        outlines.append({body.bounds, body.radius, 1, opacity});
+        outlines.push_back({body.bounds, body.radius, 1, opacity});
     };
     f.node->setWindowFrame(frame);
 
@@ -475,22 +479,22 @@ TEST(OverviewNode, ADraggedWindowIsDrawnOverTheDeskBar)
     Fixture f;
     f.container->addChild(std::make_unique<scene::OverviewDeskBarNode>(f.node));
     f.node->jumpTo(1);
-    const QRectF dragged(50, 20, 100, 75);
+    const base::RectF dragged(50, 20, 100, 75);
     f.node->setDragged(0, dragged);
     f.paint();
-    QList<QRectF> targets;
+    std::vector<base::RectF> targets;
     for (const auto &call : f.renderer.calls) {
-        if (call.kind == QStringLiteral("texture"))
-            targets.append(call.target);
+        if (call.kind == "texture")
+            targets.push_back(call.target);
     }
     // Once, by the bar, after everything the overview draws.
     ASSERT_EQ(1, targets.size());
     const double scale = dragged.width() / kWindow.width();
-    const QRectF coverage = QRectF(kWindow).adjusted(-64, -64, 64, 64);
-    EXPECT_EQ(QRectF(dragged.topLeft() + (coverage.topLeft() - kWindow.topLeft()) * scale,
+    const base::RectF coverage = base::RectF(kWindow).adjusted(-64, -64, 64, 64);
+    EXPECT_EQ(base::RectF(dragged.topLeft() + (coverage.topLeft() - kWindow.topLeft()) * scale,
                      coverage.size() * scale),
               targets[0]);
-    EXPECT_EQ(QStringLiteral("texture"), f.renderer.calls.last().kind);
+    EXPECT_EQ("texture", f.renderer.calls.back().kind);
 }
 
 namespace {
@@ -501,12 +505,12 @@ using DeskBar = scene::OverviewDeskBarNode;
 // The outline of an inactive desk preview, drawn on its body.
 constexpr float kOutlineAlpha = 0.22f;
 
-DeskBar::Desk barDesk(quintptr id, double x)
+DeskBar::Desk barDesk(uintptr_t id, double x)
 {
     DeskBar::Desk desk;
     desk.id = id;
-    desk.bounds = QRectF(x, 20, 100, 60);
-    desk.name = QStringLiteral("Desk %1").arg(id);
+    desk.bounds = base::RectF(x, 20, 100, 60);
+    desk.name = std::format("Desk {}", id);
     return desk;
 }
 
@@ -514,9 +518,9 @@ Bar bar(std::vector<DeskBar::Desk> desks, double newDeskX)
 {
     Bar bar;
     bar.output = kViewport;
-    bar.bounds = QRectF(0, 0, 1000, 100);
+    bar.bounds = base::RectF(0, 0, 1000, 100);
     bar.desks = std::move(desks);
-    bar.newDesk = QRectF(newDeskX, 20, 50, 60);
+    bar.newDesk = base::RectF(newDeskX, 20, 50, 60);
     return bar;
 }
 
@@ -531,8 +535,8 @@ TEST(OverviewNode, ABarPutUpAnewStandsWhereItIsPut)
     deskBar->setBars({bar({barDesk(1, 340), barDesk(2, 450)}, 560)});
     f.paint();
     ASSERT_EQ(2, f.renderer.outlines.size());
-    EXPECT_EQ(QRectF(340, 20, 100, 60), f.renderer.outlines[0].bounds);
-    EXPECT_EQ(QRectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
+    EXPECT_EQ(base::RectF(340, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(base::RectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
     EXPECT_FLOAT_EQ(kOutlineAlpha, f.renderer.outlines[1].alpha);
 }
 
@@ -550,17 +554,17 @@ TEST(OverviewNode, ANewDeskScalesUpAndFadesInWhileTheRestMoveOver)
     // where it was.
     f.paint();
     ASSERT_EQ(1, f.renderer.outlines.size());
-    EXPECT_EQ(QRectF(400, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(base::RectF(400, 20, 100, 60), f.renderer.outlines[0].bounds);
 
     f.now += 125;
     f.paint();
     ASSERT_EQ(2, f.renderer.outlines.size());
-    const QRectF moving = f.renderer.outlines[0].bounds;
+    const base::RectF moving = f.renderer.outlines[0].bounds;
     EXPECT_LT(340, moving.x());
     EXPECT_GT(400, moving.x());
-    EXPECT_EQ(QSizeF(100, 60), moving.size());
+    EXPECT_EQ(base::SizeF(100, 60), moving.size());
     // Scaled about the middle of its top edge, partly faded in.
-    const QRectF growing = f.renderer.outlines[1].bounds;
+    const base::RectF growing = f.renderer.outlines[1].bounds;
     EXPECT_EQ(20, growing.top());
     EXPECT_NEAR(500, growing.center().x(), 0.5);
     EXPECT_GT(100, growing.width());
@@ -570,8 +574,8 @@ TEST(OverviewNode, ANewDeskScalesUpAndFadesInWhileTheRestMoveOver)
     f.now += kSettleMs;
     f.paint();
     ASSERT_EQ(2, f.renderer.outlines.size());
-    EXPECT_EQ(QRectF(340, 20, 100, 60), f.renderer.outlines[0].bounds);
-    EXPECT_EQ(QRectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
+    EXPECT_EQ(base::RectF(340, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(base::RectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
     EXPECT_FLOAT_EQ(kOutlineAlpha, f.renderer.outlines[1].alpha);
 }
 
@@ -588,7 +592,7 @@ TEST(OverviewNode, ARemovedDeskFadesOutWhereItWasUnderTheRest)
     f.now += 100;
     f.paint();
     ASSERT_EQ(2, f.renderer.outlines.size());
-    EXPECT_EQ(QRectF(450, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(base::RectF(450, 20, 100, 60), f.renderer.outlines[0].bounds);
     EXPECT_GT(kOutlineAlpha, f.renderer.outlines[0].alpha);
     EXPECT_LT(0, f.renderer.outlines[0].alpha);
     EXPECT_LT(340, f.renderer.outlines[1].bounds.x());
@@ -597,5 +601,5 @@ TEST(OverviewNode, ARemovedDeskFadesOutWhereItWasUnderTheRest)
     f.now += kSettleMs;
     f.paint();
     ASSERT_EQ(1, f.renderer.outlines.size());
-    EXPECT_EQ(QRectF(400, 20, 100, 60), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(base::RectF(400, 20, 100, 60), f.renderer.outlines[0].bounds);
 }

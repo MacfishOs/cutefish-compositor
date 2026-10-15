@@ -21,8 +21,8 @@ using namespace cutefish;
 
 TEST(DrmConfigurationPlanner, BacktracksAcrossAsymmetricCrtcCompatibility)
 {
-    const QList<backend::DrmRouteCandidate> routes = {{10, 0b11, 100}, {20, 0b01, 0}};
-    const QList<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {2000}}};
+    const std::vector<backend::DrmRouteCandidate> routes = {{10, 0b11, 100}, {20, 0b01, 0}};
+    const std::vector<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {2000}}};
     const auto plan = backend::DrmConfigurationPlanner::assign(routes, crtcs);
     ASSERT_TRUE(plan);
     ASSERT_EQ(plan->size(), 2);
@@ -34,45 +34,45 @@ TEST(DrmConfigurationPlanner, BacktracksAcrossAsymmetricCrtcCompatibility)
 TEST(DrmModeFallbackPlanner, DowngradesOnlyTheFailedMstBranchWithinABound)
 {
     using Mode = backend::DrmModeCandidate;
-    const QList<backend::DrmFallbackHead> heads = {
+    const std::vector<backend::DrmFallbackHead> heads = {
             {10,
-             QStringLiteral("eDP-1"),
-             QStringLiteral("internal"),
+             "eDP-1",
+             "internal",
              true,
-             {Mode {QStringLiteral("panel"), 2560, 1600, 60000, 250000, true}}},
+             {Mode {"panel", 2560, 1600, 60000, 250000, true}}},
             {20,
-             QStringLiteral("DP-1-1"),
-             QStringLiteral("DP-1"),
+             "DP-1-1",
+             "DP-1",
              false,
-             {Mode {QStringLiteral("4k"), 3840, 2160, 60000, 600000, true},
-              Mode {QStringLiteral("1080p"), 1920, 1080, 60000, 148500, false}}},
+             {Mode {"4k", 3840, 2160, 60000, 600000, true},
+              Mode {"1080p", 1920, 1080, 60000, 148500, false}}},
             {30,
-             QStringLiteral("HDMI-A-1"),
-             QStringLiteral("HDMI-A-1"),
+             "HDMI-A-1",
+             "HDMI-A-1",
              false,
-             {Mode {QStringLiteral("1440p"), 2560, 1440, 60000, 241500, true},
-              Mode {QStringLiteral("720p"), 1280, 720, 60000, 74250, false}}}};
+             {Mode {"1440p", 2560, 1440, 60000, 241500, true},
+              Mode {"720p", 1280, 720, 60000, 74250, false}}}};
     const auto plan = backend::DrmModeFallbackPlanner::choose(
             heads,
-            [](const QList<Mode> &modes) {
+            [](const std::vector<Mode> &modes) {
                 if (modes.at(1).pixelClockKHz > 200000)
                     return backend::DrmFallbackTestResult {
-                            false, {QStringLiteral("DP-1")}, QStringLiteral("MST link bandwidth")};
-                return backend::DrmFallbackTestResult {true, {}, QStringLiteral("tested")};
+                            false, {"DP-1"}, "MST link bandwidth"};
+                return backend::DrmFallbackTestResult {true, {}, "tested"};
             },
             4);
     ASSERT_TRUE(plan);
-    EXPECT_EQ(plan->modes.at(0).key, QStringLiteral("panel"));
-    EXPECT_EQ(plan->modes.at(1).key, QStringLiteral("1080p"));
-    EXPECT_EQ(plan->modes.at(2).key, QStringLiteral("1440p"));
-    EXPECT_EQ(plan->downgradedConnectors, QStringList {QStringLiteral("DP-1-1")});
+    EXPECT_EQ(plan->modes.at(0).key, "panel");
+    EXPECT_EQ(plan->modes.at(1).key, "1080p");
+    EXPECT_EQ(plan->modes.at(2).key, "1440p");
+    EXPECT_EQ(plan->downgradedConnectors, std::vector<std::string> {"DP-1-1"});
     EXPECT_LE(plan->attempts, 4);
 }
 
 TEST(DrmConfigurationPlanner, RejectsSharedOrInsufficientResources)
 {
-    const QList<backend::DrmRouteCandidate> routes = {{10, 0b11, 0}, {20, 0b11, 0}};
-    const QList<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {1000}}};
+    const std::vector<backend::DrmRouteCandidate> routes = {{10, 0b11, 0}, {20, 0b11, 0}};
+    const std::vector<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {1000}}};
     EXPECT_FALSE(backend::DrmConfigurationPlanner::assign(routes, crtcs));
 }
 
@@ -164,15 +164,15 @@ TEST(DrmCommitCoordinator, TestOnlyDoesNotPublishAndStripsPageFlipEventFlag)
 
 TEST(DrmConfigurationPlanner, EnumeratesDistinctResourceAlternativesWithinTheBound)
 {
-    const QList<backend::DrmRouteCandidate> routes = {{10, 0b11, 100}, {20, 0b11, 200}};
-    const QList<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {2000}}};
+    const std::vector<backend::DrmRouteCandidate> routes = {{10, 0b11, 100}, {20, 0b11, 200}};
+    const std::vector<backend::DrmCrtcCandidate> crtcs = {{100, 0, {1000}}, {200, 1, {2000}}};
     const auto first = backend::DrmConfigurationPlanner::assign(routes, crtcs, 0);
     const auto next = backend::DrmConfigurationPlanner::assign(routes, crtcs, 1);
     ASSERT_TRUE(first);
     ASSERT_TRUE(next);
-    EXPECT_EQ(first->first().crtcId, 100u);
-    EXPECT_EQ(next->first().crtcId, 200u);
-    EXPECT_NE(next->first().primaryPlaneId, next->last().primaryPlaneId);
+    EXPECT_EQ(first->front().crtcId, 100u);
+    EXPECT_EQ(next->front().crtcId, 200u);
+    EXPECT_NE(next->front().primaryPlaneId, next->back().primaryPlaneId);
     EXPECT_FALSE(backend::DrmConfigurationPlanner::assign(routes, crtcs, 2));
     EXPECT_FALSE(backend::DrmConfigurationPlanner::assign(routes, crtcs, 8));
 }

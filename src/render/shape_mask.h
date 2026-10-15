@@ -4,42 +4,48 @@
 
 #pragma once
 
-#include <QImage>
-#include <QPainterPath>
-#include <QRect>
-#include <QString>
+#include <string>
 
+#include "base/geometry.h"
 #include "render/renderer.h"
+#include "ui/bitmap.h"
+#include "ui/path.h"
 
 namespace cutefish::render {
 
+// Eight bits a channel, rounded.
+ui::Color toUiColor(const Color &color);
+
 // Identity of a path for texture cache keys.
-QString shapeKey(const QPainterPath &path);
+std::string shapeKey(const ui::Path &path);
 
 // A logical path placed on physical pixels: pixel = point * scale + offset.
 struct ShapeRaster {
     double scale = 1;
-    QPointF offset;
-    QSize size;
+    base::PointF offset;
+    base::Size size;
 
     // Covers `logical` with `margin` physical pixels around it, keeping the
     // image origin on a physical pixel of the output.
-    static ShapeRaster covering(const QRectF &logical, double scale, int margin = 0);
+    static ShapeRaster covering(const base::RectF &logical, double scale, int margin = 0);
 
     // Where the image goes, in logical output coordinates.
-    QRectF target() const;
+    base::RectF target() const;
 
-    QString key() const;
+    std::string key() const;
 
-    bool operator==(const ShapeRaster &) const = default;
+    bool operator==(const ShapeRaster &other) const
+    {
+        return scale == other.scale && base::fuzzyCompare(offset, other.offset) && size == other.size;
+    }
 };
 
-// Premultiplied white, so the alpha is the coverage.
-QImage rasterizeShape(const QPainterPath &path, const ShapeRaster &raster);
+// Premultiplied RGBA8888 white, so the alpha is the coverage.
+ui::Bitmap rasterizeShape(const ui::Path &path, const ShapeRaster &raster);
 
 // A hairline of `widthPx` physical pixels just outside the path in `outline`
 // and just inside it in `highlight`.
-QImage rasterizeShapeOutline(const QPainterPath &path, const ShapeRaster &raster, qreal widthPx,
-                             const Color &outline, const Color &highlight);
+ui::Bitmap rasterizeShapeOutline(const ui::Path &path, const ShapeRaster &raster, double widthPx,
+                                 const Color &outline, const Color &highlight);
 
 } // namespace cutefish::render

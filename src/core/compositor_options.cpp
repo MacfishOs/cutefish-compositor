@@ -6,143 +6,123 @@
 
 #include <fcntl.h>
 
-#include <QCommandLineOption>
-#include <QCommandLineParser>
-#include <QCoreApplication>
+#include "base/command_line.h"
+#include "base/strings.h"
+#include "core/logging.h"
 
 namespace cutefish::core {
 
-std::optional<CompositorOptions> CompositorOptions::parse(const QCoreApplication &app)
+std::optional<CompositorOptions> CompositorOptions::parse(int argc, char **argv)
 {
-    QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Cutefish Wayland compositor"));
+    base::CommandLineParser parser;
+    parser.setApplicationDescription("Cutefish Wayland compositor");
+    parser.setApplicationVersion("0.1.0");
     parser.addHelpOption();
     parser.addVersionOption();
-    QCommandLineOption socketOption(QStringLiteral("socket"),
-                                    QStringLiteral("Wayland socket name to listen on."),
-                                    QStringLiteral("name"));
-    parser.addOption(socketOption);
-    QCommandLineOption drmDeviceOption(QStringLiteral("drm-device"),
-                                       QStringLiteral("DRM device to drive, e.g. /dev/dri/card0."),
-                                       QStringLiteral("path"));
-    parser.addOption(drmDeviceOption);
-    QCommandLineOption noDrmOption(QStringLiteral("no-drm"),
-                                   QStringLiteral("Run the Wayland server only, without "
-                                                  "acquiring a display."));
-    parser.addOption(noDrmOption);
-    QCommandLineOption headlessOutputsOption(
-            QStringLiteral("headless-outputs"),
-            QStringLiteral("Number of deterministic virtual outputs in --no-drm mode."),
-            QStringLiteral("count"), QStringLiteral("1"));
-    parser.addOption(headlessOutputsOption);
-    QCommandLineOption wmDemoOption(QStringLiteral("wm-demo"),
-                                    QStringLiteral("Enable development-only F1–F9 WM shortcuts."));
-    parser.addOption(wmDemoOption);
-    QCommandLineOption wmDemoScriptOption(
-            QStringLiteral("wm-demo-script"),
-            QStringLiteral("Development only: drive the window manager through a timed "
-                           "sequence instead of waiting for the demo keys."));
-    parser.addOption(wmDemoScriptOption);
-    QCommandLineOption shellControlOption(
-            QStringLiteral("shell-control-socket"),
-            QStringLiteral("Path of the control socket the session passes trusted shell "
-                           "connections over."),
-            QStringLiteral("path"));
-    parser.addOption(shellControlOption);
-    QCommandLineOption loginOption(
-            QStringLiteral("login"),
-            QStringLiteral("Start the internal login screen for greetd session handoff."));
-    parser.addOption(loginOption);
-    QCommandLineOption readyFdOption(
-            QStringLiteral("ready-fd"),
-            QStringLiteral("Session startup notification file descriptor."), QStringLiteral("fd"));
-    parser.addOption(readyFdOption);
-    QCommandLineOption clipboardClientOption(
-            QStringLiteral("clipboard-client"),
-            QStringLiteral("Executable permitted to manage clipboard contents; may be repeated."),
-            QStringLiteral("path"));
-    parser.addOption(clipboardClientOption);
-    QCommandLineOption captureClientOption(
-            "capture-client", "Allow this executable to capture outputs (repeatable).", "path");
-    parser.addOption(captureClientOption);
-    QCommandLineOption computerControlClientOption(
-            "computer-control-client",
-            "Allow this executable to ask for control of the computer (repeatable).", "path");
-    parser.addOption(computerControlClientOption);
-    QCommandLineOption inputMethodOption(
-            QStringLiteral("input-method"),
-            QStringLiteral("Development only: run this input-method desktop file id instead of "
-                           "the saved selection, also without a display."),
-            QStringLiteral("id"));
-    parser.addOption(inputMethodOption);
-    QCommandLineOption scaleOption(QStringLiteral("scale"),
-                                   QStringLiteral("Output scale, a decimal from 1.0 through 4.0."),
-                                   QStringLiteral("factor"), QStringLiteral("1.0"));
-    parser.addOption(scaleOption);
-    QCommandLineOption displayServiceOption(
-            QStringLiteral("display-config-service"),
-            QStringLiteral("Session D-Bus name for native display configuration."),
-            QStringLiteral("name"),
-            qEnvironmentVariable("CUTEFISH_DISPLAY_CONFIG_SERVICE",
-                                 QStringLiteral("com.cutefish.DisplayConfig")));
-    parser.addOption(displayServiceOption);
+    parser.addOption({"socket", "Wayland socket name to listen on.", "name"});
+    parser.addOption({"drm-device", "DRM device to drive, e.g. /dev/dri/card0.", "path"});
+    parser.addOption({"no-drm", "Run the Wayland server only, without acquiring a display."});
+    parser.addOption({"headless-outputs", "Number of deterministic virtual outputs in --no-drm mode.",
+                      "count", "1"});
+    parser.addOption({"wm-demo", "Enable development-only F1–F9 WM shortcuts."});
+    parser.addOption({"wm-demo-script",
+                      "Development only: drive the window manager through a timed sequence "
+                      "instead of waiting for the demo keys."});
+    parser.addOption({"shell-control-socket",
+                      "Path of the control socket the session passes trusted shell connections "
+                      "over.",
+                      "path"});
+    parser.addOption({"login", "Start the internal login screen for greetd session handoff."});
+    parser.addOption({"ready-fd", "Session startup notification file descriptor.", "fd"});
+    parser.addOption({"clipboard-client",
+                      "Executable permitted to manage clipboard contents; may be repeated.", "path"});
+    parser.addOption({"capture-client", "Allow this executable to capture outputs (repeatable).",
+                      "path"});
+    parser.addOption({"computer-control-client",
+                      "Allow this executable to ask for control of the computer (repeatable).",
+                      "path"});
+    parser.addOption({"input-method",
+                      "Development only: run this input-method desktop file id instead of the "
+                      "saved selection, also without a display.",
+                      "id"});
+    parser.addOption({"scale", "Output scale, a decimal from 1.0 through 4.0.", "factor", "1.0"});
+    parser.addOption({"display-config-service",
+                      "Session D-Bus name for native display configuration.", "name",
+                      "com.cutefish.DisplayConfig"});
 #ifdef CUTEFISH_ENABLE_XWAYLAND
     parser.addOption({"xwayland", "Enable the X11 frontend (enabled by default)."});
     parser.addOption({"no-xwayland", "Disable the X11 frontend; overrides --xwayland."});
     parser.addOption({"xwayland-shm", "Use Xwayland software buffers for diagnostics."});
 #endif
-    parser.addOption(
-            {"xwayland-ready-file", "Publish DISPLAY/XAUTHORITY as JSON when available.", "path"});
-    parser.process(app);
+    parser.addOption({"xwayland-ready-file", "Publish DISPLAY/XAUTHORITY as JSON when available.",
+                      "path"});
+    parser.addOption({"animation-duration-scale",
+                      "Stretch every animation by this factor, to judge motion slowly.", "factor",
+                      "1"});
+    parser.addOption({"log-rules",
+                      "Logging rules, e.g. \"cutefish.compositor.debug=true;cutefish.drm=true\".",
+                      "rules"});
+    parser.process(argc, argv);
 
     CompositorOptions options;
 
-    const auto scale = compositor::OutputScale::parse(parser.value(scaleOption));
+    const auto scale = compositor::OutputScale::parse(parser.value("scale"));
     if (!scale) {
-        qCritical("Invalid output scale; expected a decimal from 1.0 through 4.0");
+        CF_CRITICAL(base::LogCategory::defaultCategory())
+                << "Invalid output scale; expected a decimal from 1.0 through 4.0";
         return std::nullopt;
     }
     options.scale = *scale;
 
-    if (parser.isSet(readyFdOption)) {
-        bool valid = false;
-        options.readyFd = parser.value(readyFdOption).toInt(&valid);
-        if (!valid || options.readyFd < 3 || fcntl(options.readyFd, F_SETFD, FD_CLOEXEC) < 0) {
-            qCritical("Invalid session startup file descriptor");
+    const auto durationScale =
+            base::strings::toDouble(parser.value("animation-duration-scale"));
+    if (!durationScale || !(*durationScale > 0)) {
+        CF_CRITICAL(base::LogCategory::defaultCategory())
+                << "Invalid --animation-duration-scale; expected a positive number";
+        return std::nullopt;
+    }
+    options.animationDurationScale = *durationScale;
+
+    if (parser.isSet("ready-fd")) {
+        const auto fd = base::strings::toNumber<int>(parser.value("ready-fd"));
+        if (!fd || *fd < 3 || fcntl(*fd, F_SETFD, FD_CLOEXEC) < 0) {
+            CF_CRITICAL(base::LogCategory::defaultCategory())
+                    << "Invalid session startup file descriptor";
             return std::nullopt;
         }
+        options.readyFd = *fd;
     }
 
-    options.noDrm = parser.isSet(noDrmOption);
+    options.noDrm = parser.isSet("no-drm");
     if (options.noDrm) {
-        bool valid = false;
-        options.headlessOutputs = parser.value(headlessOutputsOption).toInt(&valid);
-        if (!valid || options.headlessOutputs < 1 || options.headlessOutputs > 16) {
-            qCritical("Invalid --headless-outputs count; expected 1 through 16");
+        const auto count = base::strings::toNumber<int>(parser.value("headless-outputs"));
+        if (!count || *count < 1 || *count > 16) {
+            CF_CRITICAL(base::LogCategory::defaultCategory())
+                    << "Invalid --headless-outputs count; expected 1 through 16";
             return std::nullopt;
         }
+        options.headlessOutputs = *count;
     }
 
-    options.socketName = parser.value(socketOption);
-    options.drmDevice = parser.value(drmDeviceOption);
-    options.wmDemo = parser.isSet(wmDemoOption);
-    options.wmDemoScript = parser.isSet(wmDemoScriptOption);
-    options.shellControlSocket =
-            parser.isSet(shellControlOption) ? parser.value(shellControlOption) : QString();
-    options.login = parser.isSet(loginOption);
-    options.clipboardClients = parser.values(clipboardClientOption);
-    options.captureClients = parser.values(captureClientOption);
-    options.computerControlClients = parser.values(computerControlClientOption);
-    options.inputMethodId =
-            parser.isSet(inputMethodOption) ? parser.value(inputMethodOption) : QString();
-    options.displayConfigService = parser.value(displayServiceOption);
+    options.socketName = parser.value("socket");
+    options.drmDevice = parser.value("drm-device");
+    options.wmDemo = parser.isSet("wm-demo");
+    options.wmDemoScript = parser.isSet("wm-demo-script");
+    options.shellControlSocket = parser.value("shell-control-socket");
+    options.login = parser.isSet("login");
+    options.clipboardClients = parser.values("clipboard-client");
+    options.captureClients = parser.values("capture-client");
+    options.computerControlClients = parser.values("computer-control-client");
+    options.inputMethodId = parser.value("input-method");
+    options.displayConfigService = parser.value("display-config-service");
 #ifdef CUTEFISH_ENABLE_XWAYLAND
-    options.xwayland = !parser.isSet(QStringLiteral("no-xwayland"));
-    options.xwaylandSoftware = parser.isSet(QStringLiteral("xwayland-shm"));
+    options.xwayland = !parser.isSet("no-xwayland");
+    options.xwaylandSoftware = parser.isSet("xwayland-shm");
 #else
     options.xwayland = false;
 #endif
-    options.xwaylandReadyFile = parser.value(QStringLiteral("xwayland-ready-file"));
+    options.xwaylandReadyFile = parser.value("xwayland-ready-file");
+    options.logRules = parser.value("log-rules");
 
     return options;
 }

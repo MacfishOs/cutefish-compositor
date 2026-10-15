@@ -11,93 +11,66 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include <QDBusConnection>
-#include <QDBusContext>
-#include <QDBusMessage>
-#include <QObject>
-
+#include "base/dbus.h"
+#include "base/signal.h"
 #include "display/display_configuration_controller.h"
 #include "ipc/display_dbus_types.h"
 
 namespace cutefish::display::ipc {
 
-class DisplayConfigService : public QObject, protected QDBusContext
+// com.cutefish.DisplayConfig1 at /com/cutefish/DisplayConfig1; the members
+// and their signatures are in com.cutefish.DisplayConfig1.xml.
+class DisplayConfigService
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.DisplayConfig1")
-    Q_PROPERTY(uint ProtocolVersion READ protocolVersion CONSTANT)
-
 public:
     using SessionActive = std::function<bool()>;
 
-    explicit DisplayConfigService(DisplayManager* manager,
-                                  DisplayConfigurationController* controller,
-                                  QDBusConnection connection = QDBusConnection::sessionBus(),
-                                  SessionActive sessionActive = [] { return true; },
-                                  QObject* parent = nullptr);
+    DisplayConfigService(DisplayManager* manager, DisplayConfigurationController* controller,
+                         base::dbus::Connection* connection,
+                         SessionActive sessionActive = [] { return true; });
+    ~DisplayConfigService();
 
-    uint protocolVersion() const { return 1; }
-    bool registerService(const QString& serviceName);
+    DisplayConfigService(const DisplayConfigService&) = delete;
+    DisplayConfigService& operator=(const DisplayConfigService&) = delete;
+
+    static constexpr uint32_t protocolVersion = 1;
+
+    // Publishes the object, then takes the bus name.
+    bool registerService(const std::string& serviceName);
 
     // Receives SetNightLight's strength, 0 to 1, and how long to take to it.
     using NightLightHandler = std::function<void(double, std::chrono::milliseconds)>;
 
     void setNightLightHandler(NightLightHandler handler) { m_nightLight = std::move(handler); }
 
-public slots:
-    QString GetState(QString& seatId, qulonglong& topologyGeneration,
-                     qulonglong& appliedRevision, QList<PhysicalDisplay>& physicalDisplays,
-                     QList<LogicalDisplay>& logicalDisplays, QList<Placement>& placements,
-                     QString& previewToken, qulonglong& previewDeadlineMs);
-    QString TestConfiguration(const QString& instanceId, qulonglong topologyGeneration,
-                              qulonglong appliedRevision,
-                              const QList<DisplayRequest>& displays, const QString& primary,
-                              const QList<Placement>& placements,
-                              const MirrorGroups& mirrorGroups);
-    QString ApplyConfiguration(const QString& instanceId, qulonglong topologyGeneration,
-                               qulonglong appliedRevision,
-                               const QList<DisplayRequest>& displays, const QString& primary,
-                               const QList<Placement>& placements,
-                               const MirrorGroups& mirrorGroups);
-    QString SetConfiguration(const QString& instanceId, qulonglong topologyGeneration,
-                             qulonglong appliedRevision,
-                             const QList<DisplayRequest>& displays, const QString& primary,
-                             const QList<Placement>& placements,
-                             const MirrorGroups& mirrorGroups);
-    void ConfirmConfiguration(const QString& previewToken);
-    void RevertConfiguration(const QString& previewToken);
-    QString ResetConfiguration(const QString& instanceId, qulonglong topologyGeneration,
-                               qulonglong appliedRevision);
-    QString SetDisplayPower(const QStringList& displayIds, uint state);
-    QString SetDockedLidClosed(bool closed);
-    void SetNightLight(double strength, uint durationMs);
-
-signals:
-    void StateChanged(qulonglong topologyGeneration, qulonglong appliedRevision);
-    void OperationFinished(QString operationToken, bool succeeded, bool degraded, uint errorCode,
-                           QString errorMessage, QStringList affectedDisplayIds,
-                           qulonglong topologyGeneration, qulonglong appliedRevision);
-    void PreviewChanged(QString previewToken, qulonglong deadlineMs,
-                        qulonglong topologyGeneration, qulonglong appliedRevision);
-
 private:
-    bool authorizeWrite();
+    void addMethods();
+    // Both reply with the error themselves when they refuse.
+    bool authorizeWrite(base::dbus::MethodCall& call);
     // The caller owns this session, whether or not it is on screen.
-    bool authorizeCaller();
-    QString caller() const;
-    QString reject(DisplayErrorCode code, const QString& message);
-    DisplayConfiguration defaultConfiguration(const QString& instanceId,
-                                              qulonglong topologyGeneration,
-                                              qulonglong appliedRevision) const;
+    bool authorizeCaller(base::dbus::MethodCall& call);
+    std::string reject(DisplayErrorCode code, const std::string& message);
+    DisplayConfiguration defaultConfiguration(const std::string& instanceId,
+                                              uint64_t topologyGeneration,
+                                              uint64_t appliedRevision) const;
+    uint64_t topologyGeneration() const;
+    uint64_t appliedRevision() const;
 
     DisplayManager* m_manager = nullptr;
     DisplayConfigurationController* m_controller = nullptr;
-    QDBusConnection m_connection;
+    base::dbus::Connection* m_connection = nullptr;
     SessionActive m_sessionActive;
     NightLightHandler m_nightLight;
-    QString m_serviceName;
+    std::string m_serviceName;
+    std::unique_ptr<base::dbus::Object> m_object;
+    base::dbus::Match m_ownerChanges;
+    std::vector<base::Subscription> m_subscriptions;
 };
 
 } // namespace cutefish::display::ipc

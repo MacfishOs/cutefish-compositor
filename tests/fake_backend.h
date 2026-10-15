@@ -7,7 +7,7 @@
 
 #include "auth/auth_backend.h"
 
-#include <QStringList>
+#include <string>
 
 // A backend that answers whatever the test tells it to, and counts the things
 // that must happen exactly once.
@@ -15,16 +15,16 @@ class FakeBackend : public cutefish::auth::AuthBackend
 {
 
 public:
-    QString defaultUserName() const override { return QStringLiteral("tester"); }
+    std::string defaultUserName() const override { return "tester"; }
 
     void start() override { ++startCount; }
 
-    void authenticate(const QString &userName, cutefish::auth::Secret secret) override
+    void authenticate(const std::string &userName, cutefish::auth::Secret secret) override
     {
         lastUser = userName;
         // Recorded so a test can prove the credential arrived; a real backend
         // would never copy it anywhere that outlives the attempt.
-        lastSecret = QString::fromUtf8(secret.constData(), int(secret.size()));
+        lastSecret = std::string(secret.constData(), secret.size());
         ++authenticateCount;
     }
 
@@ -35,20 +35,17 @@ public:
     void setSession(const cutefish::auth::LoginSession &session) override { lastSession = session.id; }
 
     // Drive the controller the way a real service would.
-    void succeed() { Q_EMIT succeeded(); }
+    void succeed() { succeeded(); }
 
-    void reject(const QString &message = QStringLiteral("Incorrect password"))
-    {
-        Q_EMIT failed(message);
-    }
+    void reject(const std::string &message = "Incorrect password") { failed(message); }
 
     int startCount = 0;
     int authenticateCount = 0;
     int resetCount = 0;
     int acceptCount = 0;
-    QString lastUser;
-    QString lastSecret;
-    QString lastSession;
+    std::string lastUser;
+    std::string lastSecret;
+    std::string lastSession;
 };
 
 #endif // CUTEFISH_TESTS_FAKE_BACKEND_H

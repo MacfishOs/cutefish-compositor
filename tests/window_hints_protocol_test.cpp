@@ -214,13 +214,13 @@ TEST_F(WindowHintsProtocolTest, RestoreIdIsImmediateAndPersistsUntilTheSurfaceDi
     auto *surface = wl_compositor_create_surface(clientCompositor);
     ASSERT_GE(roundtrip(), 0);
     auto *model = compositor.surfaces().front();
-    EXPECT_TRUE(model->restoreId().isEmpty());
+    EXPECT_TRUE(model->restoreId().empty());
     cutefish_window_hints_v1_set_restore_id(hints, surface, "preview");
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->restoreId(), QStringLiteral("preview"));
+    EXPECT_EQ(model->restoreId(), "preview");
     cutefish_window_hints_v1_set_restore_id(hints, surface, "");
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_TRUE(model->restoreId().isEmpty());
+    EXPECT_TRUE(model->restoreId().empty());
     wl_surface_destroy(surface);
 }
 
@@ -232,7 +232,7 @@ TEST_F(WindowHintsProtocolTest, RestoreSizeIsImmediateAndRejectsNegativeValues)
     EXPECT_TRUE(model->restoreSize().isEmpty());
     cutefish_window_hints_v1_set_restore_size(hints, surface, 300, 200);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->restoreSize(), QSize(300, 200));
+    EXPECT_EQ(model->restoreSize(), cutefish::base::Size(300, 200));
     cutefish_window_hints_v1_set_restore_size(hints, surface, -1, 200);
     EXPECT_LT(roundtrip(), 0);
     EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),

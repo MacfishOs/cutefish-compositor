@@ -4,34 +4,35 @@
 
 // A Cutefish stand-in for chromium/src/components/exo/wayland/test/
 // wayland_server_test_base.*: a real libwayland client on its own thread,
-// driven by a Server running on the Qt event loop of the main thread.
+// driven by a Server running on the event loop of the main thread.
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 
+#include "loop_test_util.h"
+#include "temporary_directory.h"
 #include "wayland/server.h"
 #include "wayland/server_util.h"
-
-#include <QCoreApplication>
-#include <QDeadlineTimer>
-#include <QTemporaryDir>
 
 #include <gtest/gtest.h>
 #include <wayland-client.h>
 #include <wayland-server-protocol.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <string>
 #include <thread>
 
 namespace cutefish::wayland {
 namespace {
 
 // Runs a wl_display connection on its own thread so that the server can keep
-// dispatching on the main thread's Qt event loop.
+// dispatching on the main thread's event loop.
 class TestClient
 {
 public:
-    void start(const QString& socketName)
+    void start(const std::string& socketName)
     {
-        m_thread = std::thread([this, name = socketName.toStdString()] { run(name); });
+        m_thread = std::thread([this, name = socketName] { run(name); });
     }
 
     void requestDisconnect() { m_shouldDisconnect = true; }
@@ -67,7 +68,7 @@ private:
         wl_registry* registry = wl_display_get_registry(display);
         wl_registry_add_listener(registry, &listener, &m_globalCount);
 
-        // Blocks until the server answers, which only happens if the Qt
+        // Blocks until the server answers, which only happens if the loop
         // integration is dispatching and flushing.
         const bool ok = wl_display_roundtrip(display) >= 0;
         m_roundtripDone = ok;
@@ -94,13 +95,7 @@ protected:
     void SetUp() override
     {
         ASSERT_TRUE(m_runtimeDir.isValid());
-        qputenv("XDG_RUNTIME_DIR", m_runtimeDir.path().toUtf8());
-
-        static int argc = 1;
-        static char arg0[] = "wayland_server_test";
-        static char* argv[] = { arg0, nullptr };
-        if (!QCoreApplication::instance())
-            new QCoreApplication(argc, argv);
+        setenv("XDG_RUNTIME_DIR", m_runtimeDir.path().c_str(), 1);
 
         m_server = std::make_unique<Server>();
         ASSERT_TRUE(m_server->display());
@@ -108,35 +103,29 @@ protected:
 
     void TearDown() override { m_server.reset(); }
 
-    // Spins the Qt event loop, which is what drives the server, until
+    // Spins the event loop, which is what drives the server, until
     // `predicate` holds.
     template<class Predicate>
     bool waitFor(Predicate predicate, int timeoutMs = 5000)
     {
-        QDeadlineTimer deadline(timeoutMs);
-        while (!predicate()) {
-            if (deadline.hasExpired())
-                return false;
-            QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents, 10);
-        }
-        return true;
+        return test::runUntil(predicate, std::chrono::milliseconds(timeoutMs));
     }
 
-    QTemporaryDir m_runtimeDir;
+    test::TemporaryDirectory m_runtimeDir;
     std::unique_ptr<Server> m_server;
 };
 
 TEST_F(WaylandServerTest, AddSocketAutoPicksAName)
 {
-    EXPECT_TRUE(m_server->socketName().isEmpty());
+    EXPECT_TRUE(m_server->socketName().empty());
     ASSERT_TRUE(m_server->addSocket());
-    EXPECT_TRUE(m_server->socketName().startsWith(QLatin1String("wayland-")));
+    EXPECT_TRUE(m_server->socketName().starts_with("wayland-"));
 }
 
 TEST_F(WaylandServerTest, AddSocketHonoursAnExplicitName)
 {
-    ASSERT_TRUE(m_server->addSocket(QStringLiteral("cutefish-test-0")));
-    EXPECT_EQ(QStringLiteral("cutefish-test-0"), m_server->socketName());
+    ASSERT_TRUE(m_server->addSocket("cutefish-test-0"));
+    EXPECT_EQ("cutefish-test-0", m_server->socketName());
 }
 
 TEST_F(WaylandServerTest, EventLoopFdIsExposedOnlyWithADisplay)
@@ -206,23 +195,24 @@ TEST_F(WaylandServerTest, DispatchWithoutTheEventLoopAcceptsAClient)
 
     TestClient client;
     client.start(m_server->socketName());
-    QDeadlineTimer deadline(5000);
-    while (!created.notified && !deadline.hasExpired())
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    const auto hasExpired = [&] { return std::chrono::steady_clock::now() >= deadline; };
+    while (!created.notified && !hasExpired())
         ASSERT_TRUE(m_server->dispatch(std::chrono::milliseconds(10)));
     wl_list_remove(&created.listener.link);
     ASSERT_TRUE(created.notified);
 
     // The roundtrip needs the server to dispatch and flush by hand too.
-    while (!client.roundtripDone() && !deadline.hasExpired()) {
+    while (!client.roundtripDone() && !hasExpired()) {
         m_server->dispatch(std::chrono::milliseconds(10));
         m_server->flush();
     }
     EXPECT_TRUE(client.roundtripDone());
 
     client.requestDisconnect();
-    while (!client.finished() && !deadline.hasExpired())
+    while (!client.finished() && !hasExpired())
         m_server->dispatch(std::chrono::milliseconds(10));
-    while (m_server->trackedClientCount() != 0 && !deadline.hasExpired())
+    while (m_server->trackedClientCount() != 0 && !hasExpired())
         m_server->dispatch(std::chrono::milliseconds(10));
     EXPECT_EQ(0, m_server->trackedClientCount());
     client.join();
@@ -277,19 +267,20 @@ TEST_F(WaylandServerTest, FlushDoesNotCrashDuringClientDisconnect)
 } // namespace cutefish::wayland
 
 // Found by protocol_fuzzer: a region built from INT_MAX-sized arguments
-// overflowed QRect's right edge.
+// overflowed the rectangle's right edge.
 TEST(ClientRect, EdgesStayWithinRangeAndNegativeSizesAreEmpty)
 {
+    using cutefish::base::Rect;
     using cutefish::wayland::clientRect;
-    EXPECT_EQ(clientRect(10, 20, 30, 40), QRect(10, 20, 30, 40));
-    EXPECT_EQ(clientRect(-5, -6, 10, 12), QRect(-5, -6, 10, 12));
+    EXPECT_EQ(clientRect(10, 20, 30, 40), Rect(10, 20, 30, 40));
+    EXPECT_EQ(clientRect(-5, -6, 10, 12), Rect(-5, -6, 10, 12));
     EXPECT_TRUE(clientRect(10, 20, -30, 40).isEmpty());
     EXPECT_TRUE(clientRect(10, 20, 30, 0).isEmpty());
 
     const int limit = 1 << 24;
-    EXPECT_EQ(clientRect(1828966744, 0, 1353190006, 1), QRect(limit, 0, 0, 1));
-    EXPECT_EQ(clientRect(0, 0, INT32_MAX, INT32_MAX), QRect(0, 0, limit, limit));
+    EXPECT_EQ(clientRect(1828966744, 0, 1353190006, 1), Rect(limit, 0, 0, 1));
+    EXPECT_EQ(clientRect(0, 0, INT32_MAX, INT32_MAX), Rect(0, 0, limit, limit));
     EXPECT_EQ(clientRect(INT32_MIN, INT32_MIN, INT32_MAX, 5),
-              QRect(-limit, -limit, limit - 1, 0));
-    EXPECT_EQ(clientRect(-limit - 10, 0, 20, 1), QRect(-limit, 0, 10, 1));
+              Rect(-limit, -limit, limit - 1, 0));
+    EXPECT_EQ(clientRect(-limit - 10, 0, 20, 1), Rect(-limit, 0, 10, 1));
 }

@@ -2,19 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "logging.h"
+#include "core/logging.h"
 
-// Keep startup and operational messages visible; routine window and input
-// diagnostics require an explicit debug logging rule.
-Q_LOGGING_CATEGORY(cfWayland, "cutefish.wayland", QtInfoMsg)
-Q_LOGGING_CATEGORY(cfSession, "cutefish.session", QtInfoMsg)
-Q_LOGGING_CATEGORY(cfDrm, "cutefish.drm", QtInfoMsg)
-Q_LOGGING_CATEGORY(cfRender, "cutefish.render", QtInfoMsg)
-Q_LOGGING_CATEGORY(cfScene, "cutefish.scene", QtInfoMsg)
-Q_LOGGING_CATEGORY(cfCompositor, "cutefish.compositor", QtInfoMsg)
-Q_LOGGING_CATEGORY(cfInput, "cutefish.input", QtInfoMsg)
+namespace cutefish::core {
 
-// Opt-in button/capture transitions; no pointer-motion or keyboard text logging.
-Q_LOGGING_CATEGORY(cfInputTransitions, "cutefish.input.transitions", QtInfoMsg)
+void setLoggingRules(std::string_view rules)
+{
+    base::logging::setRules(rules);
+}
 
-Q_LOGGING_CATEGORY(cfCursorTransitions, "cutefish.cursor.transitions", QtInfoMsg)
+} // namespace cutefish::core
+
+const cutefish::core::LogCategory cfWayland("cutefish.wayland");
+const cutefish::core::LogCategory cfSession("cutefish.session");
+const cutefish::core::LogCategory cfDrm("cutefish.drm");
+const cutefish::core::LogCategory cfRender("cutefish.render");
+const cutefish::core::LogCategory cfScene("cutefish.scene");
+const cutefish::core::LogCategory cfCompositor("cutefish.compositor");
+const cutefish::core::LogCategory cfInput("cutefish.input");
+const cutefish::core::LogCategory cfInputTransitions("cutefish.input.transitions");
+const cutefish::core::LogCategory cfCursorTransitions("cutefish.cursor.transitions");

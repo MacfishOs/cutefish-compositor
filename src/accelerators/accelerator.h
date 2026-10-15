@@ -18,7 +18,8 @@
 #include <functional>
 #include <tuple>
 
-#include <QString>
+#include <string>
+#include <string_view>
 
 namespace cutefish::accelerators {
 
@@ -110,7 +111,7 @@ public:
 
     // "Ctrl+Shift+Q", for logs and D-Bus results. Modifier order follows
     // ui::Accelerator::GetShortcutText.
-    QString shortcutText() const;
+    std::string shortcutText() const;
 
 private:
     uint32_t m_keysym = 0;
@@ -120,14 +121,14 @@ private:
 };
 
 // The keysym name xkbcommon knows the key by ("Up", "XF86AudioRaiseVolume").
-QString keysymName(uint32_t keysym);
+std::string keysymName(uint32_t keysym);
 
 // Parses what keysymName() produced; 0 when the name is unknown.
-uint32_t keysymFromName(const QString &name);
+uint32_t keysymFromName(const std::string &name);
 
 // The printable character for a keysym, or an empty string. Letters come back
 // upper-cased so "Ctrl+Q" reads as it does on the key cap.
-QString keysymText(uint32_t keysym);
+std::string keysymText(uint32_t keysym);
 
 // The key at `evdevCode` on a US layout, for the subset of punctuation keys
 // ChromeOS pins by position. Port of

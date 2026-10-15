@@ -4,36 +4,72 @@
 
 #include "display/edid.h"
 
-#include <QCryptographicHash>
+#include "base/hash.h"
+#include "base/strings.h"
 
 namespace cutefish::display {
 
-EdidInfo parseEdid(const QByteArray &edid)
+namespace {
+
+bool isAsciiSpace(char c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+
+// Latin-1 whitespace at either end, the two non-ASCII spaces included.
+std::string_view trimmedLatin1(std::string_view text)
+{
+    const auto space = [](char c) {
+        return isAsciiSpace(c) || static_cast<unsigned char>(c) == 0x85
+                || static_cast<unsigned char>(c) == 0xa0;
+    };
+    while (!text.empty() && space(text.front()))
+        text.remove_prefix(1);
+    while (!text.empty() && space(text.back()))
+        text.remove_suffix(1);
+    return text;
+}
+
+std::string_view trimmedAscii(std::string_view text)
+{
+    while (!text.empty() && isAsciiSpace(text.front()))
+        text.remove_prefix(1);
+    while (!text.empty() && isAsciiSpace(text.back()))
+        text.remove_suffix(1);
+    return text;
+}
+
+} // namespace
+
+EdidInfo parseEdid(std::string_view edid)
 {
     EdidInfo info;
-    if (edid.size() < 128 || edid.left(8) != QByteArray::fromHex("00ffffffffffff00"))
+    constexpr std::string_view header("\x00\xff\xff\xff\xff\xff\xff\x00", 8);
+    if (edid.size() < 128 || edid.substr(0, 8) != header)
         return info;
-    uint checksum = 0;
-    for (int i = 0; i < 128; ++i)
-        checksum += static_cast<unsigned char>(edid.at(i));
+    unsigned checksum = 0;
+    for (size_t i = 0; i < 128; ++i)
+        checksum += static_cast<unsigned char>(edid[i]);
     if (checksum & 255)
         return info;
 
-    QByteArray key = edid.mid(8, 8);
-    for (int offset = 54; offset + 18 <= 126; offset += 18) {
-        if (edid.mid(offset, 4) == QByteArray::fromHex("000000ff"))
-            key += edid.mid(offset + 5, 13).trimmed();
+    std::string key(edid.substr(8, 8));
+    for (size_t offset = 54; offset + 18 <= 126; offset += 18) {
+        if (edid.substr(offset, 4) == std::string_view("\x00\x00\x00\xff", 4))
+            key += trimmedAscii(edid.substr(offset + 5, 13));
         // Monitor name, read as ui/display/util/edid_parser.cc does.
-        if (edid.mid(offset, 5) == QByteArray::fromHex("000000fc00"))
-            info.model = QString::fromLatin1(edid.mid(offset + 5, 13)).trimmed();
+        if (edid.substr(offset, 5) == std::string_view("\x00\x00\x00\xfc\x00", 5))
+            info.model = base::strings::latin1ToUtf8(trimmedLatin1(edid.substr(offset + 5, 13)));
     }
-    info.key = QString::fromLatin1(QCryptographicHash::hash(key, QCryptographicHash::Sha256).toHex());
+    info.key = base::CryptographicHash::hashHex(
+            key, base::CryptographicHash::Algorithm::Sha256);
 
     // Three 5-bit letters, big endian, 1 for 'A'.
-    const uint manufacturer = (uint(uchar(edid.at(8))) << 8) | uchar(edid.at(9));
+    const unsigned manufacturer = (unsigned(static_cast<unsigned char>(edid[8])) << 8)
+            | static_cast<unsigned char>(edid[9]);
     if (manufacturer) {
         for (int shift : {10, 5, 0})
-            info.make += QLatin1Char(char('A' - 1 + ((manufacturer >> shift) & 31)));
+            info.make += char('A' - 1 + ((manufacturer >> shift) & 31));
     }
     return info;
 }

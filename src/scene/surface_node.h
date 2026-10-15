@@ -8,13 +8,15 @@
 #include <memory>
 #include <optional>
 
-#include <QPainterPath>
 
 #include "render/glass.h"
 #include "render/presentation.h"
 #include "render/scanout.h"
 #include "render/sync_fence.h"
 #include "scene/node.h"
+#include "base/region.h"
+#include "base/transform.h"
+#include "ui/path.h"
 
 namespace cutefish::scene {
 
@@ -24,12 +26,12 @@ namespace cutefish::scene {
 class SurfaceNode : public Node
 {
 public:
-    explicit SurfaceNode(const QString &name = QString());
+    explicit SurfaceNode(std::string name = {});
     ~SurfaceNode() override;
 
-    const QTransform &textureMapping() const { return m_textureMapping; }
+    const base::AffineTransform &textureMapping() const { return m_textureMapping; }
 
-    void setTextureMapping(const QTransform &mapping)
+    void setTextureMapping(const base::AffineTransform &mapping)
     {
         if (m_textureMapping == mapping)
             return;
@@ -55,14 +57,14 @@ public:
     std::shared_ptr<render::Texture> takeTexture();
 
     // `shape` is surface-local; empty for the rounded rectangle.
-    void setBackgroundBlur(const QRect &rect, int radius, const render::GlassParams &glass = {},
-                           const QPainterPath &shape = {});
+    void setBackgroundBlur(const base::Rect &rect, int radius, const render::GlassParams &glass = {},
+                           const ui::Path &shape = {});
 
     bool hasBackgroundBlur() const { return !m_blurRect.isEmpty(); }
-    QRect backgroundBlurRect() const { return m_blurRect; }
+    base::Rect backgroundBlurRect() const { return m_blurRect; }
     int backgroundBlurRadius() const { return m_blurRadius; }
     const render::GlassParams &glass() const { return m_glass; }
-    const QPainterPath &backgroundBlurShape() const { return m_blurShape; }
+    const ui::Path &backgroundBlurShape() const { return m_blurShape; }
 
     // Mapped, but hidden with its window: drawn anyway where the renderer
     // reveals hidden surfaces.
@@ -90,7 +92,7 @@ public:
     // which is what lets it take the primary plane or an opaque overlay.
     bool isOpaque() const { return m_opaque && !m_contentShape; }
 
-    void setContentShape(std::optional<QRegion> shape)
+    void setContentShape(std::optional<base::Region> shape)
     {
         if (m_contentShape == shape)
             return;
@@ -119,22 +121,22 @@ public:
     void render(render::Renderer &renderer) const override;
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const override;
+    void paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const override;
 
 private:
     std::shared_ptr<render::PresentationContent> m_presentationContent;
-    QTransform m_textureMapping;
+    base::AffineTransform m_textureMapping;
     std::shared_ptr<render::Texture> m_texture;
     std::shared_ptr<render::ScanoutBuffer> m_scanoutBuffer;
     render::SyncFence m_acquireFence;
-    QRect m_blurRect;
+    base::Rect m_blurRect;
     int m_blurRadius = 0;
     bool m_hiddenWithWindow = false;
-    QPainterPath m_blurShape;
+    ui::Path m_blurShape;
     render::GlassParams m_glass;
     float m_alpha = 1.0f;
     bool m_opaque = false;
-    std::optional<QRegion> m_contentShape;
+    std::optional<base::Region> m_contentShape;
 };
 
 } // namespace cutefish::scene

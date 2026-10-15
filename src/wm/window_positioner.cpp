@@ -23,11 +23,11 @@ constexpr int kWindowOffset = 32;
 // The most recent shown top-level window of `applicationId` on `output`.
 // Activation raises, so topmost first is most recently used first - but only
 // within one stacking layer: an always-on-top window stays topmost regardless.
-const Window *referenceWindow(WindowManager *manager, const QRect &output,
-                              const QString &applicationId, bool alwaysOnTop,
+const Window *referenceWindow(WindowManager *manager, const base::Rect &output,
+                              const std::string &applicationId, bool alwaysOnTop,
                               const Window *exclude)
 {
-    if (applicationId.isEmpty())
+    if (applicationId.empty())
         return nullptr;
     const std::vector<Window *> &windows = manager->windows();
     for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
@@ -44,12 +44,12 @@ const Window *referenceWindow(WindowManager *manager, const QRect &output,
 
 } // namespace
 
-QRect boundsForNewWindow(const Window *window, QRect bounds)
+base::Rect boundsForNewWindow(const Window *window, base::Rect bounds)
 {
     WindowManager *manager = window->manager();
     if (!window->maximumSize().isEmpty() && window->minimumSize() == window->maximumSize()) {
         const Window *reference = manager->activation()->activeWindow();
-        if (reference && reference != window && !window->applicationId().isEmpty()
+        if (reference && reference != window && !window->applicationId().empty()
             && reference->applicationId() == window->applicationId() && !reference->isPopup()
             && !reference->isShellWindow() && !reference->transientParent()
             && reference->isVisible() && !reference->state()->isMinimized()) {
@@ -65,12 +65,12 @@ QRect boundsForNewWindow(const Window *window, QRect bounds)
         return bounds;
 
     const WindowState *topState = top->state();
-    const QRect topBounds = !topState->isNormal() && topState->hasRestoreBounds()
+    const base::Rect topBounds = !topState->isNormal() && topState->hasRestoreBounds()
             ? topState->restoreBounds()
             : top->bounds();
-    bounds.moveTopLeft(topBounds.topLeft() + QPoint(kWindowOffset, kWindowOffset));
+    bounds.moveTopLeft(topBounds.topLeft() + base::Point(kWindowOffset, kWindowOffset));
 
-    const QRect workArea = manager->workAreaFor(window);
+    const base::Rect workArea = manager->workAreaFor(window);
     if (bounds.x() + bounds.width() > workArea.x() + workArea.width()
         || bounds.y() + bounds.height() > workArea.y() + workArea.height()) {
         bounds.moveTopLeft(workArea.topLeft());
@@ -79,8 +79,8 @@ QRect boundsForNewWindow(const Window *window, QRect bounds)
     return bounds;
 }
 
-WindowStateType showStateForNewWindow(WindowManager *manager, const QRect &output,
-                                      const QString &applicationId, WindowStateType requested)
+WindowStateType showStateForNewWindow(WindowManager *manager, const base::Rect &output,
+                                      const std::string &applicationId, WindowStateType requested)
 {
     if (requested != WindowStateType::Normal)
         return requested;

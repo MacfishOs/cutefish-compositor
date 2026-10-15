@@ -30,7 +30,7 @@ void subsurface_destroy(wl_client*, wl_resource* resource)
 
 void subsurface_set_position(wl_client*, wl_resource* resource, int32_t x, int32_t y)
 {
-    getUserDataAs<SubSurface>(resource)->setPosition(QPoint(x, y));
+    getUserDataAs<SubSurface>(resource)->setPosition(base::Point(x, y));
 }
 
 void subsurface_place_above(wl_client*, wl_resource* resource, wl_resource* reference)

@@ -50,7 +50,7 @@ public:
                                   timestamp.time_since_epoch())
                                   .count();
         // Unaccelerated motion is in device units, which no client scale applies to.
-        const QPointF delta =
+        const base::PointF delta =
                 logicalToClient(motion.delta, clientScale(wl_resource_get_client(m_resource)));
         zwp_relative_pointer_v1_send_relative_motion(
                 m_resource, uint32_t(uint64_t(usec) >> 32), uint32_t(usec),

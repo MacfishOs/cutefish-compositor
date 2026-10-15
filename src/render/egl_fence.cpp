@@ -47,7 +47,7 @@ EglFence::EglFence(EglContext &context)
 {
     if (!m_context.supports("EGL_KHR_fence_sync")
         || !m_context.supports("EGL_ANDROID_native_fence_sync")) {
-        qCInfo(cfRender) << "EGL has no native fence sync; explicit sync falls back to CPU waits";
+        CF_INFO(cfRender) << "EGL has no native fence sync; explicit sync falls back to CPU waits";
         return;
     }
 
@@ -59,7 +59,7 @@ EglFence::EglFence(EglContext &context)
     m_waitSyncServer = reinterpret_cast<void *>(eglGetProcAddress("eglWaitSyncKHR"));
     if (!m_createSync || !m_destroySync || !m_dupNativeFence || !m_waitSyncServer) {
         m_createSync = m_destroySync = m_dupNativeFence = m_waitSyncServer = nullptr;
-        qCInfo(cfRender) << "EGL fence entry points are missing; explicit sync uses CPU waits";
+        CF_INFO(cfRender) << "EGL fence entry points are missing; explicit sync uses CPU waits";
     }
 }
 

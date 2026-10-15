@@ -12,8 +12,9 @@
 #include <map>
 #include <memory>
 
-#include <QObject>
 
+#include "base/geometry.h"
+#include "base/signal.h"
 #include "wm/shadow_types.h"
 #include "wm/window_observer.h"
 #include "wm/window_shadow.h"
@@ -35,15 +36,13 @@ class WindowManager;
 // activation, show state, bounds, visibility and drags.
 //
 // Must be destroyed before the WindowManager it observes.
-class ShadowController : public QObject, public WindowObserver
+class ShadowController : public WindowObserver
 {
-    Q_OBJECT
-
 public:
     // `provider` may be null, which leaves every window without a shadow but
     // keeps the policy observable; that is what protocol-only tests want.
     ShadowController(WindowManager* manager, ShadowProvider* provider,
-                     ShadowControllerDelegate* delegate, QObject* parent = nullptr);
+                     ShadowControllerDelegate* delegate);
     ~ShadowController() override;
 
     // Null until the window has one. Upstream: ShadowController::GetShadowForWindow.
@@ -57,7 +56,7 @@ public:
 
     // --- WindowObserver ---
 
-    void onWindowBoundsChanged(Window* window, const QRect& oldBounds) override;
+    void onWindowBoundsChanged(Window* window, const base::Rect& oldBounds) override;
     void onWindowStateTypeChanged(Window* window, WindowStateType oldType) override;
     void onWindowActivationChanged(Window* window, bool active) override;
     void onWindowVisibilityChanged(Window* window, bool visible) override;
@@ -66,7 +65,7 @@ public:
     void onWindowClientDecorationChanged(Window* window) override;
     void onWindowFrameChanged(Window* window) override;
 
-private Q_SLOTS:
+private:
     void onWindowAdded(cutefish::wm::Window* window);
     void onWindowRemoved(cutefish::wm::Window* window);
 
@@ -77,6 +76,8 @@ private:
     ShadowProvider* m_provider = nullptr;
     ShadowControllerDelegate* m_delegate = nullptr;
     std::map<Window*, std::unique_ptr<WindowShadow>> m_shadows;
+    base::Subscription m_windowAdded;
+    base::Subscription m_windowRemoved;
 };
 
 } // namespace cutefish::wm

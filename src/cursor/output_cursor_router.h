@@ -11,11 +11,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
-#include <QByteArray>
-#include <QRect>
-
+#include "base/geometry.h"
 #include "display/mirror_transform.h"
 #include "render/cursor_sink.h"
 
@@ -27,7 +26,7 @@ public:
     struct Target {
         // Where the output sits on the logical desktop; the mirror transform
         // takes a point there to the output's own pixels.
-        QRect logicalBounds;
+        base::Rect logicalBounds;
         render::CursorSink *sink = nullptr;
         display::MirrorTransform mirrorTransform;
     };
@@ -38,7 +37,7 @@ public:
 
     bool setCursorImage(const render::CursorImage &image) override;
     void hideCursor() override;
-    void moveCursor(const QPointF &position) override;
+    void moveCursor(const base::PointF &position) override;
 
     int activeTarget() const { return m_activeTargets.empty() ? -1 : m_activeTargets.front(); }
 
@@ -46,9 +45,9 @@ private:
     bool upload(int index);
 
     std::vector<Target> m_targets;
-    QByteArray m_pixels;
+    std::vector<uint8_t> m_pixels;
     render::CursorImage m_image;
-    QPointF m_position;
+    base::PointF m_position;
     std::vector<int> m_activeTargets;
 };
 

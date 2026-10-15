@@ -47,7 +47,7 @@ SubSurface::~SubSurface()
     // Destroying a sub-surface takes effect immediately (remove schedules paint).
 }
 
-void SubSurface::setPosition(const QPoint& position)
+void SubSurface::setPosition(const base::Point& position)
 {
     if (!m_parent || !m_surface)
         return;

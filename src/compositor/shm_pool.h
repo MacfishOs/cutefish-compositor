@@ -11,7 +11,7 @@
 #ifndef CUTEFISH_COMPOSITOR_SHM_POOL_H_
 #define CUTEFISH_COMPOSITOR_SHM_POOL_H_
 
-#include <QSize>
+#include "base/geometry.h"
 
 #include <sys/uio.h>
 
@@ -65,7 +65,7 @@ public:
 
     // Creates a buffer covering `size` pixels starting `offset` bytes into the
     // pool. Returns nullptr and sets `error` when the range is not valid.
-    std::shared_ptr<ShmBuffer> createBuffer(const QSize &size, int32_t offset, int32_t stride,
+    std::shared_ptr<ShmBuffer> createBuffer(const base::Size &size, int32_t offset, int32_t stride,
                                             render::PixelFormat format, ShmBufferError *error);
 
     const uint8_t *data() const { return static_cast<const uint8_t *>(m_data); }

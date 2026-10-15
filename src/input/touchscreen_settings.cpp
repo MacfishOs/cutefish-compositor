@@ -3,80 +3,79 @@
 // found in the LICENSE file.
 
 #include "input/touchscreen_settings.h"
+#include "core/logging.h"
 
-#include <QDBusError>
-#include <QDebug>
 
 #include "core/preferences.h"
+#include "input/dbus_export.h"
 
 namespace cutefish::input {
-namespace {
-constexpr auto service = "com.cutefish.Touchscreen1";
-constexpr auto path = "/com/cutefish/Touchscreen1";
-} // namespace
 
-TouchscreenSettings::TouchscreenSettings(QObject *parent, const QString &settingsFile)
-    : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
-                                       : settingsFile,
-                 QSettings::IniFormat)
-{
-    m_settings.beginGroup(QStringLiteral("Touchscreen"));
-    m_disabledDevices = m_settings.value(QStringLiteral("disabledDevices")).toStringList();
-    m_disabledDevices.removeAll(QString());
-    m_disabledDevices.removeDuplicates();
-}
+static constexpr auto service = "com.cutefish.Touchscreen1";
+static constexpr auto path = "/com/cutefish/Touchscreen1";
+static constexpr auto disabledDevicesKey = "Touchscreen/disabledDevices";
 
-TouchscreenSettings::~TouchscreenSettings()
+TouchscreenSettings::TouchscreenSettings(const std::string &settingsFile)
+    : m_settings(settingsFile.empty() ? preferencesFile("compositor") : settingsFile)
 {
-    if (m_registered) {
-        auto bus = QDBusConnection::sessionBus();
-        bus.unregisterObject(QLatin1String(path));
-        bus.unregisterService(QLatin1String(service));
+    for (const std::string &name : m_settings.stringListValue(disabledDevicesKey)) {
+        if (!name.empty() && deviceEnabled(name))
+            m_disabledDevices.push_back(name);
     }
 }
+
+TouchscreenSettings::~TouchscreenSettings() = default;
 
 bool TouchscreenSettings::registerService()
 {
-    if (m_registered)
+    if (m_object)
         return true;
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.registerObject(QLatin1String(path), this,
-                            QDBusConnection::ExportAllProperties | QDBusConnection::ExportAllSlots
-                                    | QDBusConnection::ExportAllSignals)) {
-        qWarning() << "Cannot export touchscreen settings:" << bus.lastError().message();
+    auto exported = DBusExport::create(service, path, service);
+    if (!exported) {
+        CF_WARNING(cfInput) << "Cannot export touchscreen settings: no session bus";
         return false;
     }
-    if (!bus.registerService(QLatin1String(service))) {
-        qWarning() << "Cannot register touchscreen settings:" << bus.lastError().message();
-        bus.unregisterObject(QLatin1String(path));
+    base::dbus::Object &object = exported->object();
+    object.addProperty("devices", [this] { return m_devices; });
+    object.addProperty("disabledDevices", [this] { return m_disabledDevices; });
+    object.addMethod("setDeviceEnabled", [this](const std::string &name, bool enabled) {
+        setDeviceEnabled(name, enabled);
+    }, base::dbus::ArgumentNames{{"name", "enabled"}, {}});
+    for (const char *member : {"devicesChanged", "disabledDevicesChanged", "settingsChanged"})
+        object.addSignal(member, "");
+    if (!exported->publish("touchscreen settings"))
         return false;
-    }
-    m_registered = true;
+    m_object = std::move(exported);
     return true;
 }
 
-void TouchscreenSettings::setDevices(const QStringList &devices)
+void TouchscreenSettings::notify(const base::Signal<> &signal, const char *member)
+{
+    signal();
+    if (m_object)
+        m_object->emitSignal(member);
+}
+
+void TouchscreenSettings::setDevices(const std::vector<std::string> &devices)
 {
     if (m_devices == devices)
         return;
     m_devices = devices;
-    emit devicesChanged();
+    notify(devicesChanged, "devicesChanged");
 }
 
-void TouchscreenSettings::setDeviceEnabled(const QString &name, bool enabled)
+void TouchscreenSettings::setDeviceEnabled(const std::string &name, bool enabled)
 {
-    if (name.isEmpty() || deviceEnabled(name) == enabled)
+    if (name.empty() || deviceEnabled(name) == enabled)
         return;
     if (enabled)
-        m_disabledDevices.removeAll(name);
+        std::erase(m_disabledDevices, name);
     else
-        m_disabledDevices.append(name);
-    m_settings.setValue(QStringLiteral("disabledDevices"), m_disabledDevices);
-    m_settings.sync();
-    if (m_settings.status() != QSettings::NoError)
-        qWarning() << "Cannot persist touchscreen settings to" << m_settings.fileName();
-    emit disabledDevicesChanged();
-    emit settingsChanged();
+        m_disabledDevices.push_back(name);
+    m_settings.setValue(disabledDevicesKey, m_disabledDevices);
+    if (!m_settings.sync())
+        CF_WARNING(cfInput) << "Cannot persist touchscreen settings to" << m_settings.path();
+    notify(disabledDevicesChanged, "disabledDevicesChanged");
+    notify(settingsChanged, "settingsChanged");
 }
 } // namespace cutefish::input

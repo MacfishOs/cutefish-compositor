@@ -13,17 +13,11 @@
 
 #include <algorithm>
 
-#include <QDBusConnection>
-#include <QDBusConnectionInterface>
-#include <QDBusError>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QJsonArray>
-#include <QJsonDocument>
 #include <xkbcommon/xkbcommon.h>
 
 #include "accelerators/accelerator_controller.h"
 #include "core/logging.h"
+#include "input/dbus_export.h"
 #include "input/xkb_tracker.h"
 
 namespace cutefish::accelerators {
@@ -50,109 +44,131 @@ bool isMetaKeysym(uint32_t keysym)
     return keysym == XKB_KEY_Super_L || keysym == XKB_KEY_Super_R;
 }
 
-QString toJsonString(const QJsonObject &object)
+std::string toJsonString(const base::json::Value &object)
 {
-    return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+    return object.serialize();
 }
 
 } // namespace
 
 AcceleratorService::AcceleratorService(AcceleratorConfiguration *configuration,
                                        AcceleratorController *controller,
-                                       const input::XkbTracker *xkb, QObject *parent)
-    : QObject(parent)
-    , m_configuration(configuration)
+                                       const input::XkbTracker *xkb)
+    : m_configuration(configuration)
     , m_controller(controller)
     , m_xkb(xkb)
 {
-    connect(m_configuration, &AcceleratorConfiguration::acceleratorsUpdated, this,
-            &AcceleratorService::acceleratorsChanged);
-    m_watcher.setWatchMode(QDBusServiceWatcher::WatchForUnregistration);
-    connect(&m_watcher, &QDBusServiceWatcher::serviceUnregistered, this,
-            &AcceleratorService::releasePreventOwner);
+    m_configurationUpdates = m_configuration->acceleratorsUpdated.connect([this] {
+        acceleratorsChanged();
+        if (m_object)
+            m_object->emitSignal("acceleratorsChanged");
+    });
 }
 
-AcceleratorService::~AcceleratorService()
-{
-    if (m_registered) {
-        auto bus = QDBusConnection::sessionBus();
-        bus.unregisterObject(QLatin1String(kPath));
-        bus.unregisterService(QLatin1String(kService));
-    }
-}
+AcceleratorService::~AcceleratorService() = default;
 
-QString AcceleratorService::shortcutConvention() const
+std::string AcceleratorService::shortcutConvention() const
 {
-    return m_configuration->convention() == input::ShortcutConvention::Command
-            ? QStringLiteral("command")
-            : QStringLiteral("pc");
+    return m_configuration->convention() == input::ShortcutConvention::Command ? "command" : "pc";
 }
 
 bool AcceleratorService::registerService()
 {
-    if (m_registered)
+    if (m_object)
         return true;
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.registerObject(QLatin1String(kPath), this,
-                            QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals
-                                    | QDBusConnection::ExportAllProperties)) {
-        qCWarning(cfInput) << "Cannot export the shortcuts service:" << bus.lastError().message();
+    auto exported = input::DBusExport::create(kService, kPath, kService);
+    if (!exported) {
+        CF_WARNING(cfInput) << "Cannot export the shortcuts service: no session bus";
         return false;
     }
-    if (!bus.registerService(QLatin1String(kService))) {
-        qCWarning(cfInput) << "Cannot register the shortcuts service:"
-                           << bus.lastError().message();
-        bus.unregisterObject(QLatin1String(kPath));
+    base::dbus::Object &object = exported->object();
+    object.addProperty("shortcutConvention", [this] { return shortcutConvention(); });
+    object.addMethod("accelerators", [this] { return accelerators(); });
+    object.addMethod("addAccelerator", [this](const std::string &action, uint32_t keycode,
+                                              uint32_t keysym, uint32_t modifiers) {
+        return addAccelerator(action, keycode, keysym, modifiers);
+    }, base::dbus::ArgumentNames{{"action", "keycode", "keysym", "modifiers"}, {"result"}});
+    object.addMethod("removeAccelerator",
+                     [this](const std::string &action, uint32_t keysym, uint32_t modifiers) {
+                         return removeAccelerator(action, keysym, modifiers);
+                     },
+                     base::dbus::ArgumentNames{{"action", "keysym", "modifiers"}, {"result"}});
+    object.addMethod("replaceAccelerator",
+                     [this](const std::string &action, uint32_t oldKeysym, uint32_t oldModifiers,
+                            uint32_t keycode, uint32_t keysym, uint32_t modifiers) {
+                         return replaceAccelerator(action, oldKeysym, oldModifiers, keycode,
+                                                   keysym, modifiers);
+                     },
+                     base::dbus::ArgumentNames{{"action", "oldKeysym", "oldModifiers", "keycode",
+                                                "keysym", "modifiers"},
+                                               {"result"}});
+    object.addMethod("restoreDefault",
+                     [this](const std::string &action) { return restoreDefault(action); },
+                     base::dbus::ArgumentNames{{"action"}, {"result"}});
+    object.addMethod("restoreAllDefaults", [this] { return restoreAllDefaults(); });
+    object.addMethod("describeKey", [this](uint32_t keycode, uint32_t keysym) {
+        return describeKey(keycode, keysym);
+    }, base::dbus::ArgumentNames{{"keycode", "keysym"}, {"result"}});
+    object.addMethod("preventProcessingAccelerators", "b", "",
+                     [this](base::dbus::MethodCall &call) {
+                         bool prevent = false;
+                         if (!call.read(prevent)) {
+                             call.replyError("org.freedesktop.DBus.Error.InvalidArgs",
+                                             "Unexpected arguments");
+                             return;
+                         }
+                         preventProcessingAccelerators(prevent, call.message().sender());
+                         call.reply();
+                     },
+                     base::dbus::ArgumentNames{{"prevent"}, {}});
+    object.addMethod("hasCustomAccelerators", [this] { return hasCustomAccelerators(); });
+    object.addSignal("acceleratorsChanged", "");
+    if (!exported->publish("the shortcuts service"))
         return false;
-    }
-    m_watcher.setConnection(bus);
-    m_registered = true;
+    m_object = std::move(exported);
     return true;
 }
 
-QJsonObject AcceleratorService::acceleratorToJson(const Accelerator &accelerator,
-                                                  AcceleratorActionId id) const
+// The members in sorted order, as the service has always sent them.
+base::json::Value AcceleratorService::acceleratorToJson(const Accelerator &accelerator,
+                                                        AcceleratorActionId id) const
 {
-    QJsonObject object;
-    object.insert(QStringLiteral("keysym"), static_cast<qint64>(accelerator.keysym()));
-    object.insert(QStringLiteral("keyName"), keysymName(accelerator.keysym()));
-    object.insert(QStringLiteral("keyText"), keysymText(accelerator.keysym()));
-    object.insert(QStringLiteral("modifiers"), static_cast<qint64>(accelerator.modifiers()));
-    object.insert(QStringLiteral("keyState"),
-                  accelerator.keyState() == Accelerator::KeyState::Pressed
-                          ? QStringLiteral("pressed")
-                          : QStringLiteral("released"));
+    base::json::Value object = base::json::Value::object();
+    object.insert("keyName", keysymName(accelerator.keysym()));
+    object.insert("keyState",
+                  accelerator.keyState() == Accelerator::KeyState::Pressed ? "pressed"
+                                                                           : "released");
+    object.insert("keyText", keysymText(accelerator.keysym()));
+    object.insert("keysym", int64_t(accelerator.keysym()));
+    object.insert("locked", m_configuration->isAcceleratorLocked(accelerator));
+    object.insert("modifiers", int64_t(accelerator.modifiers()));
     const auto defaultId = m_configuration->idForDefaultAccelerator(accelerator);
-    object.insert(QStringLiteral("type"),
-                  defaultId && toActionId(*defaultId) == id ? QStringLiteral("default")
-                                                            : QStringLiteral("user"));
-    object.insert(QStringLiteral("locked"), m_configuration->isAcceleratorLocked(accelerator));
+    object.insert("type", defaultId && toActionId(*defaultId) == id ? "default" : "user");
     return object;
 }
 
-QString AcceleratorService::accelerators()
+std::string AcceleratorService::accelerators()
 {
-    QJsonArray actions;
+    base::json::Value::Array actions;
     for (const auto &[id, accelerators] : m_configuration->acceleratorMapping()) {
-        QJsonObject entry;
-        entry.insert(QStringLiteral("name"),
-                     acceleratorActionName(static_cast<AcceleratorAction>(id)));
-        QJsonArray current;
+        base::json::Value::Array current;
         for (const Accelerator &accelerator : accelerators)
-            current.append(acceleratorToJson(accelerator, id));
-        entry.insert(QStringLiteral("accelerators"), current);
-        QJsonArray defaults;
+            current.push_back(acceleratorToJson(accelerator, id));
+        base::json::Value::Array defaults;
         for (const Accelerator &accelerator : m_configuration->defaultAcceleratorsForId(id))
-            defaults.append(acceleratorToJson(accelerator, id));
-        entry.insert(QStringLiteral("defaults"), defaults);
-        actions.append(entry);
+            defaults.push_back(acceleratorToJson(accelerator, id));
+        base::json::Value entry = base::json::Value::object();
+        entry.insert("accelerators", std::move(current));
+        entry.insert("defaults", std::move(defaults));
+        entry.insert("name", acceleratorActionName(static_cast<AcceleratorAction>(id)));
+        actions.push_back(std::move(entry));
     }
-    QJsonObject root;
-    root.insert(QStringLiteral("actions"), actions);
+    base::json::Value root = base::json::Value::object();
+    root.insert("actions", std::move(actions));
     return toJsonString(root);
 }
 
-Accelerator AcceleratorService::resolve(uint keycode, uint keysym, uint modifiers) const
+Accelerator AcceleratorService::resolve(uint32_t keycode, uint32_t keysym, uint32_t modifiers) const
 {
     // The compositor's keymap is what the client typed against, so the evdev
     // code gives the same base keysym the filter will see.
@@ -175,7 +191,7 @@ Accelerator AcceleratorService::resolve(uint keycode, uint keysym, uint modifier
 }
 
 std::optional<AcceleratorConfigResult>
-AcceleratorService::validateAction(const QString &name, AcceleratorActionId *id) const
+AcceleratorService::validateAction(const std::string &name, AcceleratorActionId *id) const
 {
     const auto action = acceleratorActionFromName(name);
     if (!action || !m_configuration->isValid(toActionId(*action)))
@@ -211,22 +227,21 @@ AcceleratorService::validateAccelerator(const Accelerator &accelerator) const
     return std::nullopt;
 }
 
-std::optional<QJsonObject>
+std::optional<base::json::Value>
 AcceleratorService::preprocessAddAccelerator(AcceleratorActionId id, const Accelerator &accelerator)
 {
     const AcceleratorAction *found = m_configuration->findAcceleratorAction(accelerator);
     if (!found)
         return std::nullopt;
 
-    const QString conflictName = acceleratorActionName(*found);
+    const std::string conflictName = acceleratorActionName(*found);
 
     // Already one of this action's own accelerators.
     if (toActionId(*found) == id) {
         m_pending.reset();
-        QJsonObject object;
-        object.insert(QStringLiteral("result"),
-                      QString::fromLatin1(toString(AcceleratorConfigResult::Conflict)));
-        object.insert(QStringLiteral("conflictAction"), conflictName);
+        base::json::Value object = base::json::Value::object();
+        object.insert("conflictAction", conflictName);
+        object.insert("result", toString(AcceleratorConfigResult::Conflict));
         return object;
     }
 
@@ -235,10 +250,9 @@ AcceleratorService::preprocessAddAccelerator(AcceleratorActionId id, const Accel
     if (!m_pending || m_pending->action != id || m_pending->accelerator != accelerator) {
         m_pending = PendingAccelerator {accelerator, id};
         m_conflictState = ConflictErrorState::AwaitingConflictResolution;
-        QJsonObject object;
-        object.insert(QStringLiteral("result"),
-                      QString::fromLatin1(toString(AcceleratorConfigResult::ConflictCanOverride)));
-        object.insert(QStringLiteral("conflictAction"), conflictName);
+        base::json::Value object = base::json::Value::object();
+        object.insert("conflictAction", conflictName);
+        object.insert("result", toString(AcceleratorConfigResult::ConflictCanOverride));
         return object;
     }
     if (m_conflictState == ConflictErrorState::AwaitingConflictResolution)
@@ -275,18 +289,18 @@ AcceleratorService::maybeHandleNonMetaAccelerator(const Accelerator &accelerator
     return ConflictErrorState::Standby;
 }
 
-QString AcceleratorService::result(AcceleratorConfigResult result,
-                                   const QString &conflictAction) const
+std::string AcceleratorService::result(AcceleratorConfigResult result,
+                                       const std::string &conflictAction) const
 {
-    QJsonObject object;
-    object.insert(QStringLiteral("result"), QString::fromLatin1(toString(result)));
-    if (!conflictAction.isEmpty())
-        object.insert(QStringLiteral("conflictAction"), conflictAction);
+    base::json::Value object = base::json::Value::object();
+    if (!conflictAction.empty())
+        object.insert("conflictAction", conflictAction);
+    object.insert("result", toString(result));
     return toJsonString(object);
 }
 
-QString AcceleratorService::addAccelerator(const QString &action, uint keycode, uint keysym,
-                                           uint modifiers)
+std::string AcceleratorService::addAccelerator(const std::string &action, uint32_t keycode,
+                                               uint32_t keysym, uint32_t modifiers)
 {
     AcceleratorActionId id = 0;
     if (const auto error = validateAction(action, &id))
@@ -317,7 +331,8 @@ QString AcceleratorService::addAccelerator(const QString &action, uint keycode, 
     return result(m_configuration->addUserAccelerator(id, accelerator));
 }
 
-QString AcceleratorService::removeAccelerator(const QString &action, uint keysym, uint modifiers)
+std::string AcceleratorService::removeAccelerator(const std::string &action, uint32_t keysym,
+                                                  uint32_t modifiers)
 {
     AcceleratorActionId id = 0;
     if (const auto error = validateAction(action, &id))
@@ -333,9 +348,9 @@ QString AcceleratorService::removeAccelerator(const QString &action, uint keysym
     return result(m_configuration->removeAccelerator(id, accelerator));
 }
 
-QString AcceleratorService::replaceAccelerator(const QString &action, uint oldKeysym,
-                                               uint oldModifiers, uint keycode, uint keysym,
-                                               uint modifiers)
+std::string AcceleratorService::replaceAccelerator(const std::string &action, uint32_t oldKeysym,
+                                                   uint32_t oldModifiers, uint32_t keycode,
+                                                   uint32_t keysym, uint32_t modifiers)
 {
     AcceleratorActionId id = 0;
     if (const auto error = validateAction(action, &id))
@@ -369,7 +384,7 @@ QString AcceleratorService::replaceAccelerator(const QString &action, uint oldKe
     return result(m_configuration->replaceAccelerator(id, oldAccelerator, newAccelerator));
 }
 
-QString AcceleratorService::restoreDefault(const QString &action)
+std::string AcceleratorService::restoreDefault(const std::string &action)
 {
     AcceleratorActionId id = 0;
     if (const auto error = validateAction(action, &id))
@@ -377,56 +392,53 @@ QString AcceleratorService::restoreDefault(const QString &action)
     return result(m_configuration->restoreDefault(id));
 }
 
-QString AcceleratorService::restoreAllDefaults()
+std::string AcceleratorService::restoreAllDefaults()
 {
     return result(m_configuration->restoreAllDefaults());
 }
 
-QString AcceleratorService::describeKey(uint keycode, uint keysym)
+std::string AcceleratorService::describeKey(uint32_t keycode, uint32_t keysym)
 {
     const Accelerator accelerator = resolve(keycode, keysym, NoModifier);
-    QJsonObject object;
-    object.insert(QStringLiteral("keysym"), static_cast<qint64>(accelerator.keysym()));
-    object.insert(QStringLiteral("keyName"), keysymName(accelerator.keysym()));
-    object.insert(QStringLiteral("keyText"), keysymText(accelerator.keysym()));
-    object.insert(QStringLiteral("modifierKey"), isModifierKeysym(accelerator.keysym()));
+    base::json::Value object = base::json::Value::object();
+    object.insert("keyName", keysymName(accelerator.keysym()));
+    object.insert("keyText", keysymText(accelerator.keysym()));
+    object.insert("keysym", int64_t(accelerator.keysym()));
+    object.insert("modifierKey", isModifierKeysym(accelerator.keysym()));
     return toJsonString(object);
 }
 
 void AcceleratorService::preventProcessingAccelerators(bool prevent)
 {
+    preventProcessingAccelerators(prevent, {});
+}
+
+void AcceleratorService::preventProcessingAccelerators(bool prevent, const std::string &owner)
+{
     // Ash resets the pending state whenever the recorder starts or stops.
     m_pending.reset();
     m_conflictState = ConflictErrorState::Standby;
     m_controller->setPreventProcessingAccelerators(prevent);
-    setPreventOwner(prevent && calledFromDBus() ? message().service() : QString());
+    setPreventOwner(prevent ? owner : std::string());
 }
 
-void AcceleratorService::setPreventOwner(const QString &owner)
+void AcceleratorService::setPreventOwner(const std::string &owner)
 {
     if (owner == m_preventOwner)
         return;
-    if (!m_preventOwner.isEmpty())
-        m_watcher.removeWatchedService(m_preventOwner);
+    m_preventOwnerWatch = {};
     m_preventOwner = owner;
-    if (owner.isEmpty())
+    if (owner.empty() || !m_object)
         return;
-    m_watcher.addWatchedService(owner);
-    // The watch never reports a caller that left before its match rule was in
-    // place; sent behind that rule on the same connection, NameHasOwner does.
-    auto *check = new QDBusPendingCallWatcher(
-            m_watcher.connection().interface()->asyncCall(QStringLiteral("NameHasOwner"), owner),
-            this);
-    connect(check, &QDBusPendingCallWatcher::finished, this,
-            [this, owner](QDBusPendingCallWatcher *call) {
-                call->deleteLater();
-                const QDBusPendingReply<bool> reply = *call;
-                if (!reply.isError() && !reply.value())
+    // Also reports a caller that left before the watch was in place.
+    m_preventOwnerWatch = m_object->connection()->watchName(
+            owner, [this, owner](const std::string &current) {
+                if (current.empty())
                     releasePreventOwner(owner);
             });
 }
 
-void AcceleratorService::releasePreventOwner(const QString &owner)
+void AcceleratorService::releasePreventOwner(const std::string &owner)
 {
     if (owner != m_preventOwner)
         return;

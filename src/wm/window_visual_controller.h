@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "base/geometry.h"
 #include "scene/window_visual_node.h"
 #include "wm/window_observer.h"
 
@@ -31,7 +32,7 @@ public:
     // Re-evaluates `window` from outside its own controller; a no-op for null.
     static void refresh(Window* window);
 
-    void onWindowBoundsChanged(Window*, const QRect&) override { update(); }
+    void onWindowBoundsChanged(Window*, const base::Rect&) override { update(); }
 
     void onWindowContentChanged(Window*) override { update(); }
 

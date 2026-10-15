@@ -9,9 +9,8 @@
 
 #include <algorithm>
 
-#include <QScopedValueRollback>
-#include <QTimer>
-
+#include "base/auto_reset.h"
+#include "base/strings.h"
 #include "core/logging.h"
 #include "scene/slide_out_node.h"
 #include "wm/desks/desk.h"
@@ -119,18 +118,18 @@ bool DesksController::canRemoveDesks() const
     return m_desks.size() > 1;
 }
 
-Desk *DesksController::newDesk(DesksCreationRemovalSource, const QString &name)
+Desk *DesksController::newDesk(DesksCreationRemovalSource, const std::string &name)
 {
     if (!canCreateDesks())
         return nullptr;
-    const QScopedValueRollback modifying(m_modifying, true);
+    const base::AutoReset modifying(m_modifying, true);
     m_desks.push_back(std::make_unique<Desk>(this));
     Desk *desk = m_desks.back().get();
     // Observers learn of the desk before its name.
     notify([desk](DesksObserver *observer) {
         observer->onDeskAdded(desk);
     });
-    if (!name.isEmpty())
+    if (!name.empty())
         desk->setName(name, /*setByUser=*/true);
     return desk;
 }
@@ -276,7 +275,7 @@ bool DesksController::moveWindowFromSourceDeskTo(Window *window, Desk *source, D
     if (!source->contains(root))
         return false;
 
-    const QScopedValueRollback modifying(m_modifying, true);
+    const base::AutoReset modifying(m_modifying, true);
     source->moveWindowToDesk(root, target, /*unminimize=*/true);
     return true;
 }
@@ -317,11 +316,11 @@ void DesksController::setVisibleOnAllDesks(Window *window, bool visibleOnAllDesk
     }
 }
 
-void DesksController::setDeskName(Desk *desk, const QString &name)
+void DesksController::setDeskName(Desk *desk, const std::string &name)
 {
     if (deskIndex(desk) < 0)
         return;
-    desk->setName(name.trimmed(), /*setByUser=*/true);
+    desk->setName(std::string(base::strings::trimmed(name)), /*setByUser=*/true);
 }
 
 bool DesksController::isDeskWindow(const Window *window) const
@@ -462,8 +461,8 @@ void DesksController::activateDeskInternal(Desk *desk, bool updateWindowActivati
     if (!desk || desk == m_activeDesk)
         return;
 
-    const QScopedValueRollback modifying(m_modifying, true);
-    const QScopedValueRollback toActivate(m_deskToActivate, desk);
+    const base::AutoReset modifying(m_modifying, true);
+    const base::AutoReset toActivate(m_deskToActivate, desk);
 
     // Upstream cancels every menu before a switch.
     m_manager->dismissPopupGrabs();
@@ -483,7 +482,7 @@ void DesksController::activateDeskInternal(Desk *desk, bool updateWindowActivati
     desk->activate(updateWindowActivation);
     old->deactivate(updateWindowActivation);
 
-    qCDebug(cfCompositor) << "desk" << deskIndex(desk) << "active";
+    CF_DEBUG(cfCompositor) << "desk" << deskIndex(desk) << "active";
     notify([desk, old](DesksObserver *observer) {
         observer->onDeskActivationChanged(desk, old);
     });
@@ -496,7 +495,7 @@ void DesksController::removeDeskInternal(Desk *desk, DesksCreationRemovalSource,
     if (index < 0 || !canRemoveDesks())
         return;
 
-    const QScopedValueRollback modifying(m_modifying, true);
+    const base::AutoReset modifying(m_modifying, true);
     const bool wasActive = desk->isActive() || deskSwitched;
     std::unique_ptr<Desk> removed = std::move(m_desks[index]);
     m_desks.erase(m_desks.begin() + index);
@@ -570,8 +569,8 @@ void DesksController::performWindowMoveToDeskAnimation(Window *window, bool goin
         return transientRoot(candidate) == window;
     });
     m_windowMoveNode->setGeometry(m_manager->outputBounds());
-    m_windowMoveNode->slideOut(std::move(frames), window->bounds(),
-                               m_manager->outputBoundsFor(window), goingLeft);
+    m_windowMoveNode->slideOut(std::move(frames), window->bounds(), m_manager->outputBoundsFor(window),
+                               goingLeft);
 }
 
 void DesksController::performHitTheWallAnimation(bool goingLeft)
@@ -585,7 +584,7 @@ void DesksController::performHitTheWallAnimation(bool goingLeft)
         return;
     m_switchNode->setGeometry(m_manager->outputBounds());
     m_switchNode->setFinishedCallback([this] {
-        QTimer::singleShot(0, m_manager, [this] {
+        m_manager->runLater(std::chrono::milliseconds(0), [this] {
             // Another animation may have taken the node over meanwhile.
             if (!m_animation && m_switchNode)
                 m_switchNode->stop();

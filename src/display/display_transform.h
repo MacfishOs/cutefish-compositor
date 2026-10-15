@@ -12,11 +12,7 @@
 
 #include <optional>
 
-#include <QPointF>
-#include <QRect>
-#include <QRectF>
-#include <QSize>
-
+#include "base/geometry.h"
 #include "compositor/output_scale.h"
 #include "display/display_types.h"
 
@@ -26,30 +22,31 @@ class DisplayTransform
 {
 public:
     DisplayTransform() = default;
-    DisplayTransform(QPoint logicalOrigin, QSize nativeSize, compositor::OutputScale scale,
+    DisplayTransform(base::Point logicalOrigin, base::Size nativeSize,
+                     compositor::OutputScale scale,
                      DisplayRotation rotation);
 
     bool isValid() const;
-    QPoint logicalOrigin() const { return m_logicalOrigin; }
-    QSize nativeSize() const { return m_nativeSize; }
-    QSize rotatedNativeSize() const;
-    QSize logicalSize() const;
-    QRect logicalBounds() const;
+    base::Point logicalOrigin() const { return m_logicalOrigin; }
+    base::Size nativeSize() const { return m_nativeSize; }
+    base::Size rotatedNativeSize() const;
+    base::Size logicalSize() const;
+    base::Rect logicalBounds() const;
     compositor::OutputScale scale() const { return m_scale; }
     DisplayRotation rotation() const { return m_rotation; }
 
-    bool containsGlobal(const QPointF& point) const;
-    QPointF globalToNative(const QPointF& point) const;
-    QPointF nativeToGlobal(const QPointF& point) const;
-    QRectF globalToNative(const QRectF& rect) const;
-    QRectF nativeToGlobal(const QRectF& rect) const;
+    bool containsGlobal(const base::PointF& point) const;
+    base::PointF globalToNative(const base::PointF& point) const;
+    base::PointF nativeToGlobal(const base::PointF& point) const;
+    base::RectF globalToNative(const base::RectF& rect) const;
+    base::RectF nativeToGlobal(const base::RectF& rect) const;
 
 private:
-    QPointF rotatedToNative(const QPointF& point) const;
-    QPointF nativeToRotated(const QPointF& point) const;
+    base::PointF rotatedToNative(const base::PointF& point) const;
+    base::PointF nativeToRotated(const base::PointF& point) const;
 
-    QPoint m_logicalOrigin;
-    QSize m_nativeSize;
+    base::Point m_logicalOrigin;
+    base::Size m_nativeSize;
     compositor::OutputScale m_scale;
     DisplayRotation m_rotation = DisplayRotation::Normal;
 };

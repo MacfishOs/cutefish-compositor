@@ -14,9 +14,9 @@
 #ifndef CUTEFISH_BACKEND_DRM_DRM_CURSOR_H_
 #define CUTEFISH_BACKEND_DRM_DRM_CURSOR_H_
 
-#include <QByteArray>
-#include <QPoint>
-#include <QSize>
+#include <string>
+
+#include "base/geometry.h"
 
 #include <array>
 #include <cstdint>
@@ -42,12 +42,13 @@ public:
     // cannot be allocated, in which case the caller composites the cursor.
     static std::unique_ptr<DrmCursor> create(DrmDeviceApi* device, uint32_t crtcId);
 
-    QSize maxSize() const { return m_size; }
+    base::Size maxSize() const { return m_size; }
 
     // Uploads `pixels`, premultiplied ARGB32 (blue, green, red, alpha in memory).
     // Returns false when the image is larger than the plane can show; the
     // caller must then fall back to compositing it.
-    bool setImage(const uint8_t* pixels, const QSize& size, int stride, const QPoint& hotspot);
+    bool setImage(const uint8_t* pixels, const base::Size& size, int stride,
+                  const base::Point& hotspot);
 
     // Scales the colour channels of the image the plane shows, for a CRTC that
     // cannot tint its planes itself; a visible cursor is uploaded again.
@@ -57,11 +58,11 @@ public:
     void hide();
 
     // `position` is where the hotspot should land, in output pixels.
-    void move(const QPoint& position);
+    void move(const base::Point& position);
 
     bool isVisible() const { return m_visible; }
 
-    QPoint hotspot() const { return m_hotspot; }
+    base::Point hotspot() const { return m_hotspot; }
 
 private:
     struct Buffer {
@@ -69,24 +70,24 @@ private:
         void* data = nullptr;
     };
 
-    DrmCursor(DrmDeviceApi* device, uint32_t crtcId, const QSize& size,
+    DrmCursor(DrmDeviceApi* device, uint32_t crtcId, const base::Size& size,
               std::array<Buffer, 2> buffers);
     bool upload();
 
     DrmDeviceApi* m_device = nullptr;
     uint32_t m_crtcId = 0;
-    QSize m_size;
+    base::Size m_size;
     // Two buffers, so an image change never writes into the one the display is
     // currently scanning out.
     std::array<Buffer, 2> m_buffers;
     size_t m_front = 0;
     // The last image, kept to be tinted again.
-    QByteArray m_image;
-    QSize m_imageSize;
+    std::string m_image;
+    base::Size m_imageSize;
     int m_imageStride = 0;
     render::ColorTransform m_tint;
-    QPoint m_hotspot;
-    QPoint m_position;
+    base::Point m_hotspot;
+    base::Point m_position;
     // Until the first move the plane stays where the previous DRM master left it.
     bool m_positioned = false;
     bool m_visible = false;

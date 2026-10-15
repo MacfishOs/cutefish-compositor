@@ -6,94 +6,89 @@
 #include "auth/auth_backend.h"
 #include "auth/secret.h"
 
-#include <QFileInfo>
-#include <QLoggingCategory>
-
+#include "base/logging.h"
+#include "base/strings.h"
+#include <algorithm>
+#include <cassert>
 #include <pwd.h>
+#include <sys/stat.h>
 #include <unistd.h>
-
-// Off by default. Nothing logged from this category ever carries a credential:
-// the password never reaches a QDebug stream, in any build.
-Q_LOGGING_CATEGORY(cfAuth, "cutefish.auth", QtWarningMsg)
 
 namespace cutefish::auth {
 
 namespace {
 
-QString accountDisplayName(const QString &userName)
+// Off by default. Nothing logged from this category ever carries a credential:
+// the password never reaches a log stream, in any build.
+const base::LogCategory cfAuth("cutefish.auth", base::LogLevel::Warning);
+
+using base::strings::trimmed;
+
+std::string accountDisplayName(const std::string &userName)
 {
-    const QByteArray name = userName.toUtf8();
-    if (const passwd *entry = getpwnam(name.constData())) {
+    if (const passwd *entry = getpwnam(userName.c_str())) {
         // GECOS is comma-separated; the first field is the full name.
-        const QString gecos = QString::fromLocal8Bit(entry->pw_gecos);
-        const QString full = gecos.section(QLatin1Char(','), 0, 0).trimmed();
-        if (!full.isEmpty())
+        const std::string_view gecos = entry->pw_gecos ? entry->pw_gecos : "";
+        const std::string full(trimmed(gecos.substr(0, gecos.find(','))));
+        if (!full.empty())
             return full;
     }
     return userName;
 }
 
-QString accountIcon(const QString &userName)
+std::string accountIcon(const std::string &userName)
 {
-    const QByteArray name = userName.toUtf8();
-    const passwd *entry = getpwnam(name.constData());
-    const QString home = entry ? QString::fromLocal8Bit(entry->pw_dir) : QString();
-
+    const passwd *entry = getpwnam(userName.c_str());
+    const std::string home = entry && entry->pw_dir ? entry->pw_dir : "";
     // AccountsService first, then the per-home face file: the same two places
     // the rest of Cutefish looks, and neither needs a running service.
-    const QStringList candidates {
-            QStringLiteral("/var/lib/AccountsService/icons/%1").arg(userName),
-            home.isEmpty() ? QString() : home + QStringLiteral("/.face"),
-            home.isEmpty() ? QString() : home + QStringLiteral("/.face.icon"),
+    const std::string candidates[] = {
+            "/var/lib/AccountsService/icons/" + userName,
+            home.empty() ? std::string() : home + "/.face",
+            home.empty() ? std::string() : home + "/.face.icon",
     };
-    for (const QString &path : candidates) {
-        if (!path.isEmpty() && QFileInfo::exists(path))
+    for (const std::string &path : candidates) {
+        struct stat info;
+        if (!path.empty() && stat(path.c_str(), &info) == 0)
             return path;
     }
-    return QString();
+    return {};
 }
 
 } // namespace
 
-AuthController::AuthController(Mode mode, AuthBackend *backend, QObject *parent)
-    : QObject(parent)
-    , m_mode(mode)
+AuthController::AuthController(Mode mode, AuthBackend *backend)
+    : m_mode(mode)
     , m_backend(backend)
 {
-    Q_ASSERT(m_backend);
-
-    connect(m_backend, &AuthBackend::promptChanged, this, [this](const QString &prompt) {
+    assert(m_backend);
+    m_backendSubscriptions.push_back(m_backend->promptChanged.connect([this](const std::string &prompt) {
         if (m_prompt == prompt)
             return;
         m_prompt = prompt;
-        Q_EMIT promptChanged();
-    });
-
-    connect(m_backend, &AuthBackend::busyChanged, this, [this](bool busy) {
+        promptChanged();
+    }));
+    m_backendSubscriptions.push_back(m_backend->busyChanged.connect([this](bool busy) {
         if (busy && m_state != Authenticating)
             setState(Authenticating);
-    });
-
-    connect(m_backend, &AuthBackend::failed, this, [this](const QString &message) {
+    }));
+    m_backendSubscriptions.push_back(m_backend->failed.connect([this](const std::string &message) {
         if (m_state == Succeeded)
             return;
         setState(Failed, message);
-        Q_EMIT authenticationFailed();
-    });
-
-    connect(m_backend, &AuthBackend::succeeded, this, [this] {
+        authenticationFailed();
+    }));
+    m_backendSubscriptions.push_back(m_backend->succeeded.connect([this] {
         // Only an outstanding attempt can authorize a transition.
         if (m_accepted || m_state != Authenticating)
             return;
         m_accepted = true;
         setState(Succeeded);
-
         // accept() before the signal, so a handler that tears the process down
         // cannot run before the request that unlocks the session was sent.
         m_backend->accept();
-        Q_EMIT authenticationSucceeded();
-    });
-
+        authenticationSucceeded();
+    }));
     resolveUser();
     if (m_mode == Login) {
         setUsers(findLoginUsers());
@@ -101,100 +96,108 @@ AuthController::AuthController(Mode mode, AuthBackend *backend, QObject *parent)
     }
 }
 
-QStringList AuthController::userNames() const
+std::vector<std::string> AuthController::userNames() const
 {
-    QStringList names;
-    for (const QString &user : m_users)
-        names.append(accountDisplayName(user));
+    std::vector<std::string> names;
+    for (const std::string &user : m_users)
+        names.push_back(accountDisplayName(user));
     return names;
 }
 
-void AuthController::setUsers(QStringList users)
+int AuthController::userIndex() const
+{
+    const auto found = std::find(m_users.begin(), m_users.end(), m_userName);
+    return found == m_users.end() ? -1 : int(found - m_users.begin());
+}
+
+void AuthController::setUsers(std::vector<std::string> users)
 {
     m_users = std::move(users);
-    Q_EMIT usersChanged();
-    if (m_users.isEmpty() || m_users.contains(m_userName)) {
-        Q_EMIT userChanged();
+    usersChanged();
+    if (m_users.empty() || userIndex() >= 0) {
+        userChanged();
         return;
     }
     // Whoever logged in last, else the first account: nobody types a name
     // the system already knows.
-    const QString last = m_backend->defaultUserName();
-    setUserName(m_users.contains(last) ? last : m_users.first());
+    const std::string last = m_backend->defaultUserName();
+    const bool listed = std::find(m_users.begin(), m_users.end(), last) != m_users.end();
+    setUserName(listed ? last : m_users.front());
 }
 
 void AuthController::setUserIndex(int index)
 {
-    if (index >= 0 && index < m_users.size())
-        setUserName(m_users.at(index));
+    if (index >= 0 && index < int(m_users.size()))
+        setUserName(m_users[size_t(index)]);
 }
 
 AuthController::~AuthController() = default;
 
-QStringList AuthController::sessionNames() const
+std::vector<std::string> AuthController::sessionNames() const
 {
-    QStringList names;
+    std::vector<std::string> names;
     for (const LoginSession &session : m_sessions)
-        names.append(session.name);
+        names.push_back(session.name);
     return names;
 }
 
-void AuthController::setSessions(QList<LoginSession> sessions)
+void AuthController::setSessions(std::vector<LoginSession> sessions)
 {
     m_sessions = std::move(sessions);
     m_sessionIndex = -1;
-    Q_EMIT sessionsChanged();
+    sessionsChanged();
     selectSessionFor(m_userName);
 }
 
 void AuthController::setSessionIndex(int index)
 {
-    if (index < 0 || index >= m_sessions.size() || index == m_sessionIndex || busy() || succeeded())
+    if (index < 0 || index >= int(m_sessions.size()) || index == m_sessionIndex || busy()
+        || succeeded())
         return;
     m_sessionIndex = index;
-    Q_EMIT sessionChanged();
+    sessionChanged();
 }
 
-void AuthController::selectSessionFor(const QString &userName)
+void AuthController::selectSessionFor(const std::string &userName)
 {
-    if (m_sessions.isEmpty())
+    if (m_sessions.empty())
         return;
     // The user's last session, else Cutefish, else the first there is.
-    const QString remembered = userName.isEmpty() ? QString() : lastLoginSession(userName);
+    const std::string remembered = userName.empty() ? std::string() : lastLoginSession(userName);
     int index = -1;
-    for (const QString &id : {remembered, QStringLiteral("cutefish-wayland")}) {
-        for (int i = 0; index < 0 && !id.isEmpty() && i < m_sessions.size(); ++i) {
-            if (m_sessions.at(i).id == id)
+    for (const std::string &id : {remembered, std::string("cutefish-wayland")}) {
+        for (int i = 0; index < 0 && !id.empty() && i < int(m_sessions.size()); ++i) {
+            if (m_sessions[size_t(i)].id == id)
                 index = i;
         }
     }
-    index = qMax(index, 0);
+    index = std::max(index, 0);
     if (index == m_sessionIndex)
         return;
     m_sessionIndex = index;
-    Q_EMIT sessionChanged();
+    sessionChanged();
 }
 
 void AuthController::resolveUser()
 {
     m_userName = m_backend->defaultUserName();
-    if (m_userName.isEmpty() && m_mode == Lock) {
+    if (m_userName.empty() && m_mode == Lock) {
         if (const passwd *entry = getpwuid(getuid()))
-            m_userName = QString::fromLocal8Bit(entry->pw_name);
+            m_userName = entry->pw_name ? entry->pw_name : "";
     }
-    m_displayName = m_userName.isEmpty() ? QString() : accountDisplayName(m_userName);
-    m_iconSource = m_userName.isEmpty() ? QString() : accountIcon(m_userName);
-    Q_EMIT userChanged();
+    m_displayName = m_userName.empty() ? std::string() : accountDisplayName(m_userName);
+    m_iconSource = m_userName.empty() ? std::string() : accountIcon(m_userName);
+    userChanged();
 }
 
-void AuthController::setUserName(const QString &name)
+void AuthController::setUserName(const std::string &name)
 {
     if (!canSelectUser() || busy() || succeeded())
         return;
-    m_userName = name.trimmed();
+    m_userName = std::string(trimmed(name));
     m_displayName = accountDisplayName(m_userName);
     m_iconSource = accountIcon(m_userName);
-    emit userChanged();
+    userChanged();
     selectSessionFor(m_userName);
 }
 
@@ -203,17 +206,15 @@ void AuthController::start()
     m_backend->start();
 }
 
-void AuthController::authenticate(QString password)
+void AuthController::authenticate(std::string password)
 {
     Secret secret(password);
     wipeString(password);
-
     if (m_state == Authenticating || m_state == Succeeded)
         return;
-
     setState(Authenticating);
-    if (m_sessionIndex >= 0 && m_sessionIndex < m_sessions.size())
-        m_backend->setSession(m_sessions.at(m_sessionIndex));
+    if (m_sessionIndex >= 0 && m_sessionIndex < int(m_sessions.size()))
+        m_backend->setSession(m_sessions[size_t(m_sessionIndex)]);
     m_backend->authenticate(m_userName, std::move(secret));
 }
 
@@ -222,23 +223,22 @@ void AuthController::reset()
     // A success is not something the user can type their way out of.
     if (m_state == Succeeded || m_state == Authenticating)
         return;
-
     m_backend->reset();
-    if (!m_prompt.isEmpty()) {
+    if (!m_prompt.empty()) {
         m_prompt.clear();
-        Q_EMIT promptChanged();
+        promptChanged();
     }
     setState(Idle);
 }
 
-void AuthController::setState(State state, const QString &errorMessage)
+void AuthController::setState(State state, const std::string &errorMessage)
 {
     if (m_state == state && m_errorMessage == errorMessage)
         return;
     m_state = state;
     m_errorMessage = errorMessage;
-    qCDebug(cfAuth) << "state" << state;
-    Q_EMIT stateChanged();
+    CF_DEBUG(cfAuth) << "state" << state;
+    stateChanged();
 }
 
 } // namespace cutefish::auth

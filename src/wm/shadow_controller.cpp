@@ -15,14 +15,17 @@
 namespace cutefish::wm {
 
 ShadowController::ShadowController(WindowManager* manager, ShadowProvider* provider,
-                                   ShadowControllerDelegate* delegate, QObject* parent)
-    : QObject(parent)
-    , m_manager(manager)
+                                   ShadowControllerDelegate* delegate)
+    : m_manager(manager)
     , m_provider(provider)
     , m_delegate(delegate)
 {
-    connect(m_manager, &WindowManager::windowAdded, this, &ShadowController::onWindowAdded);
-    connect(m_manager, &WindowManager::windowRemoved, this, &ShadowController::onWindowRemoved);
+    m_windowAdded = m_manager->windowAdded.connect([this](Window* window) {
+        onWindowAdded(window);
+    });
+    m_windowRemoved = m_manager->windowRemoved.connect([this](Window* window) {
+        onWindowRemoved(window);
+    });
     // Windows that already exist: upstream walks aura::Env's window list for
     // the same reason.
     for (Window* window : m_manager->windows())
@@ -95,7 +98,7 @@ void ShadowController::handlePossibleShadowVisibilityChange(Window* window)
     shadow->setElevation(elevationForWindow(window));
 }
 
-void ShadowController::onWindowBoundsChanged(Window* window, const QRect&)
+void ShadowController::onWindowBoundsChanged(Window* window, const base::Rect&)
 {
     handlePossibleShadowVisibilityChange(window);
 }

@@ -5,133 +5,184 @@
 // Upstream: chromium/src/ash/display/cros_display_config.h
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: fixed Qt D-Bus tuples replace Ash service and Mojo
+// Adapted for Cutefish: fixed D-Bus tuples replace Ash service and Mojo
 // types while preserving capability-rich display descriptions.
 
 #pragma once
 
-#include <QDBusArgument>
-#include <QList>
-#include <QString>
-#include <QStringList>
+#include <cstdint>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <vector>
 
+#include "base/dbus_types.h"
 #include "display/display_types.h"
 
 namespace cutefish::display::ipc {
 
+// (iiiiiiubbs)
 struct Mode {
-    int width = 0;
-    int height = 0;
-    int refreshMilliHz = 0;
-    int pixelClockKHz = 0;
-    int horizontalTotal = 0;
-    int verticalTotal = 0;
-    uint flags = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    int32_t refreshMilliHz = 0;
+    int32_t pixelClockKHz = 0;
+    int32_t horizontalTotal = 0;
+    int32_t verticalTotal = 0;
+    uint32_t flags = 0;
     bool preferred = false;
     bool current = false;
-    QString name;
+    std::string name;
+
+    auto tie()
+    {
+        return std::tie(width, height, refreshMilliHz, pixelClockKHz, horizontalTotal,
+                        verticalTotal, flags, preferred, current, name);
+    }
 };
 
+// (iiiiiiubs)
 struct RequestedMode {
-    int width = 0;
-    int height = 0;
-    int refreshMilliHz = 0;
-    int pixelClockKHz = 0;
-    int horizontalTotal = 0;
-    int verticalTotal = 0;
-    uint flags = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    int32_t refreshMilliHz = 0;
+    int32_t pixelClockKHz = 0;
+    int32_t horizontalTotal = 0;
+    int32_t verticalTotal = 0;
+    uint32_t flags = 0;
     bool preferred = false;
-    QString name;
+    std::string name;
+
+    auto tie()
+    {
+        return std::tie(width, height, refreshMilliHz, pixelClockKHz, horizontalTotal,
+                        verticalTotal, flags, preferred, name);
+    }
 };
 
+// (sssssssassssiiuuuua(iiiiiiubbs))
 struct PhysicalDisplay {
-    QString sessionId;
-    QString persistentKey;
-    QString portKey;
-    QString edidKey;
-    QString connectorName;
-    QString devicePath;
-    QString baseConnectorKey;
-    QStringList pathTopology;
-    QString make;
-    QString model;
-    QString serialNumber;
-    int physicalWidthMm = 0;
-    int physicalHeightMm = 0;
-    uint connectionType = 0;
-    uint panelOrientation = 0;
-    uint capabilities = 0;
-    uint recommendedScale120 = 120;
-    QList<Mode> modes;
+    std::string sessionId;
+    std::string persistentKey;
+    std::string portKey;
+    std::string edidKey;
+    std::string connectorName;
+    std::string devicePath;
+    std::string baseConnectorKey;
+    std::vector<std::string> pathTopology;
+    std::string make;
+    std::string model;
+    std::string serialNumber;
+    int32_t physicalWidthMm = 0;
+    int32_t physicalHeightMm = 0;
+    uint32_t connectionType = 0;
+    uint32_t panelOrientation = 0;
+    uint32_t capabilities = 0;
+    uint32_t recommendedScale120 = 120;
+    std::vector<Mode> modes;
+
+    auto tie()
+    {
+        return std::tie(sessionId, persistentKey, portKey, edidKey, connectorName, devicePath,
+                        baseConnectorKey, pathTopology, make, model, serialNumber, physicalWidthMm,
+                        physicalHeightMm, connectionType, panelOrientation, capabilities,
+                        recommendedScale120, modes);
+    }
 };
 
+// (ssasiiiiiiiiuub)
 struct LogicalDisplay {
-    QString id;
-    QString waylandName;
-    QStringList destinations;
-    int x = 0;
-    int y = 0;
-    int width = 0;
-    int height = 0;
-    int workX = 0;
-    int workY = 0;
-    int workWidth = 0;
-    int workHeight = 0;
-    uint scale120 = 120;
-    uint rotation = 0;
+    std::string id;
+    std::string waylandName;
+    std::vector<std::string> destinations;
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    int32_t workX = 0;
+    int32_t workY = 0;
+    int32_t workWidth = 0;
+    int32_t workHeight = 0;
+    uint32_t scale120 = 120;
+    uint32_t rotation = 0;
     bool primary = false;
+
+    auto tie()
+    {
+        return std::tie(id, waylandName, destinations, x, y, width, height, workX, workY,
+                        workWidth, workHeight, scale120, rotation, primary);
+    }
 };
 
+// (sb(iiiiiiubs)uu)
 struct DisplayRequest {
-    QString id;
+    std::string id;
     bool enabled = true;
     RequestedMode mode;
-    uint scale120 = 120;
-    uint rotation = 0;
+    uint32_t scale120 = 120;
+    uint32_t rotation = 0;
+
+    auto tie() { return std::tie(id, enabled, mode, scale120, rotation); }
 };
 
+// (ssui)
 struct Placement {
-    QString displayId;
-    QString parentId;
-    uint edge = 0;
-    int offset = 0;
+    std::string displayId;
+    std::string parentId;
+    uint32_t edge = 0;
+    int32_t offset = 0;
+
+    auto tie() { return std::tie(displayId, parentId, edge, offset); }
 };
 
-using MirrorGroups = QList<QStringList>;
+using MirrorGroups = std::vector<std::vector<std::string>>;
 
-QDBusArgument& operator<<(QDBusArgument& argument, const Mode& value);
-const QDBusArgument& operator>>(const QDBusArgument& argument, Mode& value);
-QDBusArgument& operator<<(QDBusArgument& argument, const RequestedMode& value);
-const QDBusArgument& operator>>(const QDBusArgument& argument, RequestedMode& value);
-QDBusArgument& operator<<(QDBusArgument& argument, const PhysicalDisplay& value);
-const QDBusArgument& operator>>(const QDBusArgument& argument, PhysicalDisplay& value);
-QDBusArgument& operator<<(QDBusArgument& argument, const LogicalDisplay& value);
-const QDBusArgument& operator>>(const QDBusArgument& argument, LogicalDisplay& value);
-QDBusArgument& operator<<(QDBusArgument& argument, const DisplayRequest& value);
-const QDBusArgument& operator>>(const QDBusArgument& argument, DisplayRequest& value);
-QDBusArgument& operator<<(QDBusArgument& argument, const Placement& value);
-const QDBusArgument& operator>>(const QDBusArgument& argument, Placement& value);
-
-void registerTypes();
-DisplayConfiguration fromWire(const QString& instanceId, qulonglong topologyGeneration,
-                              qulonglong appliedRevision, const QList<DisplayRequest>& displays,
-                              const QString& primary, const QList<Placement>& placements,
+DisplayConfiguration fromWire(const std::string& instanceId, uint64_t topologyGeneration,
+                              uint64_t appliedRevision, const std::vector<DisplayRequest>& displays,
+                              const std::string& primary, const std::vector<Placement>& placements,
                               const MirrorGroups& mirrorGroups);
-QList<PhysicalDisplay> toWire(const QList<display::DisplaySnapshot>& displays);
-QList<LogicalDisplay> toWire(const QList<display::LogicalDisplay>& displays);
-QList<Placement> toWire(const QList<display::DisplayPlacement>& placements);
+std::vector<PhysicalDisplay> toWire(const std::vector<display::DisplaySnapshot>& displays);
+std::vector<LogicalDisplay> toWire(const std::vector<display::LogicalDisplay>& displays);
+std::vector<Placement> toWire(const std::vector<display::DisplayPlacement>& placements);
 
 } // namespace cutefish::display::ipc
 
-Q_DECLARE_METATYPE(cutefish::display::ipc::Mode)
-Q_DECLARE_METATYPE(cutefish::display::ipc::RequestedMode)
-Q_DECLARE_METATYPE(cutefish::display::ipc::PhysicalDisplay)
-Q_DECLARE_METATYPE(cutefish::display::ipc::LogicalDisplay)
-Q_DECLARE_METATYPE(cutefish::display::ipc::DisplayRequest)
-Q_DECLARE_METATYPE(cutefish::display::ipc::Placement)
-Q_DECLARE_METATYPE(QList<cutefish::display::ipc::Mode>)
-Q_DECLARE_METATYPE(QList<cutefish::display::ipc::PhysicalDisplay>)
-Q_DECLARE_METATYPE(QList<cutefish::display::ipc::LogicalDisplay>)
-Q_DECLARE_METATYPE(QList<cutefish::display::ipc::DisplayRequest>)
-Q_DECLARE_METATYPE(QList<cutefish::display::ipc::Placement>)
-Q_DECLARE_METATYPE(cutefish::display::ipc::MirrorGroups)
+namespace cutefish::base::dbus {
+
+// A struct whose tie() lists its members in the order of its D-Bus tuple.
+template<typename T>
+struct TiedDisplayType
+{
+    template<typename Tie>
+    struct Values;
+    template<typename... Ts>
+    struct Values<std::tuple<Ts...>>
+    {
+        using Tuple = std::tuple<std::remove_cvref_t<Ts>...>;
+    };
+    using Tuple = typename Values<decltype(std::declval<T&>().tie())>::Tuple;
+
+    static std::string signature() { return Type<Tuple>::signature(); }
+    // tie() only reads here.
+    static Variant toVariant(const T& value)
+    {
+        return Type<Tuple>::toVariant(Tuple(const_cast<T&>(value).tie()));
+    }
+    static bool fromVariant(const Variant& variant, T& out)
+    {
+        Tuple values;
+        if (!Type<Tuple>::fromVariant(variant, values))
+            return false;
+        out.tie() = std::move(values);
+        return true;
+    }
+};
+
+template<> struct Type<display::ipc::Mode> : TiedDisplayType<display::ipc::Mode> {};
+template<> struct Type<display::ipc::RequestedMode> : TiedDisplayType<display::ipc::RequestedMode> {};
+template<> struct Type<display::ipc::PhysicalDisplay> : TiedDisplayType<display::ipc::PhysicalDisplay> {};
+template<> struct Type<display::ipc::LogicalDisplay> : TiedDisplayType<display::ipc::LogicalDisplay> {};
+template<> struct Type<display::ipc::DisplayRequest> : TiedDisplayType<display::ipc::DisplayRequest> {};
+template<> struct Type<display::ipc::Placement> : TiedDisplayType<display::ipc::Placement> {};
+
+} // namespace cutefish::base::dbus

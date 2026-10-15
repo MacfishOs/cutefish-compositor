@@ -9,11 +9,11 @@
 // compositor types and ownership.
 
 #include "input/seat.h"
+#include "base/auto_reset.h"
 #include "input/session_gate.h"
 
 #include <algorithm>
 
-#include <QScopeGuard>
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
@@ -156,13 +156,13 @@ void Seat::setCursorHiddenByTouch(bool hidden)
     notifyCursorChanged();
 }
 
-void Seat::onTouchDown(Timestamp timestamp, int32_t id, const QPointF &rootLocation)
+void Seat::onTouchDown(Timestamp timestamp, int32_t id, const base::PointF &rootLocation)
 {
     // A drag owns the seat: no client gets a new point until it ends.
     if (m_wasShutdown || m_drag.grabsInput())
         return;
     // A locked session targets its secure container only, as the pointer does.
-    QPointF surfaceLocation;
+    base::PointF surfaceLocation;
     compositor::Surface *target = findTargetSurfaceIn(
             m_compositor, inputRootFor(m_compositor, m_sessionGate), rootLocation, &surfaceLocation);
     if (target)
@@ -171,7 +171,7 @@ void Seat::onTouchDown(Timestamp timestamp, int32_t id, const QPointF &rootLocat
         touch->onTouchDown(target, timestamp, id, rootLocation);
 }
 
-void Seat::onTouchMotion(Timestamp timestamp, int32_t id, const QPointF &rootLocation)
+void Seat::onTouchMotion(Timestamp timestamp, int32_t id, const base::PointF &rootLocation)
 {
     if (m_wasShutdown)
         return;
@@ -303,13 +303,13 @@ void Seat::notifyCursorChanged()
 
 void Seat::traceCursors(const char *transition) const
 {
-    if (!cfCursorTransitions().isDebugEnabled())
+    if (!cfCursorTransitions.isEnabled(base::LogLevel::Debug))
         return;
     for (const Pointer *pointer : m_pointers)
         pointer->traceCursor(transition);
 }
 
-void Seat::updateCursorPosition(const QPointF &position)
+void Seat::updateCursorPosition(const base::PointF &position)
 {
     if (m_wasShutdown)
         return;
@@ -432,11 +432,11 @@ void Seat::clearPointerFocus()
     m_pointerConstraints.update();
 }
 
-compositor::Surface *Seat::pointerTargetAt(scene::Node *root, const QPointF &location,
-                                           QPointF *surfaceLocation)
+compositor::Surface *Seat::pointerTargetAt(scene::Node *root, const base::PointF &location,
+                                           base::PointF *surfaceLocation)
 {
     if (m_inPointerMotion && m_pointerTarget && m_pointerTarget->root == root
-        && m_pointerTarget->location == location
+        && fuzzyEqual(m_pointerTarget->location, location)
         && (!m_pointerTarget->surface || *m_pointerTarget->surface)) {
         *surfaceLocation = m_pointerTarget->surfaceLocation;
         return m_pointerTarget->surface ? *m_pointerTarget->surface : nullptr;
@@ -462,7 +462,7 @@ void Seat::endPointerMotion()
     m_pointerTarget.reset();
 }
 
-void Seat::onPointerMotion(Timestamp timestamp, const QPointF &rootLocation,
+void Seat::onPointerMotion(Timestamp timestamp, const base::PointF &rootLocation,
                            const RelativeMotion *relative)
 {
     if (m_wasShutdown)
@@ -481,7 +481,7 @@ void Seat::onPointerMotion(Timestamp timestamp, const QPointF &rootLocation,
     m_pointerConstraints.update();
 }
 
-void Seat::onPointerButton(Timestamp timestamp, const QPointF &rootLocation, uint32_t evdevButton,
+void Seat::onPointerButton(Timestamp timestamp, const base::PointF &rootLocation, uint32_t evdevButton,
                            bool pressed)
 {
     if (m_wasShutdown)
@@ -507,7 +507,7 @@ void Seat::onPointerButton(Timestamp timestamp, const QPointF &rootLocation, uin
     // The first press takes the implicit grab, so the rest of the drag stays
     // with this surface however far the pointer travels.
     if (pressed && !m_pointerGrabSurface) {
-        QPointF surfaceLocation;
+        base::PointF surfaceLocation;
         setPointerGrabSurface(findTargetSurface(m_compositor, rootLocation, &surfaceLocation));
     }
 
@@ -577,7 +577,7 @@ void Seat::releasePointerButton(Timestamp timestamp, uint32_t evdevButton)
     endPointerGrabIfReleased();
 }
 
-void Seat::onPointerAxis(Timestamp timestamp, const QPointF &rootLocation, const QPointF &offset,
+void Seat::onPointerAxis(Timestamp timestamp, const base::PointF &rootLocation, const base::PointF &offset,
                          bool discrete)
 {
     if (m_wasShutdown)
@@ -589,7 +589,7 @@ void Seat::onPointerAxis(Timestamp timestamp, const QPointF &rootLocation, const
     m_pointerConstraints.update();
 }
 
-void Seat::onPointerAxisStop(Timestamp timestamp, const QPointF &rootLocation)
+void Seat::onPointerAxisStop(Timestamp timestamp, const base::PointF &rootLocation)
 {
     if (m_wasShutdown)
         return;
@@ -598,7 +598,7 @@ void Seat::onPointerAxisStop(Timestamp timestamp, const QPointF &rootLocation)
         pointer->onPointerAxisStop(timestamp, m_pointerLocation);
 }
 
-void Seat::onPointerGestureBegin(Timestamp timestamp, const QPointF &rootLocation,
+void Seat::onPointerGestureBegin(Timestamp timestamp, const base::PointF &rootLocation,
                                  GestureType type, uint32_t fingers)
 {
     if (m_wasShutdown || m_drag.grabsInput())
@@ -687,7 +687,7 @@ void Seat::deliverKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
     m_clientXkbTracker->updateKey(evdevCode, pressed);
     // A translated key can carry modifiers of its own, which must reach the
     // clients before the next key does.
-    const auto modifiers = qScopeGuard([this, before] {
+    const base::ScopeGuard modifiers([this, before] {
         if (m_clientXkbTracker->modifiers() != before)
             notifyKeyboardModifiers();
     });

@@ -16,9 +16,7 @@
 #include <memory>
 #include <vector>
 
-#include <QPointF>
-#include <QRect>
-
+#include "base/geometry.h"
 #include "input/cursor_shape.h"
 #include "input/types.h"
 #include "wm/types.h"
@@ -48,19 +46,19 @@ public:
 
     // Everything the frame accepts pointer input in, in output coordinates.
     // Larger than the window bounds: the resize grips reach outside them.
-    virtual QRect inputBounds() const = 0;
+    virtual base::Rect inputBounds() const = 0;
 
-    virtual FrameArea areaAt(const QPointF& location) const = 0;
+    virtual FrameArea areaAt(const base::PointF& location) const = 0;
 
-    virtual input::CursorShape cursorShapeAt(const QPointF&) const
+    virtual input::CursorShape cursorShapeAt(const base::PointF&) const
     {
         return input::CursorShape::Default;
     }
 
     // Pointer events the window manager decided belong to the frame, in output
     // coordinates. Each returns true when the frame consumed the event.
-    virtual bool onPointerMotion(input::Timestamp timestamp, const QPointF& location) = 0;
-    virtual bool onPointerButton(input::Timestamp timestamp, const QPointF& location,
+    virtual bool onPointerMotion(input::Timestamp timestamp, const base::PointF& location) = 0;
+    virtual bool onPointerButton(input::Timestamp timestamp, const base::PointF& location,
                                  bool pressed) = 0;
     // The pointer went somewhere the frame does not own.
     virtual void onPointerLeave() = 0;
@@ -73,14 +71,14 @@ public:
 
     // The title bar and the caption buttons in output coordinates, for the
     // window debug service. Empty for a frame that draws none.
-    virtual QRect titleBarBounds() const { return QRect(); }
-    virtual std::vector<QRect> captionButtonBounds() const { return {}; }
+    virtual base::Rect titleBarBounds() const { return base::Rect(); }
+    virtual std::vector<base::Rect> captionButtonBounds() const { return {}; }
 
     // Touch points the window manager decided belong to the frame. A point
     // that went down here is the frame's until it is lifted; one that starts
     // a window drag is the drag's from then on.
-    virtual bool onTouchDown(input::Timestamp, int32_t, const QPointF&) { return false; }
-    virtual bool onTouchMotion(input::Timestamp, int32_t, const QPointF&) { return false; }
+    virtual bool onTouchDown(input::Timestamp, int32_t, const base::PointF&) { return false; }
+    virtual bool onTouchMotion(input::Timestamp, int32_t, const base::PointF&) { return false; }
     virtual bool onTouchUp(input::Timestamp, int32_t) { return false; }
     virtual void onTouchCancel() { }
 };

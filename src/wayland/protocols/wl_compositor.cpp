@@ -5,17 +5,16 @@
 // Upstream: chromium/src/components/exo/wayland/wl_compositor.cc
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: SkRegion becomes QRegion and the leave/enter callback
+// Adapted for Cutefish: SkRegion becomes base::Region and the leave/enter callback
 // is absent until wl_output exists.
 
 #include "wayland/protocols/wl_compositor.h"
-
-#include <QRegion>
 
 #include <algorithm>
 #include <cmath>
 #include <memory>
 
+#include "base/region.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
@@ -38,41 +37,41 @@ void region_destroy(wl_client*, wl_resource* resource)
 void region_add(wl_client*, wl_resource* resource, int32_t x, int32_t y, int32_t width,
                 int32_t height)
 {
-    *getUserDataAs<QRegion>(resource) += clientRect(x, y, width, height);
+    *getUserDataAs<base::Region>(resource) += clientRect(x, y, width, height);
 }
 
 void region_subtract(wl_client*, wl_resource* resource, int32_t x, int32_t y, int32_t width,
                      int32_t height)
 {
-    *getUserDataAs<QRegion>(resource) -= clientRect(x, y, width, height);
+    *getUserDataAs<base::Region>(resource) -= clientRect(x, y, width, height);
 }
 
 const struct wl_region_interface region_implementation = { region_destroy, region_add,
                                                            region_subtract };
 
-QRegion regionToLogical(const QRegion& region, double scale)
+base::Region regionToLogical(const base::Region& region, double scale)
 {
     if (scale == 1)
         return region;
-    QRegion result;
-    for (const QRect& rect : region)
+    base::Region result;
+    for (const base::Rect& rect : region)
         result += clientToLogical(rect, scale);
     return result;
 }
 
 // An opaque region only promises what it fully covers, so it shrinks inwards.
-QRegion opaqueToLogical(const QRegion& region, double scale)
+base::Region opaqueToLogical(const base::Region& region, double scale)
 {
     if (scale == 1)
         return region;
-    QRegion result;
-    for (const QRect& rect : region) {
+    base::Region result;
+    for (const base::Rect& rect : region) {
         const int left = int(std::ceil(rect.x() / scale));
         const int top = int(std::ceil(rect.y() / scale));
         const int right = int(std::floor((rect.x() + rect.width()) / scale));
         const int bottom = int(std::floor((rect.y() + rect.height()) / scale));
         if (right > left && bottom > top)
-            result += QRect(left, top, right - left, bottom - top);
+            result += base::Rect(left, top, right - left, bottom - top);
     }
     return result;
 }
@@ -89,7 +88,7 @@ void surface_attach(wl_client* client, wl_resource* resource, wl_resource* buffe
                     int32_t y)
 {
     getUserDataAs<compositor::Surface>(resource)->attach(
-        bufferFromResource(buffer), clientToLogical(QPoint(x, y), clientScale(client)));
+        bufferFromResource(buffer), clientToLogical(base::Point(x, y), clientScale(client)));
 }
 
 void surface_damage(wl_client* client, wl_resource* resource, int32_t x, int32_t y,
@@ -154,7 +153,8 @@ void surface_set_opaque_region(wl_client* client, wl_resource* resource,
 {
     // The region is copied here; the client may destroy or reuse the wl_region
     // immediately afterwards.
-    const QRegion region = regionResource ? *getUserDataAs<QRegion>(regionResource) : QRegion();
+    const base::Region region =
+            regionResource ? *getUserDataAs<base::Region>(regionResource) : base::Region();
     getUserDataAs<compositor::Surface>(resource)->setOpaqueRegion(
         opaqueToLogical(region, clientScale(client)));
 }
@@ -165,7 +165,7 @@ void surface_set_input_region(wl_client* client, wl_resource* resource,
     auto* surface = getUserDataAs<compositor::Surface>(resource);
     if (regionResource)
         surface->setInputRegion(
-            regionToLogical(*getUserDataAs<QRegion>(regionResource), clientScale(client)));
+            regionToLogical(*getUserDataAs<base::Region>(regionResource), clientScale(client)));
     else
         surface->resetInputRegion();
 }
@@ -204,8 +204,8 @@ void surface_set_buffer_transform(wl_client*, wl_resource* resource, int32_t tra
         bufferTransform = compositor::Transform::FlippedRotate270;
         break;
     default:
-        qCWarning(cfWayland, "wl_surface.set_buffer_transform: invalid transform %d",
-                  transform);
+        CF_WARNING(cfWayland).printf(
+                "wl_surface.set_buffer_transform: invalid transform %d", transform);
         wl_resource_post_error(resource, WL_SURFACE_ERROR_INVALID_TRANSFORM,
                                "buffer transform must be one of the values from "
                                "the wl_output.transform enum ('%d' specified)",
@@ -219,7 +219,7 @@ void surface_set_buffer_transform(wl_client*, wl_resource* resource, int32_t tra
 void surface_set_buffer_scale(wl_client*, wl_resource* resource, int32_t scale)
 {
     if (scale < 1) {
-        qCWarning(cfWayland, "wl_surface.set_buffer_scale: invalid scale %d", scale);
+        CF_WARNING(cfWayland).printf("wl_surface.set_buffer_scale: invalid scale %d", scale);
         wl_resource_post_error(resource, WL_SURFACE_ERROR_INVALID_SCALE,
                                "buffer scale must be at least one ('%d' specified)", scale);
         return;
@@ -288,7 +288,7 @@ void compositor_create_region(wl_client* client, wl_resource* resource, uint32_t
         return;
     }
 
-    setImplementation(regionResource, &region_implementation, std::make_unique<QRegion>());
+    setImplementation(regionResource, &region_implementation, std::make_unique<base::Region>());
 }
 
 const struct wl_compositor_interface compositor_implementation = { compositor_create_surface,

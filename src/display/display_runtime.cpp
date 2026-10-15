@@ -7,6 +7,7 @@
 #include "backend/drm/drm_mode_fallback_planner.h"
 #include "backend/drm/drm_output.h"
 #include "backend/drm/drm_selection.h"
+#include "base/strings.h"
 #include "compositor/compositor.h"
 #include "compositor/output.h"
 #include "compositor/surface.h"
@@ -27,25 +28,41 @@
 #include "wayland/server_util.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
-#include <QSet>
+#include <algorithm>
+#include <cassert>
 #include <cmath>
+#include <cstring>
+#include <format>
 
 namespace cutefish::display {
 
 namespace {
 
+// The output's logical rectangle.
+cutefish::base::Rect logicalBounds(const cutefish::compositor::Output &model)
+{
+    return cutefish::base::Rect(model.position, model.logicalSize());
+}
+
+cutefish::render::OutputRenderContext renderContext(const cutefish::compositor::Output &model,
+                                                    uint64_t frame)
+{
+    return {model.name, logicalBounds(model), model.pixelSize, model.renderScale,
+            static_cast<uint32_t>(model.transform), frame, model.nativeContentRect};
+}
+
 // How long the outgoing frame may wait for the shell to redraw. Exo holds its
 // orientation compositor lock for up to 2.5 s; the shell redraws far faster.
-constexpr int kScreenTransitionTimeoutMs = 1000;
+constexpr std::chrono::milliseconds kScreenTransitionTimeout(1000);
 
 // How long the startup cover waits for the shell's desktop. Upstream's booting
 // animation waits at most 5 s for the device before it plays anyway.
-constexpr int kStartupCoverTimeoutMs = 5000;
+constexpr std::chrono::milliseconds kStartupCoverTimeout(5000);
 
 } // namespace
 
 DisplayRuntime::DisplayRuntime(DisplayManager &manager, backend::DrmBackend *nativeBackend,
-                               QList<compositor::Output *> models,
+                               std::vector<compositor::Output *> models,
                                std::vector<wl_global *> &globals, wl_global *&primaryGlobal,
                                wl_display *display, compositor::Compositor &compositor,
                                input::InputManager &input, wm::WindowManager &wm,
@@ -65,30 +82,26 @@ DisplayRuntime::DisplayRuntime(DisplayManager &manager, backend::DrmBackend *nat
     , cursorRouter(router)
     , updatingOutput(updating)
 {
-    activityConnection = QObject::connect(
-            &inputManager, &input::InputManager::userActivity, &displayManager, [this] {
-                if (wakeOnInput.isEmpty())
-                    return;
-                const auto result =
-                        setPower(wakeOnInput.values(), NativeDisplayDelegate::PowerState::On);
-                if (!result.succeeded)
-                    qWarning() << "Unable to wake displays:" << result.error.message;
-            });
+    activityConnection = inputManager.userActivity.connect([this] {
+        if (wakeOnInput.empty())
+            return;
+        const auto result = setPower({wakeOnInput.begin(), wakeOnInput.end()},
+                                     NativeDisplayDelegate::PowerState::On);
+        if (!result.succeeded)
+            CF_WARNING(base::LogCategory::defaultCategory())
+                    << "Unable to wake displays:" << result.error.message;
+    });
     identity.seed(displayManager.hardware()->displays);
     transitionDeadline.setSingleShot(true);
-    // A coarse timer may fire before the node's own deadline, and then nothing
-    // asks for the frame that ends the hold.
-    transitionDeadline.setTimerType(Qt::PreciseTimer);
-    transitionDeadline.callOnTimeout([this] {
+    transitionDeadline.onTimeout = [this] {
         if (screenTransition)
             screenTransition->notifyChanged();
-    });
+    };
     startupCoverDeadline.setSingleShot(true);
-    startupCoverDeadline.setTimerType(Qt::PreciseTimer);
-    startupCoverDeadline.callOnTimeout([this] {
+    startupCoverDeadline.onTimeout = [this] {
         if (startupCover)
             startupCover->notifyChanged();
-    });
+    };
     bindFrames();
     displayManager.setPublisher([this] {
         publish();
@@ -99,11 +112,10 @@ DisplayRuntime::DisplayRuntime(DisplayManager &manager, backend::DrmBackend *nat
 
 DisplayRuntime::~DisplayRuntime()
 {
-    QObject::disconnect(activityConnection);
+    activityConnection.reset();
     if (backend) {
-        const auto detach = [this](const auto &outputs) {
+        const auto detach = [](const auto &outputs) {
             for (const auto &output : outputs) {
-                QObject::disconnect(output, nullptr, &displayManager, nullptr);
                 output->presentationSubmitted = {};
                 output->setPrepareCallback({});
                 output->setRenderCallback({});
@@ -113,6 +125,9 @@ DisplayRuntime::~DisplayRuntime()
         detach(backend->allOutputs());
         detach(backend->allOutputs(true));
     }
+    for (auto &[output, binding] : boundOutputs)
+        binding.repaint.reset();
+    boundOutputs.clear();
     cursor.setSink(nullptr);
     displayManager.setPublisher({});
     inputManager.setDisplayManager(nullptr);
@@ -122,98 +137,98 @@ DisplayRuntime::~DisplayRuntime()
 }
 
 HardwareSnapshot DisplayRuntime::discover(backend::DrmBackend *backend,
-                                          const QList<compositor::Output *> &models,
-                                          const QString &instance, uint64_t generation,
+                                          const std::vector<compositor::Output *> &models,
+                                          const std::string &instance, uint64_t generation,
                                           DisplayIdentity &identity)
 {
-    QList<cutefish::display::DisplaySnapshot> physicalDisplays;
-    for (int index = 0; index < models.size(); ++index) {
-        const auto *model = models.at(index);
+    std::vector<cutefish::display::DisplaySnapshot> physicalDisplays;
+    for (size_t index = 0; index < models.size(); ++index) {
+        const auto *model = models[index];
         auto *nativeBackend = backend && index < backend->allOutputs().size()
                 ? backend->allOutputs()[index]->backend()
                 : nullptr;
         const auto displayMode = [](const drmModeModeInfo &nativeMode) {
             cutefish::display::DisplayMode mode;
-            mode.pixelSize = QSize(nativeMode.hdisplay, nativeMode.vdisplay);
+            mode.pixelSize = base::Size(nativeMode.hdisplay, nativeMode.vdisplay);
             mode.refreshMilliHz = static_cast<int>(
                     std::lround(cutefish::backend::refreshRate(nativeMode) * 1000.0));
             mode.pixelClockKHz = nativeMode.clock;
             mode.horizontalTotal = nativeMode.htotal;
             mode.verticalTotal = nativeMode.vtotal;
             mode.flags = nativeMode.flags;
-            mode.name = QString::fromLatin1(nativeMode.name);
+            mode.name = base::strings::latin1ToUtf8(std::string_view(
+                    nativeMode.name, strnlen(nativeMode.name, sizeof(nativeMode.name))));
             mode.preferred = nativeMode.type & DRM_MODE_TYPE_PREFERRED;
             return mode;
         };
         cutefish::display::DisplayMode mode;
-        QList<cutefish::display::DisplayMode> modes;
-        if (backend && index < int(backend->allOutputs().size())) {
+        std::vector<cutefish::display::DisplayMode> modes;
+        if (backend && index < backend->allOutputs().size()) {
             const auto *drmOutput = backend->allOutputs()[index];
             mode = displayMode(drmOutput->mode());
             for (const auto &nativeMode : drmOutput->modes())
-                modes.append(displayMode(nativeMode));
+                modes.push_back(displayMode(nativeMode));
         } else {
             mode.pixelSize = model->pixelSize;
             mode.refreshMilliHz = model->refreshMilliHz;
             mode.pixelClockKHz = model->pixelSize.width() * model->pixelSize.height() * 60 / 1000;
             mode.horizontalTotal = model->pixelSize.width();
             mode.verticalTotal = model->pixelSize.height();
-            mode.name = QStringLiteral("%1x%2@%3")
-                                .arg(mode.pixelSize.width())
-                                .arg(mode.pixelSize.height())
-                                .arg(mode.refreshMilliHz);
+            mode.name = std::format("{}x{}@{}", mode.pixelSize.width(), mode.pixelSize.height(),
+                                    mode.refreshMilliHz);
             mode.preferred = model->preferred;
             modes = {mode};
-            for (const QSize size : {QSize(1600, 900), QSize(1280, 720)}) {
+            for (const base::Size size : {base::Size(1600, 900), base::Size(1280, 720)}) {
                 auto alternative = mode;
                 alternative.pixelSize = size;
                 alternative.pixelClockKHz = size.width() * size.height() * 60 / 1000;
                 alternative.horizontalTotal = size.width();
                 alternative.verticalTotal = size.height();
-                alternative.name =
-                        QStringLiteral("%1x%2@60000").arg(size.width()).arg(size.height());
+                alternative.name = std::format("{}x{}@60000", size.width(), size.height());
                 alternative.preferred = false;
                 if (alternative.stableKey() != mode.stableKey())
-                    modes.append(alternative);
+                    modes.push_back(alternative);
             }
         }
         cutefish::display::DisplaySnapshot physical;
         EdidInfo edid;
-        physical.persistentKey = QStringLiteral("session:%1").arg(model->model);
-        physical.portKey = (nativeBackend ? nativeBackend->deviceKey() : QStringLiteral("virtual"))
-                + QLatin1Char('/') + model->name;
-        if (backend && index < int(backend->allOutputs().size())) {
-            physical.portKey = nativeBackend->deviceKey() + QLatin1Char('/')
-                    + backend->allOutputs()[index]->portPath();
+        const std::string modelName = model->model;
+        const std::string outputName = model->name;
+        physical.persistentKey = "session:" + modelName;
+        physical.portKey = (nativeBackend ? nativeBackend->deviceKey() : std::string("virtual"))
+                + '/' + outputName;
+        if (backend && index < backend->allOutputs().size()) {
+            physical.portKey =
+                    nativeBackend->deviceKey() + '/' + backend->allOutputs()[index]->portPath();
             edid = parseEdid(backend->allOutputs()[index]->edid());
             physical.edidKey = edid.key;
         }
-        const QString route = backend && index < int(backend->allOutputs().size())
+        const std::string route = backend && index < backend->allOutputs().size()
                 ? backend->allOutputs()[index]->portPath()
-                : model->name;
-        const QStringList connectorPath = route.split(QLatin1Char('-'));
+                : outputName;
+        using base::strings::CaseSensitivity;
+        const std::vector<std::string> connectorPath = base::strings::split(route, '-');
         physical.baseConnectorKey =
-                connectorPath.first().compare(QStringLiteral("DP"), Qt::CaseInsensitive) == 0
+                base::strings::equalsIgnoreAsciiCase(connectorPath.front(), "DP")
                         && connectorPath.size() > 2
-                ? connectorPath.mid(0, 2).join(QLatin1Char('-'))
+                ? connectorPath[0] + '-' + connectorPath[1]
                 : route;
         physical.pathTopology = connectorPath;
-        physical.connectorName = model->name;
-        physical.devicePath =
-                nativeBackend ? nativeBackend->devicePath() : QStringLiteral("virtual");
-        physical.make = edid.make.isEmpty() ? model->make : edid.make;
-        physical.model = edid.model.isEmpty() ? model->model : edid.model;
+        physical.connectorName = outputName;
+        physical.devicePath = nativeBackend ? nativeBackend->devicePath() : std::string("virtual");
+        physical.make = edid.make.empty() ? model->make : edid.make;
+        physical.model = edid.model.empty() ? modelName : edid.model;
         physical.physicalSizeMm = model->physicalSizeMm;
-        const auto connector = nativeBackend ? backend->allOutputs()[index]->name() : model->name;
+        const std::string connector =
+                nativeBackend ? backend->allOutputs()[index]->name() : outputName;
+        const std::string &driver = nativeBackend ? nativeBackend->driverName() : std::string();
         physical.connectionType =
-                (!nativeBackend || nativeBackend->driverName() == QStringLiteral("virtio_gpu")
-                 || nativeBackend->driverName() == QStringLiteral("vmwgfx")
-                 || nativeBackend->driverName() == QStringLiteral("qxl")
-                 || nativeBackend->driverName() == QStringLiteral("vkms"))
+                (!nativeBackend || driver == "virtio_gpu" || driver == "vmwgfx" || driver == "qxl"
+                 || driver == "vkms")
                 ? cutefish::display::DisplayConnectionType::Virtual
-                : (connector.startsWith(QStringLiteral("eDP"), Qt::CaseInsensitive)
-                   || connector.startsWith(QStringLiteral("LVDS"), Qt::CaseInsensitive)
-                   || connector.startsWith(QStringLiteral("DSI"), Qt::CaseInsensitive))
+                : (base::strings::startsWith(connector, "eDP", CaseSensitivity::Insensitive)
+                   || base::strings::startsWith(connector, "LVDS", CaseSensitivity::Insensitive)
+                   || base::strings::startsWith(connector, "DSI", CaseSensitivity::Insensitive))
                 ? cutefish::display::DisplayConnectionType::Internal
                 : cutefish::display::DisplayConnectionType::External;
         physical.capabilities = cutefish::display::DisplayCapability::Scale
@@ -221,7 +236,7 @@ HardwareSnapshot DisplayRuntime::discover(backend::DrmBackend *backend,
                 | cutefish::display::DisplayCapability::SoftwareMirror
                 | cutefish::display::DisplayCapability::Power;
         // Through the CRTC, or blended over the frame where it cannot.
-        if (backend && index < int(backend->allOutputs().size()))
+        if (backend && index < backend->allOutputs().size())
             physical.capabilities |= cutefish::display::DisplayCapability::ColorTransform;
         physical.modes = modes;
         physical.currentMode = mode;
@@ -232,7 +247,7 @@ HardwareSnapshot DisplayRuntime::discover(backend::DrmBackend *backend,
                 break;
             }
         }
-        physicalDisplays.append(std::move(physical));
+        physicalDisplays.push_back(std::move(physical));
     }
     identity.assign(physicalDisplays);
     for (auto *model : models) {
@@ -241,12 +256,12 @@ HardwareSnapshot DisplayRuntime::discover(backend::DrmBackend *backend,
                 model->displayId = physical.sessionId.value();
         }
     }
-    return {instance, QStringLiteral("seat0"), generation, physicalDisplays};
+    return {instance, "seat0", generation, physicalDisplays};
 }
 
 void DisplayRuntime::initialize(DisplayManager &displayManager, backend::DrmBackend *backend,
-                                const QList<compositor::Output *> &outputModels,
-                                const QString &compositorInstanceId,
+                                const std::vector<compositor::Output *> &outputModels,
+                                const std::string &compositorInstanceId,
                                 compositor::Compositor &compositor,
                                 input::InputManager &inputManager)
 {
@@ -257,23 +272,23 @@ void DisplayRuntime::initialize(DisplayManager &displayManager, backend::DrmBack
     if (!displayManager.installHardware(snapshot))
         return;
 
-    QList<cutefish::display::LogicalDisplay> logicalDisplays;
-    QList<cutefish::compositor::Compositor::OutputView> views;
-    QList<QRect> topology;
-    for (int index = 0; index < models.size(); ++index) {
-        const auto *model = models.at(index);
-        const cutefish::display::DisplayId id(models.at(index)->displayId);
+    std::vector<cutefish::display::LogicalDisplay> logicalDisplays;
+    std::vector<cutefish::compositor::Compositor::OutputView> views;
+    std::vector<base::Rect> topology;
+    for (size_t index = 0; index < models.size(); ++index) {
+        const auto *model = models[index];
+        const cutefish::display::DisplayId id(model->displayId);
         cutefish::display::LogicalDisplay logical;
         logical.id = id;
         logical.destinations = {id};
         logical.waylandName = model->name;
-        logical.bounds = QRect(model->position, model->logicalSize());
+        logical.bounds = base::Rect(model->position, model->logicalSize());
         logical.workArea = logical.bounds;
         logical.scale = model->scale;
         logical.primary = index == 0;
-        logicalDisplays.append(logical);
-        views.append({id.value(), logical.bounds, logical.scale, model->name});
-        topology.append(logical.bounds);
+        logicalDisplays.push_back(logical);
+        views.push_back({model->displayId, logical.bounds, logical.scale, model->name});
+        topology.push_back(logical.bounds);
     }
     cutefish::display::AppliedConfiguration applied;
     applied.compositorInstanceId = compositorInstanceId;
@@ -281,16 +296,16 @@ void DisplayRuntime::initialize(DisplayManager &displayManager, backend::DrmBack
     applied.revision = displayManager.applied() ? displayManager.applied()->revision + 1 : 1;
     applied.physicalDisplays = displayManager.hardware()->displays;
     applied.logicalDisplays = std::move(logicalDisplays);
-    for (int index = 1; index < applied.logicalDisplays.size(); ++index)
-        applied.placements.append({applied.logicalDisplays[index].id,
+    for (size_t index = 1; index < applied.logicalDisplays.size(); ++index)
+        applied.placements.push_back({applied.logicalDisplays[index].id,
                                    applied.logicalDisplays[index - 1].id,
                                    cutefish::display::LayoutEdge::Right, 0});
     displayManager.installApplied(std::move(applied));
     compositor.setOutputViews(std::move(views));
-    inputManager.setTopology(topology, topology.isEmpty() ? QRect() : topology.first());
+    inputManager.setTopology(topology, topology.empty() ? base::Rect() : topology.front());
 }
 
-void DisplayRuntime::replaceOutputs(QList<compositor::Output *> models)
+void DisplayRuntime::replaceOutputs(std::vector<compositor::Output *> models)
 {
     cursor.setSink(nullptr);
     if (cursorRouter)
@@ -333,14 +348,14 @@ std::optional<HardwareSnapshot> DisplayRuntime::reprobe()
     if (!backend->reprobe())
         return std::nullopt;
     std::vector<std::unique_ptr<compositor::Output>> replacement;
-    QList<compositor::Output *> models;
+    std::vector<compositor::Output *> models;
     for (const auto &output : backend->allOutputs()) {
         auto model = std::make_unique<compositor::Output>();
         model->name = output->publicName();
         model->model = output->name();
         model->pixelSize = output->size();
         model->physicalSizeMm = output->physicalSizeMm();
-        models.append(model.get());
+        models.push_back(model.get());
         replacement.push_back(std::move(model));
     }
     const auto hardware = discover(backend, models, displayManager.hardware()->compositorInstanceId,
@@ -349,12 +364,11 @@ std::optional<HardwareSnapshot> DisplayRuntime::reprobe()
     ownedModels = std::move(replacement);
     // A display that went away takes its power state and wake-on-input entry
     // along, or every later input event would try to power it on.
-    QSet<DisplayId> present;
+    std::set<DisplayId> present;
     for (const auto &display : hardware.displays)
         present.insert(display.sessionId);
-    for (auto it = powerStates.begin(); it != powerStates.end();)
-        it = present.contains(it.key()) ? std::next(it) : powerStates.erase(it);
-    wakeOnInput.intersect(present);
+    std::erase_if(powerStates, [&](const auto &entry) { return !present.contains(entry.first); });
+    std::erase_if(wakeOnInput, [&](const auto &id) { return !present.contains(id); });
     return hardware;
 }
 
@@ -387,16 +401,16 @@ void DisplayRuntime::setColorTransform(const render::ColorTransform &transform)
 }
 
 void DisplayRuntime::setScreenTransition(scene::ScreenTransitionNode *transition,
-                                         QList<scene::Node *> layers)
+                                         std::vector<scene::Node *> layers)
 {
     screenTransition = transition;
     transitionLayers = std::move(layers);
 }
 
-std::map<QString, std::unique_ptr<render::Texture>>
+std::map<std::string, std::unique_ptr<render::Texture>>
 DisplayRuntime::captureOutputs(const std::function<void(render::Renderer &)> &paint)
 {
-    std::map<QString, std::unique_ptr<render::Texture>> frames;
+    std::map<std::string, std::unique_ptr<render::Texture>> frames;
     if (!backend)
         return frames;
     const auto outputs = backend->allOutputs();
@@ -405,10 +419,7 @@ DisplayRuntime::captureOutputs(const std::function<void(render::Renderer &)> &pa
         if (model->logicalExtent.isEmpty())
             continue;
         auto texture = outputs[index]->renderOffscreen(
-                {model->name, QRect(model->position, model->logicalSize()), model->pixelSize,
-                 model->renderScale, static_cast<uint32_t>(model->transform), 0,
-                 model->nativeContentRect},
-                paint);
+                renderContext(*model, 0), paint);
         if (texture)
             frames[model->name] = std::move(texture);
     }
@@ -429,8 +440,8 @@ void DisplayRuntime::captureOutgoingFrames()
     };
 
     scene::ScreenTransitionNode::Outputs rotated;
-    QList<QRect> outgoing;
-    QList<QRect> covers;
+    std::vector<base::Rect> outgoing;
+    std::vector<base::Rect> covers;
     for (int index = 0; index < outputModels.size() && index < int(backend->allOutputs().size());
          ++index) {
         auto *model = outputModels.at(index);
@@ -440,7 +451,7 @@ void DisplayRuntime::captureOutgoingFrames()
         const DisplayId destination(model->displayId);
         const LogicalDisplay *logical = nullptr;
         for (const auto &candidate : applied.logicalDisplays) {
-            if (candidate.destinations.contains(destination)) {
+            if (candidate.hasDestination(destination)) {
                 logical = &candidate;
                 break;
             }
@@ -448,19 +459,17 @@ void DisplayRuntime::captureOutgoingFrames()
         const int quarterTurns = logical ? int(logical->rotation) - int(model->transform) : 0;
         if (quarterTurns == 0)
             continue;
-        const QRect outgoingBounds(model->position, model->logicalSize());
+        const base::Rect outgoingBounds = logicalBounds(*model);
         auto texture = backend->allOutputs()[index]->renderOffscreen(
-                {model->name, outgoingBounds, model->pixelSize, model->renderScale,
-                 static_cast<uint32_t>(model->transform), 0, model->nativeContentRect},
-                paintOutgoing);
+                renderContext(*model, 0), paintOutgoing);
         if (!texture)
             continue;
         // Renderer transforms turn logical content by -90 degrees per step, so
         // the outgoing frame stays put on the panel when turned by the difference.
         static constexpr int kDegrees[] = {0, 90, -180, -90};
         rotated[model->name] = {std::move(texture), kDegrees[(quarterTurns % 4 + 4) % 4]};
-        outgoing.append(outgoingBounds);
-        covers.append(logical->bounds);
+        outgoing.push_back(outgoingBounds);
+        covers.push_back(logical->bounds);
     }
     if (rotated.empty())
         return;
@@ -469,7 +478,7 @@ void DisplayRuntime::captureOutgoingFrames()
     // resized. Here the shell's surfaces on a rotated output have to commit
     // again, and every desktop has to cover its output.
     struct TrackedSurface {
-        quint64 window;
+        uint64_t window;
         uint64_t revision;
     };
 
@@ -484,7 +493,7 @@ void DisplayRuntime::captureOutgoingFrames()
         if (!node || !node->isEffectivelyVisible())
             continue;
         hasDesktop |= role == wm::WindowRole::Desktop;
-        if (std::any_of(outgoing.begin(), outgoing.end(), [&](const QRect &bounds) {
+        if (std::any_of(outgoing.begin(), outgoing.end(), [&](const base::Rect &bounds) {
                 return node->absoluteGeometry().intersects(bounds);
             }))
             tracked.push_back({window->id(), node->contentRevision()});
@@ -499,7 +508,7 @@ void DisplayRuntime::captureOutgoingFrames()
             if (node && node->isEffectivelyVisible() && node->contentRevision() == surface.revision)
                 return false;
         }
-        for (const QRect &bounds : covers) {
+        for (const base::Rect &bounds : covers) {
             const auto &windows = windowManager.windows();
             if (std::none_of(windows.begin(), windows.end(), [&](const wm::Window *window) {
                     const auto *node =
@@ -519,11 +528,12 @@ void DisplayRuntime::captureOutgoingFrames()
                 for (auto *layer : transitionLayers)
                     layer->render(renderer);
             },
-            ready, kScreenTransitionTimeoutMs);
-    transitionDeadline.start(kScreenTransitionTimeoutMs);
+            ready, int(kScreenTransitionTimeout.count()));
+    transitionDeadline.start(kScreenTransitionTimeout);
 }
 
-void DisplayRuntime::setStartupCover(scene::ScreenTransitionNode *cover, QList<scene::Node *> layers,
+void DisplayRuntime::setStartupCover(scene::ScreenTransitionNode *cover,
+                                     std::vector<scene::Node *> layers,
                                      std::function<bool()> ready)
 {
     startupCover = cover;
@@ -547,12 +557,12 @@ void DisplayRuntime::startStartupCover()
     // A reconciliation publishes an empty layout before it configures: only
     // the first real one has carried frames, and only it gets the cover. A
     // later one, a VT switch back included, shows the session at once.
-    if (!startupCoverPending || !startupCover || !backend || applied.logicalDisplays.isEmpty())
+    if (!startupCoverPending || !startupCover || !backend || applied.logicalDisplays.empty())
         return;
     startupCoverPending = false;
     const auto outputs = backend->allOutputs();
     scene::ScreenTransitionNode::Outputs carried;
-    QList<QRect> covers;
+    std::vector<base::Rect> covers;
     for (int index = 0; index < int(outputs.size()); ++index) {
         outputs[index]->setKeepCarriedFrame(false);
         auto frame = outputs[index]->takeCarriedFrame();
@@ -562,7 +572,7 @@ void DisplayRuntime::startStartupCover()
         const DisplayId destination(model->displayId);
         const auto logical = std::find_if(applied.logicalDisplays.begin(),
                                           applied.logicalDisplays.end(), [&](const auto &candidate) {
-                                              return candidate.destinations.contains(destination);
+                                              return candidate.hasDestination(destination);
                                           });
         if (logical == applied.logicalDisplays.end())
             continue;
@@ -570,17 +580,18 @@ void DisplayRuntime::startStartupCover()
         // frame, it stays put when turned by the new rotation.
         static constexpr int kDegrees[] = {0, 90, -180, -90};
         carried[model->name] = {std::move(frame), kDegrees[int(logical->rotation) % 4]};
-        covers.append(logical->bounds);
+        covers.push_back(logical->bounds);
     }
     if (carried.empty())
         return;
     auto desktopsCover = [this, covers = std::move(covers)] {
         const auto &windows = windowManager.windows();
-        return std::all_of(covers.begin(), covers.end(), [&](const QRect &bounds) {
+        return std::all_of(covers.begin(), covers.end(), [&](const base::Rect &bounds) {
             return std::any_of(windows.begin(), windows.end(), [&](const wm::Window *window) {
                 const auto *node = window->rootSurface() ? window->rootSurface()->node() : nullptr;
                 return window->role() == wm::WindowRole::Desktop && node
-                        && node->isEffectivelyVisible() && node->absoluteGeometry().contains(bounds);
+                        && node->isEffectivelyVisible()
+                        && node->absoluteGeometry().contains(bounds);
             });
         });
     };
@@ -592,8 +603,8 @@ void DisplayRuntime::startStartupCover()
                     layer->render(renderer);
             },
             startupCoverReady ? startupCoverReady : std::function<bool()>(std::move(desktopsCover)),
-            kStartupCoverTimeoutMs);
-    startupCoverDeadline.start(kStartupCoverTimeoutMs);
+            int(kStartupCoverTimeout.count()));
+    startupCoverDeadline.start(kStartupCoverTimeout);
 }
 
 void DisplayRuntime::bindFrames()
@@ -604,12 +615,13 @@ void DisplayRuntime::bindFrames()
         auto *output = backend->allOutputs()[index];
         if (boundOutputs.contains(output))
             continue;
-        boundOutputs.insert(output);
-        QObject::connect(output, &QObject::destroyed, &displayManager, [this, output] {
-            boundOutputs.remove(output);
-        });
+        auto &binding = boundOutputs[output];
+        binding.subscriptions.push_back(output->destroyed.connect([this, output] {
+            boundOutputs[output].repaint.reset();
+            boundOutputs.erase(output);
+        }));
         auto *model = outputModels.at(index);
-        auto tokens = std::make_shared<QHash<quint64, quint64>>();
+        auto tokens = std::make_shared<std::unordered_map<uint64_t, uint64_t>>();
         output->presentationOutput = model->presentation;
         output->setDirectScanoutEnabled(true);
         output->setSecureScanout(secureScanout);
@@ -620,84 +632,77 @@ void DisplayRuntime::bindFrames()
         output->setCarryOverWhileSecure(carryOverWhileSecure);
         // Before its first modeset, which carries it.
         output->setColorTransform(colorTransform);
-        output->setScanoutPlanner([this, model](const QSize &size, size_t maxOverlays) {
+        output->setScanoutPlanner([this, model](const base::Size &size, size_t maxOverlays) {
             const auto &applied = displayManager.applied();
             if (!applied || applied->logicalDisplays.size() != 1
                 || applied->logicalDisplays.front().destinations.size() != 1
-                || (capturePending && capturePending(model->name)) || !model->position.isNull()
+                || (capturePending && capturePending(model->name))
+                || !model->position.isOrigin()
                 || model->transform != compositor::Output::Transform::Normal
-                || !qFuzzyCompare(model->renderScale, model->scale.value()))
+                || !base::fuzzyCompare(model->renderScale, model->scale.value()))
                 return scene::OverlayPlan();
-            return scene::proposeOverlays(*scene.root(), size, maxOverlays, model->scale.value());
+            return scene::proposeOverlays(*scene.root(), size, maxOverlays,
+                                          model->scale.value());
         });
         output->setBeginFrameCallback([this, model](double frameTime) {
-            Q_EMIT compositor.frameStarted(frameTime);
+            compositor.frameStarted(frameTime);
             // Like viz's Display without damage, an output that shows nothing
             // new and owes no client a frame draws and flips nothing.
-            const QRect viewport(model->position, model->logicalSize());
-            return scene.hasDamage({model->name, viewport, model->pixelSize, model->renderScale,
-                                    static_cast<uint32_t>(model->transform), 0,
-                                    model->nativeContentRect})
-                    || compositor.awaitsFrame(viewport)
+            return scene.hasDamage(renderContext(*model, 0))
+                    || compositor.awaitsFrame(base::Rect(model->position, model->logicalSize()))
                     || (capturePending && capturePending(model->name));
         });
         output->setPrepareCallback([this, model, tokens](render::Renderer &renderer,
-                                                         quint64 generation) {
+                                                         uint64_t generation) {
             const auto token = ++nextFrameToken;
-            tokens->insert(generation, token);
-            renderer.setOutputContext({model->name, QRect(model->position, model->logicalSize()),
-                                       model->pixelSize, model->renderScale,
-                                       static_cast<uint32_t>(model->transform), token,
-                                       model->nativeContentRect});
+            tokens->insert_or_assign(generation, token);
+            renderer.setOutputContext(renderContext(*model, token));
             compositor.updateTextures(renderer);
-            compositor.frameSubmittedForOutput(QRect(model->position, model->logicalSize()), token);
+            compositor.frameSubmittedForOutput(base::Rect(model->position, model->logicalSize()),
+                                               token);
         });
-        output->setRenderCallback([this](render::Renderer &renderer, quint64) {
+        output->setRenderCallback([this](render::Renderer &renderer, uint64_t) {
             scene.render(renderer);
-            Q_EMIT compositor.outputRendered(renderer);
+            compositor.outputRendered(renderer);
         });
         output->presentationSubmitted = [this, model](const auto &submission) {
             compositor.abandonUnsubmittedPresentation(
-                    QRect(model->position, model->logicalSize()), submission);
+                    base::Rect(model->position, model->logicalSize()), submission);
         };
-        QObject::connect(output, &backend::DrmOutput::imagePresented, &displayManager,
-                         [this, tokens](quint64 generation, quint64 timeNs) {
-                             if (tokens->contains(generation))
-                                 Q_EMIT compositor.outputPresented(tokens->value(generation),
-                                                                   timeNs);
-                         });
+        binding.subscriptions.push_back(output->imagePresented.connect(
+                [this, tokens](uint64_t generation, uint64_t timeNs) {
+                    if (tokens->contains(generation))
+                        compositor.outputPresented(tokens->at(generation), timeNs);
+                }));
         // exo runs wl_surface.frame on the ack viz sends from
         // Display::DrawAndSwap (RunDrawCallbacks), not on presentation. Paced
         // by flips, a client behind a queued frame draws every other refresh.
-        QObject::connect(output, &backend::DrmOutput::frameDrawn, &displayManager,
-                         [this, tokens](quint64 generation, quint64 aimedNs) {
-                             if (!tokens->contains(generation))
-                                 return;
-                             compositor.frameDrawn(wayland::nowInMilliseconds(),
-                                                   tokens->value(generation));
-                             Q_EMIT compositor.outputDrawn(tokens->value(generation), aimedNs);
-                         });
-        QObject::connect(output, &backend::DrmOutput::framePresented, &displayManager,
-                         [this, tokens, model, output](quint32, quint64 generation) {
-                             if (!tokens->remove(generation))
-                                 return;
-                             if (securelyPresented && output->lastPresentedFrameWasSecure())
-                                 securelyPresented(model->displayId);
-                         });
-        QObject::connect(output, &backend::DrmOutput::frameDiscarded, &displayManager,
-                         [this, tokens](quint64 generation) {
-                             if (tokens->contains(generation))
-                                 compositor.frameDiscarded(tokens->take(generation));
-                         });
+        binding.subscriptions.push_back(output->frameDrawn.connect(
+                [this, tokens](uint64_t generation, uint64_t aimedNs) {
+                    if (!tokens->contains(generation))
+                        return;
+                    compositor.frameDrawn(wayland::nowInMilliseconds(), tokens->at(generation));
+                    compositor.outputDrawn(tokens->at(generation), aimedNs);
+                }));
+        binding.subscriptions.push_back(output->framePresented.connect(
+                [this, tokens, model, output](uint32_t, uint64_t generation) {
+                    if (!tokens->erase(generation))
+                        return;
+                    if (securelyPresented && output->lastPresentedFrameWasSecure())
+                        securelyPresented(model->displayId);
+                }));
+        binding.subscriptions.push_back(
+                output->frameDiscarded.connect([this, tokens](uint64_t generation) {
+                    if (const auto token = tokens->extract(generation))
+                        compositor.frameDiscarded(token.mapped());
+                }));
         output->setFullRepaintQuery([this, model] {
-            return scene.requiresFullRepaint(QRect(model->position, model->logicalSize()));
+            return scene.requiresFullRepaint(logicalBounds(*model));
         });
-        QObject::connect(&compositor, &compositor::Compositor::repaintNeeded, output,
-                         [output](bool decoration) {
-                             output->scheduleFrame(decoration
-                                                           ? backend::DrmOutput::Reason::Decoration
-                                                           : backend::DrmOutput::Reason::Surface);
-                         });
+        binding.repaint = compositor.repaintNeeded.connect([output](bool decoration) {
+            output->scheduleFrame(decoration ? backend::DrmOutput::Reason::Decoration
+                                             : backend::DrmOutput::Reason::Surface);
+        });
     }
 }
 
@@ -718,7 +723,7 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
     if (!displayManager.hardware())
         return {false,
                 false,
-                {DisplayErrorCode::Unavailable, QStringLiteral("No hardware snapshot"), {}},
+                {DisplayErrorCode::Unavailable, "No hardware snapshot", {}},
                 std::nullopt};
     const auto hardware = *displayManager.hardware();
     const uint64_t revision = displayManager.applied() ? displayManager.applied()->revision : 0;
@@ -726,7 +731,7 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
             DisplayConfigurationValidator::validateExtended(hardware, revision, configuration);
     if (!validated.succeeded)
         return {false, false, validated.error, std::nullopt};
-    QList<backend::DrmFallbackHead> heads;
+    std::vector<backend::DrmFallbackHead> heads;
     for (const auto &request : validated.normalized.displays) {
         const auto physical = std::find_if(hardware.displays.begin(), hardware.displays.end(),
                                            [&](const auto &item) {
@@ -734,12 +739,11 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
                                            });
         backend::DrmFallbackHead head;
         head.connectorName = physical->connectorName;
-        head.baseConnectorKey =
-                physical->devicePath + QLatin1Char(':') + physical->baseConnectorKey;
+        head.baseConnectorKey = physical->devicePath + ':' + physical->baseConnectorKey;
         head.internal =
                 !request.enabled || physical->connectionType != DisplayConnectionType::External;
         const auto append = [&](const DisplayMode &candidate, bool preferred) {
-            head.modes.append({candidate.stableKey(), candidate.pixelSize.width(),
+            head.modes.push_back({candidate.stableKey(), candidate.pixelSize.width(),
                                candidate.pixelSize.height(), candidate.refreshMilliHz,
                                candidate.pixelClockKHz, preferred});
         };
@@ -754,13 +758,13 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
                     append(candidate, false);
             }
         }
-        heads.append(head);
+        heads.push_back(head);
     }
     ConfigurationResult last;
     DisplayConfiguration selected;
     const uint64_t epoch = backend ? backend->topologyEpoch() : 0;
     int testRounds = 0;
-    QStringList diagnostics;
+    std::vector<std::string> diagnostics;
     auto plan = backend::DrmModeFallbackPlanner::choose(
             heads,
             [&](const auto &modes) {
@@ -776,14 +780,14 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
                     last = {false,
                             false,
                             {DisplayErrorCode::StaleConfiguration,
-                             QStringLiteral("Hardware invalidated during recovery testing"),
+                             "Hardware invalidated during recovery testing",
                              {}},
                             std::nullopt};
                     return backend::DrmFallbackTestResult {false, {}, last.error.message, false};
                 }
                 selected = validated.normalized;
                 selected.allowModeFallback = false;
-                for (int i = 0; i < modes.size(); ++i) {
+                for (size_t i = 0; i < modes.size(); ++i) {
                     auto &request = selected.displays[i];
                     for (const auto &physical : hardware.displays) {
                         if (physical.sessionId != request.display)
@@ -811,32 +815,30 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
                     bindFrames();
                     ++resources;
                     ++testRounds;
-                    qCInfo(cfCompositor)
+                    CF_INFO(cfCompositor)
                             << "Retrying native route/buffer allocation, round" << testRounds;
                     last = exact(selected, NativeDisplayDelegate::ConfigureMode::TestOnly);
                 }
-                QStringList keys;
-                for (int i = 0; i < modes.size(); ++i)
-                    keys.append(heads[i].connectorName + QLatin1Char('=') + modes[i].key);
-                diagnostics.append(QStringLiteral("round %1 [%2]: %3")
-                                           .arg(testRounds)
-                                           .arg(keys.join(QLatin1Char(',')),
-                                                last.succeeded ? QStringLiteral("passed")
-                                                               : last.error.message));
-                qCInfo(cfCompositor).noquote() << "Display recovery" << diagnostics.last();
+                std::vector<std::string> keys;
+                for (size_t i = 0; i < modes.size(); ++i)
+                    keys.push_back(heads[i].connectorName + '=' + modes[i].key);
+                diagnostics.push_back(
+                        std::format("round {} [{}]: {}", testRounds, base::strings::join(keys, ","),
+                                    last.succeeded ? std::string("passed") : last.error.message));
+                CF_INFO(cfCompositor) << "Display recovery" << diagnostics.back();
                 if (!current())
                     last = {false,
                             false,
                             {DisplayErrorCode::StaleConfiguration,
-                             QStringLiteral("Hardware invalidated during recovery testing"),
+                             "Hardware invalidated during recovery testing",
                              {}},
                             std::nullopt};
-                QStringList failedGroups;
+                std::vector<std::string> failedGroups;
                 for (const auto &id : last.error.affectedDisplays) {
                     for (const auto &physical : hardware.displays)
                         if (physical.sessionId == id)
-                            failedGroups.append(physical.devicePath + QLatin1Char(':')
-                                                + physical.baseConnectorKey);
+                            failedGroups.push_back(physical.devicePath + ':'
+                                                   + physical.baseConnectorKey);
                 }
                 return backend::DrmFallbackTestResult {
                         last.succeeded, failedGroups, last.error.message,
@@ -858,19 +860,19 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
         selected.primary = survivor;
         selected.placements.clear();
         selected.mirrorGroups.clear();
-        QStringList disabled;
+        std::vector<std::string> disabled;
         for (auto &request : selected.displays) {
             if (request.display != survivor && request.enabled)
-                disabled.append(request.display.value());
+                disabled.push_back(request.display.value());
             request.enabled = request.display == survivor;
         }
-        if (!disabled.isEmpty()) {
+        if (!disabled.empty()) {
             const auto checked =
                     DisplayConfigurationValidator::validateExtended(hardware, revision, selected);
             if (checked.succeeded) {
                 selected = checked.normalized;
                 ++testRounds;
-                qCWarning(cfCompositor) << "Testing single-output rescue on" << survivor.value();
+                CF_WARNING(cfCompositor) << "Testing single-output rescue on" << survivor.value();
                 last = exact(selected, NativeDisplayDelegate::ConfigureMode::TestOnly);
                 if (!displayManager.hardware()
                     || displayManager.hardware()->topologyGeneration != hardware.topologyGeneration
@@ -878,36 +880,35 @@ ConfigurationResult DisplayRuntime::configure(const DisplayConfiguration &config
                     last = {false,
                             false,
                             {DisplayErrorCode::StaleConfiguration,
-                             QStringLiteral("Hardware invalidated during single-output rescue"),
+                             "Hardware invalidated during single-output rescue",
                              {}},
                             std::nullopt};
                 if (last.succeeded)
                     plan = backend::DrmFallbackPlan {
-                            {}, disabled, QStringLiteral("Single-output rescue"), testRounds};
+                            {}, disabled, "Single-output rescue", testRounds};
             }
         }
     }
     if (!plan) {
         last.succeeded = false;
         last.error.message +=
-                QStringLiteral("; recovery exhausted after %1 candidate rounds").arg(testRounds);
+                std::format("; recovery exhausted after {} candidate rounds", testRounds);
         return last;
     }
     last.selected = selected;
-    last.degraded = !plan->downgradedConnectors.isEmpty();
+    last.degraded = !plan->downgradedConnectors.empty();
     last.error.code = DisplayErrorCode::None;
     last.error.affectedDisplays.clear();
-    for (int i = 0; i < selected.displays.size(); ++i)
+    for (size_t i = 0; i < selected.displays.size(); ++i)
         if (selected.displays[i].mode.stableKey()
                     != validated.normalized.displays[i].mode.stableKey()
             || selected.displays[i].enabled != validated.normalized.displays[i].enabled)
-            last.error.affectedDisplays.append(selected.displays[i].display);
+            last.error.affectedDisplays.push_back(selected.displays[i].display);
     if (last.degraded)
-        last.error.message = QStringLiteral("Recovery selected a degraded configuration for %1 "
-                                            "after %2 test rounds. %3")
-                                     .arg(plan->downgradedConnectors.join(QLatin1Char(',')))
-                                     .arg(testRounds)
-                                     .arg(diagnostics.join(QStringLiteral("; ")));
+        last.error.message = std::format(
+                "Recovery selected a degraded configuration for {} after {} test rounds. {}",
+                base::strings::join(plan->downgradedConnectors, ","), testRounds,
+                base::strings::join(diagnostics, "; "));
     return last;
 }
 
@@ -931,7 +932,7 @@ ConfigurationResult DisplayRuntime::configureExact(const DisplayConfiguration &c
                 auto selected = output->mode();
                 bool found = !request.enabled;
                 for (const auto &native : output->modes()) {
-                    if (QSize(native.hdisplay, native.vdisplay) == request.mode.pixelSize
+                    if (base::Size(native.hdisplay, native.vdisplay) == request.mode.pixelSize
                         && native.clock == request.mode.pixelClockKHz
                         && native.htotal == request.mode.horizontalTotal
                         && native.vtotal == request.mode.verticalTotal
@@ -946,7 +947,7 @@ ConfigurationResult DisplayRuntime::configureExact(const DisplayConfiguration &c
                             false,
                             false,
                             {cutefish::display::DisplayErrorCode::UnsupportedMode,
-                             QStringLiteral("The requested native mode is unavailable"),
+                             "The requested native mode is unavailable",
                              {id}},
                             std::nullopt};
                 const bool blanked =
@@ -963,17 +964,17 @@ ConfigurationResult DisplayRuntime::configureExact(const DisplayConfiguration &c
         }
         backend::DrmCommitStatus status = backend::DrmCommitStatus::Success;
         backend::DrmDeviceApi *failedDevice = nullptr;
-        QString diagnostic;
+        std::string diagnostic;
         if (changed
             && !cutefish::backend::DrmOutput::configure(
                     changes,
                     mode == cutefish::display::NativeDisplayDelegate::ConfigureMode::TestOnly,
                     &status, &diagnostic, &failedDevice)) {
-            QList<DisplayId> affected;
+            std::vector<DisplayId> affected;
             const auto outputs = backend->allOutputs();
-            for (int i = 0; i < outputs.size(); ++i)
+            for (size_t i = 0; i < outputs.size(); ++i)
                 if (outputs[i]->backend()->device() == failedDevice)
-                    affected.append(DisplayId(outputModels[i]->displayId));
+                    affected.push_back(DisplayId(outputModels[i]->displayId));
             if (status == backend::DrmCommitStatus::RollbackFailed)
                 requireNativeRecovery();
             return cutefish::display::ConfigurationResult {
@@ -996,15 +997,19 @@ ConfigurationResult DisplayRuntime::configureExact(const DisplayConfiguration &c
     return cutefish::display::ConfigurationResult {true, false, {}, std::nullopt};
 }
 
-ConfigurationResult DisplayRuntime::setPower(const QList<DisplayId> &displays,
+ConfigurationResult DisplayRuntime::setPower(const std::vector<DisplayId> &displays,
                                              NativeDisplayDelegate::PowerState state)
 {
     if (!displayManager.applied())
         return {false,
                 false,
-                {DisplayErrorCode::Unavailable, QStringLiteral("No applied display state"), {}},
+                {DisplayErrorCode::Unavailable, "No applied display state", {}},
                 std::nullopt};
     auto next = powerStates;
+    const auto nextState = [&next](const DisplayId &id) {
+        const auto found = next.find(id);
+        return found == next.end() ? NativeDisplayDelegate::PowerState::On : found->second;
+    };
     for (const auto &id : displays) {
         bool known = false;
         for (const auto &physical : displayManager.applied()->physicalDisplays)
@@ -1012,20 +1017,19 @@ ConfigurationResult DisplayRuntime::setPower(const QList<DisplayId> &displays,
         if (!known)
             return {false,
                     false,
-                    {DisplayErrorCode::UnknownOutput, QStringLiteral("Unknown power target"), {id}},
+                    {DisplayErrorCode::UnknownOutput, "Unknown power target", {id}},
                     std::nullopt};
     }
     for (const auto &physical : displayManager.applied()->physicalDisplays) {
-        if (displays.isEmpty() || displays.contains(physical.sessionId))
-            next.insert(physical.sessionId, state);
+        if (displays.empty() || std::ranges::find(displays, physical.sessionId) != displays.end())
+            next.insert_or_assign(physical.sessionId, state);
     }
     bool hasActiveOutput = false;
     bool allOff = true;
     for (const auto &logical : displayManager.applied()->logicalDisplays) {
         for (const auto &id : logical.destinations) {
             hasActiveOutput = true;
-            allOff &= next.value(id, NativeDisplayDelegate::PowerState::On)
-                    != NativeDisplayDelegate::PowerState::On;
+            allOff &= nextState(id) != NativeDisplayDelegate::PowerState::On;
         }
     }
     // Install the shield and secure KMS policy before powering off the last display.
@@ -1039,7 +1043,7 @@ ConfigurationResult DisplayRuntime::setPower(const QList<DisplayId> &displays,
             auto *output = backend->allOutputs()[index];
             bool active = false;
             for (const auto &logical : displayManager.applied()->logicalDisplays)
-                active |= logical.destinations.contains(id);
+                active |= logical.hasDestination(id);
             auto selected = output->mode();
             for (const auto &physical : displayManager.applied()->physicalDisplays) {
                 if (physical.sessionId != id || !physical.currentMode)
@@ -1047,7 +1051,7 @@ ConfigurationResult DisplayRuntime::setPower(const QList<DisplayId> &displays,
                 bool found = false;
                 for (const auto &native : output->modes()) {
                     const auto &mode = *physical.currentMode;
-                    if (QSize(native.hdisplay, native.vdisplay) == mode.pixelSize
+                    if (base::Size(native.hdisplay, native.vdisplay) == mode.pixelSize
                         && native.clock == mode.pixelClockKHz
                         && native.htotal == mode.horizontalTotal
                         && native.vtotal == mode.verticalTotal && native.flags == mode.flags) {
@@ -1060,18 +1064,17 @@ ConfigurationResult DisplayRuntime::setPower(const QList<DisplayId> &displays,
                     return {false,
                             false,
                             {DisplayErrorCode::UnsupportedMode,
-                             QStringLiteral("The applied native mode is unavailable"),
+                             "The applied native mode is unavailable",
                              {id}},
                             std::nullopt};
             }
-            const bool off = next.value(id, NativeDisplayDelegate::PowerState::On)
-                    != NativeDisplayDelegate::PowerState::On;
+            const bool off = nextState(id) != NativeDisplayDelegate::PowerState::On;
             // Virtual scanouts need a black framebuffer instead of a detached CRTC.
             const bool blanked = active && off && output->requiresSoftwareBlanking();
             changes.push_back({output, selected, active && (!off || blanked), blanked});
         }
         backend::DrmCommitStatus status;
-        QString diagnostic;
+        std::string diagnostic;
         if (!backend::DrmOutput::configure(changes, false, &status, &diagnostic)) {
             if (status == backend::DrmCommitStatus::RollbackFailed)
                 requireNativeRecovery();
@@ -1086,12 +1089,12 @@ ConfigurationResult DisplayRuntime::setPower(const QList<DisplayId> &displays,
         }
     }
     for (const auto &physical : displayManager.applied()->physicalDisplays) {
-        if (!displays.isEmpty() && !displays.contains(physical.sessionId))
+        if (!displays.empty() && std::ranges::find(displays, physical.sessionId) == displays.end())
             continue;
         if (state == NativeDisplayDelegate::PowerState::On)
-            wakeOnInput.remove(physical.sessionId);
+            wakeOnInput.erase(physical.sessionId);
         // Explicit per-display power-off also serves the closed-lid policy.
-        else if (displays.isEmpty() && !isPoweredOff(physical.sessionId))
+        else if (displays.empty() && !isPoweredOff(physical.sessionId))
             wakeOnInput.insert(physical.sessionId);
     }
     powerStates = std::move(next);
@@ -1117,9 +1120,7 @@ void DisplayRuntime::requireNativeRecovery()
 {
     displayManager.clearApplied(displayManager.hardware()->topologyGeneration);
     if (backend)
-        QTimer::singleShot(0, backend, [native = backend] {
-            emit native->outputsInvalidated();
-        });
+        backend->invalidateOutputsLater();
 }
 
 void DisplayRuntime::publish()
@@ -1153,11 +1154,11 @@ void DisplayRuntime::publish()
     // The topology coordinator's empty baseline, between a reprobe and the
     // configuration it reconciles: no display is disabled by it, so no global
     // is withdrawn for it.
-    const bool baseline = displayManager.applied()->logicalDisplays.isEmpty();
-    QList<cutefish::compositor::Compositor::OutputView> views;
-    QList<QRect> topology;
-    QSet<QString> logicalViews;
-    QRect desktop;
+    const bool baseline = displayManager.applied()->logicalDisplays.empty();
+    std::vector<cutefish::compositor::Compositor::OutputView> views;
+    std::vector<base::Rect> topology;
+    std::set<std::string> logicalViews;
+    base::Rect desktop;
     for (int index = 0; index < models.size(); ++index) {
         auto *model = models.at(index);
         const cutefish::display::DisplayId destination(models.at(index)->displayId);
@@ -1170,12 +1171,12 @@ void DisplayRuntime::publish()
         }
         const cutefish::display::LogicalDisplay *logical = nullptr;
         for (const auto &candidate : displayManager.applied()->logicalDisplays) {
-            if (candidate.destinations.contains(destination)) {
+            if (candidate.hasDestination(destination)) {
                 logical = &candidate;
                 break;
             }
         }
-        const bool published = logical && logical->destinations.first() == destination;
+        const bool published = logical && logical->destinations.front() == destination;
         if (backend && index < int(backend->allOutputs().size()))
             backend->allOutputs()[index]->setDirectScanoutEnabled(
                     published && logical->primary
@@ -1194,15 +1195,15 @@ void DisplayRuntime::publish()
         model->scale = logical->scale;
         model->transform = static_cast<cutefish::compositor::Output::Transform>(logical->rotation);
         const auto mapping = displayManager.mappingFor(destination);
-        Q_ASSERT(mapping);
+        assert(mapping);
         model->renderScale = mapping->renderScale;
         model->nativeContentRect = mapping->nativeContent;
-        if (!logicalViews.contains(logical->id.value())) {
-            views.append({logical->id.value(), logical->bounds, logical->scale, model->name});
-            topology.append(logical->bounds);
-            logicalViews.insert(logical->id.value());
+        const base::Rect bounds = logical->bounds;
+        if (logicalViews.insert(logical->id.value()).second) {
+            views.push_back({logical->id.value(), logical->bounds, logical->scale, model->name});
+            topology.push_back(bounds);
         }
-        desktop = desktop.united(logical->bounds);
+        desktop = desktop.united(bounds);
         if (published && index < int(outputGlobals.size()) && !outputGlobals[index])
             outputGlobals[index] = cutefish::wayland::createOutputGlobal(waylandDisplay, model);
         if (published && index < int(outputGlobals.size()))
@@ -1215,7 +1216,7 @@ void DisplayRuntime::publish()
         }
     }
     compositor.setOutputViews(std::move(views));
-    QRect primary;
+    base::Rect primary;
     for (const auto &logical : displayManager.applied()->logicalDisplays) {
         if (logical.primary)
             primary = logical.bounds;
@@ -1224,9 +1225,9 @@ void DisplayRuntime::publish()
     windowManager.setOutputBounds(desktop);
     scene.setSize(desktop.size());
     if (screenTransition)
-        screenTransition->setGeometry(QRect(QPoint(), desktop.size()));
+        screenTransition->setGeometry(base::Rect(desktop.size()));
     if (startupCover)
-        startupCover->setGeometry(QRect(QPoint(), desktop.size()));
+        startupCover->setGeometry(base::Rect(desktop.size()));
     if (cursorRouter && backend) {
         std::vector<cutefish::cursor::OutputCursorRouter::Target> targets;
         for (int index = 0; index < models.size() && index < int(backend->allOutputs().size());
@@ -1234,7 +1235,7 @@ void DisplayRuntime::publish()
             const cutefish::display::DisplayId destination(models.at(index)->displayId);
             const cutefish::display::LogicalDisplay *logical = nullptr;
             for (const auto &candidate : displayManager.applied()->logicalDisplays) {
-                if (candidate.destinations.contains(destination)) {
+                if (candidate.hasDestination(destination)) {
                     logical = &candidate;
                     break;
                 }

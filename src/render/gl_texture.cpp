@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <cstring>
 
-#include <QByteArrayList>
+#include "core/logging.h"
+#include "render/egl_context.h"
+#include "base/region.h"
 
 namespace cutefish::render {
 
@@ -17,7 +19,7 @@ namespace {
 constexpr size_t kScratchKeep = 1 << 20;
 } // namespace
 
-GlTexture::GlTexture(uint32_t name, const QSize &size, PixelFormat format, uint32_t target,
+GlTexture::GlTexture(uint32_t name, const base::Size &size, PixelFormat format, uint32_t target,
                      std::shared_ptr<EglContext> context)
     : m_context(std::move(context))
     , m_name(name)
@@ -34,7 +36,7 @@ GlTexture::~GlTexture()
     if (m_context) {
         ScopedEglCurrent current(*m_context);
         if (!current.valid())
-            qFatal("Cannot make EGL context current for texture retirement");
+            CF_FATAL(cfRender) << "Cannot make EGL context current for texture retirement";
         glDeleteTextures(1, &m_name);
     } else {
         glDeleteTextures(1, &m_name);
@@ -49,12 +51,12 @@ bool GlTextureUploader::unpacksRows()
         int major = 0;
         m_unpacksRows = (version && std::sscanf(version, "OpenGL ES %d", &major) == 1 && major >= 3)
                 || (extensions
-                    && QByteArray(extensions).split(' ').contains("GL_EXT_unpack_subimage"));
+                    && hasExtension(extensions, "GL_EXT_unpack_subimage"));
     }
     return *m_unpacksRows;
 }
 
-void GlTextureUploader::uploadPixels(const QSize &size, const QRect &rect, const uint8_t *pixels,
+void GlTextureUploader::uploadPixels(const base::Size &size, const base::Rect &rect, const uint8_t *pixels,
                                      int stride, bool create)
 {
     const int tight = rect.width() * 4;
@@ -90,7 +92,7 @@ void GlTextureUploader::uploadPixels(const QSize &size, const QRect &rect, const
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
 
-std::unique_ptr<Texture> GlTextureUploader::create(const QSize &size, const uint8_t *pixels,
+std::unique_ptr<Texture> GlTextureUploader::create(const base::Size &size, const uint8_t *pixels,
                                                    int stride, PixelFormat format)
 {
     if (size.isEmpty() || !pixels || stride < size.width() * 4)
@@ -99,7 +101,7 @@ std::unique_ptr<Texture> GlTextureUploader::create(const QSize &size, const uint
     GLuint name = 0;
     glGenTextures(1, &name);
     glBindTexture(GL_TEXTURE_2D, name);
-    uploadPixels(size, QRect(QPoint(), size), pixels, stride, /*create=*/true);
+    uploadPixels(size, base::Rect(base::Point(), size), pixels, stride, /*create=*/true);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -113,11 +115,11 @@ bool GlTextureUploader::update(Texture *texture, const uint8_t *pixels, int stri
                                PixelFormat format)
 {
     return update(texture, pixels, stride, format,
-                  texture ? QRect(QPoint(), texture->size()) : QRect());
+                  texture ? base::Rect(base::Point(), texture->size()) : base::Rect());
 }
 
 bool GlTextureUploader::update(Texture *texture, const uint8_t *pixels, int stride,
-                               PixelFormat format, const QRegion &damage)
+                               PixelFormat format, const base::Region &damage)
 {
     auto *glTexture = dynamic_cast<GlTexture *>(texture);
     if (!glTexture || !pixels || glTexture->format() != format)
@@ -127,14 +129,14 @@ bool GlTextureUploader::update(Texture *texture, const uint8_t *pixels, int stri
         return false;
     if (stride < glTexture->size().width() * 4)
         return false;
-    const QRegion changed = damage.intersected(QRect(QPoint(), glTexture->size()));
+    const base::Region changed = damage.intersected(base::Rect(base::Point(), glTexture->size()));
     if (changed.isEmpty())
         return true;
 
     glBindTexture(GL_TEXTURE_2D, glTexture->name());
     // A few rectangles go one by one; past that, calls cost more than bytes.
     if (changed.rectCount() <= 16) {
-        for (const QRect &rect : changed)
+        for (const base::Rect &rect : changed)
             uploadPixels(glTexture->size(), rect, pixels, stride, /*create=*/false);
     } else {
         uploadPixels(glTexture->size(), changed.boundingRect(), pixels, stride,

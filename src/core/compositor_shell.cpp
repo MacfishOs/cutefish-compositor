@@ -7,17 +7,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <utility>
-
-#include <QCoreApplication>
-#include <QDBusConnection>
-#include <QDBusMessage>
-#include <QDBusPendingCall>
-#include <QFileInfo>
-#include <QPointer>
-#include <QProcessEnvironment>
-#include <QTimer>
-#include <QUuid>
 
 #include "accelerators/accelerator_configuration.h"
 #include "accelerators/accelerator_controller.h"
@@ -31,12 +22,16 @@
 #include "backend/headless/headless_backend.h"
 #include "backend/input/libinput_backend.h"
 #include "backend/session/libseat_session.h"
+#include "base/dbus.h"
 #include "compositor/surface.h"
 #include "computer_control/computer_control_service.h"
 #include "computer_control/controller.h"
 #include "computer_control/permission_consent.h"
+#include "base/dbus.h"
+#include "base/uuid.h"
 #include "core/computer_control_environment.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "decoration/overview_window_frame.h"
 #include "decoration/window_visual_style.h"
 #include "display/callback_native_display_delegate.h"
@@ -89,6 +84,32 @@ namespace {
 // After the login transition and the shell's own startup.
 constexpr int kSwitcherPreloadDelayMs = 3000;
 
+std::vector<std::string> withExecutables(std::vector<std::string> builtIn,
+                                         const std::vector<std::string> &added)
+{
+    builtIn.insert(builtIn.end(), added.begin(), added.end());
+    return builtIn;
+}
+
+// Where this executable lives, for the tools installed next to it.
+std::string executableDirectory()
+{
+    std::error_code error;
+    return std::filesystem::read_symlink("/proc/self/exe", error).parent_path();
+}
+
+// Fire and forget, as the session's AppRuntime answers nothing of use here.
+void callAppRuntime(const std::string &method, int64_t pid)
+{
+    base::dbus::Connection *bus = base::dbus::Connection::session(mainLoop());
+    if (!bus)
+        return;
+    base::dbus::Message message = bus->newMethodCall("com.cutefish.AppRuntime", "/AppRuntime",
+                                                     "com.cutefish.AppRuntime", method);
+    message.append(uint32_t(pid));
+    bus->send(message);
+}
+
 // Whether `node` puts anything on the output, walked as the damage tracker does.
 bool drawsAnything(const scene::Node &node)
 {
@@ -123,7 +144,7 @@ void CompositorShell::SecureScanoutPolicy::onSessionStateChanged(session::Sessio
 
 void CompositorShell::IdleInhibitionPolicy::setInhibition(wayland::IdleInhibition *inhibition)
 {
-    m_inhibition = inhibition;
+    m_inhibition = inhibition ? inhibition->weakPtr() : nullptr;
     if (m_inhibition)
         m_inhibition->setIgnored(m_blocked);
 }
@@ -150,25 +171,25 @@ void CompositorShell::ComputerControlPolicy::onSessionStateChanged(session::Sess
 CompositorShell::CompositorShell(const CompositorOptions &options)
     : m_options(options)
     , m_surfaceContainer(
-              m_scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces"))))
+              m_scene.root()->addChild(std::make_unique<scene::Node>("surfaces")))
     , m_inputMethodContainer(m_scene.root()->addChild(
-              std::make_unique<scene::Node>(QStringLiteral("input-method"))))
+              std::make_unique<scene::Node>("input-method")))
     , m_switcherContainer(m_scene.root()->addChild(
-              std::make_unique<scene::Node>(QStringLiteral("switcher"))))
+              std::make_unique<scene::Node>("switcher")))
     , m_screenTransition(static_cast<scene::ScreenTransitionNode *>(
               m_scene.root()->addChild(std::make_unique<scene::ScreenTransitionNode>())))
     , m_secureContainer(
-              m_scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("secure"))))
+              m_scene.root()->addChild(std::make_unique<scene::Node>("secure")))
     , m_startupCover(static_cast<scene::ScreenTransitionNode *>(
               m_scene.root()->addChild(std::make_unique<scene::ScreenTransitionNode>())))
     , m_cursorContainer(
-              m_scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("cursor"))))
+              m_scene.root()->addChild(std::make_unique<scene::Node>("cursor")))
     , m_compositor(m_surfaceContainer)
     , m_seat(&m_compositor)
     , m_dragIconContainer(m_cursorContainer->addChild(
-              std::make_unique<scene::Node>(QStringLiteral("drag-icons"))))
+              std::make_unique<scene::Node>("drag-icons")))
     , m_clientCursorContainer(m_cursorContainer->addChild(
-              std::make_unique<scene::Node>(QStringLiteral("client-cursors"))))
+              std::make_unique<scene::Node>("client-cursors")))
     , m_cursor(m_seat, *m_cursorContainer)
     , m_cursorPreferences(m_cursor)
     , m_inputManager(&m_seat)
@@ -189,7 +210,7 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
     , m_authUi(&m_sessionController, m_seat.xkbTracker())
     , m_screenSaver(&m_sessionController)
     , m_sleepLock(&m_sessionController)
-    , m_compositorInstanceId(QUuid::createUuid().toString(QUuid::WithoutBraces))
+    , m_compositorInstanceId(base::Uuid::generate().toString())
 {
     m_compositor.setOutputScale(m_options.scale);
     m_compositor.setInputMethodContainer(m_inputMethodContainer);
@@ -199,8 +220,10 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
     m_windowManager.setFrameProvider(&m_decorationProvider);
     m_windowManager.setVisualStyle(m_decorationTheme.visualStyle());
     m_decorationTheme.addObserver(this);
-    QObject::connect(&m_compositor, &compositor::Compositor::frameStarted, &m_dockLayout,
-                     &wm::DockLayoutManager::advance);
+    m_compositorSubscriptions.push_back(
+            m_compositor.frameStarted.connect([this](double frameTimeMs) {
+                m_dockLayout.advance(frameTimeMs);
+            }));
     m_outputModel.scale = m_options.scale;
 
     // The overview's windows slide with a desk switch, its desk bar stays.
@@ -214,16 +237,16 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
             std::make_unique<scene::OverviewDeskBarNode>(m_overviewNode)));
     m_windowManager.setDeskOverlays(
             {m_overviewNode, m_deskSwitchNode, m_windowMoveNode, m_overviewBarNode});
-    const auto paintText = [this](const QString &text, int pixelSize, const render::Color &color,
+    const auto paintText = [this](const std::string &text, int pixelSize, const render::Color &color,
                                   double density, int maxWidth) {
         decoration::TextRenderer &renderer = m_decorationTheme.textRenderer();
         const decoration::Image image = renderer.renderText(
-                renderer.elideText(text, pixelSize, maxWidth), pixelSize, color, density);
+                renderer.elideText(text, pixelSize, maxWidth), pixelSize, color,
+                density);
         if (image.size().isEmpty())
-            return QImage();
-        return QImage(image.bits(), image.size().width(), image.size().height(), image.stride(),
-                      QImage::Format_RGBA8888_Premultiplied)
-                .copy();
+            return ui::Bitmap();
+        return ui::Bitmap::copyOf(image.bits(), image.size().width(), image.size().height(),
+                                  size_t(image.stride()), ui::Bitmap::Format::Rgba8888Premultiplied);
     };
     m_overviewNode->setTextPainter(paintText);
     m_overviewBarNode->setTextPainter(paintText);
@@ -232,8 +255,12 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
     desks->setSwitchNode(m_deskSwitchNode);
     desks->setWindowMoveNode(m_windowMoveNode);
     desks->setScreenshotter([this](const std::function<void(render::Renderer &)> &paint) {
-        return m_displayRuntime ? m_displayRuntime->captureOutputs(paint)
-                                : scene::DeskSwitchNode::Frames();
+        scene::DeskSwitchNode::Frames frames;
+        if (m_displayRuntime) {
+            for (auto &[name, texture] : m_displayRuntime->captureOutputs(paint))
+                frames.emplace(name, std::move(texture));
+        }
+        return frames;
     });
 }
 
@@ -250,15 +277,12 @@ void CompositorShell::initKeyboard()
             m_acceleratorFilter->setKeyRepeatSettings(settings);
     };
     applyRepeat();
-    QObject::connect(&m_keyboardSettings, &input::KeyboardSettings::repeatEnabledChanged, qApp,
-                     applyRepeat);
-    QObject::connect(&m_keyboardSettings, &input::KeyboardSettings::repeatDelayChanged, qApp,
-                     applyRepeat);
-    QObject::connect(&m_keyboardSettings, &input::KeyboardSettings::repeatIntervalChanged, qApp,
-                     applyRepeat);
+    m_inputSubscriptions.push_back(m_keyboardSettings.repeatEnabledChanged.connect(applyRepeat));
+    m_inputSubscriptions.push_back(m_keyboardSettings.repeatDelayChanged.connect(applyRepeat));
+    m_inputSubscriptions.push_back(m_keyboardSettings.repeatIntervalChanged.connect(applyRepeat));
 
-    m_keyboardSettings.setLayoutApplier([this](const QString &name) {
-        return m_seat.setKeyboardLayout(name.toStdString());
+    m_keyboardSettings.setLayoutApplier([this](const std::string &name) {
+        return m_seat.setKeyboardLayout(name);
     });
 
     // The greeter and development instances must not take over the user's
@@ -274,7 +298,7 @@ void CompositorShell::initComputerControl()
     if (m_options.login || m_options.noDrm)
         return;
 
-    const auto showsSystemDialogs = [this](qint64 pid) {
+    const auto showsSystemDialogs = [this](int64_t pid) {
         return m_security && m_security->showsSystemDialogs(pid);
     };
     m_computerControlConsent =
@@ -292,13 +316,15 @@ void CompositorShell::initComputerControl()
     m_computerControl = std::make_unique<computer_control::Controller>(
             &m_inputManager, computerControlEnvironment(std::move(hosts)));
     m_computerControlPolicy.setController(m_computerControl.get());
-    QObject::connect(&m_compositor, &compositor::Compositor::outputDrawn,
-                     m_computerControl.get(), &computer_control::Controller::drawn);
+    m_computerControlDrawn = m_compositor.outputDrawn.connect([this](uint64_t, uint64_t) {
+        if (m_computerControl)
+            m_computerControl->drawn();
+    });
 
     m_computerControlService =
             std::make_unique<computer_control::ComputerControlService>(m_computerControl.get());
     if (!m_computerControlService->registerService())
-        qCWarning(cfWayland) << "The computer control service is unavailable";
+        CF_WARNING(cfWayland) << "The computer control service is unavailable";
 }
 
 void CompositorShell::initAccelerators()
@@ -311,10 +337,7 @@ void CompositorShell::initAccelerators()
     m_windowCycle->setView(m_switcherView.get());
     // Once the session has settled; the greeter switches nothing.
     if (!m_options.login) {
-        QTimer::singleShot(kSwitcherPreloadDelayMs, m_switcherView.get(),
-                           [view = m_switcherView.get()] {
-                               view->preload();
-                           });
+        m_switcherView->preloadAfter(std::chrono::milliseconds(kSwitcherPreloadDelayMs));
     }
     m_acceleratorConfiguration = std::make_unique<accelerators::AcceleratorConfiguration>();
     m_acceleratorConfiguration->initialize();
@@ -373,43 +396,31 @@ void CompositorShell::initAccelerators()
                 m_hotCorners->setBinding(corner, m_hotCornerSettings->binding(corner));
         };
         const auto applyOutputs = [this] {
-            std::vector<QRect> outputs;
+            std::vector<base::Rect> outputs;
             for (const wm::WindowManager::OutputArea &area : m_windowManager.outputAreas())
                 outputs.push_back(area.bounds);
             m_hotCorners->setOutputs(outputs);
         };
         applyBindings();
         applyOutputs();
-        QObject *context = m_hotCornerSettings.get();
-        QObject::connect(m_hotCornerSettings.get(), &accelerators::HotCornerSettings::changed,
-                         context, applyBindings);
-        QObject::connect(&m_windowManager, &wm::WindowManager::outputsChanged, context,
-                         applyOutputs);
-        QObject::connect(&m_inputManager, &input::InputManager::pointerMoved, context,
-                         [this](const QPointF &position) {
-                             m_hotCorners->onPointerMoved(position,
-                                                          m_inputManager.isPointerButtonHeld()
-                                                                  || m_seat.drag()->busy());
-                         });
+        m_hotCornerBindings = m_hotCornerSettings->changed.connect(applyBindings);
+        m_windowManagerSignals.push_back(m_windowManager.outputsChanged.connect(applyOutputs));
+        m_hotCornerPointer = m_inputManager.pointerMoved.connect([this](base::PointF position) {
+            m_hotCorners->onPointerMoved(position,
+                                         m_inputManager.isPointerButtonHeld()
+                                                 || m_seat.drag()->busy());
+        });
     }
 
     // Quit's last resort for a process that closed its windows but keeps
     // running. AppRuntime checks the process is the user's before signalling.
-    m_windowManager.setTerminateProcess([](qint64 pid) {
-        QDBusMessage message = QDBusMessage::createMethodCall(
-                QStringLiteral("com.cutefish.AppRuntime"), QStringLiteral("/AppRuntime"),
-                QStringLiteral("com.cutefish.AppRuntime"), QStringLiteral("quitByPid"));
-        message << static_cast<uint>(pid);
-        QDBusConnection::sessionBus().asyncCall(message);
+    m_windowManager.setTerminateProcess([](int64_t pid) {
+        callAppRuntime("quitByPid", pid);
     });
     // Force quit ends the client itself; AppRuntime ends what else runs in the
     // application scope it started the process in.
-    m_windowManager.setForceQuitProcess([](qint64 pid) {
-        QDBusMessage message = QDBusMessage::createMethodCall(
-                QStringLiteral("com.cutefish.AppRuntime"), QStringLiteral("/AppRuntime"),
-                QStringLiteral("com.cutefish.AppRuntime"), QStringLiteral("forceQuitByPid"));
-        message << static_cast<uint>(pid);
-        QDBusConnection::sessionBus().asyncCall(message);
+    m_windowManager.setForceQuitProcess([](int64_t pid) {
+        callAppRuntime("forceQuitByPid", pid);
     });
 
     input::KeyTranslator *translator = m_seat.keyTranslator();
@@ -435,8 +446,8 @@ void CompositorShell::initAccelerators()
         m_acceleratorConfiguration->setConvention(convention);
     };
     applyConvention();
-    QObject::connect(&m_keyboardSettings, &input::KeyboardSettings::shortcutConventionChanged,
-                     qApp, applyConvention);
+    m_inputSubscriptions.push_back(
+            m_keyboardSettings.shortcutConventionChanged.connect(applyConvention));
 }
 
 void CompositorShell::onThemeChanged()
@@ -454,10 +465,9 @@ bool CompositorShell::init()
     m_sessionController.addObserver(&m_secureScanoutPolicy);
     m_sessionController.addObserver(&m_idleInhibitionPolicy);
     m_sessionController.addObserver(&m_computerControlPolicy);
-    QObject::connect(&m_authUi, &auth::AuthUi::cursorShapeChanged, qApp,
-                     [this](Qt::CursorShape shape) {
-                         m_seat.setCompositorCursorShape(input::cursorShapeFromQt(shape));
-                     });
+    m_authCursor = m_authUi.cursorShapeChanged.connect([this](input::CursorShape shape) {
+        m_seat.setCompositorCursorShape(shape);
+    });
     m_authUi.setPointerLocator([this] {
         return m_seat.cursorPosition();
     });
@@ -467,17 +477,17 @@ bool CompositorShell::init()
         m_sleepLock.start();
     m_seat.setSessionGate(&m_sessionController);
     m_windowManager.setSessionGate(&m_sessionController);
-    QObject::connect(
-            &m_displayManager, &display::DisplayManager::displaysChanged, &m_compositor, [this] {
-                if (m_displayManager.applied())
-                    m_sessionController.setDisplayConfiguration(*m_displayManager.applied());
-                else
-                    m_sessionController.setOutputs({});
-            });
+    m_secureOutputsUpdate = m_displayManager.displaysChanged.connect([this](uint64_t, uint64_t) {
+        if (m_displayManager.applied())
+            m_sessionController.setDisplayConfiguration(*m_displayManager.applied());
+        else
+            m_sessionController.setOutputs({});
+    });
 
     m_inputManager.setEventSink(&m_windowManager);
-    QObject::connect(&m_windowManager, &wm::WindowManager::pointerTargetsChanged,
-                     &m_inputManager, &input::InputManager::synthesizeMotion);
+    m_windowManagerSignals.push_back(m_windowManager.pointerTargetsChanged.connect([this] {
+        m_inputManager.synthesizeMotion();
+    }));
     if (m_options.demoEnabled()) {
         m_demoController = std::make_unique<wm::DemoController>(&m_windowManager, &m_inputManager);
         m_inputManager.setEventSink(m_demoController.get());
@@ -523,32 +533,30 @@ bool CompositorShell::init()
                     m_dockLayout.setSessionEnding(ending);
                 });
         if (!m_applicationsService->registerService())
-            qCWarning(cfWayland) << "The applications service is unavailable";
+            CF_WARNING(cfWayland) << "The applications service is unavailable";
 
         m_windowDebugService = std::make_unique<session::WindowDebugService>(&m_windowManager);
         if (m_options.noDrm)
             m_windowDebugService->setInput(&m_inputManager);
         m_windowDebugService->setOutputStats([this] {
-            QStringList lines;
+            std::vector<std::string> lines;
             if (m_backend) {
                 for (const auto &output : m_backend->allOutputs())
-                    lines << output->statsLine();
+                    lines.push_back(output->statsLine());
             }
             return lines;
         });
         if (!m_windowDebugService->registerService())
-            qCWarning(cfWayland) << "The window debug service is unavailable";
+            CF_WARNING(cfWayland) << "The window debug service is unavailable";
     }
 
     if (m_options.noDrm) {
         // Headless: give the window manager a nominal output so state changes
         // and placement still have somewhere to happen.
-        m_windowManager.setOutputBounds(
-                QRect(QPoint(0, 0), backend::HeadlessBackend::outputSize()));
+        m_windowManager.setOutputBounds(base::Rect(backend::HeadlessBackend::outputSize()));
         m_scene.setSize(backend::HeadlessBackend::outputSize());
         m_sessionController.setOutputs(
-                {{QStringLiteral("headless"),
-                  QRect(QPoint(0, 0), backend::HeadlessBackend::outputSize())}});
+                {{"headless", base::Rect(backend::HeadlessBackend::outputSize())}});
     }
 
     if (m_options.wmDemoScript)
@@ -566,21 +574,20 @@ bool CompositorShell::init()
         m_windowManager.clearAllExclusiveZones();
     });
 
-    if (!m_options.shellControlSocket.isEmpty()) {
+    if (!m_options.shellControlSocket.empty()) {
         m_shellControl = std::make_unique<wayland::ShellControlChannel>();
-        QObject::connect(m_shellControl.get(), &wayland::ShellControlChannel::connectionReceived,
-                         qApp, [this](int fd) {
-                             m_globals->privileged()->adoptShellConnection(fd);
-                         });
+        m_shellControl->connectionReceived = [this](int fd) {
+            m_globals->privileged()->adoptShellConnection(fd);
+        };
         if (!m_shellControl->listen(m_options.shellControlSocket))
-            qCWarning(cfWayland) << "Continuing without a trusted shell channel";
+            CF_WARNING(cfWayland) << "Continuing without a trusted shell channel";
     }
 
     m_sceneSync.setSingleShot(true);
-    m_sceneSync.setInterval(0);
-    QObject::connect(&m_sceneSync, &QTimer::timeout, qApp, [this] { syncSceneToClients(); });
-    QObject::connect(&m_compositor, &compositor::Compositor::repaintNeeded, qApp,
-                     [this] { scheduleSceneSync(); });
+    m_sceneSync.onTimeout = [this] { syncSceneToClients(); };
+    m_compositorSubscriptions.push_back(m_compositor.repaintNeeded.connect([this](bool) {
+        scheduleSceneSync();
+    }));
     m_scene.root()->setChangeCallback([this] { scheduleSceneSync(); });
 
     if (m_options.noDrm) {
@@ -595,10 +602,10 @@ bool CompositorShell::init()
             return false;
         // After initDrm(), which can wait long for the seat; the displays settle only after it.
         m_cursorRelease.setSingleShot(true);
-        m_cursorRelease.callOnTimeout([this] {
+        m_cursorRelease.onTimeout = [this] {
             releaseCursor();
-        });
-        m_cursorRelease.start(2000);
+        };
+        m_cursorRelease.start(std::chrono::seconds(2));
     }
 
     return initDisplay();
@@ -611,18 +618,16 @@ bool CompositorShell::initWayland()
         return false;
 
     m_security = std::make_unique<wayland::ExecutableSecurityDelegate>(
-            QStringList {QStringLiteral("/usr/bin/cutefish-services")} + m_options.clipboardClients,
-            QStringList {QCoreApplication::applicationDirPath() + "/cutefish-screenshot",
-                         QStringLiteral(CUTEFISH_PORTAL_BACKEND),
-                         QStringLiteral(CUTEFISH_SCREEN_RECORDER)}
-                    + m_options.captureClients,
+            withExecutables({"/usr/bin/cutefish-services"}, m_options.clipboardClients),
+            withExecutables({executableDirectory() + "/cutefish-screenshot",
+                             CUTEFISH_PORTAL_BACKEND, CUTEFISH_SCREEN_RECORDER},
+                            m_options.captureClients),
             // Permission prompts and authentication dialogs.
-            QStringList {QStringLiteral("/usr/bin/cutefish-services"),
-                         QStringLiteral("/usr/bin/cutefish-polkit-agent")},
+            std::vector<std::string> {"/usr/bin/cutefish-services",
+                                      "/usr/bin/cutefish-polkit-agent"},
             !m_options.noDrm,
-            QStringList {QStringLiteral("/usr/bin/cutefish-computer-use")}
-                    + m_options.computerControlClients);
-    m_windowManager.setSystemDialogPolicy([this](qint64 pid) {
+            withExecutables({"/usr/bin/cutefish-computer-use"}, m_options.computerControlClients));
+    m_windowManager.setSystemDialogPolicy([this](int64_t pid) {
         return m_security->showsSystemDialogs(pid);
     });
 
@@ -639,7 +644,7 @@ bool CompositorShell::initWayland()
     // The greeter and development instances must not take over the user's input
     // method.
     dependencies.launchInputMethod =
-            !m_options.inputMethodId.isEmpty() || (!m_options.noDrm && !m_options.login);
+            !m_options.inputMethodId.empty() || (!m_options.noDrm && !m_options.login);
     dependencies.inputMethodOverride = m_options.inputMethodId;
     // Constructing this installs the privileged registry filter, which has to be
     // in place before the socket exists.
@@ -658,7 +663,7 @@ bool CompositorShell::initWayland()
     // The greeter and development instances must not keep the user's session
     // awake. The counter goes before the service when the shell tears down.
     if (!m_options.noDrm && !m_options.login) {
-        const QPointer<wayland::IdleInhibition> inhibition = m_globals->idleInhibition();
+        const auto inhibition = m_globals->idleInhibition()->weakPtr();
         m_screenSaver.setInhibition(
                 [inhibition] {
                     if (inhibition)
@@ -679,19 +684,19 @@ bool CompositorShell::initWayland()
         imageCapture->failPending();
     });
     m_sessionTeardown.setWindowCycle(m_windowCycle.get());
-    QObject::connect(&m_compositor, &compositor::Compositor::outputDrawn, imageCapture,
-                     [imageCapture](uint64_t generation, uint64_t aimedNs) {
-                         imageCapture->drawn(generation, aimedNs);
-                     });
-    QObject::connect(&m_compositor, &compositor::Compositor::outputPresented, imageCapture,
-                     [imageCapture](uint64_t generation, uint64_t timeNs) {
-                         imageCapture->presented(generation, timeNs);
-                     });
-    QObject::connect(&m_compositor, &compositor::Compositor::outputDiscarded, imageCapture,
-                     [imageCapture](uint64_t generation) {
-                         imageCapture->discarded(generation);
-                     });
-    QObject::connect(&m_compositor, &compositor::Compositor::outputRendered, imageCapture,
+    m_compositorSubscriptions.push_back(m_compositor.outputDrawn.connect(
+            [imageCapture](uint64_t generation, uint64_t aimedNs) {
+                imageCapture->drawn(generation, aimedNs);
+            }));
+    m_compositorSubscriptions.push_back(m_compositor.outputPresented.connect(
+            [imageCapture](uint64_t generation, uint64_t timeNs) {
+                imageCapture->presented(generation, timeNs);
+            }));
+    m_compositorSubscriptions.push_back(m_compositor.outputDiscarded.connect(
+            [imageCapture](uint64_t generation) {
+                imageCapture->discarded(generation);
+            }));
+    m_compositorSubscriptions.push_back(m_compositor.outputRendered.connect(
                      [this, imageCapture](render::Renderer &renderer) {
                          wayland::ImageCaptureManager::Painters painters;
                          painters.root = m_scene.root();
@@ -710,7 +715,7 @@ bool CompositorShell::initWayland()
                                  painters.cursors();
                          };
                          painters.cursorBounds = [this] {
-                             return m_cursor.captureBounds().toAlignedRect();
+                             return m_cursor.captureBounds().toEnclosingRect();
                          };
                          painters.composited = [this] {
                              using Composited = wayland::ImageCaptureManager::Composited;
@@ -734,7 +739,7 @@ bool CompositorShell::initWayland()
                              return cursor ? Composited::WithCursor : Composited::WithoutCursor;
                          };
                          imageCapture->renderPending(renderer, painters);
-                     });
+                     }));
 
     return true;
 }
@@ -753,7 +758,7 @@ void CompositorShell::initXwayland()
     m_xwayland->started = [this] {
         m_globals->setInputMethodX11Display(m_xwayland->display(), m_xwayland->authority());
     };
-    m_xwayland->failure = [this](const QString &) {
+    m_xwayland->failure = [this](const std::string &) {
         m_globals->startInputMethod({}, {});
     };
     if (m_options.xwayland) {
@@ -780,21 +785,22 @@ void CompositorShell::initXwayland()
 #endif
 }
 
-QList<compositor::Output *> CompositorShell::outputModels() const
+std::vector<compositor::Output *> CompositorShell::outputModels() const
 {
-    QList<compositor::Output *> result;
+    std::vector<compositor::Output *> result;
     if (m_backend && m_backend->allOutputs().empty())
         return result;
-    result.append(const_cast<compositor::Output *>(&m_outputModel));
+    result.push_back(const_cast<compositor::Output *>(&m_outputModel));
     for (const auto &output : m_additionalOutputModels)
-        result.append(output.get());
+        result.push_back(output.get());
     return result;
 }
 
 void CompositorShell::publishDisplayState()
 {
     display::DisplayRuntime::initialize(m_displayManager, m_backend.get(), outputModels(),
-                                        m_compositorInstanceId, m_compositor, m_inputManager);
+                                        m_compositorInstanceId, m_compositor,
+                                        m_inputManager);
     if (!std::exchange(m_cursorProbed, true))
         probeCursor();
 }
@@ -807,9 +813,10 @@ void CompositorShell::probeCursor()
         return;
     const auto models = outputModels();
     const auto outputs = m_backend->allOutputs();
-    for (qsizetype index = 0; index < models.size() && index < outputs.size(); ++index) {
+    for (size_t index = 0; index < models.size() && index < outputs.size(); ++index) {
         if (const auto topLeft = outputs.at(index)->probedCursor()) {
-            m_probedCursor = ProbedCursor {display::DisplayId(models.at(index)->displayId), *topLeft};
+            m_probedCursor = ProbedCursor {display::DisplayId(models.at(index)->displayId),
+                                           *topLeft};
             return;
         }
     }
@@ -828,10 +835,11 @@ void CompositorShell::releaseCursor()
     if (mapping) {
         // In native pixels, with the hotspot the plane subtracts again: a logical
         // hotspot is rounded and would move the image a pixel or two.
-        const QPoint native = m_probedCursor->topLeft + m_cursor.deviceHotspot();
-        const QRect content = mapping->nativeContent;
-        const QPointF pointer(std::clamp(native.x(), content.left(), content.right()),
-                              std::clamp(native.y(), content.top(), content.bottom()));
+        const base::Point native = m_probedCursor->topLeft + m_cursor.deviceHotspot();
+        const base::Rect &content = mapping->nativeContent;
+        // The last pixel inside the content on each axis.
+        const base::PointF pointer(std::clamp(native.x(), content.x(), content.right() - 1),
+                                   std::clamp(native.y(), content.y(), content.bottom() - 1));
         if (const auto position = mapping->transform().nativeToLogical(pointer))
             m_inputManager.warpPointer(*position);
     }
@@ -842,13 +850,13 @@ void CompositorShell::applyScale()
 {
     m_updatingOutput = true;
     int x = 0;
-    QRect desktop;
+    base::Rect desktop;
     for (auto *model : outputModels()) {
         model->scale = m_compositor.outputScale();
         model->renderScale = model->scale.value();
-        model->nativeContentRect = QRect(QPoint(), model->pixelSize);
-        model->position = QPoint(x, 0);
-        desktop = desktop.united(QRect(model->position, model->logicalSize()));
+        model->nativeContentRect = base::Rect(base::Point(), model->pixelSize);
+        model->position = base::Point(x, 0);
+        desktop = desktop.united(base::Rect(model->position, model->logicalSize()));
         x += model->logicalSize().width();
     }
     m_scene.setSize(desktop.size());
@@ -900,10 +908,9 @@ bool CompositorShell::initHeadless()
 {
     m_headless =
             std::make_unique<backend::HeadlessBackend>(&m_compositor, m_options.headlessOutputs);
-    QObject::connect(m_headless.get(), &backend::HeadlessBackend::aboutToPresent, &m_compositor,
-                     [this] {
-                         m_sessionController.notifyFramePresented();
-                     });
+    m_backendSubscriptions.push_back(m_headless->aboutToPresent.connect([this] {
+        m_sessionController.notifyFramePresented();
+    }));
     m_additionalOutputModels = m_headless->createOutputs(&m_outputModel);
     m_headless->startClock();
 
@@ -939,7 +946,7 @@ bool CompositorShell::initDrm()
     m_dmabufGlobal = wayland::LinuxDmabufGlobal::create(m_server->display(), &m_compositor,
                                                         m_backend->renderer());
     if (!m_dmabufGlobal) {
-        qCWarning(cfWayland) << "linux-dmabuf is unavailable on this device";
+        CF_WARNING(cfWayland) << "linux-dmabuf is unavailable on this device";
     } else {
         // A fullscreen client is steered to a layout the primary plane takes,
         // so its buffers can be flipped instead of composited.
@@ -950,8 +957,8 @@ bool CompositorShell::initDrm()
             return {};
         });
         m_scanoutPolicy = std::make_unique<wayland::DmaBufScanoutPolicy>(feedback, &m_windowManager);
-        QObject::connect(&m_displayManager, &display::DisplayManager::displaysChanged,
-                         m_scanoutPolicy.get(), [feedback] { feedback->refreshScanoutTranches(); });
+        m_scanoutTranchesUpdate = m_displayManager.displaysChanged.connect(
+                [feedback](uint64_t, uint64_t) { feedback->refreshScanoutTranches(); });
     }
 
     // Explicit synchronization rides on the same device the buffers come from.
@@ -959,14 +966,14 @@ bool CompositorShell::initDrm()
     // correct.
     m_syncobjGlobal = wayland::createLinuxDrmSyncobjGlobal(m_server->display(), m_backend->fd());
     if (!m_syncobjGlobal)
-        qCWarning(cfWayland) << "Explicit synchronization is unavailable on this device";
+        CF_WARNING(cfWayland) << "Explicit synchronization is unavailable on this device";
 
     const auto populateOutputModel = [](auto *output, auto *model) {
         model->pixelSize = output->size();
         model->physicalSizeMm = output->physicalSizeMm();
         model->name = output->publicName();
         model->model = output->name();
-        model->refreshMilliHz = qRound(output->refreshRate() * 1000);
+        model->refreshMilliHz = base::roundToInt(output->refreshRate() * 1000);
     };
     if (auto *output = m_backend->primaryOutput())
         populateOutputModel(output, &m_outputModel);
@@ -989,10 +996,10 @@ bool CompositorShell::initDrm()
 
     m_inputBackend = backend::LibinputBackend::create(m_session.get(), &m_inputManager);
     if (!m_inputBackend)
-        qCWarning(cfInput) << "Continuing without input devices";
+        CF_WARNING(cfInput) << "Continuing without input devices";
 
-    QObject::connect(m_session.get(), &backend::Session::activeChanged, qApp, [this](bool active) {
-        qInfo() << "Compositor seat active" << active;
+    m_backendSubscriptions.push_back(m_session->activeChanged.connect([this](bool active) {
+        CF_INFO(base::LogCategory::defaultCategory()) << "Compositor seat active" << active;
         for (const auto &output : m_backend->allOutputs())
             output->reportStats();
         if (!active) {
@@ -1001,7 +1008,7 @@ bool CompositorShell::initDrm()
         }
         if (m_inputBackend)
             m_inputBackend->setActive(active);
-    });
+    }));
     return true;
 }
 
@@ -1027,11 +1034,10 @@ bool CompositorShell::initDisplay()
                             : std::function<bool()>());
     if (!m_options.login && m_displayRuntime->isStartupCoverShowing()) {
         m_dockLayout.setSessionStarting(true);
-        QObject::connect(&m_compositor, &compositor::Compositor::frameStarted, &m_dockLayout,
-                         [this] {
-                             if (m_displayRuntime && !m_displayRuntime->isStartupCoverShowing())
-                                 m_dockLayout.setSessionStarting(false);
-                         });
+        m_compositorSubscriptions.push_back(m_compositor.frameStarted.connect([this](double) {
+            if (m_displayRuntime && !m_displayRuntime->isStartupCoverShowing())
+                m_dockLayout.setSessionStarting(false);
+        }));
     }
 #ifdef CUTEFISH_ENABLE_XWAYLAND
     m_displayRuntime->maximumScaleChanged = [this](double scale) {
@@ -1043,11 +1049,11 @@ bool CompositorShell::initDisplay()
         m_sessionController.requestLock();
         m_secureScene.finishTransition();
     };
-    m_displayRuntime->capturePending = [this](const QString &output) {
+    m_displayRuntime->capturePending = [this](const std::string &output) {
         return m_globals->imageCapture()->hasPending(output);
     };
     // Complete transitions only after secure presentation.
-    m_displayRuntime->securelyPresented = [this](const QString &name) {
+    m_displayRuntime->securelyPresented = [this](const std::string &name) {
         m_sessionController.notifyOutputPresented(name);
     };
     m_displayRuntime->secureContentSettled = [this](double frameTime) {
@@ -1074,26 +1080,23 @@ bool CompositorShell::initDisplay()
                 &m_displayManager, m_displayDelegate.get(), m_displayController.get(), [this] {
                     return m_displayRuntime->reprobe();
                 });
-        QObject::connect(m_backend.get(), &backend::DrmBackend::outputsInvalidated,
-                         m_topologyCoordinator.get(), [this] {
-                             m_topologyCoordinator->invalidate();
-                         });
-        QObject::connect(m_topologyCoordinator.get(),
-                         &display::DisplayTopologyCoordinator::reconciled, qApp,
-                         [this](bool succeeded) {
-                             releaseCursor();
-                             if (!succeeded)
-                                 qCWarning(cfWayland)
-                                         << "Display topology recovery failed; waiting for "
-                                            "another hardware event or seat activation";
-                         });
+        m_backendSubscriptions.push_back(m_backend->outputsInvalidated.connect([this] {
+            m_topologyCoordinator->invalidate();
+        }));
+        m_backendSubscriptions.push_back(
+                m_topologyCoordinator->reconciled.connect([this](bool succeeded) {
+                    releaseCursor();
+                    if (!succeeded)
+                        CF_WARNING(cfWayland) << "Display topology recovery failed; waiting for "
+                                                "another hardware event or seat activation";
+                }));
         m_topologyCoordinator->start();
     } else {
         display::DisplayPreferences preferences;
         auto restored = preferences.restore(*m_displayManager.hardware(),
                                             m_displayManager.applied()->revision);
         if (restored)
-            m_displayController->apply(*restored, QStringLiteral("internal"), 0);
+            m_displayController->apply(*restored, "internal", 0);
     }
 
     m_nightLight = std::make_unique<display::NightLight>(
@@ -1101,7 +1104,8 @@ bool CompositorShell::initDisplay()
                 m_displayRuntime->setColorTransform(transform);
             });
     m_displayService = std::make_unique<display::ipc::DisplayConfigService>(
-            &m_displayManager, m_displayController.get(), QDBusConnection::sessionBus(), [this] {
+            &m_displayManager, m_displayController.get(),
+            base::dbus::Connection::session(core::mainLoop()), [this] {
                 return !m_session || m_session->isActive();
             });
     m_displayService->setNightLightHandler(
@@ -1109,7 +1113,7 @@ bool CompositorShell::initDisplay()
                 m_nightLight->animateTo(strength, duration);
             });
     if (!m_displayService->registerService(m_options.displayConfigService))
-        qCWarning(cfWayland) << "Native display configuration D-Bus service is unavailable";
+        CF_WARNING(cfWayland) << "Native display configuration D-Bus service is unavailable";
     return true;
 }
 
@@ -1119,9 +1123,9 @@ void CompositorShell::stop()
         m_server->stop();
 }
 
-QString CompositorShell::socketName() const
+std::string CompositorShell::socketName() const
 {
-    return m_server ? m_server->socketName() : QString();
+    return m_server ? m_server->socketName() : std::string();
 }
 
 bool CompositorShell::notifyReady()
@@ -1129,7 +1133,7 @@ bool CompositorShell::notifyReady()
     if (m_options.readyFd < 0)
         return true;
     if (write(m_options.readyFd, "R", 1) != 1) {
-        qCritical() << "Cannot notify session that the compositor is ready";
+        CF_CRITICAL(cfWayland) << "Cannot notify session that the compositor is ready";
         return false;
     }
     close(m_options.readyFd);
@@ -1159,6 +1163,7 @@ CompositorShell::~CompositorShell()
     // With input stopped, so what the agent holds is left to the seat's teardown.
     m_computerControlPolicy.setController(nullptr);
     m_computerControlService.reset();
+    m_computerControlDrawn.reset();
     m_computerControl.reset();
     if (m_windowCycle)
         m_windowCycle->setView(nullptr);
@@ -1172,6 +1177,7 @@ CompositorShell::~CompositorShell()
     // Clients go first: their surfaces own GL textures that need the context.
     if (m_syncobjGlobal)
         wl_global_destroy(m_syncobjGlobal);
+    m_scanoutTranchesUpdate.reset();
     m_scanoutPolicy.reset();
     m_dmabufGlobal.reset();
     m_xwayland.reset();

@@ -16,12 +16,12 @@
 #include <memory>
 #include <vector>
 
-#include <QCoreApplication>
-
+#include "base/geometry.h"
 #include "backend/drm/drm_cursor.h"
 #include "compositor/compositor.h"
 #include "compositor/shm_pool.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "cursor/cursor.h"
 #include "cursor/output_cursor_router.h"
 #include "fake_drm_device.h"
@@ -42,7 +42,7 @@ namespace {
 
 constexpr uint32_t kCrtcId = 7;
 
-std::vector<uint8_t> opaquePixels(const QSize &size)
+std::vector<uint8_t> opaquePixels(const cutefish::base::Size &size)
 {
     return std::vector<uint8_t>(static_cast<size_t>(size.width()) * size.height() * 4, 0xFF);
 }
@@ -68,7 +68,7 @@ public:
         visible = false;
     }
 
-    void moveCursor(const QPointF &position) override
+    void moveCursor(const base::PointF &position) override
     {
         ++moveCalls;
         lastPosition = position;
@@ -79,9 +79,9 @@ public:
     int setImageCalls = 0;
     int hideCalls = 0;
     int moveCalls = 0;
-    QSize lastSize;
-    QPoint lastHotspot;
-    QPointF lastPosition;
+    base::Size lastSize;
+    base::Point lastHotspot;
+    base::PointF lastPosition;
 };
 
 class DrmCursorTest : public ::testing::Test
@@ -96,7 +96,7 @@ protected:
 
 TEST_F(DrmCursorTest, ADeviceWithoutACursorPlaneHasNoHardwareCursor)
 {
-    m_device->maxCursor = QSize();
+    m_device->maxCursor = base::Size();
 
     EXPECT_EQ(backend::DrmCursor::create(m_device.get(), kCrtcId), nullptr);
 }
@@ -126,45 +126,45 @@ TEST_F(DrmCursorTest, AnImageIsUploadedWithItsHotspot)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(24, 24);
+    const cutefish::base::Size size(24, 24);
     const auto pixels = opaquePixels(size);
 
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint(5, 3)));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point(5, 3)));
 
     EXPECT_TRUE(cursor->isVisible());
     EXPECT_EQ(m_device->cursorCrtc, kCrtcId);
     EXPECT_NE(m_device->cursorHandle, 0u);
     // The plane is always the full buffer; the image sits in its top left.
     EXPECT_EQ(m_device->cursorSize, m_device->maxCursor);
-    EXPECT_EQ(m_device->cursorHotspot, QPoint(5, 3));
+    EXPECT_EQ(m_device->cursorHotspot, base::Point(5, 3));
 }
 
 TEST_F(DrmCursorTest, TheHotspotIsSubtractedFromThePointerPosition)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(24, 24);
+    const cutefish::base::Size size(24, 24);
     const auto pixels = opaquePixels(size);
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint(5, 3)));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point(5, 3)));
 
-    cursor->move(QPoint(100, 90));
+    cursor->move(base::Point(100, 90));
 
     // DRM positions the buffer, not the hotspot.
-    EXPECT_EQ(m_device->cursorPosition, QPoint(95, 87));
+    EXPECT_EQ(m_device->cursorPosition, base::Point(95, 87));
 }
 
 TEST_F(DrmCursorTest, AnImageChangeRepositionsForTheNewHotspot)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(24, 24);
+    const cutefish::base::Size size(24, 24);
     const auto pixels = opaquePixels(size);
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint(0, 0)));
-    cursor->move(QPoint(100, 90));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point(0, 0)));
+    cursor->move(base::Point(100, 90));
 
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint(12, 12)));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point(12, 12)));
 
-    EXPECT_EQ(m_device->cursorPosition, QPoint(88, 78));
+    EXPECT_EQ(m_device->cursorPosition, base::Point(88, 78));
 }
 
 TEST_F(DrmCursorTest, TheFirstImageStaysWhereThePreviousMastersCursorWas)
@@ -173,25 +173,25 @@ TEST_F(DrmCursorTest, TheFirstImageStaysWhereThePreviousMastersCursorWas)
     // outgoing compositor left its cursor, until the pointer places it.
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(24, 24);
+    const cutefish::base::Size size(24, 24);
     const auto pixels = opaquePixels(size);
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint(5, 3)));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point(5, 3)));
     EXPECT_EQ(m_device->moveCursorCalls, 0);
-    cursor->move(QPoint(100, 90));
+    cursor->move(base::Point(100, 90));
     EXPECT_EQ(m_device->moveCursorCalls, 1);
-    EXPECT_EQ(m_device->cursorPosition, QPoint(95, 87));
+    EXPECT_EQ(m_device->cursorPosition, base::Point(95, 87));
 }
 
 TEST_F(DrmCursorTest, ConsecutiveImagesAlternateBuffers)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(24, 24);
+    const cutefish::base::Size size(24, 24);
     const auto pixels = opaquePixels(size);
 
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint()));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point()));
     const uint32_t first = m_device->cursorHandle;
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint()));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point()));
 
     // Writing into the buffer the display is scanning out would tear the cursor.
     EXPECT_NE(m_device->cursorHandle, first);
@@ -203,7 +203,7 @@ TEST_F(DrmCursorTest, ATintScalesTheColoursThePlaneShows)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(1, 1);
+    const cutefish::base::Size size(1, 1);
     const uint8_t pixel[] = {200, 100, 40, 255};
     const auto shown = [&] {
         const auto *data =
@@ -211,7 +211,7 @@ TEST_F(DrmCursorTest, ATintScalesTheColoursThePlaneShows)
         return std::vector<uint8_t>(data, data + 4);
     };
 
-    ASSERT_TRUE(cursor->setImage(pixel, size, 4, QPoint()));
+    ASSERT_TRUE(cursor->setImage(pixel, size, 4, base::Point()));
     EXPECT_EQ(shown(), std::vector<uint8_t>({200, 100, 40, 255}));
 
     // Blue, green, red and alpha in memory.
@@ -223,7 +223,7 @@ TEST_F(DrmCursorTest, ATintScalesTheColoursThePlaneShows)
     cursor->hide();
     cursor->setTint({});
     EXPECT_EQ(m_device->setCursorCalls, 3);
-    ASSERT_TRUE(cursor->setImage(pixel, size, 4, QPoint()));
+    ASSERT_TRUE(cursor->setImage(pixel, size, 4, base::Point()));
     EXPECT_EQ(shown(), std::vector<uint8_t>({200, 100, 40, 255}));
 }
 
@@ -231,10 +231,10 @@ TEST_F(DrmCursorTest, AnImageLargerThanThePlaneIsRefused)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(128, 128);
+    const cutefish::base::Size size(128, 128);
     const auto pixels = opaquePixels(size);
 
-    EXPECT_FALSE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint()));
+    EXPECT_FALSE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point()));
     EXPECT_FALSE(cursor->isVisible());
 }
 
@@ -243,11 +243,11 @@ TEST_F(DrmCursorTest, ADriverRejectionIsNotRetried)
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
     m_device->setCursorFails = true;
-    const QSize size(24, 24);
+    const cutefish::base::Size size(24, 24);
     const auto pixels = opaquePixels(size);
 
-    EXPECT_FALSE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint()));
-    EXPECT_FALSE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint()));
+    EXPECT_FALSE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point()));
+    EXPECT_FALSE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point()));
     EXPECT_FALSE(cursor->isVisible());
 }
 
@@ -255,9 +255,9 @@ TEST_F(DrmCursorTest, HidingIsIdempotentAndClearsThePlane)
 {
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
-    const QSize size(24, 24);
+    const cutefish::base::Size size(24, 24);
     const auto pixels = opaquePixels(size);
-    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, QPoint()));
+    ASSERT_TRUE(cursor->setImage(pixels.data(), size, size.width() * 4, base::Point()));
     const int calls = m_device->setCursorCalls;
 
     cursor->hide();
@@ -273,7 +273,7 @@ TEST_F(DrmCursorTest, MovingAHiddenCursorCostsNothing)
     auto cursor = backend::DrmCursor::create(m_device.get(), kCrtcId);
     ASSERT_TRUE(cursor);
 
-    cursor->move(QPoint(10, 10));
+    cursor->move(base::Point(10, 10));
 
     EXPECT_EQ(m_device->moveCursorCalls, 0);
 }
@@ -307,10 +307,6 @@ struct CursorFixture {
 
 TEST(HardwareCursorFallback, AnAcceptingSinkTakesTheCursorOutOfTheScene)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     CursorFixture fixture;
     ASSERT_TRUE(fixture.node->isVisible());
 
@@ -319,21 +315,17 @@ TEST(HardwareCursorFallback, AnAcceptingSinkTakesTheCursorOutOfTheScene)
     EXPECT_TRUE(fixture.cursor->isHardware());
     EXPECT_FALSE(fixture.node->isVisible());
     EXPECT_EQ(fixture.sink.setImageCalls, 1);
-    EXPECT_EQ(fixture.sink.lastSize, QSize(24, 24));
+    EXPECT_EQ(fixture.sink.lastSize, base::Size(24, 24));
 }
 
 TEST(HardwareCursorFallback, AnUnchangedThemeDoesNotReprogramThePlane)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     CursorFixture fixture;
-    fixture.cursor->setTheme(QStringLiteral("default"), 24);
+    fixture.cursor->setTheme("default", 24);
     fixture.cursor->setSink(&fixture.sink);
     ASSERT_EQ(fixture.sink.setImageCalls, 1);
 
-    fixture.cursor->setTheme(QStringLiteral("default"), 24);
+    fixture.cursor->setTheme("default", 24);
 
     EXPECT_EQ(fixture.sink.setImageCalls, 1);
     EXPECT_EQ(fixture.sink.hideCalls, 0);
@@ -342,27 +334,20 @@ TEST(HardwareCursorFallback, AnUnchangedThemeDoesNotReprogramThePlane)
 
 TEST(HardwareCursorFallback, MotionOnAHardwareCursorDoesNotTouchTheScene)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     CursorFixture fixture;
     fixture.cursor->setSink(&fixture.sink);
-    const QPoint before = fixture.node->position();
+    const base::Point before = fixture.node->position();
 
     fixture.input.warpPointer({100, 90});
 
     // The whole point of the plane: no repaint, one ioctl.
-    EXPECT_EQ(fixture.sink.lastPosition, QPoint(100, 90));
+    EXPECT_TRUE(base::fuzzyCompare(fixture.sink.lastPosition, base::PointF(100, 90)))
+            << fixture.sink.lastPosition;
     EXPECT_EQ(fixture.node->position(), before);
 }
 
 TEST(HardwareCursorFallback, ARefusingSinkLeavesTheCursorComposited)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     CursorFixture fixture;
     fixture.sink.accept = false;
 
@@ -372,15 +357,11 @@ TEST(HardwareCursorFallback, ARefusingSinkLeavesTheCursorComposited)
     EXPECT_TRUE(fixture.node->isVisible());
     fixture.input.warpPointer({100, 90});
     EXPECT_EQ(fixture.node->position(),
-              QPoint(100, 90) - cursor::load(input::CursorShape::Default, 24).front().hotspot);
+              base::Point(100, 90) - cursor::load(input::CursorShape::Default, 24).front().hotspot);
 }
 
 TEST(HardwareCursorFallback, AHiddenCursorIsTakenOffThePlane)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     CursorFixture fixture;
     fixture.cursor->setSink(&fixture.sink);
     ASSERT_TRUE(fixture.sink.visible);
@@ -394,10 +375,6 @@ TEST(HardwareCursorFallback, AHiddenCursorIsTakenOffThePlane)
 
 TEST(HardwareCursorFallback, DroppingTheSinkPutsTheCursorBackInTheScene)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     CursorFixture fixture;
     fixture.cursor->setSink(&fixture.sink);
     ASSERT_TRUE(fixture.cursor->isHardware());
@@ -412,10 +389,6 @@ TEST(HardwareCursorFallback, DroppingTheSinkPutsTheCursorBackInTheScene)
 
 TEST(HardwareCursorFallback, AShapeChangeReuploadsTheImage)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     CursorFixture fixture;
     fixture.cursor->setSink(&fixture.sink);
     const int uploads = fixture.sink.setImageCalls;
@@ -443,16 +416,16 @@ TEST(CursorScaling, EveryScaleUsesThePlaneWithDeviceImageAndHotspot)
         EXPECT_TRUE(sink.visible) << scale;
         // The sink maps the position onto each output; the image and its
         // hotspot are already the output's pixels.
-        EXPECT_EQ(sink.lastPosition, QPointF(300, 200));
+        EXPECT_TRUE(base::fuzzyCompare(sink.lastPosition, base::PointF(300, 200))) << sink.lastPosition;
         const auto frames = cursor::load(seat.compositorCursorShape(), 24 * int(std::ceil(scale)));
         ASSERT_FALSE(frames.empty());
         const double ratio = scale / std::ceil(scale);
-        const QSize artwork = frames.front().image.size();
-        EXPECT_EQ(sink.lastSize, QSize(int(std::floor(artwork.width() * ratio)),
-                                       int(std::floor(artwork.height() * ratio))))
+        const base::Size artwork = frames.front().image.size();
+        EXPECT_EQ(sink.lastSize, base::Size(int(std::floor(artwork.width() * ratio)),
+                                            int(std::floor(artwork.height() * ratio))))
                 << scale;
-        EXPECT_EQ(sink.lastHotspot, QPoint(int(std::floor(frames.front().hotspot.x() * ratio)),
-                                           int(std::floor(frames.front().hotspot.y() * ratio))))
+        EXPECT_EQ(sink.lastHotspot, base::Point(int(std::floor(frames.front().hotspot.x() * ratio)),
+                                                int(std::floor(frames.front().hotspot.y() * ratio))))
                 << scale;
     }
     sink.accept = false;
@@ -481,10 +454,11 @@ TEST(CursorScaling, AScaledOutputGetsTheScaleOnce)
     cursor.setScale(2);
     seat.updateCursorPosition({400.5, 250});
     ASSERT_TRUE(cursor.isHardware());
-    EXPECT_EQ(output.lastPosition, QPointF(801, 500));
+    EXPECT_TRUE(base::fuzzyCompare(output.lastPosition, base::PointF(801, 500))) << output.lastPosition;
     // Past the middle of the desktop, where the doubled position left the output.
     seat.updateCursorPosition({1000, 700});
-    EXPECT_EQ(output.lastPosition, QPointF(2000, 1400));
+    EXPECT_TRUE(base::fuzzyCompare(output.lastPosition, base::PointF(2000, 1400)))
+            << output.lastPosition;
     cursor.setSink(nullptr);
 }
 
@@ -506,7 +480,7 @@ struct LockCursorFixture {
         manager.setOutputBounds({0, 0, 800, 600});
         seat.setSessionGate(&controller);
         manager.setSessionGate(&controller);
-        controller.setOutputs({{QStringLiteral("DP-1"), QRect(0, 0, 800, 600)}});
+        controller.setOutputs({{"DP-1", base::Rect(0, 0, 800, 600)}});
         seat.setCursorContainer(clients);
         cursor = std::make_unique<cursor::Cursor>(seat, *cursorRoot, 24);
         node = cursorRoot->children().back();
@@ -517,14 +491,15 @@ struct LockCursorFixture {
 
     ~LockCursorFixture() { seat.shutdown(); }
 
-    compositor::Surface *makeSurface(const QSize &size)
+    compositor::Surface *makeSurface(const base::Size &size)
     {
         owned.push_back(compositor.createSurface());
         compositor::Surface *surface = owned.back().get();
-        auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
+        auto buffer = pool->createBuffer(size, 0, size.width() * 4,
+                                         render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(size));
         surface->commit();
         return surface;
     }
@@ -556,15 +531,15 @@ public:
 
     bool canAcceptPointerEventsForSurface(compositor::Surface *) const override { return true; }
 
-    void onPointerEnter(compositor::Surface *, const QPointF &, input::ButtonFlags) override { }
+    void onPointerEnter(compositor::Surface *, const base::PointF &, input::ButtonFlags) override { }
 
     void onPointerLeave(compositor::Surface *) override { }
 
-    void onPointerMotion(input::Timestamp, const QPointF &) override { }
+    void onPointerMotion(input::Timestamp, const base::PointF &) override { }
 
     void onPointerButton(input::Timestamp, input::ButtonFlags, bool) override { }
 
-    void onPointerScroll(input::Timestamp, const QPointF &, bool) override { }
+    void onPointerScroll(input::Timestamp, const base::PointF &, bool) override { }
 
     void onFingerScrollStop(input::Timestamp) override { }
 
@@ -575,21 +550,17 @@ public:
 
 TEST(SessionLockCursor, LockingTakesTheClientCursorSurfaceOutOfTheScene)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     LockCursorFixture fixture;
     PermissivePointerDelegate delegate;
     input::Pointer pointer(&delegate, &fixture.seat);
 
     compositor::Surface *window = fixture.makeSurface({200, 150});
     window->setPosition({100, 100});
-    fixture.seat.onPointerMotion(input::Timestamp(std::chrono::milliseconds(1)), QPointF(150, 150));
+    fixture.seat.onPointerMotion(input::Timestamp(std::chrono::milliseconds(1)), base::PointF(150, 150));
     ASSERT_EQ(window, pointer.focusedSurface());
 
     compositor::Surface *clientCursor = fixture.makeSurface({16, 16});
-    pointer.setCursor(clientCursor, QPoint(2, 2));
+    pointer.setCursor(clientCursor, base::Point(2, 2));
     ASSERT_EQ(fixture.clients, clientCursor->node()->parent());
     ASSERT_TRUE(fixture.seat.hasClientCursorRequest());
 
@@ -607,10 +578,6 @@ TEST(SessionLockCursor, LockingTakesTheClientCursorSurfaceOutOfTheScene)
 
 TEST(SessionLockCursor, LockingReprogramsTheHardwareCursorPlane)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     LockCursorFixture fixture;
     PermissivePointerDelegate delegate;
     input::Pointer pointer(&delegate, &fixture.seat);
@@ -619,12 +586,12 @@ TEST(SessionLockCursor, LockingReprogramsTheHardwareCursorPlane)
 
     compositor::Surface *window = fixture.makeSurface({200, 150});
     window->setPosition({100, 100});
-    fixture.seat.onPointerMotion(input::Timestamp(std::chrono::milliseconds(1)), QPointF(150, 150));
+    fixture.seat.onPointerMotion(input::Timestamp(std::chrono::milliseconds(1)), base::PointF(150, 150));
     ASSERT_EQ(window, pointer.focusedSurface());
     // A client cursor composites through the seat's container, so the plane
     // gives the cursor back and the session's image is what is on screen.
     compositor::Surface *clientCursor = fixture.makeSurface({16, 16});
-    pointer.setCursor(clientCursor, QPoint(2, 2));
+    pointer.setCursor(clientCursor, base::Point(2, 2));
     const int uploadsBefore = fixture.sink.setImageCalls;
 
     ASSERT_TRUE(fixture.controller.requestLock());
@@ -638,10 +605,6 @@ TEST(SessionLockCursor, LockingReprogramsTheHardwareCursorPlane)
 
 TEST(SessionLockCursor, WakingWithARefusingPlaneStillLeavesNoSessionCursor)
 {
-    int argc = 1;
-    char name[] = "hardware-cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     LockCursorFixture fixture;
     fixture.cursor->setSink(&fixture.sink);
     ASSERT_TRUE(fixture.cursor->isHardware());

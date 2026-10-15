@@ -14,9 +14,10 @@
 #include <set>
 #include <vector>
 
-#include <QObject>
-#include <QPoint>
 
+#include "base/geometry.h"
+
+#include "base/signal.h"
 #include "compositor/surface_observer.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/window_observer.h"
@@ -43,15 +44,13 @@ constexpr uint32_t kCutefishWindowManagementVersion = 1;
 //
 // Only normal toplevel windows are announced. The shell's own surfaces
 // are private shell windows and must never appear in its own task list.
-class WaylandCutefishWindowManagement : public QObject, public wm::WindowObserver,
+class WaylandCutefishWindowManagement : public wm::WindowObserver,
                                         public compositor::SurfaceObserver,
                                         public wm::DesksObserver
 {
-    Q_OBJECT
-
 public:
     WaylandCutefishWindowManagement(wm::WindowManager* windowManager,
-                                    PrivilegedClients* privileged, QObject* parent = nullptr);
+                                    PrivilegedClients* privileged);
     ~WaylandCutefishWindowManagement() override;
 
     wm::WindowManager* windowManager() const { return m_windowManager; }
@@ -74,7 +73,7 @@ public:
     void removeManagerResource(wl_resource* manager);
 
     // Answers pick: what the capture interface points at.
-    void pick(wl_resource* manager, uint32_t serial, const QPoint& position);
+    void pick(wl_resource* manager, uint32_t serial, const base::Point& position);
 
     void onSurfaceWindowHintsChanged(compositor::Surface* surface) override;
     void onSurfaceMenuChanged(compositor::Surface* surface) override;
@@ -84,7 +83,7 @@ public:
 
     void onWindowTitleChanged(wm::Window* window) override;
     void onWindowApplicationIdChanged(wm::Window* window) override;
-    void onWindowBoundsChanged(wm::Window* window, const QRect& oldBounds) override;
+    void onWindowBoundsChanged(wm::Window* window, const base::Rect& oldBounds) override;
     void onWindowStateTypeChanged(wm::Window* window, wm::WindowStateType oldType) override;
     void onWindowActivationChanged(wm::Window* window, bool active) override;
     void onWindowTransientParentChanged(wm::Window* window, wm::Window* oldParent) override;
@@ -123,11 +122,12 @@ private:
     CaptureSourceExporter m_captureSourceExporter;
     std::vector<wl_resource*> m_managers;
     std::set<wm::Window*> m_observedWindows;
-    std::vector<quint64> m_applicationHistory;
-    quint64 m_activeWindowId = 0;
+    std::vector<uint64_t> m_applicationHistory;
+    uint64_t m_activeWindowId = 0;
     // Window -> its per-manager resources. The window pointer is only ever a
     // key: it is erased before the window is destroyed.
     std::map<wm::Window*, std::vector<wl_resource*>> m_windowResources;
+    std::vector<base::Subscription> m_windowManagerSignals;
 };
 
 // `management` must outlive the global.

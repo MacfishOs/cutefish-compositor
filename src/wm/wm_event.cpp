@@ -39,7 +39,7 @@ bool WMEvent::isBoundsEvent() const
     return m_type == WMEventType::SetBounds;
 }
 
-SetBoundsWMEvent::SetBoundsWMEvent(const QRect &bounds)
+SetBoundsWMEvent::SetBoundsWMEvent(const base::Rect &bounds)
     : WMEvent(WMEventType::SetBounds)
     , m_requestedBounds(bounds)
 {

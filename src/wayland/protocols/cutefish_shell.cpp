@@ -10,9 +10,7 @@
 #include <memory>
 #include <optional>
 
-#include <QObject>
-#include <QPointer>
-
+#include "base/strings.h"
 #include "compositor/surface.h"
 #include "compositor/surface_observer.h"
 #include "core/logging.h"
@@ -114,7 +112,7 @@ public:
         apply();
     }
 
-    void setPosition(const QPoint& position)
+    void setPosition(const base::Point& position)
     {
         m_metadata.position = position;
         m_metadata.hasPosition = true;
@@ -138,7 +136,7 @@ public:
         m_manager->setExclusiveZone(this, edge, thickness, m_metadata.outputName);
     }
 
-    bool setOutput(const QString& name)
+    bool setOutput(const std::string& name)
     {
         auto* displays = m_manager->displayManager();
         if (!displays || !displays->applied())
@@ -156,7 +154,7 @@ public:
 
     void clearExclusiveZone() { m_manager->clearExclusiveZone(this); }
 
-    void setParent(quint64 parentWindow)
+    void setParent(uint64_t parentWindow)
     {
         m_metadata.parentWindow = parentWindow;
         apply();
@@ -216,7 +214,7 @@ void shellSurfaceSetRole(wl_client*, wl_resource* resource, uint32_t role)
 
 void shellSurfaceSetPosition(wl_client*, wl_resource* resource, int32_t x, int32_t y)
 {
-    getUserDataAs<CutefishShellSurface>(resource)->setPosition(QPoint(x, y));
+    getUserDataAs<CutefishShellSurface>(resource)->setPosition(base::Point(x, y));
 }
 
 void shellSurfaceSetPanelBehavior(wl_client*, wl_resource* resource, uint32_t behavior)
@@ -279,7 +277,8 @@ void shellSurfaceActivate(wl_client*, wl_resource* resource)
 
 void shellSurfaceSetOutput(wl_client*, wl_resource* resource, const char* name)
 {
-    if (!getUserDataAs<CutefishShellSurface>(resource)->setOutput(QString::fromUtf8(name))) {
+    auto* surface = getUserDataAs<CutefishShellSurface>(resource);
+    if (!surface->setOutput(base::strings::sanitizedUtf8(name))) {
         wl_resource_post_error(resource, CUTEFISH_SHELL_SURFACE_V1_ERROR_INVALID_OUTPUT,
                                "unknown logical output %s", name);
     }
@@ -288,7 +287,7 @@ void shellSurfaceSetOutput(wl_client*, wl_resource* resource, const char* name)
 void shellSurfaceSetParent(wl_client*, wl_resource* resource, uint32_t idHigh, uint32_t idLow)
 {
     getUserDataAs<CutefishShellSurface>(resource)->setParent(
-            (static_cast<quint64>(idHigh) << 32) | idLow);
+            (static_cast<uint64_t>(idHigh) << 32) | idLow);
 }
 
 const struct cutefish_shell_surface_v1_interface kShellSurfaceImplementation = {
@@ -306,20 +305,21 @@ const struct cutefish_shell_surface_v1_interface kShellSurfaceImplementation = {
 
 // The user data of a cutefish_shell_drag_v1. It follows one drag of its own
 // client: the one in progress when it is created, or else the next one.
-class CutefishShellDrag : public QObject
+class CutefishShellDrag
 {
 public:
     CutefishShellDrag(input::DragController* drag, wl_resource* resource)
-        : m_drag(drag)
+        : m_drag(drag->weakPtr())
         , m_resource(resource)
     {
-        m_startedConnection = connect(m_drag, &input::DragController::started, this,
-                                      &CutefishShellDrag::follow);
+        m_startedConnection = drag->started.connect([this] {
+            follow();
+        });
         if (m_drag->active())
             follow();
     }
 
-    ~CutefishShellDrag() override
+    ~CutefishShellDrag()
     {
         if (m_holdsReturn && m_drag)
             m_drag->releaseReturn();
@@ -345,7 +345,7 @@ public:
             m_drag->setReturnsHome(returns);
     }
 
-    void setHome(const QPointF& home)
+    void setHome(const base::PointF& home)
     {
         m_home = home;
         if (m_following && m_drag)
@@ -364,31 +364,31 @@ private:
         if (m_following || !m_drag || !m_drag->active() || m_drag->isExternal() || !ownsDrag())
             return;
         m_following = true;
-        disconnect(m_startedConnection);
+        m_startedConnection.reset();
 
-        connect(m_drag, &input::DragController::locationChanged, this,
-                &CutefishShellDrag::sendMotion);
-        connect(m_drag, &input::DragController::released, this, [this] {
+        m_dragConnections.push_back(m_drag->locationChanged.connect(
+                [this](const base::PointF& location) { sendMotion(location); }));
+        m_dragConnections.push_back(m_drag->released.connect([this] {
             m_released = true;
-            const QPointF location = m_drag->location();
+            const base::PointF location = m_drag->location();
             cutefish_shell_drag_v1_send_dropped(m_resource, wl_fixed_from_double(location.x()),
                                                 wl_fixed_from_double(location.y()));
-        });
-        connect(m_drag, &input::DragController::ended, this, [this] {
+        }));
+        m_dragConnections.push_back(m_drag->ended.connect([this] {
             const bool returning = m_drag->isReturning();
-            disconnect(m_drag, nullptr, this, nullptr);
+            m_dragConnections.clear();
             // A later drag is not this one: settings no longer reach it.
             m_following = false;
             if (!m_released)
                 cutefish_shell_drag_v1_send_cancelled(m_resource);
             m_holdsReturn = returning;
             if (returning) {
-                connect(m_drag, &input::DragController::returned, this, [this] {
-                    disconnect(m_drag, nullptr, this, nullptr);
+                m_dragConnections.push_back(m_drag->returned.connect([this] {
+                    m_dragConnections.clear();
                     cutefish_shell_drag_v1_send_returned(m_resource);
-                });
+                }));
             }
-        });
+        }));
 
         m_drag->setPlainIdleCursor(true);
         m_drag->setReturnsHome(m_returnsHome);
@@ -399,18 +399,19 @@ private:
         sendMotion(m_drag->location());
     }
 
-    void sendMotion(const QPointF& location)
+    void sendMotion(const base::PointF& location)
     {
         cutefish_shell_drag_v1_send_motion(m_resource, wl_fixed_from_double(location.x()),
                                            wl_fixed_from_double(location.y()));
     }
 
-    QPointer<input::DragController> m_drag;
+    base::WeakPtr<input::DragController> m_drag;
     wl_resource* m_resource = nullptr;
-    QMetaObject::Connection m_startedConnection;
+    base::Subscription m_startedConnection;
+    std::vector<base::Subscription> m_dragConnections;
     std::optional<float> m_iconOpacity;
     bool m_returnsHome = false;
-    std::optional<QPointF> m_home;
+    std::optional<base::PointF> m_home;
     // The icon of the drag followed is coming back, or waits at home for
     // this object to go.
     bool m_holdsReturn = false;
@@ -437,7 +438,7 @@ void dragSetReturnsHome(wl_client*, wl_resource* resource, uint32_t returns)
 void dragSetHome(wl_client*, wl_resource* resource, wl_fixed_t x, wl_fixed_t y)
 {
     getUserDataAs<CutefishShellDrag>(resource)->setHome(
-            QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y)));
+            base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y)));
 }
 
 const struct cutefish_shell_drag_v1_interface kDragImplementation = {

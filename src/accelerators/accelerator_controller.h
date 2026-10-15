@@ -19,15 +19,13 @@
 #include <set>
 #include <vector>
 
-#include <QObject>
-#include <QTimer>
-
 #include "accelerators/accelerator.h"
 #include "accelerators/accelerator_actions.h"
 #include "accelerators/accelerator_commands.h"
 #include "accelerators/accelerator_launcher_state_machine.h"
 #include "accelerators/accelerator_manager.h"
 #include "accelerators/accelerator_history.h"
+#include "base/signal.h"
 
 namespace cutefish::accelerators {
 
@@ -35,14 +33,13 @@ class AcceleratorConfiguration;
 
 // Registers the configured accelerators with an AcceleratorManager and is the
 // target that performs them.
-class AcceleratorController : public QObject, public AcceleratorTarget
+class AcceleratorController : public AcceleratorTarget
 {
-    Q_OBJECT
 
 public:
     // `anyKeysPressed` feeds the launcher state machine.
     AcceleratorController(AcceleratorConfiguration *configuration, const CommandContext &context,
-                          std::function<bool()> anyKeysPressed, QObject *parent = nullptr);
+                          std::function<bool()> anyKeysPressed);
     ~AcceleratorController() override;
 
     // A list of possible ways in which an accelerator should be restricted
@@ -128,6 +125,7 @@ private:
     std::set<AcceleratorAction> m_repeatableActions;
 
     bool m_preventProcessing = false;
+    base::Subscription m_configurationUpdates;
 };
 
 } // namespace cutefish::accelerators

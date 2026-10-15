@@ -13,6 +13,8 @@
 #include <utility>
 
 #include "render/gl_program.h"
+#include <cassert>
+#include "base/geometry.h"
 
 namespace cutefish::render {
 namespace {
@@ -28,7 +30,7 @@ class ScopedGlState
 {
 public:
     explicit ScopedGlState(const EglContext &context)
-        : es3(context.glVersion().startsWith("OpenGL ES 3"))
+        : es3(context.glVersion().starts_with("OpenGL ES 3"))
     {
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
         if (es3) {
@@ -120,10 +122,10 @@ private:
     PresentationSubmission *m_submission;
     bool m_capturing;
     uint64_t m_backdropScope;
-    std::optional<QRect> m_paintClip;
+    std::optional<base::Rect> m_paintClip;
 };
 
-std::unique_ptr<GlTexture> allocate(const std::shared_ptr<EglContext> &context, const QSize &size,
+std::unique_ptr<GlTexture> allocate(const std::shared_ptr<EglContext> &context, const base::Size &size,
                                     GLint filter)
 {
     GLuint name = 0;
@@ -141,7 +143,7 @@ std::unique_ptr<GlTexture> allocate(const std::shared_ptr<EglContext> &context, 
 class GlPendingImage : public PendingImage
 {
 public:
-    GlPendingImage(std::shared_ptr<EglContext> context, GLuint buffer, const QSize &size)
+    GlPendingImage(std::shared_ptr<EglContext> context, GLuint buffer, const base::Size &size)
         : m_context(std::move(context))
         , m_buffer(buffer)
         , m_size(size)
@@ -155,7 +157,7 @@ public:
             glDeleteBuffers(1, &m_buffer);
     }
 
-    QImage take() override
+    ui::Bitmap take() override
     {
         // Output sessions of one output share the read.
         if (m_taken)
@@ -167,50 +169,49 @@ public:
         GLint previous = 0;
         glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previous);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, m_buffer);
-        const qsizetype bytes = qsizetype(m_size.width()) * m_size.height() * 4;
-        QImage image(m_size, QImage::Format_RGBA8888_Premultiplied);
+        const size_t bytes = size_t(m_size.width()) * m_size.height() * 4;
+        ui::Bitmap image(m_size, ui::Bitmap::Format::Rgba8888Premultiplied);
         const void *pixels = image.isNull()
                 ? nullptr
                 : glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT);
         if (pixels) {
-            std::memcpy(image.bits(), pixels, size_t(bytes));
+            std::memcpy(image.bits(), pixels, bytes);
             glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         }
         glBindBuffer(GL_PIXEL_PACK_BUFFER, previous);
         if (pixels)
-            m_image = image.mirrored(false, true)
-                              .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            m_image = image.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
         return m_image;
     }
 
 private:
     std::shared_ptr<EglContext> m_context;
     GLuint m_buffer;
-    QSize m_size;
+    base::Size m_size;
     bool m_taken = false;
-    QImage m_image;
+    ui::Bitmap m_image;
 };
 
 } // namespace
 
-QRect BackdropSource::framebufferRect(const QRect &rect) const
+base::Rect BackdropSource::framebufferRect(const base::Rect &rect) const
 {
-    const QSize layout = oriented();
-    const QRect r = rect.translated(-offset.toPoint());
-    QRect turned = r;
+    const base::Size layout = oriented();
+    const base::Rect r = rect.translated(-offset.toPoint());
+    base::Rect turned = r;
     switch (transform) {
     case 1:
-        turned = QRect(r.y(), layout.width() - r.x() - r.width(), r.height(), r.width());
+        turned = base::Rect(r.y(), layout.width() - r.x() - r.width(), r.height(), r.width());
         break;
     case 2:
-        turned = QRect(layout.width() - r.x() - r.width(), layout.height() - r.y() - r.height(),
+        turned = base::Rect(layout.width() - r.x() - r.width(), layout.height() - r.y() - r.height(),
                        r.width(), r.height());
         break;
     case 3:
-        turned = QRect(layout.height() - r.y() - r.height(), r.x(), r.height(), r.width());
+        turned = base::Rect(layout.height() - r.y() - r.height(), r.x(), r.height(), r.width());
         break;
     }
-    return QRect(turned.x(), size.height() - turned.y() - turned.height(), turned.width(),
+    return base::Rect(turned.x(), size.height() - turned.y() - turned.height(), turned.width(),
                  turned.height());
 }
 
@@ -225,15 +226,15 @@ std::vector<BackdropSource> GlRenderPass::backdropSources(double scale, uint32_t
     return sources;
 }
 
-QImage GlRenderPass::capture(Renderer &renderer, const QSize &size,
-                             const std::function<void()> &paint)
+ui::Bitmap GlRenderPass::capture(Renderer &renderer, const base::Size &size,
+                                 const std::function<void()> &paint)
 {
     return captureImage(renderer, renderer.outputContext(), size, paint);
 }
 
 std::unique_ptr<GlTexture> GlRenderPass::captureTexture(Renderer &renderer,
                                                         const OutputRenderContext &context,
-                                                        const QSize &size,
+                                                        const base::Size &size,
                                                         const std::function<void()> &paint)
 {
     if (size.isEmpty())
@@ -249,7 +250,7 @@ std::unique_ptr<GlTexture> GlRenderPass::captureTexture(Renderer &renderer,
     ScopedValue offset(m_offset);
     renderer.Renderer::setOutputContext(context);
     // Letterboxed content keeps its place in the buffer, as on the display.
-    const QRect content = context.nativeContentRect.isEmpty() ? QRect(QPoint(), size)
+    const base::Rect content = context.nativeContentRect.isEmpty() ? base::Rect(base::Point(), size)
                                                               : context.nativeContentRect;
     m_viewport = content.size();
     m_offset = context.logicalViewport.topLeft();
@@ -264,12 +265,12 @@ std::unique_ptr<GlTexture> GlRenderPass::captureTexture(Renderer &renderer,
     return texture;
 }
 
-QImage GlRenderPass::captureImage(Renderer &renderer, const OutputRenderContext &context,
-                                  const QSize &size, const std::function<void()> &paint)
+ui::Bitmap GlRenderPass::captureImage(Renderer &renderer, const OutputRenderContext &context,
+                                      const base::Size &size, const std::function<void()> &paint)
 {
     ScopedGlState state(*m_context);
     RendererState rendererState(renderer);
-    QImage image(size, QImage::Format_RGBA8888_Premultiplied);
+    ui::Bitmap image(size, ui::Bitmap::Format::Rgba8888Premultiplied);
     if (image.isNull())
         return {};
     auto texture = captureTexture(renderer, context, size, paint);
@@ -282,15 +283,15 @@ QImage GlRenderPass::captureImage(Renderer &renderer, const OutputRenderContext 
     glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, image.bits());
     if (glGetError() != GL_NO_ERROR)
         return {};
-    return image.mirrored(false, true).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    return image.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
 }
 
 std::shared_ptr<PendingImage> GlRenderPass::readBack(Renderer &renderer,
                                                      const OutputRenderContext &context,
-                                                     const QSize &size,
+                                                     const base::Size &size,
                                                      const std::function<void()> &paint)
 {
-    if (!m_context->glVersion().startsWith("OpenGL ES 3"))
+    if (!m_context->glVersion().starts_with("OpenGL ES 3"))
         return nullptr;
     ScopedGlState state(*m_context);
     RendererState rendererState(renderer);
@@ -321,7 +322,7 @@ std::shared_ptr<PendingImage> GlRenderPass::readBack(Renderer &renderer,
 // the image is bound as a plain GL_TEXTURE_2D render target as ui::
 // NativePixmapEGLBinding does for RGB pixmaps.
 bool GlRenderPass::captureToImage(Renderer &renderer, const OutputRenderContext &context,
-                                  const QSize &size, EGLImageKHR image,
+                                  const base::Size &size, EGLImageKHR image,
                                   const std::function<void()> &paint)
 {
     ScopedGlState state(*m_context);
@@ -350,21 +351,21 @@ bool GlRenderPass::captureToImage(Renderer &renderer, const OutputRenderContext 
             // were top-down lands it top-down in the target's memory.
             OutputRenderContext flat;
             flat.outputId = context.outputId;
-            flat.logicalViewport = QRect(QPoint(), size);
+            flat.logicalViewport = base::Rect(base::Point(), size);
             flat.nativeTargetSize = size;
-            flat.nativeContentRect = QRect(QPoint(), size);
+            flat.nativeContentRect = base::Rect(base::Point(), size);
             ScopedValue viewport(m_viewport);
             ScopedValue offset(m_offset);
             ScopedValue blend(m_blendMode);
             renderer.Renderer::setOutputContext(flat);
             m_viewport = size;
-            m_offset = QPointF();
+            m_offset = base::PointF();
             // The client reuses its buffers, so every pixel has to be written.
             m_blendMode = BlendMode::Copy;
             glViewport(0, 0, size.width(), size.height());
             glDisable(GL_SCISSOR_TEST);
             texture->inverted = false;
-            renderer.drawTexture(texture.get(), QRect(QPoint(), size));
+            renderer.drawTexture(texture.get(), base::Rect(base::Point(), size));
             glFlush();
         }
     }
@@ -372,8 +373,8 @@ bool GlRenderPass::captureToImage(Renderer &renderer, const OutputRenderContext 
     return complete;
 }
 
-QImage GlRenderPass::renderToImage(Renderer &renderer, const QSize &size,
-                                   const std::function<void()> &paint)
+ui::Bitmap GlRenderPass::renderToImage(Renderer &renderer, const base::Size &size,
+                                       const std::function<void()> &paint)
 {
     RendererState rendererState(renderer);
     if (size.isEmpty())
@@ -382,7 +383,7 @@ QImage GlRenderPass::renderToImage(Renderer &renderer, const QSize &size,
     const GLint limit = maxTextureSize();
     if (size.width() > limit || size.height() > limit)
         return {};
-    QImage image(size, QImage::Format_RGBA8888_Premultiplied);
+    ui::Bitmap image(size, ui::Bitmap::Format::Rgba8888Premultiplied);
     if (image.isNull())
         return {};
     auto texture = allocate(m_context, size, GL_NEAREST);
@@ -399,11 +400,11 @@ QImage GlRenderPass::renderToImage(Renderer &renderer, const QSize &size,
     auto context = renderer.outputContext();
     context.transform = 0;
     context.scale = 1;
-    context.logicalViewport = QRect(QPoint(), size);
-    context.nativeContentRect = QRect(QPoint(), size);
+    context.logicalViewport = base::Rect(base::Point(), size);
+    context.nativeContentRect = base::Rect(base::Point(), size);
     renderer.Renderer::setOutputContext(context);
     m_viewport = size;
-    m_offset = QPointF();
+    m_offset = base::PointF();
     glViewport(0, 0, size.width(), size.height());
     glDisable(GL_SCISSOR_TEST);
     renderer.clear({0, 0, 0, 0});
@@ -412,20 +413,20 @@ QImage GlRenderPass::renderToImage(Renderer &renderer, const QSize &size,
     glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, image.bits());
     if (glGetError() != GL_NO_ERROR)
         return {};
-    return image.mirrored(false, true).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    return image.mirrored(false, true).converted(ui::Bitmap::Format::Argb32Premultiplied);
 }
 
 bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
-                          const QRect &bounds, const std::function<void()> &paint,
-                          const QRect &repaint)
+                          const base::Rect &bounds, const std::function<void()> &paint,
+                          const base::Rect &repaint)
 {
     RendererState rendererState(renderer);
     if (bounds.isEmpty())
         return false;
     ScopedGlState state(*m_context);
-    const QRectF deviceBounds(QPointF(bounds.topLeft()) * renderer.rasterScale(),
-                              QSizeF(bounds.size()) * renderer.rasterScale());
-    const QRect coverage = deviceBounds.toAlignedRect();
+    const base::RectF deviceBounds(base::PointF(bounds.topLeft()) * renderer.rasterScale(),
+                              base::SizeF(bounds.size()) * renderer.rasterScale());
+    const base::Rect coverage = deviceBounds.toEnclosingRect();
     // Rounded outward, the coverage is a pixel wider or taller depending on
     // where its fractional origin falls, so at a fractional scale a moving
     // window would take a new texture nearly every frame. The texture is sized
@@ -433,25 +434,25 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     // as the origin moves; contentPixels says where the content is in it, and
     // the spare row and column stay clear.
     const bool fractional = renderer.rasterScale() != std::floor(renderer.rasterScale());
-    const QSize allocation(int(std::ceil(bounds.width() * renderer.rasterScale())) + fractional,
+    const base::Size allocation(int(std::ceil(bounds.width() * renderer.rasterScale())) + fractional,
                            int(std::ceil(bounds.height() * renderer.rasterScale())) + fractional);
-    Q_ASSERT(allocation.width() >= coverage.width() && allocation.height() >= coverage.height());
+    assert(allocation.width() >= coverage.width() && allocation.height() >= coverage.height());
     const GLint limit = maxTextureSize();
     if (allocation.width() > limit || allocation.height() > limit)
         return false;
     auto *target = dynamic_cast<GlTexture *>(texture.get());
     // Only a texture of this size still holds what lies outside `repaint`.
-    QRect scissor;
+    base::Rect scissor;
     if (!target || target->size() != allocation) {
         texture = allocate(m_context, allocation, GL_LINEAR);
         target = static_cast<GlTexture *>(texture.get());
         target->inverted = true;
     } else if (!repaint.isEmpty()) {
-        scissor = QRectF(QPointF(repaint.topLeft()) * renderer.rasterScale(),
-                         QSizeF(repaint.size()) * renderer.rasterScale())
-                          .toAlignedRect()
+        scissor = base::RectF(base::PointF(repaint.topLeft()) * renderer.rasterScale(),
+                         base::SizeF(repaint.size()) * renderer.rasterScale())
+                          .toEnclosingRect()
                           .translated(-coverage.topLeft())
-                          .intersected(QRect(QPoint(), allocation));
+                          .intersected(base::Rect(base::Point(), allocation));
     }
     if (target->mipmapped) {
         // The smaller levels would keep showing the previous contents.
@@ -486,7 +487,7 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     context.scale = renderer.rasterScale();
     renderer.Renderer::setOutputContext(context);
     m_viewport = allocation;
-    m_offset = QPointF(coverage.topLeft()) / renderer.rasterScale();
+    m_offset = base::PointF(coverage.topLeft()) / renderer.rasterScale();
     glViewport(0, 0, allocation.width(), allocation.height());
     if (scissor.isEmpty()) {
         glDisable(GL_SCISSOR_TEST);
@@ -527,7 +528,7 @@ void GlRenderPass::generateMipmaps(Texture *texture)
     if (!target || target->mipmapped || target->target() != GL_TEXTURE_2D)
         return;
     // GLES 2 only mipmaps power-of-two sizes.
-    if (!m_context->glVersion().startsWith("OpenGL ES 3")
+    if (!m_context->glVersion().starts_with("OpenGL ES 3")
         && !m_context->supportsGl("GL_OES_texture_npot"))
         return;
     glBindTexture(GL_TEXTURE_2D, target->name());
@@ -543,7 +544,7 @@ void GlRenderPass::limitMipmapLevel(Texture *texture, int level)
 {
     auto *target = dynamic_cast<GlTexture *>(texture);
     // GLES 2 has no LOD range.
-    if (!target || !target->mipmapped || !m_context->glVersion().startsWith("OpenGL ES 3"))
+    if (!target || !target->mipmapped || !m_context->glVersion().starts_with("OpenGL ES 3"))
         return;
     glBindTexture(GL_TEXTURE_2D, target->name());
     // 1000 is GL's initial GL_TEXTURE_MAX_LOD.

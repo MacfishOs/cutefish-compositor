@@ -7,10 +7,11 @@
 #include "display/recommended_scale.h"
 
 using namespace cutefish::display;
+namespace base = cutefish::base;
 
 namespace {
 
-DisplayMode mode(QSize size, bool preferred = false)
+DisplayMode mode(base::Size size, bool preferred = false)
 {
     DisplayMode result;
     result.pixelSize = size;
@@ -19,18 +20,18 @@ DisplayMode mode(QSize size, bool preferred = false)
     return result;
 }
 
-DisplaySnapshot display(DisplayConnectionType type, QSize pixels, QSize mm)
+DisplaySnapshot display(DisplayConnectionType type, base::Size pixels, base::Size mm)
 {
     DisplaySnapshot result;
     result.connectionType = type;
     result.physicalSizeMm = mm;
     result.modes = {mode(pixels, true)};
-    result.nativeMode = result.modes.first();
+    result.nativeMode = result.modes.front();
     result.currentMode = result.nativeMode;
     return result;
 }
 
-double scale(DisplayConnectionType type, QSize pixels, QSize mm)
+double scale(DisplayConnectionType type, base::Size pixels, base::Size mm)
 {
     return recommendedScale(display(type, pixels, mm)).value();
 }
@@ -72,8 +73,8 @@ TEST(RecommendedScale, ExternalMonitorsAllowForViewingDistance)
 TEST(RecommendedScale, ReadsTheNativeModeNotTheCurrentOne)
 {
     auto monitor = display(DisplayConnectionType::External, {3840, 2160}, {597, 336});
-    monitor.modes.append(mode({1920, 1080}));
-    monitor.currentMode = monitor.modes.last();
+    monitor.modes.push_back(mode({1920, 1080}));
+    monitor.currentMode = monitor.modes.back();
     EXPECT_EQ(recommendedScale(monitor).value(), 1.5);
 }
 

@@ -6,31 +6,35 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <utility>
 
 #include "render/shape_mask.h"
+#include "base/geometry.h"
+#include "base/transform.h"
+#include "ui/geometry_conversions.h"
 
 namespace cutefish::scene {
 
 namespace {
 
 // ash/wm/window_dimmer.cc kDefaultDimAnimationDurationMs.
-constexpr qint64 kDimDurationMs = 200;
+constexpr int64_t kDimDurationMs = 200;
 
 } // namespace
 
 void paintWindowOutline(render::Renderer &renderer, const render::RoundedShape &shape,
                         const WindowVisualState &state, float opacity)
 {
-    const qreal stroke = state.outlineWidthPx / renderer.rasterScale();
+    const double stroke = state.outlineWidthPx / renderer.rasterScale();
     auto inner = shape;
     // On whole pixels, so no edge splits its stroke over two.
     inner.bounds = renderer.pixelsInside(shape.bounds);
     auto outer = inner;
-    outer.bounds.adjust(-stroke, -stroke, stroke, stroke);
+    outer.bounds = outer.bounds.adjusted(-stroke, -stroke, stroke, stroke);
     if (shape.radius > 0)
         outer.radius += stroke / std::max(shape.radiusScale.width(), shape.radiusScale.height());
-    if (!renderer.drawsInto(outer.bounds.toAlignedRect().adjusted(-1, -1, 1, 1)))
+    if (!renderer.drawsInto(outer.bounds.toEnclosingRect().adjusted(-1, -1, 1, 1)))
         return;
     auto outline = state.outlineColor;
     outline.a *= opacity;
@@ -43,36 +47,36 @@ void paintWindowOutline(render::Renderer &renderer, const render::RoundedShape &
 }
 
 void paintShapeOutline(render::Renderer &renderer, const WindowVisualState &state,
-                       const QTransform &transform, float opacity)
+                       const base::AffineTransform &transform, float opacity)
 {
     const auto raster =
-            render::ShapeRaster::covering(state.outlinePath.boundingRect(), renderer.rasterScale(),
+            render::ShapeRaster::covering(ui::toBase(state.outlinePath.boundingRect()), renderer.rasterScale(),
                                           int(std::ceil(state.outlineWidthPx)) + 1);
     const auto color = [](const render::Color &c) {
-        return QStringLiteral(":%1,%2,%3,%4").arg(c.r).arg(c.g).arg(c.b).arg(c.a);
+        return std::format(":{},{},{},{}", c.r, c.g, c.b, c.a);
     };
-    const QString key = QStringLiteral("shape-outline:") + render::shapeKey(state.outlinePath)
-            + raster.key() + color(state.outlineColor) + color(state.highlightColor)
-            + QString::number(state.outlineWidthPx);
+    const std::string key = "shape-outline:" + render::shapeKey(state.outlinePath) + raster.key()
+            + color(state.outlineColor) + color(state.highlightColor)
+            + std::format("{}", state.outlineWidthPx);
     const auto &textures = renderer.cachedTextureSet(key, [&] {
-        const QImage image =
+        const ui::Bitmap image =
                 render::rasterizeShapeOutline(state.outlinePath, raster, state.outlineWidthPx,
                                               state.outlineColor, state.highlightColor);
         render::Renderer::TextureSet set;
-        set.push_back(renderer.createTexture(image.size(), image.constBits(), image.bytesPerLine(),
+        set.push_back(renderer.createTexture(image.size(), image.constBits(), int(image.stride()),
                                              render::PixelFormat::Rgba8888));
         return set;
     });
     // Looked up even when culled, so the cache keeps it as long as before.
-    const QRectF target = transform.mapRect(raster.target());
-    if (textures.front() && renderer.drawsInto(target.toAlignedRect()))
+    const base::RectF target = transform.mapRect(raster.target());
+    if (textures.front() && renderer.drawsInto(target.toEnclosingRect()))
         renderer.drawTextureF(textures.front().get(), target, opacity);
 }
 
-QPointF clientBodySnap(const render::Renderer &renderer, const WindowVisualState &state,
-                       const QPointF &position)
+base::PointF clientBodySnap(const render::Renderer &renderer, const WindowVisualState &state,
+                       const base::PointF &position)
 {
-    const QPointF surface = position + state.surfaceOrigin;
+    const base::PointF surface = position + state.surfaceOrigin;
     return renderer.pixelAligned(surface) - surface;
 }
 
@@ -101,8 +105,8 @@ void WindowVisualNode::render(render::Renderer &renderer) const
 {
     if (!isVisible())
         return;
-    const QPointF position = absolutePosition();
-    const QPointF placed = position + clientBodySnap(renderer, m_state, position);
+    const base::PointF position = absolutePosition();
+    const base::PointF placed = position + clientBodySnap(renderer, m_state, position);
     auto shape = m_state.shape;
     shape.bounds = renderer.pixelsInside(shape.bounds.translated(placed));
     // Taken here, so a window nested below keeps its own corners.
@@ -116,15 +120,15 @@ void WindowVisualNode::render(render::Renderer &renderer) const
         renderer.pushRoundedClip(shape);
     Node::render(renderer);
     if (const float dim = presentedDim(renderer);
-        dim > 0 && renderer.drawsInto(shape.bounds.toAlignedRect()))
+        dim > 0 && renderer.drawsInto(shape.bounds.toEnclosingRect()))
         renderer.fillRectF(shape.bounds, {0, 0, 0, dim});
     if (clip)
         renderer.popRoundedClip();
     if (m_state.drawOutline && !renderer.suppressWindowOutlines && !m_state.outlinePath.isEmpty()) {
         // Rasterized where it lands, so it stays on physical pixels at any scale.
         auto state = m_state;
-        state.outlinePath.translate(placed);
-        paintShapeOutline(renderer, state, QTransform());
+        state.outlinePath.translate(placed.x(), placed.y());
+        paintShapeOutline(renderer, state, base::AffineTransform());
     } else if (m_state.drawOutline && !renderer.suppressWindowOutlines) {
         auto outline = m_state.outlined();
         outline.bounds.translate(placed);

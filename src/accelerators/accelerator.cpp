@@ -9,58 +9,62 @@
 // localized VKEY tables.
 
 #include "accelerators/accelerator.h"
+#include "base/strings.h"
 
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon.h>
 
-#include <QStringList>
 
 namespace cutefish::accelerators {
 
-QString Accelerator::shortcutText() const
+std::string Accelerator::shortcutText() const
 {
-    QStringList parts;
+    std::string text;
+    const auto append = [&text](std::string_view part) {
+        if (!text.empty())
+            text += '+';
+        text += part;
+    };
     if (isControlDown())
-        parts << QStringLiteral("Ctrl");
+        append("Ctrl");
     if (isAltDown())
-        parts << QStringLiteral("Alt");
+        append("Alt");
     if (isShiftDown())
-        parts << QStringLiteral("Shift");
+        append("Shift");
     if (isMetaDown())
-        parts << QStringLiteral("Meta");
+        append("Meta");
     if (isAltGrDown())
-        parts << QStringLiteral("AltGr");
-    const QString text = keysymText(m_keysym);
-    parts << (text.isEmpty() ? keysymName(m_keysym) : text);
-    return parts.join(QLatin1Char('+'));
+        append("AltGr");
+    const std::string key = keysymText(m_keysym);
+    append(key.empty() ? keysymName(m_keysym) : key);
+    return text;
 }
 
-QString keysymName(uint32_t keysym)
+std::string keysymName(uint32_t keysym)
 {
     char buffer[64];
     const int length = xkb_keysym_get_name(keysym, buffer, sizeof(buffer));
     if (length <= 0)
-        return QString();
-    return QString::fromLatin1(buffer, length);
+        return {};
+    return std::string(buffer, size_t(length));
 }
 
-uint32_t keysymFromName(const QString &name)
+uint32_t keysymFromName(const std::string &name)
 {
-    const xkb_keysym_t keysym =
-            xkb_keysym_from_name(name.toLatin1().constData(), XKB_KEYSYM_NO_FLAGS);
+    const xkb_keysym_t keysym = xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_NO_FLAGS);
     return keysym == XKB_KEY_NoSymbol ? 0 : keysym;
 }
 
-QString keysymText(uint32_t keysym)
+std::string keysymText(uint32_t keysym)
 {
     // Space and the control characters have names; only visible glyphs are text.
     if (keysym == XKB_KEY_space || xkb_keysym_to_utf32(keysym) < 0x21)
-        return QString();
+        return {};
     char buffer[8];
     const int length = xkb_keysym_to_utf8(keysym, buffer, sizeof(buffer));
     if (length <= 1)
-        return QString();
-    return QString::fromUtf8(buffer, length - 1).toUpper();
+        return {};
+    return base::strings::toUpper(std::string_view(buffer, size_t(length - 1)));
 }
 
 namespace {

@@ -4,18 +4,20 @@
 
 #include "session/secure_container.h"
 
+#include "base/event_loop.h"
+#include "base/settings.h"
+#include "base/strings.h"
+#include "base/thread_pool.h"
+#include "base/url.h"
+#include "core/main_loop.h"
 #include "core/preferences.h"
 #include "scene/node.h"
-#include <QCoreApplication>
-#include <QDateTime>
-#include <QFileInfo>
-#include <QFutureWatcher>
-#include <QImageReader>
-#include <QSettings>
-#include <QUrl>
-#include <QtConcurrentRun>
+#include "ui/bitmap.h"
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <string_view>
+#include <sys/stat.h>
 
 namespace cutefish::session {
 
@@ -55,56 +57,119 @@ double easeOut(double t)
     return 1 - (1 - t) * (1 - t);
 }
 
-QImage loadWallpaper(const QSize &size, double scale)
+const std::string kDefaultWallpaper = "/usr/share/backgrounds/cutefishos/default.jpg";
+const std::string kDefaultBackgroundColor = "#2B8ADA";
+
+std::string servicesFile()
 {
-    QImage image;
-    QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
-    settings.beginGroup(QStringLiteral("Appearance"));
+    return preferencesFile("services");
+}
+
+// The file a wallpaper setting names: a path, or a file: URL.
+std::string wallpaperFile(const std::string &setting)
+{
+    return base::url::toLocalFile(setting).value_or(setting);
+}
+
+// Milliseconds since the epoch; -1 for a file that is not there.
+int64_t modifiedMs(const std::string &path)
+{
+    struct stat info;
+    if (stat(path.c_str(), &info) != 0)
+        return -1;
+    return int64_t(info.st_mtim.tv_sec) * 1000 + info.st_mtim.tv_nsec / 1000000;
+}
+
+// #RGB, #RRGGBB, #AARRGGBB and the 12-bit-per-channel forms of a colour
+// setting, as premultiplied 0xAARRGGBB; opaque black for anything else.
+uint32_t settingColor(std::string_view text)
+{
+    if (text.empty() || text.front() != '#')
+        return 0xff000000;
+    text.remove_prefix(1);
+    const std::optional<uint64_t> value = base::strings::toNumber<uint64_t>(text, 16);
+    if (!value || text.find_first_of("+-") != std::string_view::npos)
+        return 0xff000000;
+    uint32_t a = 255, r = 0, g = 0, b = 0;
+    switch (text.size()) {
+    case 3:
+        r = ((*value >> 8) & 0xf) * 17;
+        g = ((*value >> 4) & 0xf) * 17;
+        b = (*value & 0xf) * 17;
+        break;
+    case 6:
+        r = (*value >> 16) & 0xff;
+        g = (*value >> 8) & 0xff;
+        b = *value & 0xff;
+        break;
+    case 8:
+        a = (*value >> 24) & 0xff;
+        r = (*value >> 16) & 0xff;
+        g = (*value >> 8) & 0xff;
+        b = *value & 0xff;
+        break;
+    case 9:
+        r = ((*value >> 24) & 0xfff) >> 4;
+        g = ((*value >> 12) & 0xfff) >> 4;
+        b = (*value & 0xfff) >> 4;
+        break;
+    case 12:
+        r = ((*value >> 32) & 0xffff) >> 8;
+        g = ((*value >> 16) & 0xffff) >> 8;
+        b = (*value & 0xffff) >> 8;
+        break;
+    default:
+        return 0xff000000;
+    }
+    const auto premultiply = [a](uint32_t channel) { return (channel * a + 127) / 255; };
+    return a << 24 | premultiply(r) << 16 | premultiply(g) << 8 | premultiply(b);
+}
+
+// On a worker thread: the wallpaper covering `size` at the output's density,
+// cropped to its middle.
+ui::Bitmap loadWallpaper(const base::Size &size, double scale)
+{
+    const base::Settings settings(servicesFile());
     // Device pixels: the wallpaper is shown sharp, as the desktop shows it.
-    const QSize target(qMax(1, qRound(size.width() * scale)),
-                       qMax(1, qRound(size.height() * scale)));
-    if (settings.value(QStringLiteral("BackgroundType"), 0).toInt() == 0) {
-        QString path =
-                settings.value(QStringLiteral("Wallpaper"),
-                               QStringLiteral("/usr/share/backgrounds/cutefishos/default.jpg"))
-                        .toString();
-        if (QUrl(path).isLocalFile())
-            path = QUrl(path).toLocalFile();
-        QImageReader reader(path);
-        reader.setAutoTransform(true);
-        if (reader.size().isValid())
-            reader.setScaledSize(reader.size().scaled(target, Qt::KeepAspectRatioByExpanding));
-        image = reader.read();
+    const base::Size target(std::max(1, base::roundToInt(size.width() * scale)),
+                            std::max(1, base::roundToInt(size.height() * scale)));
+    ui::Bitmap image;
+    if (settings.intValue("Appearance/BackgroundType", 0) == 0) {
+        const std::string path =
+                wallpaperFile(settings.stringValue("Appearance/Wallpaper", kDefaultWallpaper));
+        image = ui::Bitmap::decodeFile(path, target, ui::Bitmap::Scaling::Cover, true);
         if (image.isNull())
             return {};
-        image = image.scaled(target, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-        image = image.copy((image.width() - target.width()) / 2,
-                           (image.height() - target.height()) / 2, target.width(), target.height());
-        image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        const base::Size covering =
+                ui::scaledSize(image.size(), target, ui::Bitmap::Scaling::Cover);
+        if (image.size() != covering)
+            image = image.scaled(covering);
+        image = image.copy(base::Rect((image.width() - target.width()) / 2,
+                                      (image.height() - target.height()) / 2, target.width(),
+                                      target.height()));
     } else {
-        image = QImage(target, QImage::Format_ARGB32_Premultiplied);
-        image.fill(
-                QColor(settings.value(QStringLiteral("BackgroundColor"), QStringLiteral("#2B8ADA"))
-                               .toString()));
+        image = ui::Bitmap(target, ui::Bitmap::Format::Argb32Premultiplied);
+        image.fill(settingColor(
+                settings.stringValue("Appearance/BackgroundColor", kDefaultBackgroundColor)));
     }
-    image = image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
-    return image;
+    return image.converted(ui::Bitmap::Format::Rgba8888Premultiplied);
 }
 
 class WallpaperNode final : public scene::Node
 {
 public:
-    WallpaperNode(const SecureContainer *container, const QSize &size, double scale)
-        : Node(QStringLiteral("lock-wallpaper"))
+    WallpaperNode(const SecureContainer *container, const base::Size &size, double scale)
+        : Node("lock-wallpaper")
         , m_container(container)
     {
-        QObject::connect(&m_loader, &QFutureWatcher<QImage>::finished, &m_loader, [this] {
-            m_image = m_loader.result();
-            m_loaded = true;
-            notifyChanged();
-        });
-        m_loader.setFuture(QtConcurrent::run(loadWallpaper, size, scale));
-        setGeometry(QRect(QPoint(), size));
+        m_loader = base::ThreadPool::global().run(
+                [size, scale] { return loadWallpaper(size, scale); },
+                [this](ui::Bitmap image) {
+                    m_image = std::move(image);
+                    m_loaded = true;
+                    notifyChanged();
+                });
+        setGeometry(base::Rect(size));
     }
 
     Content content() const override { return Content::Translucent; }
@@ -114,22 +179,22 @@ public:
     void releaseRenderResources() override { m_texture.reset(); }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &bounds) const override
+    void paint(render::Renderer &renderer, const base::Rect &bounds) const override
     {
         if (m_image.isNull())
             return;
         if (!m_texture)
-            m_texture =
-                    renderer.createTexture(m_image.size(), m_image.constBits(),
-                                           m_image.bytesPerLine(), render::PixelFormat::Rgba8888);
+            m_texture = renderer.createTexture(m_image.size(),
+                                               m_image.constBits(), int(m_image.stride()),
+                                               render::PixelFormat::Rgba8888);
         if (m_texture)
             renderer.drawTexture(m_texture.get(), bounds, m_container->sample(renderer).backdrop);
     }
 
 private:
     const SecureContainer *m_container;
-    QFutureWatcher<QImage> m_loader;
-    QImage m_image;
+    base::Job m_loader;
+    ui::Bitmap m_image;
     bool m_loaded = false;
     mutable std::unique_ptr<render::Texture> m_texture;
 };
@@ -140,7 +205,7 @@ class ShieldNode final : public scene::ColorNode
 {
 public:
     explicit ShieldNode(const SecureContainer *container)
-        : ColorNode(kShieldColor, QStringLiteral("shield"))
+        : ColorNode(kShieldColor, "shield")
         , m_container(container)
     {
     }
@@ -154,7 +219,7 @@ public:
     }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &bounds) const override
+    void paint(render::Renderer &renderer, const base::Rect &bounds) const override
     {
         const float backdrop = m_container->sample(renderer).backdrop;
         const bool wallpaper = std::any_of(children().begin(), children().end(), [](auto *child) {
@@ -175,17 +240,9 @@ private:
 SecureContainer::SecureContainer(scene::Node *root)
     : m_root(root)
 {
-    m_shield = m_root->addChild(std::make_unique<scene::Node>(QStringLiteral("lock-shield")));
-    m_auth = m_root->addChild(std::make_unique<scene::Node>(QStringLiteral("auth-ui")));
+    m_shield = m_root->addChild(std::make_unique<scene::Node>("lock-shield"));
+    m_auth = m_root->addChild(std::make_unique<scene::Node>("auth-ui"));
     m_root->setVisible(false);
-    const auto changed = [this] {
-        if (!m_blocked)
-            refreshWallpaper();
-    };
-    QObject::connect(&m_wallpaperWatcher, &QFileSystemWatcher::directoryChanged,
-                     &m_wallpaperWatcher, changed);
-    QObject::connect(&m_wallpaperWatcher, &QFileSystemWatcher::fileChanged, &m_wallpaperWatcher,
-                     changed);
     refreshWallpaper();
 }
 
@@ -267,7 +324,7 @@ void SecureContainer::requestAnimationFrame() const
         panel->notifyChanged();
 }
 
-void SecureContainer::setOutputs(const QList<SecureOutput> &outputs)
+void SecureContainer::setOutputs(const std::vector<SecureOutput> &outputs)
 {
     if (m_outputs == outputs)
         return;
@@ -277,7 +334,7 @@ void SecureContainer::setOutputs(const QList<SecureOutput> &outputs)
 
 bool SecureContainer::isWallpaperReady() const
 {
-    if (m_outputs.isEmpty() || m_shieldRects.size() != size_t(m_outputs.size()))
+    if (m_outputs.empty() || m_shieldRects.size() != m_outputs.size())
         return false;
     return std::all_of(m_shieldRects.begin(), m_shieldRects.end(), [](const scene::ColorNode *shield) {
         return std::all_of(shield->children().begin(), shield->children().end(),
@@ -290,34 +347,28 @@ bool SecureContainer::isWallpaperReady() const
 
 void SecureContainer::refreshWallpaper()
 {
-    QSettings settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat);
-    settings.beginGroup(QStringLiteral("Appearance"));
-    const QString path =
-            settings.value(QStringLiteral("Wallpaper"),
-                           QStringLiteral("/usr/share/backgrounds/cutefishos/default.jpg"))
-                    .toString();
-    const QString file = QUrl(path).isLocalFile() ? QUrl(path).toLocalFile() : path;
-    if (QCoreApplication::instance()) {
-        // The settings file and the wallpaper are replaced by rename, which
-        // drops their watches; the directories see the rename.
-        QStringList wanted {settings.fileName(), QFileInfo(settings.fileName()).absolutePath(),
-                            file, QFileInfo(file).absolutePath()};
-        wanted.removeIf([](const QString &path) { return !QFileInfo::exists(path); });
-        const QStringList watched = m_wallpaperWatcher.files() + m_wallpaperWatcher.directories();
-        QStringList stale = watched;
-        stale.removeIf([&](const QString &path) { return wanted.contains(path); });
-        wanted.removeIf([&](const QString &path) { return watched.contains(path); });
-        if (!stale.isEmpty())
-            m_wallpaperWatcher.removePaths(stale);
-        if (!wanted.isEmpty())
-            m_wallpaperWatcher.addPaths(wanted);
+    const base::Settings settings(servicesFile());
+    const std::string path = settings.stringValue("Appearance/Wallpaper", kDefaultWallpaper);
+    const std::string file = wallpaperFile(path);
+    if (base::EventLoop *loop = core::mainLoop()) {
+        // The settings file and the wallpaper are replaced by rename; their
+        // directories are what is watched, so the new file is followed too.
+        const auto follow = [this, loop](const std::string &path, std::string &watched,
+                                         base::FileWatch &watch) {
+            if (path == watched && watch.isActive())
+                return;
+            watched = path;
+            watch = base::FileWatch::file(path, [this] {
+                if (!m_blocked)
+                    refreshWallpaper();
+            }, loop);
+        };
+        follow(settings.path(), m_watchedSettings, m_settingsWatch);
+        follow(file, m_watchedWallpaper, m_wallpaperWatch);
     }
-    const QString key = path + QLatin1Char('|')
-            + settings.value(QStringLiteral("BackgroundType"), 0).toString() + QLatin1Char('|')
-            + settings.value(QStringLiteral("BackgroundColor"), QStringLiteral("#2B8ADA"))
-                      .toString()
-            + QLatin1Char('|')
-            + QString::number(QFileInfo(file).lastModified().toMSecsSinceEpoch());
+    const std::string key = path + '|' + settings.stringValue("Appearance/BackgroundType", "0")
+            + '|' + settings.stringValue("Appearance/BackgroundColor", kDefaultBackgroundColor)
+            + '|' + std::to_string(modifiedMs(file));
     if (key == m_wallpaperKey)
         return;
     m_wallpaperKey = key;
@@ -326,24 +377,24 @@ void SecureContainer::refreshWallpaper()
 
 void SecureContainer::rebuildShield()
 {
-    while (m_shieldRects.size() > size_t(m_outputs.size())) {
+    while (m_shieldRects.size() > m_outputs.size()) {
         m_shield->removeChild(m_shieldRects.back());
         m_shieldRects.pop_back();
     }
-    while (m_shieldRects.size() < size_t(m_outputs.size())) {
+    while (m_shieldRects.size() < m_outputs.size()) {
         auto node = std::make_unique<ShieldNode>(this);
         m_shieldRects.push_back(
                 static_cast<scene::ColorNode *>(m_shield->addChild(std::move(node))));
     }
-    for (int i = 0; i < m_outputs.size(); ++i) {
-        auto *shield = m_shieldRects[size_t(i)];
-        shield->setGeometry(m_outputs.at(i).bounds);
+    for (size_t i = 0; i < m_outputs.size(); ++i) {
+        auto *shield = m_shieldRects[i];
+        shield->setGeometry(m_outputs[i].bounds);
         while (!shield->children().empty())
             shield->removeChild(shield->children().back());
-        if (QCoreApplication::instance())
+        if (core::mainLoop())
             shield->addChild(
-                    std::make_unique<WallpaperNode>(this, m_outputs.at(i).bounds.size(),
-                                                    m_outputs.at(i).scale));
+                    std::make_unique<WallpaperNode>(this, m_outputs[i].bounds.size(),
+                                                    m_outputs[i].scale));
     }
 }
 

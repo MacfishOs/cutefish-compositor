@@ -8,9 +8,6 @@
 #include <algorithm>
 #include <utility>
 
-#include <QPointer>
-#include <QTimer>
-
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
@@ -27,7 +24,7 @@
 
 namespace cutefish::wm {
 
-QRect Window::minimizedGeometry() const
+base::Rect Window::minimizedGeometry() const
 {
     if (!m_minimizedGeometryPanel)
         return m_minimizedGeometry;
@@ -39,17 +36,17 @@ QRect Window::minimizedGeometry() const
     return {};
 }
 
-void Window::setMinimizedGeometry(const QRect &geometry)
+void Window::setMinimizedGeometry(const base::Rect &geometry)
 {
     m_minimizedGeometryPanel = 0;
     m_minimizedGeometry = geometry;
     m_state->updateMinimizeTarget();
 }
 
-void Window::setMinimizedGeometry(Window *panel, const QRect &geometry)
+void Window::setMinimizedGeometry(Window *panel, const base::Rect &geometry)
 {
     m_minimizedGeometryPanel = panel ? panel->id() : 0;
-    m_minimizedGeometry = panel ? geometry : QRect();
+    m_minimizedGeometry = panel ? geometry : base::Rect();
     m_state->updateMinimizeTarget();
 }
 
@@ -98,11 +95,11 @@ scene::WindowAnimation::Style animationStyleFor(WindowRole role)
 
 } // namespace
 
-Window::Window(WindowManager *manager, compositor::Surface *rootSurface, const QString &title,
+Window::Window(WindowManager *manager, compositor::Surface *rootSurface, const std::string &title,
                WindowType type)
     : m_type(type)
     , m_id([] {
-        static quint64 next = 0;
+        static uint64_t next = 0;
         return ++next;
     }())
     , m_manager(manager)
@@ -204,14 +201,14 @@ void Window::onSurfaceWindowHintsChanged(compositor::Surface *surface)
         m_manager->onWindowStackingChanged(this);
 }
 
-QRect Window::presentedBounds() const
+base::Rect Window::presentedBounds() const
 {
-    const QRect requested(QPoint(0, 0), m_bounds.size());
+    const base::Rect requested(base::Point(0, 0), m_bounds.size());
     const scene::Node *node = surfaceNode();
     if (!node || node->geometry().size().isEmpty())
         return requested;
     const auto insets = frameInsets();
-    return QRect(m_surfaceOrigin, insets.outset(node->geometry().size()));
+    return base::Rect(m_surfaceOrigin, insets.outset(node->geometry().size()));
 }
 
 scene::Node *Window::surfaceNode() const
@@ -238,12 +235,12 @@ Insets Window::frameInsets() const
     return m_frame->extents();
 }
 
-QSize Window::minimumOuterSize() const
+base::Size Window::minimumOuterSize() const
 {
     return frameInsets().outset(m_minimumSize);
 }
 
-QSize Window::maximumOuterSize() const
+base::Size Window::maximumOuterSize() const
 {
     // Empty means unbounded, and stays that way.
     if (m_maximumSize.isEmpty())
@@ -263,7 +260,7 @@ void Window::setDecorated(bool decorated)
 void Window::updateFrame()
 {
     // Sampled before the frame changes: this is what the client keeps.
-    const QRect content = contentBounds();
+    const base::Rect content = contentBounds();
 
     FrameProvider *provider = m_manager ? m_manager->frameProvider() : nullptr;
     if (m_decorated && !m_frame && provider)
@@ -288,8 +285,9 @@ void Window::updateFrame()
     updateSurfacePlacement();
     // Mapping logs the initial state; this is for a mode change later on.
     if (!m_bounds.isEmpty()) {
-        qCDebug(cfCompositor) << "decoration" << (m_frame ? "on:" : "off:") << m_applicationId
-                             << m_title << "outer" << m_bounds << "content" << contentBounds();
+        CF_DEBUG(cfCompositor) << "decoration" << (m_frame ? "on:" : "off:") << m_applicationId
+                             << m_title << "outer" << m_bounds << "content"
+                             << contentBounds();
     }
     forEachObserver(this, m_observers, [this](WindowObserver *observer) {
         observer->onWindowFrameChanged(this);
@@ -301,12 +299,12 @@ WindowStateType Window::stateType() const
     return m_state->stateType();
 }
 
-void Window::setBounds(const QRect &bounds)
+void Window::setBounds(const base::Rect &bounds)
 {
     if (bounds == m_bounds)
         return;
 
-    const QRect oldBounds = m_bounds;
+    const base::Rect oldBounds = m_bounds;
     m_bounds = bounds;
     updateSurfacePlacement();
     if (m_manager)
@@ -329,7 +327,7 @@ void Window::placeSheets()
     }
 }
 
-void Window::setSurfaceOrigin(const QPoint &origin)
+void Window::setSurfaceOrigin(const base::Point &origin)
 {
     if (origin == m_surfaceOrigin)
         return;
@@ -343,7 +341,7 @@ void Window::setSurfaceOrigin(const QPoint &origin)
     placeSheets();
 }
 
-void Window::setPresentationOffset(const QPoint &offset)
+void Window::setPresentationOffset(const base::Point &offset)
 {
     if (offset == m_presentationOffset)
         return;
@@ -373,7 +371,7 @@ void Window::updateSurfacePlacement()
         return;
     // Only the origin crosses into the scene. The node's size stays the
     // committed buffer's until the client resizes; see the class comment.
-    const QPoint origin = frameInsets().topLeft() + m_surfaceOrigin;
+    const base::Point origin = frameInsets().topLeft() + m_surfaceOrigin;
     m_rootSurface->setPosition(m_node ? origin : m_bounds.topLeft() + origin);
     updateSurfaceTargetBounds();
 }
@@ -383,19 +381,19 @@ void Window::updateSurfaceTargetBounds()
     // The presentation offset is left out, as aura leaves a layer transform
     // out of a window's bounds.
     const scene::Node *node = surfaceNode();
-    const QRect bounds(m_bounds.topLeft() + frameInsets().topLeft() + m_surfaceOrigin,
-                       node ? node->geometry().size() : QSize());
-    const QRect oldBounds = std::exchange(m_surfaceTargetBounds, bounds);
+    const base::Rect bounds(m_bounds.topLeft() + frameInsets().topLeft() + m_surfaceOrigin,
+                            node ? node->geometry().size() : base::Size());
+    const base::Rect oldBounds = std::exchange(m_surfaceTargetBounds, bounds);
     if (bounds != oldBounds && m_manager)
         m_manager->onWindowTargetBoundsChanged(this, oldBounds, bounds);
 }
 
-void Window::setMinimumSize(const QSize &size)
+void Window::setMinimumSize(const base::Size &size)
 {
-    m_minimumSize = QSize(std::max(1, size.width()), std::max(1, size.height()));
+    m_minimumSize = base::Size(std::max(1, size.width()), std::max(1, size.height()));
 }
 
-void Window::setMaximumSize(const QSize &size)
+void Window::setMaximumSize(const base::Size &size)
 {
     m_maximumSize = size;
 }
@@ -459,7 +457,7 @@ void Window::setOpacity(float opacity)
         animation->setOpacity(opacity);
 }
 
-void Window::setPresentationScale(double scale, const QPointF &anchor, bool animate)
+void Window::setPresentationScale(double scale, const base::PointF &anchor, bool animate)
 {
     if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node))
         animation->setPresentationScale(scale, anchor, animate);
@@ -573,7 +571,7 @@ void Window::setClientInputInsets(const Insets &insets)
     });
 }
 
-void Window::setMinimizedSnapshot(const QImage &snapshot)
+void Window::setMinimizedSnapshot(const ui::Bitmap &snapshot)
 {
     if (snapshot.isNull() && m_minimizedSnapshot.isNull())
         return;
@@ -588,11 +586,11 @@ void Window::beginMinimizeHandoff()
     auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node);
     if (!animation || !animation->isHolding() || !m_state->isMinimized())
         return;
-    const quint64 handoff = ++m_minimizeHandoff;
-    const QPointer<WindowManager> manager(m_manager);
-    const quint64 id = m_id;
-    QTimer::singleShot(kMinimizeHandoffTimeoutMs, m_manager, [manager, id, handoff] {
-        Window *window = manager ? manager->windowById(id) : nullptr;
+    const uint64_t handoff = ++m_minimizeHandoff;
+    const uint64_t id = m_id;
+    m_manager->runLater(std::chrono::milliseconds(kMinimizeHandoffTimeoutMs),
+                        [manager = m_manager, id, handoff] {
+        Window *window = manager->windowById(id);
         if (window && window->m_minimizeHandoff == handoff)
             window->endMinimizeHandoff();
     });
@@ -619,7 +617,7 @@ bool Window::isMinimizeHandoffPending() const
     return animation && animation->isHolding();
 }
 
-void Window::setTitle(const QString &title)
+void Window::setTitle(const std::string &title)
 {
     if (title == m_title)
         return;
@@ -631,7 +629,7 @@ void Window::setTitle(const QString &title)
 
 bool Window::isShellApplication() const
 {
-    return applicationId() == QLatin1String("cutefish-shell");
+    return applicationId() == "cutefish-shell";
 }
 
 bool Window::skipTaskbar() const
@@ -640,7 +638,7 @@ bool Window::skipTaskbar() const
             || (rootSurface() && rootSurface()->skipTaskbar());
 }
 
-void Window::setApplicationId(const QString &id)
+void Window::setApplicationId(const std::string &id)
 {
     if (id == m_applicationId)
         return;
@@ -677,13 +675,13 @@ void Window::setPanelBehavior(PanelBehavior behavior)
         m_manager->onWindowStackingChanged(this);
 }
 
-void Window::setClientPosition(const QPoint &position)
+void Window::setClientPosition(const base::Point &position)
 {
     m_hasClientPosition = true;
     if (m_clientPosition == position && m_bounds.topLeft() == position)
         return;
     m_clientPosition = position;
-    setBounds(QRect(position, m_bounds.size()));
+    setBounds(base::Rect(position, m_bounds.size()));
 }
 
 void Window::setCloseCallback(CloseCallback callback)
@@ -756,7 +754,7 @@ WindowStateType Window::presentedStateType() const
 WindowStateType Window::decoratedStateType() const
 {
     // Client exterior margins do not make the restored window body oversized.
-    const QRect presented = m_clientExteriorInsets.inset(presentedBounds());
+    const base::Rect presented = m_clientExteriorInsets.inset(presentedBounds());
     if (m_restoringFromDrag
         && (presented.width() > m_bounds.width() || presented.height() > m_bounds.height())) {
         return m_state->stateType();
@@ -805,7 +803,7 @@ void Window::setFullscreen(bool fullscreen)
     }
 }
 
-void Window::requestBounds(const QRect &bounds)
+void Window::requestBounds(const base::Rect &bounds)
 {
     const SetBoundsWMEvent event(bounds);
     m_state->onEvent(event);

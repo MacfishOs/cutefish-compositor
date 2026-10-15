@@ -10,10 +10,9 @@
 
 #include "server_util.h"
 
-#include <QHash>
-
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <utility>
 
 #include <wayland-server-protocol.h>
@@ -24,9 +23,9 @@ namespace cutefish::wayland {
 
 namespace {
 
-QHash<compositor::Surface*, wl_resource*>& surfaceResources()
+std::unordered_map<compositor::Surface*, wl_resource*>& surfaceResources()
 {
-    static QHash<compositor::Surface*, wl_resource*> map;
+    static std::unordered_map<compositor::Surface*, wl_resource*> map;
     return map;
 }
 
@@ -39,15 +38,17 @@ compositor::Surface* surfaceFromResource(wl_resource* resource)
 
 wl_resource* getSurfaceResource(compositor::Surface* surface)
 {
-    return surfaceResources().value(surface, nullptr);
+    const auto& map = surfaceResources();
+    const auto it = map.find(surface);
+    return it == map.end() ? nullptr : it->second;
 }
 
 void setSurfaceResource(compositor::Surface* surface, wl_resource* resource)
 {
     if (resource)
-        surfaceResources().insert(surface, resource);
+        surfaceResources()[surface] = resource;
     else
-        surfaceResources().remove(surface);
+        surfaceResources().erase(surface);
 }
 
 void setImplementation(wl_resource* resource, const void* implementation)
@@ -72,20 +73,21 @@ double clientScale(wl_client* client)
     return server ? server->clientScale(client) : 1;
 }
 
-QRect clientRect(int32_t x, int32_t y, int32_t width, int32_t height)
+base::Rect clientRect(int32_t x, int32_t y, int32_t width, int32_t height)
 {
-    static constexpr qint64 kLimit = 1 << 24;
+    static constexpr int64_t kLimit = 1 << 24;
     const auto span = [](int32_t origin, int32_t size) {
-        const qint64 start = std::clamp<qint64>(origin, -kLimit, kLimit);
-        const qint64 end = std::clamp<qint64>(qint64(origin) + std::max(size, 0), start, kLimit);
+        const int64_t start = std::clamp<int64_t>(origin, -kLimit, kLimit);
+        const int64_t end =
+                std::clamp<int64_t>(int64_t(origin) + std::max(size, 0), start, kLimit);
         return std::pair<int, int>(int(start), int(end - start));
     };
     const auto [left, w] = span(x, width);
     const auto [top, h] = span(y, height);
-    return QRect(left, top, w, h);
+    return base::Rect(left, top, w, h);
 }
 
-QRect clientToLogical(const QRect& rect, double scale)
+base::Rect clientToLogical(const base::Rect& rect, double scale)
 {
     if (scale == 1 || rect.isEmpty())
         return rect;
@@ -93,15 +95,17 @@ QRect clientToLogical(const QRect& rect, double scale)
     const int top = int(std::floor(rect.y() / scale));
     const int right = int(std::ceil((rect.x() + rect.width()) / scale));
     const int bottom = int(std::ceil((rect.y() + rect.height()) / scale));
-    return QRect(QPoint(left, top), QPoint(right - 1, bottom - 1));
+    return base::Rect::fromEdges(left, top, right, bottom);
 }
 
-QPoint clientToLogical(const QPoint& point, double scale)
+base::Point clientToLogical(const base::Point& point, double scale)
 {
-    return scale == 1 ? point : QPoint(qRound(point.x() / scale), qRound(point.y() / scale));
+    return scale == 1 ? point
+                      : base::Point(base::roundToInt(point.x() / scale),
+                                    base::roundToInt(point.y() / scale));
 }
 
-QPointF logicalToClient(const QPointF& point, double scale)
+base::PointF logicalToClient(const base::PointF& point, double scale)
 {
     return point * scale;
 }

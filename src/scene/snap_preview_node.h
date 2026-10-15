@@ -9,6 +9,7 @@
 #include "render/renderer.h"
 #include "render/rounded_shape.h"
 #include "scene/node.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
@@ -23,7 +24,7 @@ class SnapPreviewNode : public Node
 public:
     // Upstream kPhantomWindowInsets and kPhantomWindowCornerRadius.
     static constexpr int kInset = 8;
-    static constexpr qreal kRadius = 12;
+    static constexpr double kRadius = 12;
     // Upstream kScrimEntranceSizeAnimationDurationMs and
     // kScrimEntranceOpacityAnimationDurationMs.
     static constexpr int kSizeDurationMs = 150;
@@ -36,13 +37,13 @@ public:
     // `windowBounds` are where the window will land, in the parent's
     // coordinates. A change restarts the entrance, as Ash builds a new phantom
     // for every new snap type.
-    void show(const QRect &windowBounds);
+    void show(const base::Rect &windowBounds);
 
     void setColors(const render::Color &fill, const render::Color &outline,
                    const render::Color &highlight);
 
     // The plate as the entrance draws it `elapsedMs` in, and its opacity.
-    static QRectF entranceBounds(const QRectF &target, double elapsedMs);
+    static base::RectF entranceBounds(const base::RectF &target, double elapsedMs);
     static float entranceOpacity(double elapsedMs);
 
     Content content() const override { return Content::Translucent; }
@@ -54,10 +55,10 @@ public:
     bool requiresFullRepaint() const override { return false; }
 
     // A preview is a hint, never a target: input goes to whatever is under it.
-    bool acceptsInput(const QPointF &) const override { return false; }
+    bool acceptsInput(const base::PointF &) const override { return false; }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const override;
+    void paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const override;
 
 private:
     std::function<double()> m_now;

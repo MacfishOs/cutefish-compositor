@@ -10,8 +10,6 @@
 #include <map>
 #include <string>
 
-#include <QByteArray>
-
 #include "clipboard/selection.h"
 
 namespace cutefish::clipboard {
@@ -20,7 +18,7 @@ namespace cutefish::clipboard {
 class StoredSource : public DataSource
 {
 public:
-    std::map<std::string, QByteArray> payloads;
+    std::map<std::string, std::string> payloads;
 
     void send(const std::string &mime, int fd) override;
 };

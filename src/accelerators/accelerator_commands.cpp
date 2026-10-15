@@ -12,9 +12,7 @@
 #include "accelerators/accelerator_commands.h"
 
 #include <chrono>
-
-#include <QRect>
-#include <QTimer>
+#include <cstdint>
 
 #include "accelerators/accelerator_delegate.h"
 #include "display/display_manager.h"
@@ -117,8 +115,8 @@ void quitApplication(const CommandContext &context)
     if (!window)
         return;
     wm::WindowManager *manager = context.windowManager;
-    const quint64 id = window->id();
-    QTimer::singleShot(kQuitDelay, manager, [manager, id] {
+    const uint64_t id = window->id();
+    manager->runLater(kQuitDelay, [manager, id] {
         manager->quitApplication(manager->windowById(id));
     });
 }
@@ -185,14 +183,14 @@ void moveActiveWindowBetweenDisplays(const CommandContext &context)
     display::DisplayManager *displays = context.windowManager->displayManager();
     if (!window || !displays || !displays->applied())
         return;
-    const QList<display::LogicalDisplay> &logical = displays->applied()->logicalDisplays;
+    const std::vector<display::LogicalDisplay> &logical = displays->applied()->logicalDisplays;
     if (logical.size() < 2)
         return;
 
     // ash::display_move_window_util: the window goes to the next display in
     // the list, keeping its position relative to the display's origin, then
     // is fitted into that display's work area.
-    const QRect current = context.windowManager->outputBoundsFor(window);
+    const base::Rect current = context.windowManager->outputBoundsFor(window);
     int index = 0;
     for (int i = 0; i < logical.size(); ++i) {
         if (logical[i].bounds == current) {
@@ -202,19 +200,20 @@ void moveActiveWindowBetweenDisplays(const CommandContext &context)
     }
     const display::LogicalDisplay &target = logical[(index + 1) % logical.size()];
 
-    const QRect workArea = context.windowManager->workAreaForOutput(target.bounds);
-    QRect bounds = window->bounds();
-    bounds.moveTopLeft(target.bounds.topLeft() + (bounds.topLeft() - current.topLeft()));
-    bounds.setSize(QSize(std::min(bounds.width(), workArea.width()),
-                         std::min(bounds.height(), workArea.height())));
+    const base::Rect targetBounds = target.bounds;
+    const base::Rect workArea = context.windowManager->workAreaForOutput(targetBounds);
+    base::Rect bounds = window->bounds();
+    bounds.moveTopLeft(targetBounds.topLeft() + (bounds.topLeft() - current.topLeft()));
+    bounds.setSize(base::Size(std::min(bounds.width(), workArea.width()),
+                              std::min(bounds.height(), workArea.height())));
     if (bounds.right() > workArea.right())
         bounds.moveRight(workArea.right());
     if (bounds.bottom() > workArea.bottom())
         bounds.moveBottom(workArea.bottom());
-    if (bounds.left() < workArea.left())
-        bounds.moveLeft(workArea.left());
-    if (bounds.top() < workArea.top())
-        bounds.moveTop(workArea.top());
+    if (bounds.x() < workArea.x())
+        bounds.moveLeft(workArea.x());
+    if (bounds.y() < workArea.y())
+        bounds.moveTop(workArea.y());
 
     context.windowManager->setWindowOutput(window, target.waylandName);
     if (window->state()->isNormal())

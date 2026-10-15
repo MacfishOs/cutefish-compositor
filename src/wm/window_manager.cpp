@@ -13,15 +13,15 @@
 #include <utility>
 
 #include <linux/input-event-codes.h>
+#include <unistd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
-#include <QCoreApplication>
-#include <QStringList>
-#include <QTimer>
-
+#include "base/event_loop.h"
+#include "base/strings.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "display/display_manager.h"
 #include "input/hit_test.h"
 #include "input/key_translator.h"
@@ -56,9 +56,8 @@ void WindowManager::setVisualStyle(const decoration::WindowVisualStyle &style)
     }
 }
 
-WindowManager::WindowManager(compositor::Compositor *compositor, input::Seat *seat, QObject *parent)
-    : QObject(parent)
-    , m_compositor(compositor)
+WindowManager::WindowManager(compositor::Compositor *compositor, input::Seat *seat)
+    : m_compositor(compositor)
     , m_seat(seat)
     , m_activation(this)
     , m_transientManager(std::make_unique<TransientManager>())
@@ -84,7 +83,7 @@ WindowManager::~WindowManager()
     m_mruTracker.reset();
 }
 
-void WindowManager::setOutputBounds(const QRect &bounds)
+void WindowManager::setOutputBounds(const base::Rect &bounds)
 {
     if (bounds == m_outputBounds)
         return;
@@ -102,16 +101,15 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
 {
     if (m_displayManager == manager)
         return;
-    if (m_displayManager)
-        disconnect(m_displayManager, nullptr, this, nullptr);
+    m_displaysChanged.reset();
     m_displayManager = manager;
     notifyOutputsChanged();
     if (!m_displayManager)
         return;
-    connect(m_displayManager, &display::DisplayManager::displaysChanged, this,
+    m_displaysChanged = m_displayManager->displaysChanged.connect(
             [this](uint64_t, uint64_t) {
                 if (!m_displayManager->applied()
-                    || m_displayManager->applied()->logicalDisplays.isEmpty())
+                    || m_displayManager->applied()->logicalDisplays.empty())
                     return;
                 const WMEvent event(WMEventType::WorkAreaChanged);
                 for (Window *window : std::vector<Window *>(m_stackingOrder)) {
@@ -123,22 +121,22 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
                             reachable |= window->bounds().intersects(output.bounds);
                     }
                     if (!reachable && m_displayManager->applied()
-                        && !m_displayManager->applied()->logicalDisplays.isEmpty()
+                        && !m_displayManager->applied()->logicalDisplays.empty()
                         && window->stateType() == WindowStateType::Normal
                         && !window->isShellWindow()) {
                         const auto *output =
-                                m_displayManager->nearestDisplay(window->bounds().center());
-                        QRect target = window->bounds();
+                                m_displayManager->nearestDisplay(centerPixel(window->bounds()));
+                        base::Rect target = window->bounds();
                         if (output) {
-                            const QRect area = m_exclusiveZones.apply(
+                            const base::Rect area = m_exclusiveZones.apply(
                                     output->workArea, output->waylandName, output->primary);
                             const int visibleWidth = std::min(64, target.width());
                             const int visibleHeight = std::min(32, target.height());
                             target.moveLeft(std::clamp(target.x(),
                                                        area.left() - target.width() + visibleWidth,
-                                                       area.right() - visibleWidth + 1));
+                                                       area.right() - visibleWidth));
                             target.moveTop(std::clamp(target.y(), area.top(),
-                                                      area.bottom() - visibleHeight + 1));
+                                                      area.bottom() - visibleHeight));
                             window->setBounds(target);
                         }
                     }
@@ -154,17 +152,17 @@ void WindowManager::notifyOutputsChanged()
     if (areas == m_outputAreas)
         return;
     m_outputAreas = std::move(areas);
-    Q_EMIT outputsChanged();
+    outputsChanged();
 }
 
-QRect WindowManager::outputBounds() const
+base::Rect WindowManager::outputBounds() const
 {
     if (m_displayManager && !m_displayManager->desktopBounds().isEmpty())
         return m_displayManager->desktopBounds();
     return m_outputBounds;
 }
 
-QRect WindowManager::outputBoundsFor(const Window *window) const
+base::Rect WindowManager::outputBoundsFor(const Window *window) const
 {
     if (m_displayManager) {
         const display::LogicalDisplay *logical = nullptr;
@@ -181,7 +179,7 @@ QRect WindowManager::outputBoundsFor(const Window *window) const
         }
         if (window && window->rootSurface() && m_displayManager->applied()) {
             const auto metadata = m_shellMetadata.find(window->rootSurface());
-            if (metadata != m_shellMetadata.end() && !metadata->second.outputName.isEmpty()) {
+            if (metadata != m_shellMetadata.end() && !metadata->second.outputName.empty()) {
                 for (const auto &candidate : m_displayManager->applied()->logicalDisplays) {
                     if (candidate.waylandName == metadata->second.outputName) {
                         logical = &candidate;
@@ -199,7 +197,7 @@ QRect WindowManager::outputBoundsFor(const Window *window) const
     return m_outputBounds;
 }
 
-void WindowManager::setWindowOutput(Window *window, const QString &waylandName)
+void WindowManager::setWindowOutput(Window *window, const std::string &waylandName)
 {
     if (window)
         m_windowOutputs[window] = waylandName;
@@ -210,7 +208,7 @@ void WindowManager::clearWindowOutput(Window *window)
     m_windowOutputs.erase(window);
 }
 
-QRect WindowManager::workAreaFor(const Window *window) const
+base::Rect WindowManager::workAreaFor(const Window *window) const
 {
     if (m_displayManager) {
         const display::LogicalDisplay *logical = window
@@ -230,10 +228,10 @@ QRect WindowManager::workAreaFor(const Window *window) const
     return m_workArea;
 }
 
-QRect WindowManager::visibleAreaFor(const Window *window) const
+base::Rect WindowManager::visibleAreaFor(const Window *window) const
 {
-    QRect area = workAreaFor(window);
-    QRect output = m_outputBounds;
+    base::Rect area = workAreaFor(window);
+    base::Rect output = m_outputBounds;
     if (m_displayManager) {
         if (const auto *logical = window ? m_displayManager->displayForRect(window->bounds())
                                          : m_displayManager->primaryDisplay())
@@ -244,7 +242,7 @@ QRect WindowManager::visibleAreaFor(const Window *window) const
     return area;
 }
 
-QRect WindowManager::outputForNewWindow() const
+base::Rect WindowManager::outputForNewWindow() const
 {
     if (Window *active = m_activation.activeWindow();
         active && !active->isShellWindow() && !active->isPopup()) {
@@ -252,7 +250,8 @@ QRect WindowManager::outputForNewWindow() const
     }
     if (m_displayManager) {
         if (m_seat) {
-            if (const auto *logical = m_displayManager->displayAt(m_seat->pointerLocation()))
+            if (const auto *logical =
+                        m_displayManager->displayAt(m_seat->pointerLocation()))
                 return logical->bounds;
         }
         if (const auto *logical = m_displayManager->primaryDisplay())
@@ -261,7 +260,7 @@ QRect WindowManager::outputForNewWindow() const
     return m_outputBounds;
 }
 
-QRect WindowManager::workAreaForOutput(const QRect &outputBounds) const
+base::Rect WindowManager::workAreaForOutput(const base::Rect &outputBounds) const
 {
     if (m_displayManager && m_displayManager->applied()) {
         for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
@@ -271,7 +270,7 @@ QRect WindowManager::workAreaForOutput(const QRect &outputBounds) const
             }
         }
     }
-    return outputBounds == m_outputBounds ? m_workArea : QRect();
+    return outputBounds == m_outputBounds ? m_workArea : base::Rect();
 }
 
 std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
@@ -292,13 +291,14 @@ std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
     return areas;
 }
 
-void WindowManager::setWorkArea(const QRect &bounds)
+void WindowManager::setWorkArea(const base::Rect &bounds)
 {
-    const QRect area = bounds.intersected(m_outputBounds);
+    const base::Rect area = bounds.intersected(m_outputBounds);
     if (area.isEmpty() || area == m_workArea)
         return;
     m_workArea = area;
-    qCDebug(cfCompositor) << "work area" << m_workArea << "of output" << m_outputBounds;
+    CF_DEBUG(cfCompositor) << "work area" << m_workArea << "of output"
+                          << m_outputBounds;
     const WMEvent event(WMEventType::WorkAreaChanged);
     for (Window *window : std::vector<Window *>(m_stackingOrder)) {
         if (hasWindow(window))
@@ -312,11 +312,11 @@ void WindowManager::applyExclusiveZones()
 }
 
 void WindowManager::setExclusiveZone(const void *token, ScreenEdge edge, int thickness,
-                                     const QString &outputName)
+                                     const std::string &outputName)
 {
     if (m_exclusiveZones.set(token, edge, thickness, outputName)) {
         applyExclusiveZones();
-        if (!outputName.isEmpty()) {
+        if (!outputName.empty()) {
             const WMEvent event(WMEventType::WorkAreaChanged);
             for (Window *window : std::vector<Window *>(m_stackingOrder)) {
                 if (hasWindow(window))
@@ -437,30 +437,30 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     // A shell window is never decorated.
     window->setDecorated(init.decorated && !window->isShellWindow() && !window->isPopup());
 
-    QSize size = init.requestedSize;
+    base::Size size = init.requestedSize;
     if (size.isEmpty() && rootSurface)
         size = rootSurface->contentSize();
     if (size.isEmpty())
-        size = QSize(1, 1);
+        size = base::Size(1, 1);
 
     const ShellWindowMetadata *metadata = shellMetadata(rootSurface);
     if (window->isPopup()) {
-        window->setBounds(QRect(init.origin, size));
+        window->setBounds(base::Rect(init.origin, size));
     } else if (window->role() == WindowRole::Sheet && window->transientParent()) {
-        window->setBounds(QRect(QPoint(), size));
+        window->setBounds(base::Rect(base::Point(), size));
         placeSheet(window);
     } else if (metadata && metadata->hasPosition) {
         // Shell positions bypass the normal window placement policy.
-        window->setBounds(QRect(metadata->position, size));
+        window->setBounds(base::Rect(metadata->position, size));
         window->setClientPosition(metadata->position);
     } else if (window->isShellWindow()) {
-        window->setBounds(QRect(outputBoundsFor(window).topLeft(), size));
+        window->setBounds(base::Rect(outputBoundsFor(window).topLeft(), size));
     } else if (Window *parent = window->transientParent()) {
         window->setBounds(m_placement.placeTransient(window->frameInsets().outset(size),
                                                      parent->bounds(), parent->frameInsets().top,
                                                      workAreaFor(parent)));
     } else {
-        QRect workArea = workAreaForOutput(init.output);
+        base::Rect workArea = workAreaForOutput(init.output);
         if (workArea.isEmpty())
             workArea = workAreaForOutput(outputForNewWindow());
         if (workArea.isEmpty())
@@ -476,13 +476,13 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
 
     restackScene();
 
-    qCDebug(cfCompositor) << "Window created;" << toString(window->role()) << "total"
+    CF_DEBUG(cfCompositor) << "Window created;" << toString(window->role()) << "total"
                           << m_stackingOrder.size();
-    Q_EMIT windowAdded(window);
+    windowAdded(window);
     return window;
 }
 
-QRect WindowManager::boundsForNewWindow(const Window *window, QRect bounds) const
+base::Rect WindowManager::boundsForNewWindow(const Window *window, base::Rect bounds) const
 {
     if (!restorePlacement(window, &bounds))
         bounds = window_positioner::boundsForNewWindow(window, bounds);
@@ -492,13 +492,13 @@ QRect WindowManager::boundsForNewWindow(const Window *window, QRect bounds) cons
 void WindowManager::rememberPlacement(const Window *window)
 {
     const compositor::Surface *surface = window->rootSurface();
-    if (!surface || surface->restoreId().isEmpty() || window->applicationId().isEmpty()
+    if (!surface || surface->restoreId().empty() || window->applicationId().empty()
         || window->isPopup() || window->isShellWindow() || window->transientParent()) {
         return;
     }
     // A maximized or fullscreen window is remembered by where it returns to.
     const WindowState *state = window->state();
-    QRect bounds = window->bounds();
+    base::Rect bounds = window->bounds();
     if (!state->isNormal()) {
         if (!(state->isMaximized() || state->isFullscreen()) || !state->hasRestoreBounds())
             return;
@@ -508,18 +508,18 @@ void WindowManager::rememberPlacement(const Window *window)
             bounds, outputBoundsFor(window)};
 }
 
-bool WindowManager::restorePlacement(const Window *window, QRect *bounds) const
+bool WindowManager::restorePlacement(const Window *window, base::Rect *bounds) const
 {
     const compositor::Surface *surface = window->rootSurface();
-    if (!surface || surface->restoreId().isEmpty())
+    if (!surface || surface->restoreId().empty())
         return false;
     const auto it = m_rememberedPlacements.find({window->applicationId(), surface->restoreId()});
     if (it == m_rememberedPlacements.end())
         return false;
-    const QRect workArea = workAreaForOutput(it->second.output);
+    const base::Rect workArea = workAreaForOutput(it->second.output);
     if (workArea.isEmpty())
         return false;
-    const QRect &previous = it->second.bounds;
+    const base::Rect &previous = it->second.bounds;
     bounds->moveTopLeft(previous.topLeft());
     if (surface->resizeAnchor() == compositor::ResizeAnchor::Center) {
         // Halves of the difference, as a client resize around the centre moves it.
@@ -573,9 +573,9 @@ void WindowManager::destroyWindow(Window *window)
     m_activation.onWindowRemoving(window);
     if (grabbed)
         releaseKeyboardGrab();
-    Q_EMIT pointerTargetsChanged();
+    pointerTargetsChanged();
 
-    Q_EMIT windowRemoved(window);
+    windowRemoved(window);
 }
 
 void WindowManager::insertIntoStackingOrder(Window *window)
@@ -625,11 +625,11 @@ void WindowManager::restackScene()
     if (!container)
         return;
 
-    if (cfCompositor().isDebugEnabled()) {
-        QStringList order;
+    if (cfCompositor.isEnabled(base::LogLevel::Debug)) {
+        std::vector<std::string> order;
         for (Window *window : m_stackingOrder)
-            order << QStringLiteral("%1(%2)").arg(window->title(), toString(window->role()));
-        qCDebug(cfCompositor) << "stacking, bottom to top:" << order.join(QLatin1String(" < "));
+            order.push_back(window->title() + "(" + toString(window->role()) + ")");
+        CF_DEBUG(cfCompositor) << "stacking, bottom to top:" << base::strings::join(order, " < ");
     }
 
     std::vector<scene::Node *> managedNodes;
@@ -711,7 +711,7 @@ void WindowManager::restackScene()
     }
 
     container->reorderChildren(order);
-    Q_EMIT pointerTargetsChanged();
+    pointerTargetsChanged();
 }
 
 void WindowManager::setDragOverlay(scene::Node *overlay, Window *below)
@@ -779,7 +779,7 @@ void WindowManager::onWindowStackingChanged(Window *window)
         m_compositor->scheduleRepaint();
 }
 
-void WindowManager::attachSheet(Window *sheet, quint64 parentId)
+void WindowManager::attachSheet(Window *sheet, uint64_t parentId)
 {
     Window *parent = windowById(parentId);
     // Only an application window has a sheet; another shell surface is no
@@ -799,9 +799,9 @@ void WindowManager::placeSheet(Window *sheet)
         return;
     // What the parent shows: a client that has not drawn a new size yet, as a
     // hung one never does, keeps its old contents where they were.
-    const QRect bounds = parent->presentedBounds().translated(parent->bounds().topLeft());
-    const QSize size = sheet->bounds().size();
-    sheet->setClientPosition(QPoint(bounds.x() + (bounds.width() - size.width()) / 2,
+    const base::Rect bounds = parent->presentedBounds().translated(parent->bounds().topLeft());
+    const base::Size size = sheet->bounds().size();
+    sheet->setClientPosition(base::Point(bounds.x() + (bounds.width() - size.width()) / 2,
                                     bounds.y() + (bounds.height() - size.height()) / 2));
 }
 
@@ -821,11 +821,11 @@ void WindowManager::onWindowVisibilityChanged(Window *window)
 {
     if (!window->isVisible() && m_keyboardGrab == window)
         releaseKeyboardGrab();
-    Q_EMIT pointerTargetsChanged();
+    pointerTargetsChanged();
 }
 
-void WindowManager::onWindowTargetBoundsChanged(Window *window, const QRect &oldBounds,
-                                                const QRect &newBounds)
+void WindowManager::onWindowTargetBoundsChanged(Window *window, const base::Rect &oldBounds,
+                                                const base::Rect &newBounds)
 {
     const scene::Node *node = window->node();
     if (!m_seat || !hasWindow(window) || !node || !node->isEffectivelyVisible()
@@ -834,13 +834,13 @@ void WindowManager::onWindowTargetBoundsChanged(Window *window, const QRect &old
     // As aura's WindowEventDispatcher::OnWindowBoundsChanged: only when the
     // pointer enters or leaves the bounds, or the bounds move under it. A
     // resize in place leaves the surface-local location as it was.
-    const QPointF cursor = m_seat->cursorPosition();
-    const QPoint location(static_cast<int>(std::floor(cursor.x())),
+    const base::PointF cursor = m_seat->cursorPosition();
+    const base::Point location(static_cast<int>(std::floor(cursor.x())),
                           static_cast<int>(std::floor(cursor.y())));
     const bool contained = newBounds.contains(location);
     if (oldBounds.contains(location) != contained
         || (contained && newBounds.topLeft() != oldBounds.topLeft()))
-        Q_EMIT pointerTargetsChanged();
+        pointerTargetsChanged();
 }
 
 void WindowManager::setKeyboardGrab(Window *window)
@@ -853,12 +853,27 @@ void WindowManager::setKeyboardGrab(Window *window)
         m_seat->setFocusedSurface(window->rootSurface(), true);
 }
 
+void WindowManager::runLater(std::chrono::milliseconds delay, std::function<void()> task)
+{
+    auto guarded = [manager = weakPtr(), task = std::move(task)] {
+        if (manager)
+            task();
+    };
+    base::EventLoop *loop = core::mainLoop();
+    if (delay.count() == 0)
+        loop->post(std::move(guarded));
+    else
+        loop->startTimer(delay, false, std::move(guarded));
+}
+
 void WindowManager::sendPaste()
 {
     if (!m_pasteTimer) {
-        m_pasteTimer = new QTimer(this);
-        m_pasteTimer->setInterval(20);
-        connect(m_pasteTimer, &QTimer::timeout, this, &WindowManager::sendPaste);
+        m_pasteTimer = std::make_unique<base::Timer>(core::mainLoop());
+        m_pasteTimer->setInterval(std::chrono::milliseconds(20));
+        m_pasteTimer->onTimeout = [this] {
+            sendPaste();
+        };
     }
     if (!m_pasteTimer->isActive())
         m_pasteDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kPasteWaitMs);
@@ -915,7 +930,7 @@ void WindowManager::releaseKeyboardGrab()
         m_seat->setFocusedSurface(active ? active->rootSurface() : nullptr);
 }
 
-Window *WindowManager::windowById(quint64 id) const
+Window *WindowManager::windowById(uint64_t id) const
 {
     for (Window *window : m_stackingOrder) {
         if (window->id() == id)
@@ -932,16 +947,14 @@ bool WindowManager::belongsToApplication(const Window *candidate, const Window *
         return true;
     // The application id first, as the dock groups its tasks: an installed web
     // app shares its browser's process but is an application of its own.
-    if (!window->applicationId().isEmpty()) {
-        return candidate->applicationId().compare(window->applicationId(), Qt::CaseInsensitive)
-                == 0;
-    }
+    if (!window->applicationId().empty())
+        return base::strings::equalsIgnoreAsciiCase(candidate->applicationId(), window->applicationId());
     // With neither an application id nor a process, a window is on its own.
-    return window->processId() != 0 && candidate->applicationId().isEmpty()
+    return window->processId() != 0 && candidate->applicationId().empty()
             && candidate->processId() == window->processId();
 }
 
-bool WindowManager::hasApplicationWindow(qint64 process) const
+bool WindowManager::hasApplicationWindow(int64_t process) const
 {
     return std::any_of(m_stackingOrder.begin(), m_stackingOrder.end(), [process](Window *window) {
         return !window->skipTaskbar() && window->processId() == process;
@@ -956,14 +969,14 @@ void WindowManager::quitApplication(Window *window)
         return;
 
     std::vector<Window *> windows;
-    std::set<qint64> processes;
+    std::set<int64_t> processes;
     for (Window *candidate : m_stackingOrder) {
         if (candidate->transientParent() || !belongsToApplication(candidate, window))
             continue;
         windows.push_back(candidate);
         // Never the compositor itself, whatever claims its pid.
         if (candidate->processId() != 0
-            && candidate->processId() != QCoreApplication::applicationPid())
+            && candidate->processId() != getpid())
             processes.insert(candidate->processId());
     }
     // A close request can destroy its window, and with it others.
@@ -978,10 +991,10 @@ void WindowManager::quitApplication(Window *window)
     // closed its windows but keeps running. One that still shows a window
     // declined, typically to ask about unsaved changes, or also runs another
     // application's windows, and is left alone.
-    QTimer::singleShot(m_quitGracePeriod, this, [this, processes] {
+    runLater(m_quitGracePeriod, [this, processes] {
         if (!m_terminateProcess)
             return;
-        for (const qint64 process : processes) {
+        for (const int64_t process : processes) {
             if (!hasApplicationWindow(process))
                 m_terminateProcess(process);
         }
@@ -992,10 +1005,10 @@ void WindowManager::forceQuit(Window *window)
 {
     if (!hasWindow(window))
         return;
-    const qint64 process = window->processId();
+    const int64_t process = window->processId();
     window->kill();
     // Never the compositor itself, whatever claims its pid.
-    if (m_forceQuitProcess && process != 0 && process != QCoreApplication::applicationPid())
+    if (m_forceQuitProcess && process != 0 && process != getpid())
         m_forceQuitProcess(process);
 }
 
@@ -1167,7 +1180,7 @@ void WindowManager::dismissPopupGrabs()
     // client is told. Dismissing one popup routinely destroys the rest of the
     // chain, which unregisters them from here; a cached copy of the list would
     // be full of dangling pointers by the second iteration.
-    qCDebug(cfCompositor) << "dismissing" << m_popupGrabs.size() << "grabbing popup(s)";
+    CF_DEBUG(cfCompositor) << "dismissing" << m_popupGrabs.size() << "grabbing popup(s)";
     while (!m_popupGrabs.empty()) {
         ShellSurface *innermost = m_popupGrabs.back();
         m_popupGrabs.pop_back();
@@ -1195,10 +1208,10 @@ scene::Node *WindowManager::inputRoot() const
     return input::inputRootFor(m_compositor, m_sessionGate);
 }
 
-Window *WindowManager::windowAt(const QPointF &location, compositor::Surface **hitSurface,
-                                QPointF *surfaceLocation) const
+Window *WindowManager::windowAt(const base::PointF &location, compositor::Surface **hitSurface,
+                                base::PointF *surfaceLocation) const
 {
-    QPointF localLocation;
+    base::PointF localLocation;
     compositor::Surface *target =
             input::findTargetSurfaceIn(m_compositor, inputRoot(), location, &localLocation);
     if (hitSurface)
@@ -1208,16 +1221,17 @@ Window *WindowManager::windowAt(const QPointF &location, compositor::Surface **h
     return windowForSurface(target);
 }
 
-Window *WindowManager::capturableWindowAt(const QPointF &location) const
+Window *WindowManager::capturableWindowAt(const base::PointF &location) const
 {
     Window *window = windowForSurface(input::findCapturedSurfaceIn(
-            m_compositor, m_compositor ? m_compositor->surfaceContainer() : nullptr, location));
+            m_compositor, m_compositor ? m_compositor->surfaceContainer() : nullptr,
+            location));
     while (window && window->isPopup() && window->transientParent())
         window = window->transientParent();
     return window;
 }
 
-Window *WindowManager::modalBlockedWindowAt(const QPointF &location) const
+Window *WindowManager::modalBlockedWindowAt(const base::PointF &location) const
 {
     // Hit testing on every motion only pays off while some modal is up.
     const bool anyModal =
@@ -1242,14 +1256,14 @@ bool WindowManager::isPopupSurface(compositor::Surface *surface) const
             || input::isInputMethodSurface(m_compositor, surface);
 }
 
-bool WindowManager::isInputMethodPress(const QPointF &location) const
+bool WindowManager::isInputMethodPress(const base::PointF &location) const
 {
     compositor::Surface *hit = nullptr;
     windowAt(location, &hit, nullptr);
     return input::isInputMethodSurface(m_compositor, hit);
 }
 
-Window *WindowManager::frameAt(const QPointF &location, FrameArea *area) const
+Window *WindowManager::frameAt(const base::PointF &location, FrameArea *area) const
 {
     if (area)
         *area = FrameArea::None;
@@ -1269,9 +1283,9 @@ Window *WindowManager::frameAt(const QPointF &location, FrameArea *area) const
             continue;
 
         // Moved aside, or sliding: the frame's pixels are elsewhere than its bounds.
-        const QPoint drawn = location.toPoint() - window->presentationOffset();
+        const base::Point drawn = location.toPoint() - window->presentationOffset();
         WindowFrame *frame = window->frame();
-        if (!window->presentationOffset().isNull()) {
+        if (!window->presentationOffset().isOrigin()) {
             if ((frame && frame->inputBounds().contains(drawn))
                 || (window->bounds().contains(drawn)
                     && (!window->visualNode() || window->visualNode()->acceptsInput(location))))
@@ -1296,15 +1310,15 @@ Window *WindowManager::frameAt(const QPointF &location, FrameArea *area) const
     return nullptr;
 }
 
-bool WindowManager::isPopupAt(const QPointF &location) const
+bool WindowManager::isPopupAt(const base::PointF &location) const
 {
-    QPointF surfaceLocation;
+    base::PointF surfaceLocation;
     return isPopupSurface(m_seat ? m_seat->pointerTargetAt(inputRoot(), location, &surfaceLocation)
                                  : input::findTargetSurfaceIn(m_compositor, inputRoot(), location,
                                                               &surfaceLocation));
 }
 
-Window *WindowManager::resizeHandleAt(const QPointF &location, bool touch, ResizeEdge *edge) const
+Window *WindowManager::resizeHandleAt(const base::PointF &location, bool touch, ResizeEdge *edge) const
 {
     *edge = ResizeEdge::None;
     if (!allowsActivation() || isPopupAt(location))
@@ -1316,14 +1330,14 @@ Window *WindowManager::resizeHandleAt(const QPointF &location, bool touch, Resiz
             continue;
 
         // Checked before the window's own area: the handles reach a pixel in.
-        const bool inPlace = window->presentationOffset().isNull();
+        const bool inPlace = window->presentationOffset().isOrigin();
         const ResizeEdge hit = inPlace ? serverResizeEdgeAt(*window, m_visualStyle, location, touch)
                                        : ResizeEdge::None;
         if (hit != ResizeEdge::None) {
             *edge = hit;
             return window;
         }
-        const QPoint drawn = location.toPoint() - window->presentationOffset();
+        const base::Point drawn = location.toPoint() - window->presentationOffset();
         if (WindowFrame *frame = window->frame(); frame && frame->inputBounds().contains(drawn))
             return nullptr;
         if (window->bounds().contains(drawn)
@@ -1333,14 +1347,14 @@ Window *WindowManager::resizeHandleAt(const QPointF &location, bool touch, Resiz
     return nullptr;
 }
 
-Window *WindowManager::drawnWindowAt(const QPointF &location) const
+Window *WindowManager::drawnWindowAt(const base::PointF &location) const
 {
     for (auto it = m_stackingOrder.rbegin(); it != m_stackingOrder.rend(); ++it) {
         Window *window = *it;
         if (!window->isVisible())
             continue;
 
-        const QPoint drawn = location.toPoint() - window->presentationOffset();
+        const base::Point drawn = location.toPoint() - window->presentationOffset();
         if (WindowFrame *frame = window->frame(); frame && frame->inputBounds().contains(drawn))
             return window;
         if (window->bounds().contains(drawn)
@@ -1375,9 +1389,9 @@ void WindowManager::setFrameHover(Window *window)
     m_frameHover = window;
 }
 
-bool WindowManager::onPointerMotion(input::Timestamp timestamp, const QPointF &location)
+bool WindowManager::onPointerMotion(input::Timestamp timestamp, const base::PointF &location)
 {
-    Q_EMIT pointerMoved(location);
+    pointerMoved(location);
     if (m_eventHandler->onPointerMotion(location))
         return true;
 
@@ -1429,7 +1443,7 @@ bool WindowManager::onPointerMotion(input::Timestamp timestamp, const QPointF &l
     return true;
 }
 
-bool WindowManager::onPointerButton(input::Timestamp timestamp, const QPointF &location,
+bool WindowManager::onPointerButton(input::Timestamp timestamp, const base::PointF &location,
                                     uint32_t code, bool pressed)
 {
     if (pressed) {
@@ -1445,10 +1459,10 @@ bool WindowManager::onPointerButton(input::Timestamp timestamp, const QPointF &l
     return m_consumedButtons.erase(code) > 0 || consumed;
 }
 
-bool WindowManager::handlePointerButton(input::Timestamp timestamp, const QPointF &location,
+bool WindowManager::handlePointerButton(input::Timestamp timestamp, const base::PointF &location,
                                         uint32_t code, bool pressed)
 {
-    qCDebug(cfInputTransitions) << "WM code" << code << (pressed ? "press" : "release")
+    CF_DEBUG(cfInputTransitions) << "WM code" << code << (pressed ? "press" : "release")
                                 << "drag-target" << m_eventHandler->draggedWindow()
                                 << "frame-capture" << windowTrackingFramePress() << "hit-frame"
                                 << frameAt(location);
@@ -1531,7 +1545,7 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const QPoint
     return false;
 }
 
-bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location)
+bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF &location)
 {
     // A window drag, pointer or touch, owns the seat until it ends.
     if (m_eventHandler->isDragging())
@@ -1586,7 +1600,7 @@ bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const QP
 }
 
 bool WindowManager::onTouchMotion(input::Timestamp timestamp, int32_t id,
-                                  const QPointF &location)
+                                  const base::PointF &location)
 {
     // Checked before the frame: a point the frame started a drag with moves
     // the window from then on.
@@ -1624,7 +1638,7 @@ void WindowManager::onTouchCancel(input::Timestamp)
     }
 }
 
-bool WindowManager::onPointerAxis(input::Timestamp, const QPointF &location, const QPointF &, bool)
+bool WindowManager::onPointerAxis(input::Timestamp, const base::PointF &location, const base::PointF &, bool)
 {
     if (m_eventHandler->isDragging())
         return true;
@@ -1633,7 +1647,7 @@ bool WindowManager::onPointerAxis(input::Timestamp, const QPointF &location, con
     return modalBlockedWindowAt(location) != nullptr;
 }
 
-bool WindowManager::onPointerAxisStop(input::Timestamp, const QPointF &location)
+bool WindowManager::onPointerAxisStop(input::Timestamp, const base::PointF &location)
 {
     if (m_eventHandler->isDragging())
         return true;
@@ -1662,9 +1676,8 @@ bool WindowManager::onKey(input::Timestamp, uint32_t evdevCode, bool pressed)
     return true;
 }
 
-void WindowManager::onWindowActivated(Window *gainedActive, Window *lostActive)
+void WindowManager::onWindowActivated(Window *gainedActive, Window *)
 {
-    Q_UNUSED(lostActive);
     // A picker or a popup gives the keyboard up to whatever is activated while
     // it is up, an application started from the dock for one.
     if (m_keyboardGrab
@@ -1672,7 +1685,7 @@ void WindowManager::onWindowActivated(Window *gainedActive, Window *lostActive)
         m_keyboardGrab = nullptr;
     if (m_seat && !m_keyboardGrab)
         m_seat->setFocusedSurface(gainedActive ? gainedActive->rootSurface() : nullptr);
-    Q_EMIT activeWindowChanged(gainedActive);
+    activeWindowChanged(gainedActive);
 }
 
 } // namespace cutefish::wm

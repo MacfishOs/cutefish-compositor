@@ -12,13 +12,13 @@
 #include <optional>
 #include <vector>
 
-#include <QImage>
-#include <QRectF>
-#include <QString>
+#include <string>
 
 #include "scene/finger_track.h"
 #include "scene/motion.h"
 #include "scene/node.h"
+#include "base/geometry.h"
+#include "ui/bitmap.h"
 
 namespace cutefish::scene {
 
@@ -26,9 +26,9 @@ class WindowAnimation;
 
 // One line of text at `density` device pixels to a logical one, no wider than
 // `maxWidth` logical pixels: premultiplied RGBA8888, or null.
-using OverviewTextPainter = std::function<QImage(const QString &text, int pixelSize,
-                                                 const render::Color &color, double density,
-                                                 int maxWidth)>;
+using OverviewTextPainter = std::function<ui::Bitmap(const std::string &text, int pixelSize,
+                                                     const render::Color &color, double density,
+                                                     int maxWidth)>;
 
 // What the overview draws around every window alike, whatever its own state:
 // the corners of a window in its normal state, `radius` logical pixels scaled
@@ -37,7 +37,7 @@ using OverviewTextPainter = std::function<QImage(const QString &text, int pixelS
 // `window`, is drawn, to 1, where only the overview's is. `moving` says the
 // body is not yet where it rests.
 struct OverviewWindowFrame {
-    qreal radius = 0;
+    double radius = 0;
     std::function<void(render::Renderer &renderer, const WindowAnimation &window,
                        const render::RoundedShape &body, double uniform, float opacity,
                        bool moving)>
@@ -52,26 +52,26 @@ class OverviewChromeCache
 {
 public:
     render::Texture *label(render::Renderer &renderer, const OverviewTextPainter &painter,
-                           const QString &text, int pixelSize, const render::Color &color,
-                           int maxWidth, QSizeF *size);
+                           const std::string &text, int pixelSize, const render::Color &color,
+                           int maxWidth, base::SizeF *size);
     enum class Glyph {
         Close,
         Plus,
     };
     // The glyph filling `size` logical pixels, drawn in `color`.
-    render::Texture *glyph(render::Renderer &renderer, Glyph glyph, const QSizeF &size,
+    render::Texture *glyph(render::Renderer &renderer, Glyph glyph, const base::SizeF &size,
                            const render::Color &color);
     void clear() { m_entries.clear(); }
 
 private:
     struct Entry {
-        QString key;
+        std::string key;
         std::unique_ptr<render::Texture> texture;
-        QSizeF size;
+        base::SizeF size;
     };
-    render::Texture *find(const QString &key, QSizeF *size);
-    render::Texture *insert(render::Renderer &renderer, const QString &key, const QImage &image,
-                            const QSizeF &size);
+    render::Texture *find(const std::string &key, base::SizeF *size);
+    render::Texture *insert(render::Renderer &renderer, const std::string &key, const ui::Bitmap &image,
+                            const base::SizeF &size);
     std::list<Entry> m_entries;
 };
 
@@ -95,8 +95,8 @@ public:
         // Drawn together, bottom to top: a window and its transient children.
         // The first one's geometry is what `to` places.
         std::vector<const WindowAnimation *> windows;
-        QRectF to;
-        QString title;
+        base::RectF to;
+        std::string title;
     };
 
     // What the pointer or the keyboard is on.
@@ -115,7 +115,7 @@ public:
     static constexpr double kChromeFadeMs = 150;
     static constexpr float kDimOpacity = 0.35f;
 
-    explicit OverviewNode(std::function<qint64()> clock = {});
+    explicit OverviewNode(std::function<int64_t()> clock = {});
 
     void setTextPainter(OverviewTextPainter painter) { m_textPainter = std::move(painter); }
     void setWindowFrame(OverviewWindowFrame frame) { m_frame = std::move(frame); }
@@ -130,7 +130,7 @@ public:
 
     // The item drawn at `rect` as the pointer drags it; none for -1. It is not
     // drawn with the rest but by renderDragged(), over the desk bar.
-    void setDragged(int index, const QRectF &rect);
+    void setDragged(int index, const base::RectF &rect);
     void renderDragged(render::Renderer &renderer) const;
 
     // The item drawn over the rest; none for -1.
@@ -172,13 +172,13 @@ public:
     }
 
     // Where item `index` is drawn at `progress`.
-    QRectF presentedRect(int index, double progress, double timeMs) const;
+    base::RectF presentedRect(int index, double progress, double timeMs) const;
 
     void render(render::Renderer &renderer) const override;
     Content content() const override { return isActive() ? Content::Opaque : Content::None; }
     bool paintsSubtree() const override { return isActive(); }
     bool requiresFullRepaint() const override { return isActive(); }
-    bool acceptsInput(const QPointF &) const override { return false; }
+    bool acceptsInput(const base::PointF &) const override { return false; }
     bool occludesOutput(const render::Renderer &) const override { return isActive(); }
     void releaseRenderResources() override;
 
@@ -194,25 +194,25 @@ private:
     void updateCoast();
     double layoutProgress(double timeMs) const;
     // Whether the backdrop paints the whole viewport opaquely.
-    bool backdropCovers(const QRect &viewport) const;
+    bool backdropCovers(const base::Rect &viewport) const;
     // Whether the chrome shows, and how much, at `timeMs`.
     float chromeOpacity(double timeMs) const;
     void renderItem(render::Renderer &renderer, int index, double progress, double now) const;
     // The main window's body at `rect`, at rest in the overview.
-    render::RoundedShape restingBody(int index, const QRectF &rect) const;
-    void renderChrome(render::Renderer &renderer, const QRect &viewport, double now) const;
+    render::RoundedShape restingBody(int index, const base::RectF &rect) const;
+    void renderChrome(render::Renderer &renderer, const base::Rect &viewport, double now) const;
     void landed(double now) const;
 
-    std::function<qint64()> m_now;
+    std::function<int64_t()> m_now;
     OverviewTextPainter m_textPainter;
     OverviewWindowFrame m_frame;
     std::vector<const Node *> m_backdrop;
     std::vector<Item> m_items;
     // Where each item was headed when the layout last changed.
-    std::vector<QRectF> m_layoutFrom;
+    std::vector<base::RectF> m_layoutFrom;
     std::optional<motion::Tween> m_layout;
     int m_dragged = -1;
-    QRectF m_dragRect;
+    base::RectF m_dragRect;
     int m_raised = -1;
     Chrome m_chrome;
 
@@ -237,8 +237,8 @@ class OverviewDeskBarNode : public Node
 {
 public:
     struct Desk {
-        QRectF bounds;
-        QString name;
+        base::RectF bounds;
+        std::string name;
         bool active = false;
         // The pointer is on it, or a window dragged over it would drop there.
         bool highlighted = false;
@@ -247,15 +247,15 @@ public:
         bool closeShown = false;
         bool closeHovered = false;
         // Stays with the desk as the bar changes around it.
-        quintptr id = 0;
+        uintptr_t id = 0;
     };
 
     struct Bar {
         // The output it is on, and where it sits once shown.
-        QRect output;
-        QRectF bounds;
+        base::Rect output;
+        base::RectF bounds;
         std::vector<Desk> desks;
-        QRectF newDesk;
+        base::RectF newDesk;
         bool newDeskHighlighted = false;
     };
 
@@ -267,7 +267,7 @@ public:
     // Ash's DeskActionView close button, in the preview's top right corner.
     static constexpr double kCloseButtonSize = 24;
     static constexpr double kCloseButtonMargin = 4;
-    static QRectF closeButtonRect(const QRectF &preview);
+    static base::RectF closeButtonRect(const base::RectF &preview);
 
     static constexpr double kPreviewRadius = 8;
     static constexpr int kLabelPixelSize = 13;
@@ -306,13 +306,13 @@ public:
     }
     bool paintsSubtree() const override { return m_overview->isActive(); }
     bool requiresFullRepaint() const override { return m_overview->isActive(); }
-    bool acceptsInput(const QPointF &) const override { return false; }
+    bool acceptsInput(const base::PointF &) const override { return false; }
     void releaseRenderResources() override;
 
 private:
     struct Preview {
         std::unique_ptr<render::Texture> texture;
-        QRectF bounds;
+        base::RectF bounds;
         double scale = 0;
         double drawnAt = -1;
         bool stale = true;
@@ -320,21 +320,21 @@ private:
 
     // How a preview or the new-desk button heads for where the bar puts it.
     struct Placement {
-        QRectF from;
+        base::RectF from;
         std::optional<motion::Tween> shift;
         std::optional<motion::Tween> scale;
         std::optional<motion::Tween> fade;
 
         static Placement appearing(double now);
-        QRectF rect(const QRectF &to, double now) const;
+        base::RectF rect(const base::RectF &to, double now) const;
         double scaleAt(double now) const { return scale ? scale->value(now) : 1; }
         float opacity(double now) const { return fade ? float(fade->value(now)) : 1.0f; }
         bool isMoving(double now) const;
-        void moveTo(const QRectF &oldTo, const QRectF &to, double now);
+        void moveTo(const base::RectF &oldTo, const base::RectF &to, double now);
     };
 
     struct BarMotion {
-        std::map<quintptr, Placement> desks;
+        std::map<uintptr_t, Placement> desks;
         Placement newDesk;
     };
 
@@ -342,7 +342,7 @@ private:
     struct Leaving {
         Bar bar;
         std::optional<Desk> desk;
-        QRectF rect;
+        base::RectF rect;
         double scale = 1;
         std::unique_ptr<render::Texture> preview;
         motion::Tween fade;
@@ -352,9 +352,9 @@ private:
                    double progress, double now) const;
     // `rect` is where the desk sits, its preview scaled by `scale` from the
     // top centre.
-    void renderDesk(render::Renderer &renderer, const Desk &desk, const QRectF &rect,
+    void renderDesk(render::Renderer &renderer, const Desk &desk, const base::RectF &rect,
                     double scale, render::Texture *preview, float opacity) const;
-    void renderNewDesk(render::Renderer &renderer, const QRectF &rect, bool highlighted,
+    void renderNewDesk(render::Renderer &renderer, const base::RectF &rect, bool highlighted,
                        float opacity) const;
     void updatePreview(render::Renderer &renderer, const Bar &bar, int desk, double now) const;
 
@@ -367,7 +367,7 @@ private:
     std::vector<const Node *> m_backdrop;
     std::vector<DeskContent> m_desks;
     // Keyed by the output's bounds and the desk's id.
-    mutable std::map<std::pair<QString, quintptr>, Preview> m_previews;
+    mutable std::map<std::pair<std::string, uintptr_t>, Preview> m_previews;
     mutable int m_previewsLeft = 0;
     mutable OverviewChromeCache m_chromeCache;
 };

@@ -3,40 +3,19 @@
 // found in the LICENSE file.
 
 #include "auth/pam_backend.h"
+#include "core/main_loop.h"
 #include <pwd.h>
 #include <unistd.h>
 
 namespace cutefish::auth {
-PamBackend::PamBackend(QObject *parent)
-    : AuthBackend(parent)
+PamBackend::PamBackend()
+    : m_timeout(core::mainLoop())
 {
-    m_process.setProgram(QStringLiteral(CUTEFISH_AUTH_HELPER));
-    m_process.setProcessChannelMode(QProcess::SeparateChannels);
-    m_process.setStandardOutputFile(QProcess::nullDevice());
-    m_process.setStandardErrorFile(QProcess::nullDevice());
     m_timeout.setSingleShot(true);
-    connect(&m_timeout, &QTimer::timeout, this, [this] {
+    m_timeout.onTimeout = [this] {
         reset();
-        emit failed(tr("Authentication timed out"));
-    });
-    connect(&m_process, &QProcess::errorOccurred, this, [this] {
-        if (!m_pending)
-            return;
-        m_pending = false;
-        m_timeout.stop();
-        emit failed(tr("Authentication service unavailable"));
-    });
-    connect(&m_process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-            [this](int code, QProcess::ExitStatus status) {
-                if (!m_pending)
-                    return;
-                m_pending = false;
-                m_timeout.stop();
-                if (status == QProcess::NormalExit && code == 0)
-                    emit succeeded();
-                else
-                    emit failed(tr("Authentication failed"));
-            });
+        failed("Authentication timed out");
+    };
 }
 
 PamBackend::~PamBackend()
@@ -44,38 +23,52 @@ PamBackend::~PamBackend()
     reset();
 }
 
-QString PamBackend::defaultUserName() const
+std::string PamBackend::defaultUserName() const
 {
     const passwd *user = getpwuid(getuid());
-    return user ? QString::fromLocal8Bit(user->pw_name) : QString();
+    return user && user->pw_name ? std::string(user->pw_name) : std::string();
 }
 
-void PamBackend::authenticate(const QString &userName, Secret secret)
+void PamBackend::authenticate(const std::string &userName, Secret secret)
 {
-    if (m_pending || m_process.state() != QProcess::NotRunning)
+    if (m_pending || (m_process && m_process->isRunning()))
         return;
     if (userName != defaultUserName() || secret.size() > 4096 || secret.isEmpty()) {
-        emit failed(tr("Authentication failed"));
+        failed("Authentication failed");
         return;
     }
     m_pending = true;
-    m_process.start();
-    if (!m_process.waitForStarted(1000))
-        return;
+    m_process = std::make_unique<base::Process>(core::mainLoop());
+    // A crash is the service failing, not a verdict.
+    m_process->onFinished = [this](int code, bool crashed) {
+        if (!m_pending)
+            return;
+        m_pending = false;
+        m_timeout.stop();
+        if (crashed)
+            failed("Authentication service unavailable");
+        else if (code == 0)
+            succeeded();
+        else
+            failed("Authentication failed");
+    };
     // The helper reads only this inherited pipe, never argv or a public socket.
-    m_process.write(secret.constData(), secret.size());
-    m_process.closeWriteChannel();
+    m_process->setStandardInput(std::string(secret.constData(), secret.size()));
     secret.clear();
-    m_timeout.start(30000);
+    if (!m_process->start(CUTEFISH_AUTH_HELPER)) {
+        m_pending = false;
+        m_process.reset();
+        failed("Authentication service unavailable");
+        return;
+    }
+    m_timeout.start(std::chrono::milliseconds(30000));
 }
 
 void PamBackend::reset()
 {
     m_pending = false;
     m_timeout.stop();
-    if (m_process.state() != QProcess::NotRunning) {
-        m_process.kill();
-        m_process.waitForFinished(1000);
-    }
+    // Kills a helper still running and waits for it.
+    m_process.reset();
 }
 } // namespace cutefish::auth

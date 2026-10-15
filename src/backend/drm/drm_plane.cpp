@@ -13,13 +13,11 @@
 
 namespace cutefish::backend {
 
-QList<QByteArray> DrmPlane::requiredProperties()
+std::vector<std::string> DrmPlane::requiredProperties()
 {
     return {
-        QByteArrayLiteral("type"),   QByteArrayLiteral("FB_ID"),  QByteArrayLiteral("CRTC_ID"),
-        QByteArrayLiteral("SRC_X"),  QByteArrayLiteral("SRC_Y"),  QByteArrayLiteral("SRC_W"),
-        QByteArrayLiteral("SRC_H"),  QByteArrayLiteral("CRTC_X"), QByteArrayLiteral("CRTC_Y"),
-        QByteArrayLiteral("CRTC_W"), QByteArrayLiteral("CRTC_H"),
+        "type",   "FB_ID",  "CRTC_ID", "SRC_X",  "SRC_Y",  "SRC_W",
+        "SRC_H",  "CRTC_X", "CRTC_Y",  "CRTC_W", "CRTC_H",
     };
 }
 

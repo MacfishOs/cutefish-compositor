@@ -8,10 +8,6 @@
 
 #include <gtest/gtest.h>
 
-#include <QCoreApplication>
-#include <QDeadlineTimer>
-#include <QTemporaryDir>
-
 #include <wayland-client.h>
 
 #include <fcntl.h>
@@ -21,14 +17,17 @@
 #include <linux-drm-syncobj-v1-client-protocol.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <functional>
 #include <thread>
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "fake_renderer.h"
+#include "loop_test_util.h"
 #include "scene/scene.h"
 #include "scene/surface_node.h"
+#include "temporary_directory.h"
 #include "wayland/protocols/linux_drm_syncobj.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_shm.h"
@@ -55,16 +54,16 @@ struct ClientResult {
     std::atomic<int> bufferReleases { 0 };
 };
 
-// Runs a client on its own thread so the server can keep dispatching on the Qt
+// Runs a client on its own thread so the server can keep dispatching on the
 // event loop of the main thread.
 class TestClient
 {
 public:
     using Body = std::function<void(wl_display*, wl_compositor*, wl_shm*, ClientResult&)>;
 
-    void start(const QString& socketName, Body body)
+    void start(const std::string& socketName, Body body)
     {
-        m_thread = std::thread([this, name = socketName.toStdString(), body = std::move(body)] {
+        m_thread = std::thread([this, name = socketName, body = std::move(body)] {
             run(name, body);
         });
     }
@@ -169,15 +168,9 @@ protected:
     void SetUp() override
     {
         ASSERT_TRUE(m_runtimeDir.isValid());
-        qputenv("XDG_RUNTIME_DIR", m_runtimeDir.path().toUtf8());
+        setenv("XDG_RUNTIME_DIR", m_runtimeDir.path().c_str(), 1);
 
-        static int argc = 1;
-        static char arg0[] = "wayland_protocol_test";
-        static char* argv[] = { arg0, nullptr };
-        if (!QCoreApplication::instance())
-            new QCoreApplication(argc, argv);
-
-        m_scene.setSize(QSize(800, 600));
+        m_scene.setSize(base::Size(800, 600));
         m_compositor = std::make_unique<compositor::Compositor>(m_scene.root());
 
         m_server = std::make_unique<wayland::Server>();
@@ -194,17 +187,11 @@ protected:
         m_compositor.reset();
     }
 
-    // Spins the Qt event loop, which drives the server, until `predicate` holds.
+    // Runs the event loops, which drive the server, until `predicate` holds.
     template<class Predicate>
     bool waitFor(Predicate predicate, int timeoutMs = 5000)
     {
-        QDeadlineTimer deadline(timeoutMs);
-        while (!predicate()) {
-            if (deadline.hasExpired())
-                return false;
-            QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents, 5);
-        }
-        return true;
+        return cutefish::test::runUntil(predicate, std::chrono::milliseconds(timeoutMs));
     }
 
     bool runClient(TestClient& client, TestClient::Body body)
@@ -215,7 +202,7 @@ protected:
         return ok;
     }
 
-    QTemporaryDir m_runtimeDir;
+    cutefish::test::TemporaryDirectory m_runtimeDir;
     scene::Scene m_scene;
     std::unique_ptr<compositor::Compositor> m_compositor;
     std::unique_ptr<wayland::Server> m_server;
@@ -298,7 +285,8 @@ TEST_F(WaylandProtocolTest, TheCommittedBufferReachesTheSceneAndReleasesTheClien
     std::atomic<bool> mayFinish { false };
 
     TestClient client;
-    client.start(m_server->socketName(), [&committed, &mayFinish](wl_display* display,
+    client.start(m_server->socketName(), [&committed,
+                 &mayFinish](wl_display* display,
                                                                   wl_compositor* compositor,
                                                                   wl_shm* shm,
                                                                   ClientResult& result) {
@@ -357,8 +345,8 @@ TEST_F(WaylandProtocolTest, TheCommittedBufferReachesTheSceneAndReleasesTheClien
     ASSERT_EQ(1u, m_compositor->surfaces().size());
 
     compositor::Surface* surface = m_compositor->surfaces().front();
-    EXPECT_EQ(QSize(8, 4), surface->contentSize());
-    EXPECT_EQ(QRegion(QRect(0, 0, 8, 4)), surface->damageRegion());
+    EXPECT_EQ(base::Size(8, 4), surface->contentSize());
+    EXPECT_EQ(base::Region(base::Rect(0, 0, 8, 4)), surface->damageRegion());
 
     cutefish::testsupport::FakeRenderer renderer;
     m_compositor->updateTextures(renderer);

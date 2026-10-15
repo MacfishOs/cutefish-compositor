@@ -16,25 +16,22 @@
 #include <chrono>
 #include <functional>
 
-#include <QObject>
-#include <QTimer>
-
+#include "base/timer.h"
 #include "render/color_transform.h"
 
 namespace cutefish::display {
 
 // The night light's strength, from 0, which leaves the screen untouched, to 1,
 // the warmest, and the tint each step of its animation gives the outputs.
-class NightLight : public QObject
+class NightLight
 {
-    Q_OBJECT
-
 public:
     using Clock = std::function<std::chrono::steady_clock::time_point()>;
     using Apply = std::function<void(const render::ColorTransform &)>;
 
-    explicit NightLight(Apply apply, Clock clock = std::chrono::steady_clock::now,
-                        QObject *parent = nullptr);
+    explicit NightLight(Apply apply, Clock clock = std::chrono::steady_clock::now);
+    NightLight(const NightLight &) = delete;
+    NightLight &operator=(const NightLight &) = delete;
 
     // Moves linearly from where the animation is now. Ash takes a second for a
     // change the user makes and a minute for a scheduled one.
@@ -58,7 +55,7 @@ private:
 
     Apply m_apply;
     Clock m_clock;
-    QTimer m_timer;
+    base::Timer m_timer;
     double m_start = 0;
     double m_current = 0;
     double m_target = 0;

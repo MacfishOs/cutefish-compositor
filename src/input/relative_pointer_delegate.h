@@ -11,9 +11,9 @@
 #ifndef CUTEFISH_INPUT_RELATIVE_POINTER_DELEGATE_H_
 #define CUTEFISH_INPUT_RELATIVE_POINTER_DELEGATE_H_
 
-#include <QPointF>
 
 #include "input/types.h"
+#include "base/geometry.h"
 
 namespace cutefish::input {
 
@@ -23,8 +23,8 @@ class Pointer;
 // constraint. `delta` is accelerated and in logical units; `unaccelerated` is
 // the device's own delta before acceleration.
 struct RelativeMotion {
-    QPointF delta;
-    QPointF unaccelerated;
+    base::PointF delta;
+    base::PointF unaccelerated;
 };
 
 class RelativePointerDelegate

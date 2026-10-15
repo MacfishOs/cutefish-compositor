@@ -17,7 +17,8 @@
 #include <memory>
 #include <vector>
 
-#include <QImage>
+#include "base/strings.h"
+#include "ui/bitmap.h"
 #include FT_FREETYPE_H
 #include <hb-ft.h>
 #include <unicode/ubidi.h>
@@ -31,27 +32,35 @@ namespace {
 
 constexpr int kMaxTitleLength = 4096;
 
-QString singleLine(const QString& text)
+// UTF-16, as ICU and HarfBuzz take it; the length limit is in its units.
+using Text = std::u16string;
+
+Text singleLine(std::string_view utf8)
 {
-    QString result = text.left(kMaxTitleLength);
-    if (!result.isEmpty() && result.back().isHighSurrogate())
-        result.chop(1);
-    for (QChar& ch : result) {
-        if (ch == QLatin1Char('\n') || ch == QLatin1Char('\r') || ch == QLatin1Char('\t') ||
-            ch == QChar(0x2028) || ch == QChar(0x2029))
-            ch = QLatin1Char(' ');
-        else if (ch.isNull())
-            ch = QChar::ReplacementCharacter;
+    Text result = base::strings::utf8ToUtf16(utf8);
+    if (result.size() > size_t(kMaxTitleLength))
+        result.resize(kMaxTitleLength);
+    if (!result.empty() && U16_IS_LEAD(result.back()))
+        result.pop_back();
+    for (char16_t& ch : result) {
+        if (ch == u'\n' || ch == u'\r' || ch == u'\t' || ch == 0x2028 || ch == 0x2029)
+            ch = u' ';
+        else if (ch == 0)
+            ch = 0xFFFD;
     }
     return result;
 }
 
-std::vector<int> boundaries(const QString& text)
+const UChar* units(const Text& text)
+{
+    return reinterpret_cast<const UChar*>(text.data());
+}
+
+std::vector<int> boundaries(const Text& text)
 {
     UErrorCode error = U_ZERO_ERROR;
     std::unique_ptr<UBreakIterator, decltype(&ubrk_close)> iterator(
-        ubrk_open(UBRK_CHARACTER, nullptr, reinterpret_cast<const UChar*>(text.utf16()),
-                  text.size(), &error),
+        ubrk_open(UBRK_CHARACTER, nullptr, units(text), int32_t(text.size()), &error),
         ubrk_close);
     std::vector<int> result {0};
     if (U_FAILURE(error))
@@ -123,14 +132,14 @@ public:
         return true;
     }
 
-    Font* forText(const QString& text, int start, int end)
+    Font* forText(const Text& text, int start, int end)
     {
         bool preferColor = false;
         bool textPresentation = false;
         bool hasVisibleCharacter = false;
         for (int offset = start; offset < end;) {
             UChar32 code;
-            U16_NEXT(text.utf16(), offset, end, code);
+            U16_NEXT(text.data(), offset, end, code);
             preferColor |= code == 0xFE0F || u_hasBinaryProperty(code, UCHAR_EMOJI_PRESENTATION);
             textPresentation |= code == 0xFE0E;
             hasVisibleCharacter |= !u_hasBinaryProperty(code, UCHAR_DEFAULT_IGNORABLE_CODE_POINT);
@@ -151,7 +160,7 @@ public:
             int missing = 0;
             for (int offset = start; offset < end;) {
                 UChar32 code;
-                U16_NEXT(text.utf16(), offset, end, code);
+                U16_NEXT(text.data(), offset, end, code);
                 if (!u_hasBinaryProperty(code, UCHAR_DEFAULT_IGNORABLE_CODE_POINT) &&
                     !FcCharSetHasChar(charset, code))
                     ++missing;
@@ -228,7 +237,7 @@ struct Layout {
     int top = 0;
     int bottom = 0;
 
-    QSize size() const { return QSize(right - left, bottom - top); }
+    base::Size size() const { return base::Size(right - left, bottom - top); }
 };
 
 struct Run {
@@ -238,12 +247,13 @@ struct Run {
     Font* font;
 };
 
-void shapeRun(const QString& text, const Run& run, bool rtl, Layout& layout)
+void shapeRun(const Text& text, const Run& run, bool rtl, Layout& layout)
 {
     if (!run.font)
         return;
     hb_buffer_t* buffer = hb_buffer_create();
-    hb_buffer_add_utf16(buffer, text.utf16(), text.size(), run.start, run.end - run.start);
+    hb_buffer_add_utf16(buffer, reinterpret_cast<const uint16_t*>(text.data()), int(text.size()),
+                        run.start, run.end - run.start);
     hb_buffer_set_script(buffer, hb_script_from_string(uscript_getShortName(run.script), -1));
     hb_buffer_set_direction(buffer, rtl ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
     hb_buffer_set_language(buffer, hb_language_get_default());
@@ -279,15 +289,15 @@ void shapeRun(const QString& text, const Run& run, bool rtl, Layout& layout)
     hb_buffer_destroy(buffer);
 }
 
-Layout shape(const QString& text, int pixelSize, Fonts& fonts)
+Layout shape(const Text& text, int pixelSize, Fonts& fonts)
 {
     Layout layout;
-    if (text.isEmpty() || !fonts.setSize(pixelSize))
+    if (text.empty() || !fonts.setSize(pixelSize))
         return layout;
     UErrorCode error = U_ZERO_ERROR;
     std::unique_ptr<UBiDi, decltype(&ubidi_close)> bidi(ubidi_open(), ubidi_close);
-    ubidi_setPara(bidi.get(), reinterpret_cast<const UChar*>(text.utf16()), text.size(),
-                  UBIDI_DEFAULT_LTR, nullptr, &error);
+    ubidi_setPara(bidi.get(), units(text), int32_t(text.size()), UBIDI_DEFAULT_LTR, nullptr,
+                  &error);
     const int count = ubidi_countRuns(bidi.get(), &error);
     if (U_FAILURE(error))
         return layout;
@@ -303,7 +313,7 @@ Layout shape(const QString& text, int pixelSize, Fonts& fonts)
             UScriptCode script = USCRIPT_COMMON;
             for (int pos = offset; pos < end;) {
                 UChar32 code;
-                U16_NEXT(text.utf16(), pos, end, code);
+                U16_NEXT(text.data(), pos, end, code);
                 error = U_ZERO_ERROR;
                 auto candidate = uscript_getScript(code, &error);
                 if (U_SUCCESS(error) && candidate != USCRIPT_COMMON &&
@@ -333,17 +343,17 @@ Layout shape(const QString& text, int pixelSize, Fonts& fonts)
     return layout;
 }
 
-QString withEllipsis(const QString& prefix, UBiDiDirection direction)
+Text withEllipsis(const Text& prefix, UBiDiDirection direction)
 {
-    QString result = prefix + QChar(0x2026);
-    for (int i = prefix.size(); i > 0;) {
+    Text result = prefix + char16_t(0x2026);
+    for (int i = int(prefix.size()); i > 0;) {
         UChar32 code;
-        U16_PREV(prefix.utf16(), 0, i, code);
+        U16_PREV(prefix.data(), 0, i, code);
         const auto type = u_charDirection(code);
         if (type == U_LEFT_TO_RIGHT || type == U_RIGHT_TO_LEFT || type == U_RIGHT_TO_LEFT_ARABIC) {
             const bool rtl = type != U_LEFT_TO_RIGHT;
             if (rtl != (direction == UBIDI_RTL))
-                result += QChar(rtl ? 0x200F : 0x200E);
+                result += char16_t(rtl ? 0x200F : 0x200E);
             break;
         }
     }
@@ -363,18 +373,18 @@ TextRenderer::TextRenderer()
 
 TextRenderer::~TextRenderer() = default;
 
-QSize TextRenderer::textSize(const QString& text, int pixelSize)
+base::Size TextRenderer::textSize(std::string_view text, int pixelSize)
 {
     return shape(singleLine(text), pixelSize, m_impl->fonts).size();
 }
 
-Image TextRenderer::renderText(const QString& text, int pixelSize, const render::Color& color,
+Image TextRenderer::renderText(std::string_view text, int pixelSize, const render::Color& color,
                                double rasterDensity)
 {
     const Layout layout = shape(singleLine(text), pixelSize, m_impl->fonts);
     rasterDensity = std::clamp(rasterDensity, 1.0, 4.0);
-    Image image(QSize(int(std::ceil(layout.size().width() * rasterDensity)),
-                      int(std::ceil(layout.size().height() * rasterDensity))));
+    Image image(base::Size(int(std::ceil(layout.size().width() * rasterDensity)),
+                           int(std::ceil(layout.size().height() * rasterDensity))));
     for (const auto& glyph : layout.glyphs) {
         FT_Face face = glyph.font->face;
 
@@ -410,8 +420,9 @@ Image TextRenderer::renderText(const QString& text, int pixelSize, const render:
         const int y = std::lround((glyph.y - layout.top) * rasterDensity -
                                   face->glyph->bitmap_top * scale);
         const bool colored = bitmap.pixel_mode == FT_PIXEL_MODE_BGRA;
-        QImage mask(bitmap.width, bitmap.rows,
-                    colored ? QImage::Format_RGBA8888_Premultiplied : QImage::Format_Alpha8);
+        ui::Bitmap mask(int(bitmap.width), int(bitmap.rows),
+                        colored ? ui::Bitmap::Format::Rgba8888Premultiplied
+                                : ui::Bitmap::Format::Alpha8);
         mask.fill(0);
         for (unsigned row = 0; row < bitmap.rows; ++row) {
             const auto* pixels = bitmap.buffer +
@@ -432,8 +443,7 @@ Image TextRenderer::renderText(const QString& text, int pixelSize, const render:
         }
         if (scale != 1) {
             mask = mask.scaled(std::max(1, static_cast<int>(std::lround(mask.width() * scale))),
-                               std::max(1, static_cast<int>(std::lround(mask.height() * scale))),
-                               Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                               std::max(1, static_cast<int>(std::lround(mask.height() * scale))));
         }
         for (int row = 0; row < mask.height(); ++row) {
             const auto* pixels = mask.constScanLine(row);
@@ -454,32 +464,34 @@ Image TextRenderer::renderText(const QString& text, int pixelSize, const render:
     return image;
 }
 
-QString TextRenderer::elideText(const QString& text, int pixelSize, int maxWidth)
+std::string TextRenderer::elideText(std::string_view text, int pixelSize, int maxWidth)
 {
     if (maxWidth <= 0 || pixelSize <= 0 || pixelSize > 128)
         return {};
-    const QString line = singleLine(text);
-    if (textSize(line, pixelSize).width() <= maxWidth)
-        return line;
-    const QString ellipsis(QChar(0x2026));
-    if (textSize(ellipsis, pixelSize).width() > maxWidth)
+    const Text line = singleLine(text);
+    const auto width = [&](const Text& candidate) {
+        return shape(candidate, pixelSize, m_impl->fonts).size().width();
+    };
+    if (width(line) <= maxWidth)
+        return base::strings::utf16ToUtf8(line);
+    const Text ellipsis(1, char16_t(0x2026));
+    if (width(ellipsis) > maxWidth)
         return {};
     const auto breaks = boundaries(line);
-    const auto direction =
-        ubidi_getBaseDirection(reinterpret_cast<const UChar*>(line.utf16()), line.size());
+    const auto direction = ubidi_getBaseDirection(units(line), int32_t(line.size()));
     int low = 0, high = static_cast<int>(breaks.size()) - 2;
-    QString best = ellipsis;
+    Text best = ellipsis;
     while (low <= high) {
         const int guess = low + (high - low) / 2;
-        const QString candidate = withEllipsis(line.left(breaks[guess]), direction);
-        if (textSize(candidate, pixelSize).width() <= maxWidth) {
+        const Text candidate = withEllipsis(line.substr(0, size_t(breaks[guess])), direction);
+        if (width(candidate) <= maxWidth) {
             best = candidate;
             low = guess + 1;
         } else {
             high = guess - 1;
         }
     }
-    return best;
+    return base::strings::utf16ToUtf8(best);
 }
 
 } // namespace cutefish::decoration

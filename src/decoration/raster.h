@@ -16,9 +16,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <QPointF>
-#include <QRectF>
-#include <QSize>
+#include "base/geometry.h"
 
 #include "render/renderer.h"
 
@@ -28,9 +26,9 @@ namespace cutefish::decoration {
 class Image
 {
 public:
-    explicit Image(const QSize& size);
+    explicit Image(const base::Size& size);
 
-    QSize size() const { return m_size; }
+    base::Size size() const { return m_size; }
     int stride() const { return m_size.width() * 4; }
     const uint8_t* bits() const { return m_pixels.data(); }
 
@@ -41,7 +39,7 @@ public:
     void erase(int x, int y, float coverage);
 
 private:
-    QSize m_size;
+    base::Size m_size;
     std::vector<uint8_t> m_pixels;
 };
 
@@ -56,21 +54,21 @@ struct Corners {
     static Corners all() { return Corners(); }
 };
 
-void fillRoundedRect(Image& image, const QRectF& rect, qreal radius, const render::Color& color,
+void fillRoundedRect(Image& image, const base::RectF& rect, double radius, const render::Color& color,
                      const Corners& corners = Corners::all());
 
 // Window silhouettes use continuous corners; decoration controls keep circular arcs.
-void fillContinuousRoundedRect(Image& image, const QRectF& rect, qreal radius,
+void fillContinuousRoundedRect(Image& image, const base::RectF& rect, double radius,
                                const render::Color& color, const Corners& corners = Corners::all());
 
 // `width` is grown inwards from `rect`.
-void strokeRoundedRect(Image& image, const QRectF& rect, qreal radius, qreal width,
+void strokeRoundedRect(Image& image, const base::RectF& rect, double radius, double width,
                        const render::Color& color, const Corners& corners = Corners::all());
 
-void eraseRoundedRect(Image& image, const QRectF& rect, qreal radius);
+void eraseRoundedRect(Image& image, const base::RectF& rect, double radius);
 
 // A round-capped line, which is what the icon artwork uses.
-void strokeLine(Image& image, const QPointF& from, const QPointF& to, qreal width,
+void strokeLine(Image& image, const base::PointF& from, const base::PointF& to, double width,
                 const render::Color& color);
 
 } // namespace cutefish::decoration

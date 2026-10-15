@@ -26,7 +26,8 @@ compositor::Surface *map(Harness &h, Client &c, int x)
     auto *surface = wayland::surfaceFromResource(resource);
     auto pool = testsupport::makePool(100 * 100 * 4);
     auto buffer =
-            pool->createBuffer(QSize(100, 100), 0, 400, render::PixelFormat::Bgra8888, nullptr);
+            pool->createBuffer(base::Size(100, 100), 0, 400, render::PixelFormat::Bgra8888,
+                               nullptr);
     surface->attach(buffer, {});
     surface->commit();
     surface->setPosition({x, 0});
@@ -64,7 +65,7 @@ struct ShellDrag {
     cutefish_shell_drag_v1 *object = nullptr;
     Client *client = nullptr;
     std::vector<std::string> events;
-    QPointF location;
+    base::PointF location;
     // How many cancels the client's data source had seen when the drop came.
     size_t cancelsAtDrop = 0;
 
@@ -89,12 +90,12 @@ struct ShellDrag {
             [](void *data, cutefish_shell_drag_v1 *, wl_fixed_t x, wl_fixed_t y) {
                 auto *drag = static_cast<ShellDrag *>(data);
                 drag->events.push_back("motion");
-                drag->location = QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+                drag->location = base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
             },
             [](void *data, cutefish_shell_drag_v1 *, wl_fixed_t x, wl_fixed_t y) {
                 auto *drag = static_cast<ShellDrag *>(data);
                 drag->events.push_back("dropped");
-                drag->location = QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+                drag->location = base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
                 drag->cancelsAtDrop = drag->client->cancelled;
             },
             [](void *data, cutefish_shell_drag_v1 *) {
@@ -184,16 +185,16 @@ TEST(DndProtocol, ViewportDestinationKeepsDragCoordinatesSurfaceLocal)
     auto &b = h.addClient();
     map(h, a, 0);
     auto *target = map(h, b, 150);
-    target->setCrop(QRectF(25, 10, 50, 50));
-    target->setViewport(QSize(200, 100));
+    target->setCrop(base::RectF(25, 10, 50, 50));
+    target->setViewport(base::Size(200, 100));
     target->commit();
     start(h, a);
     h.seat.onPointerMotion({}, {250, 50});
     h.sync(b);
-    EXPECT_EQ(b.dragEnterPosition, QPointF(100, 50));
+    EXPECT_EQ(b.dragEnterPosition, cutefish::base::PointF(100, 50));
     h.seat.onPointerMotion({}, {275.5, 60.25});
     h.sync(b);
-    EXPECT_EQ(b.dragMotionPosition, QPointF(125.5, 60.25));
+    EXPECT_EQ(b.dragMotionPosition, cutefish::base::PointF(125.5, 60.25));
     h.seat.onKey({}, KEY_ESC, true);
 }
 
@@ -371,11 +372,11 @@ TEST(DndProtocol, SourceOriginAndDestinationDeviceDestructionUnwindTransfers)
 TEST(DndProtocol, DragIconTracksCommittedOffsetAndDetachesOnCancellation)
 {
     Harness h;
-    scene::Node icons(QStringLiteral("icons"));
+    scene::Node icons("icons");
     h.seat.setDragIconContainer(&icons);
-    scene::Node cursors(QStringLiteral("cursors"));
+    scene::Node cursors("cursors");
     auto *clientCursors =
-            cursors.addChild(std::make_unique<scene::Node>(QStringLiteral("client-cursors")));
+            cursors.addChild(std::make_unique<scene::Node>("client-cursors"));
     h.seat.setCursorContainer(clientCursors);
     cursor::Cursor cursor(h.seat, cursors);
     auto &a = h.addClient();
@@ -397,9 +398,9 @@ TEST(DndProtocol, DragIconTracksCommittedOffsetAndDetachesOnCancellation)
     surface->commit();
     EXPECT_FALSE(clientCursors->isEffectivelyVisible());
     EXPECT_TRUE(surface->node()->isEffectivelyVisible());
-    EXPECT_EQ(QPoint(3, 1), surface->position());
+    EXPECT_EQ(base::Point(3, 1), surface->position());
     h.seat.onPointerMotion({}, {70, 60});
-    EXPECT_EQ(QPoint(63, 51), surface->position());
+    EXPECT_EQ(base::Point(63, 51), surface->position());
     EXPECT_EQ(h.seat.drag()->origin(), h.seat.drag()->target());
     h.seat.onKey({}, KEY_ESC, true);
     EXPECT_EQ(nullptr, surface->node()->parent());
@@ -413,11 +414,11 @@ TEST(DndProtocol, DragIconTracksCommittedOffsetAndDetachesOnCancellation)
 TEST(DndProtocol, ViewportDragIconPreservesOffsetsAndSampling)
 {
     Harness h;
-    scene::Node icons(QStringLiteral("icons"));
+    scene::Node icons("icons");
     h.seat.setDragIconContainer(&icons);
-    scene::Node cursors(QStringLiteral("cursors"));
+    scene::Node cursors("cursors");
     auto *clientCursors =
-            cursors.addChild(std::make_unique<scene::Node>(QStringLiteral("client-cursors")));
+            cursors.addChild(std::make_unique<scene::Node>("client-cursors"));
     h.seat.setCursorContainer(clientCursors);
     cursor::Cursor cursor(h.seat, cursors);
     auto &a = h.addClient();
@@ -436,16 +437,16 @@ TEST(DndProtocol, ViewportDragIconPreservesOffsetsAndSampling)
     auto pool = testsupport::makePool(32 * 32 * 4);
     auto buffer = pool->createBuffer({32, 32}, 0, 128, render::PixelFormat::Bgra8888, nullptr);
     surface->attach(buffer, {-7, -9});
-    surface->setCrop(QRectF(4, 8, 16, 16));
-    surface->setViewport(QSize(48, 24));
+    surface->setCrop(base::RectF(4, 8, 16, 16));
+    surface->setViewport(base::Size(48, 24));
     surface->commit();
-    EXPECT_EQ(surface->contentSize(), QSize(48, 24));
-    EXPECT_EQ(surface->surfaceToBuffer().map(QPointF()), QPointF(4, 8));
+    EXPECT_EQ(surface->contentSize(), base::Size(48, 24));
+    EXPECT_EQ(surface->surfaceToBuffer().map(base::PointF()), base::PointF(4, 8));
     EXPECT_FALSE(clientCursors->isEffectivelyVisible());
     EXPECT_TRUE(surface->node()->isEffectivelyVisible());
-    EXPECT_EQ(QPoint(3, 1), surface->position());
+    EXPECT_EQ(base::Point(3, 1), surface->position());
     h.seat.onPointerMotion({}, {70, 60});
-    EXPECT_EQ(QPoint(63, 51), surface->position());
+    EXPECT_EQ(base::Point(63, 51), surface->position());
     EXPECT_EQ(h.seat.drag()->origin(), h.seat.drag()->target());
     h.seat.onKey({}, KEY_ESC, true);
     EXPECT_EQ(nullptr, surface->node()->parent());
@@ -547,13 +548,6 @@ TEST(DndProtocol, InertSecondDeviceDoesNotOverrideAcceptedOfferOnModifierChange)
     h.sync(b);
     h.sync(a);
     EXPECT_EQ(1u, a.finished);
-}
-
-int main(int argc, char **argv)
-{
-    QCoreApplication app(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }
 
 TEST(DndProtocol, ATouchDragFollowsTheFingerAndDropsWhereItIsLifted)
@@ -750,7 +744,7 @@ TEST(DndProtocol, TheShellFollowsItsDragDimsTheIconAndHearsTheDropFirst)
 {
     ShellHarness sh;
     auto &h = sh.h;
-    scene::Node icons(QStringLiteral("icons"));
+    scene::Node icons("icons");
     h.seat.setDragIconContainer(&icons);
     auto &a = sh.addShell();
     map(h, a, 0);
@@ -771,13 +765,13 @@ TEST(DndProtocol, TheShellFollowsItsDragDimsTheIconAndHearsTheDropFirst)
             a.serverClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(icon))));
     ASSERT_FALSE(drag.events.empty());
     EXPECT_EQ("motion", drag.events.back());
-    EXPECT_EQ(QPointF(10, 10), drag.location);
+    EXPECT_EQ(base::PointF(10, 10), drag.location);
     EXPECT_FLOAT_EQ(0.5f, surface->node()->alpha());
 
     // Off every surface, where nothing would tell the shell where the drag is.
     h.seat.onPointerMotion({}, {300, 250});
     h.sync(a);
-    EXPECT_EQ(QPointF(300, 250), drag.location);
+    EXPECT_EQ(base::PointF(300, 250), drag.location);
     // Nothing takes the drop here, and the pointer does not say so.
     EXPECT_EQ(input::CursorShape::Default, h.seat.cursorOverride());
     cutefish_shell_drag_v1_set_icon_opacity(drag.object, wl_fixed_from_double(1));
@@ -790,7 +784,7 @@ TEST(DndProtocol, TheShellFollowsItsDragDimsTheIconAndHearsTheDropFirst)
     h.sync(a);
     EXPECT_FALSE(h.seat.drag()->active());
     ASSERT_EQ("dropped", drag.events.back());
-    EXPECT_EQ(QPointF(300, 250), drag.location);
+    EXPECT_EQ(base::PointF(300, 250), drag.location);
     EXPECT_EQ(0u, drag.cancelsAtDrop);
     EXPECT_EQ(1u, a.cancelled);
     EXPECT_EQ(0, std::count(drag.events.begin(), drag.events.end(), "cancelled"));
@@ -845,7 +839,7 @@ TEST(DndProtocol, TheShellIgnoresOtherClientsDragsAndHearsEscapeAsACancel)
     EXPECT_EQ("cancelled", drag.events.end()[-2]);
     EXPECT_EQ("returned", drag.events.back());
     EXPECT_EQ(0, std::count(drag.events.begin(), drag.events.end(), "dropped"));
-    EXPECT_EQ(QPointF(40, 300), drag.location);
+    EXPECT_EQ(base::PointF(40, 300), drag.location);
 }
 
 // Ash's DragDropController::StartCanceledAnimation: a drop nothing takes
@@ -854,7 +848,7 @@ TEST(DndProtocol, TheShellsUntakenDragSlidesItsIconHome)
 {
     ShellHarness sh;
     auto &h = sh.h;
-    scene::Node icons(QStringLiteral("icons"));
+    scene::Node icons("icons");
     h.seat.setDragIconContainer(&icons);
     auto &a = sh.addShell();
     map(h, a, 0);
@@ -879,9 +873,9 @@ TEST(DndProtocol, TheShellsUntakenDragSlidesItsIconHome)
     surface->commit();
     const std::vector<uint8_t> pixels(32 * 32 * 4);
     surface->node()->setTexture(std::make_shared<testsupport::FakeTexture>(
-            QSize(32, 32), pixels.data(), 128, render::PixelFormat::Bgra8888));
+            base::Size(32, 32), pixels.data(), 128, render::PixelFormat::Bgra8888));
     h.seat.onPointerMotion({}, {300, 250});
-    EXPECT_EQ(QPoint(293, 241), surface->position());
+    EXPECT_EQ(base::Point(293, 241), surface->position());
     // The slot the shell keeps for it, not where the drag happened to start.
     cutefish_shell_drag_v1_set_home(drag.object, wl_fixed_from_int(40), wl_fixed_from_int(30));
     h.sync(a);
@@ -893,11 +887,11 @@ TEST(DndProtocol, TheShellsUntakenDragSlidesItsIconHome)
     ASSERT_EQ(1u, icons.children().size());
     auto *home = static_cast<scene::SurfaceNode *>(icons.children().front());
     EXPECT_NE(surface->node(), home);
-    EXPECT_EQ(QPoint(293, 241), home->position());
+    EXPECT_EQ(base::Point(293, 241), home->position());
     EXPECT_FLOAT_EQ(0.5f, home->alpha());
 
     h.compositor.frameStarted(1000);
-    EXPECT_EQ(QPoint(293, 241), home->position());
+    EXPECT_EQ(base::Point(293, 241), home->position());
     h.compositor.frameStarted(1125);
     EXPECT_GT(home->position().x(), 33);
     EXPECT_LT(home->position().x(), 293);
@@ -910,10 +904,10 @@ TEST(DndProtocol, TheShellsUntakenDragSlidesItsIconHome)
     EXPECT_EQ("returned", drag.events.back());
     // Home, and held there until the shell lets go.
     ASSERT_EQ(1u, icons.children().size());
-    EXPECT_EQ(QPoint(33, 21), home->position());
+    EXPECT_EQ(base::Point(33, 21), home->position());
     EXPECT_FLOAT_EQ(1.0f, home->alpha());
     h.compositor.frameStarted(1300);
-    EXPECT_EQ(QPoint(33, 21), home->position());
+    EXPECT_EQ(base::Point(33, 21), home->position());
     cutefish_shell_drag_v1_destroy(std::exchange(drag.object, nullptr));
     h.sync(a);
     EXPECT_TRUE(icons.children().empty());
@@ -925,7 +919,7 @@ TEST(DndProtocol, TheShellsDragObjectGoneMidDragSendsNothingHome)
 {
     ShellHarness sh;
     auto &h = sh.h;
-    scene::Node icons(QStringLiteral("icons"));
+    scene::Node icons("icons");
     h.seat.setDragIconContainer(&icons);
     auto &a = sh.addShell();
     map(h, a, 0);
@@ -950,7 +944,7 @@ TEST(DndProtocol, TheShellsDragObjectGoneMidDragSendsNothingHome)
     surface->commit();
     const std::vector<uint8_t> pixels(32 * 32 * 4);
     surface->node()->setTexture(std::make_shared<testsupport::FakeTexture>(
-            QSize(32, 32), pixels.data(), 128, render::PixelFormat::Bgra8888));
+            base::Size(32, 32), pixels.data(), 128, render::PixelFormat::Bgra8888));
     h.seat.onPointerMotion({}, {300, 250});
 
     // Nobody would let go of an icon sent home now, so none is.

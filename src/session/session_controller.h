@@ -5,10 +5,10 @@
 #ifndef CUTEFISH_SESSION_SESSION_CONTROLLER_H_
 #define CUTEFISH_SESSION_SESSION_CONTROLLER_H_
 
+#include <set>
+#include <string>
+#include <string_view>
 #include <vector>
-
-#include <QSet>
-#include <QString>
 
 #include "input/session_gate.h"
 #include "session/secure_container.h"
@@ -57,13 +57,13 @@ public:
 
     bool requestLock();
 
-    void notifyOutputPresented(const QString &outputName);
+    void notifyOutputPresented(std::string_view outputName);
 
     void notifyFramePresented();
 
     bool requestUnlock();
 
-    void setOutputs(const QList<SecureOutput> &outputs);
+    void setOutputs(const std::vector<SecureOutput> &outputs);
     void setDisplayConfiguration(const display::AppliedConfiguration &configuration);
 
     bool allowsCapture() const { return !isBlocked(); }
@@ -93,7 +93,7 @@ private:
     SecureContainer *m_secure = nullptr;
     Delegate *m_delegate = nullptr;
     std::vector<SessionObserver *> m_observers;
-    QSet<QString> m_presentedOutputs;
+    std::set<std::string, std::less<>> m_presentedOutputs;
     SessionState m_state = SessionState::Active;
 };
 

@@ -11,9 +11,6 @@
 #include <map>
 #include <utility>
 
-#include <QCoreApplication>
-#include <QTimer>
-
 #include "input/cursor_shape.h"
 #include "input/seat.h"
 #include "scene/window_animation.h"
@@ -43,9 +40,19 @@ Window *transientRoot(Window *window)
     return window;
 }
 
-double distance(const QPointF &a, const QPointF &b)
+double distance(const base::PointF &a, const base::PointF &b)
 {
     return std::hypot(a.x() - b.x(), a.y() - b.y());
+}
+
+// A preview takes the pointer on its right and bottom edges too; a rect of
+// no width and no height takes nothing.
+bool containsWithEdges(const base::RectF &rect, const base::PointF &point)
+{
+    if (rect.width() == 0 && rect.height() == 0)
+        return false;
+    return point.x() >= rect.left() && point.x() <= rect.right() && point.y() >= rect.top()
+            && point.y() <= rect.bottom();
 }
 
 } // namespace
@@ -55,29 +62,28 @@ OverviewController::OverviewController(WindowManager *manager)
 {
     m_manager->activation()->addObserver(this);
     m_manager->desks()->addObserver(this);
-    m_addedConnection = QObject::connect(m_manager, &WindowManager::windowAdded, m_manager,
-                                         [this](Window *) {
-                                             if (isActive())
-                                                 rebuild(true);
-                                         });
+    m_windowAdded = m_manager->windowAdded.connect([this](Window *) {
+        if (isActive())
+            rebuild(true);
+    });
     // The window is out of the window manager's lists by now.
-    m_removedConnection = QObject::connect(m_manager, &WindowManager::windowRemoved, m_manager,
-                                           [this](Window *window) {
-                                               if (!isActive())
-                                                   return;
-                                               if (window == m_swipeTarget)
-                                                   m_swipeTarget = nullptr;
-                                               rebuild(true);
-                                           });
-    m_outputsConnection = QObject::connect(m_manager, &WindowManager::outputsChanged, m_manager,
-                                           [this] { onOutputsChanged(); });
+    m_windowRemoved = m_manager->windowRemoved.connect([this](Window *window) {
+        if (!isActive())
+            return;
+        if (window == m_swipeTarget)
+            m_swipeTarget = nullptr;
+        rebuild(true);
+    });
+    m_outputsChanged = m_manager->outputsChanged.connect([this] {
+        onOutputsChanged();
+    });
 }
 
 OverviewController::~OverviewController()
 {
-    QObject::disconnect(m_addedConnection);
-    QObject::disconnect(m_removedConnection);
-    QObject::disconnect(m_outputsConnection);
+    m_windowAdded.reset();
+    m_windowRemoved.reset();
+    m_outputsChanged.reset();
     m_manager->desks()->removeObserver(this);
     m_manager->activation()->removeObserver(this);
 }
@@ -89,7 +95,7 @@ void OverviewController::setNodes(scene::OverviewNode *node, scene::OverviewDesk
     if (m_node) {
         m_node->setFinishedCallback([this](double target) {
             // From inside a frame, which is no place to change the scene.
-            QTimer::singleShot(0, m_manager, [this, target] {
+            m_manager->runLater(std::chrono::milliseconds(0), [this, target] {
                 onNodeFinished(target);
             });
         });
@@ -106,13 +112,12 @@ bool OverviewController::isOverviewWindow(const Window *window) const
     return m_manager->desks()->belongsToActiveDesk(window);
 }
 
-QString OverviewController::deskName(int index) const
+std::string OverviewController::deskName(int index) const
 {
     const Desk *desk = m_manager->desks()->deskAt(index);
-    if (desk && !desk->name().isEmpty())
+    if (desk && !desk->name().empty())
         return desk->name();
-    return QCoreApplication::translate("cutefish::wm::OverviewController", "Desk %1")
-            .arg(index + 1);
+    return "Desk " + std::to_string(index + 1);
 }
 
 bool OverviewController::canCloseDesks() const
@@ -136,7 +141,7 @@ void OverviewController::buildBars()
     m_bars.clear();
     m_barDesks.clear();
     for (const auto &output : m_manager->outputAreas()) {
-        const QRect work = output.workArea.isEmpty() ? output.bounds : output.workArea;
+        const base::Rect work = output.workArea.isEmpty() ? output.bounds : output.workArea;
         // The panels along the top edge give way to the overview; the
         // previews keep half the margin they had below them.
         const int top = output.bounds.top();
@@ -160,22 +165,22 @@ void OverviewController::buildBars()
             width = std::floor(width * shrink);
             newDesk = canAdd ? std::floor(width / 2) : 0;
         }
-        double x = std::round(work.center().x() + 0.5 - total() / 2);
+        double x = std::round(centerPixel(work).x() + 0.5 - total() / 2);
         const double y = top + margin;
         for (int index = 0; index < count; ++index) {
             scene::OverviewDeskBarNode::Desk desk;
-            desk.bounds = QRectF(x, y, width, height);
+            desk.bounds = base::RectF(x, y, width, height);
             desk.name = deskName(index);
             desk.active = desks->deskAt(index) == desks->chosenDesk();
-            desk.id = quintptr(desks->deskAt(index));
+            desk.id = uintptr_t(desks->deskAt(index));
             bar.desks.push_back(std::move(desk));
             barDesks.push_back(desks->deskAt(index));
             x += width + kBarSpacing;
         }
         if (canAdd)
-            bar.newDesk = QRectF(x, y, newDesk, height);
-        bar.bounds = QRectF(work.left(), top, work.width(),
-                            margin + height + kLabelHeight + kBarPadding / 2);
+            bar.newDesk = base::RectF(x, y, newDesk, height);
+        bar.bounds = base::RectF(work.left(), top, work.width(),
+                                 margin + height + kLabelHeight + kBarPadding / 2);
         m_bars.push_back(std::move(bar));
         m_barDesks.push_back(std::move(barDesks));
     }
@@ -185,7 +190,7 @@ void OverviewController::rebuild(bool animate, bool keepPlaces)
 {
     if (!m_node)
         return;
-    std::map<Window *, QRectF> kept;
+    std::map<Window *, base::RectF> kept;
     if (keepPlaces) {
         for (const Item &item : m_items)
             kept[item.window] = item.bounds;
@@ -227,15 +232,15 @@ void OverviewController::rebuild(bool animate, bool keepPlaces)
             m_press->hit.index = index;
     }
     const auto outputs = m_manager->outputAreas();
-    std::map<Window *, QRectF> places;
+    std::map<Window *, base::RectF> places;
     for (size_t index = 0; index < outputs.size(); ++index) {
         const auto &output = outputs[index];
         std::vector<Window *> onOutput;
-        std::vector<QRect> rects;
+        std::vector<base::Rect> rects;
         for (Window *window : roots) {
             // Each window is laid out on the output that has its centre, or
             // the nearest one.
-            const QPoint centre = window->bounds().center();
+            const base::Point centre = centerPixel(window->bounds());
             const bool here = output.bounds.contains(centre)
                     || (std::none_of(outputs.begin(), outputs.end(),
                                      [centre](const auto &other) {
@@ -247,11 +252,11 @@ void OverviewController::rebuild(bool animate, bool keepPlaces)
             onOutput.push_back(window);
             rects.push_back(window->bounds());
         }
-        const QRect work = output.workArea.isEmpty() ? output.bounds : output.workArea;
+        const base::Rect work = output.workArea.isEmpty() ? output.bounds : output.workArea;
         const int top = index < m_bars.size() ? int(std::ceil(m_bars[index].bounds.bottom()))
                                               : work.top();
-        const QRect area(QPoint(work.left() + kMargin, top + kMargin / 2),
-                         QPoint(work.right() - kMargin, work.bottom() - kMargin));
+        const base::Rect area = base::Rect::fromEdges(work.left() + kMargin, top + kMargin / 2,
+                                                      work.right() - kMargin, work.bottom() - kMargin);
         const auto spread = overview::spreadLayout(rects, area, kWindowGap, output.scale);
         for (size_t i = 0; i < onOutput.size() && i < spread.size(); ++i) {
             const auto it = kept.find(onOutput[i]);
@@ -437,7 +442,7 @@ void OverviewController::onOutputsChanged()
     if (m_bar)
         m_bar->invalidatePreviews();
     // What lies under the pointer is found again by a synthesized motion.
-    Q_EMIT m_manager->pointerTargetsChanged();
+    m_manager->pointerTargetsChanged();
 }
 
 void OverviewController::activateForExit(Window *window)
@@ -504,7 +509,7 @@ void OverviewController::finish()
     }
     releasePointer();
     // The windows are where they were: whatever is under the pointer enters.
-    Q_EMIT m_manager->pointerTargetsChanged();
+    m_manager->pointerTargetsChanged();
 }
 
 void OverviewController::onNodeFinished(double target)
@@ -612,7 +617,7 @@ void OverviewController::endSwipe(double timeMs)
     }
 }
 
-OverviewController::Hit OverviewController::hitTest(const QPointF &location) const
+OverviewController::Hit OverviewController::hitTest(const base::PointF &location) const
 {
     Hit hit;
     if (!isActive())
@@ -631,32 +636,32 @@ OverviewController::Hit OverviewController::hitTest(const QPointF &location) con
     const double progress = moving ? std::clamp(m_node->progress(), 0.0, 1.0) : 1;
     for (size_t bar = 0; bar < m_bars.size(); ++bar) {
         const auto &candidate = m_bars[bar];
-        const QPointF onBar =
-                location - QPointF(0, scene::OverviewDeskBarNode::slideOffset(candidate, progress));
-        if (!candidate.bounds.contains(onBar))
+        const base::PointF onBar =
+                location - base::PointF(0, scene::OverviewDeskBarNode::slideOffset(candidate, progress));
+        if (!containsWithEdges(candidate.bounds, onBar))
             continue;
         hit.bar = int(bar);
         for (size_t desk = 0; desk < candidate.desks.size(); ++desk) {
-            const QRectF &bounds = candidate.desks[desk].bounds;
-            if (bounds.contains(onBar)) {
+            const base::RectF &bounds = candidate.desks[desk].bounds;
+            if (containsWithEdges(bounds, onBar)) {
                 const bool close = m_dragged < 0 && canCloseDesks()
-                        && scene::OverviewDeskBarNode::closeButtonRect(bounds).contains(onBar);
+                        && containsWithEdges(scene::OverviewDeskBarNode::closeButtonRect(bounds), onBar);
                 hit.type = close ? Hit::Type::DeskClose : Hit::Type::Desk;
                 hit.index = int(desk);
                 return hit;
             }
         }
-        hit.type = candidate.newDesk.contains(onBar) ? Hit::Type::NewDesk : Hit::Type::Bar;
+        hit.type = containsWithEdges(candidate.newDesk, onBar) ? Hit::Type::NewDesk : Hit::Type::Bar;
         return hit;
     }
     for (int index = int(m_items.size()) - 1; index >= 0; --index) {
         const Item &item = m_items[index];
         if (index == m_dragged)
             continue;
-        const QRectF bounds = moving
+        const base::RectF bounds = moving
                 ? m_node->presentedRect(index, progress, m_node->clockTime())
                 : item.bounds;
-        if (bounds.contains(location)) {
+        if (containsWithEdges(bounds, location)) {
             hit.type = Hit::Type::Item;
             hit.index = index;
             return hit;
@@ -677,13 +682,13 @@ void OverviewController::setHover(const Hit &hit)
     updateChrome();
 }
 
-void OverviewController::press(const Hit &hit, const QPointF &location,
+void OverviewController::press(const Hit &hit, const base::PointF &location,
                                std::optional<int32_t> touch)
 {
     m_press = Press {hit, location, touch};
 }
 
-void OverviewController::move(const QPointF &location)
+void OverviewController::move(const base::PointF &location)
 {
     m_pointer = location;
     if (m_press && m_dragged < 0 && m_press->hit.type == Hit::Type::Item
@@ -691,9 +696,9 @@ void OverviewController::move(const QPointF &location)
         m_dragged = m_press->hit.index;
         // Pressed while the window was still on its way, the grab point may
         // lie off it now.
-        const QRectF &bounds = m_items[m_dragged].bounds;
-        const QPointF grab = m_press->location - bounds.topLeft();
-        m_dragOffset = QPointF(std::clamp(grab.x(), 0.0, bounds.width()),
+        const base::RectF &bounds = m_items[m_dragged].bounds;
+        const base::PointF grab = m_press->location - bounds.topLeft();
+        m_dragOffset = base::PointF(std::clamp(grab.x(), 0.0, bounds.width()),
                                std::clamp(grab.y(), 0.0, bounds.height()));
         m_hovered = -1;
     }
@@ -701,15 +706,15 @@ void OverviewController::move(const QPointF &location)
         setHover(hitTest(location));
         return;
     }
-    m_node->setDragged(m_dragged, draggedBounds(location));
+        m_node->setDragged(m_dragged, draggedBounds(location));
     updateChrome();
 }
 
-QRectF OverviewController::draggedBounds(const QPointF &location) const
+base::RectF OverviewController::draggedBounds(const base::PointF &location) const
 {
     const Item &item = m_items[m_dragged];
-    const QSizeF full = item.bounds.size();
-    QSizeF size = full;
+    const base::SizeF full = item.bounds.size();
+    base::SizeF size = full;
     for (size_t index = 0; index < m_bars.size(); ++index) {
         const auto &bar = m_bars[index];
         if (!bar.output.contains(location.toPoint()) || full.isEmpty())
@@ -721,12 +726,12 @@ QRectF OverviewController::draggedBounds(const QPointF &location) const
         if (distance >= reach)
             break;
         // On the bar, the window at the bar's share of the output's height.
-        const QSizeF window = item.window->bounds().size();
-        QSizeF onBar = window * (barHeight / std::max(1, bar.output.height()));
+        const base::SizeF window = item.window->bounds().size();
+        base::SizeF onBar = window * (barHeight / std::max(1, bar.output.height()));
         const double minimum = barHeight * kMinimumSideOnBar;
         const double shorter = std::min(onBar.width(), onBar.height());
         if (shorter > 0 && shorter < minimum)
-            onBar *= minimum / shorter;
+            onBar = onBar * (minimum / shorter);
         if (onBar.width() > full.width())
             onBar = full;
         const double t = 1 - distance / reach;
@@ -734,11 +739,11 @@ QRectF OverviewController::draggedBounds(const QPointF &location) const
         break;
     }
     // Held at the same share of its size as where it was grabbed.
-    const QPointF grab(m_dragOffset.x() / full.width(), m_dragOffset.y() / full.height());
-    return QRectF(location - QPointF(grab.x() * size.width(), grab.y() * size.height()), size);
+    const base::PointF grab(m_dragOffset.x() / full.width(), m_dragOffset.y() / full.height());
+    return base::RectF(location - base::PointF(grab.x() * size.width(), grab.y() * size.height()), size);
 }
 
-void OverviewController::release(const QPointF &location)
+void OverviewController::release(const base::PointF &location)
 {
     if (!m_press)
         return;
@@ -804,7 +809,7 @@ void OverviewController::cancelPress()
         rebuild(true);
 }
 
-void OverviewController::drop(const QPointF &location)
+void OverviewController::drop(const base::PointF &location)
 {
     Window *window = m_items[m_dragged].window;
     // The node keeps drawing it where it was let go, which is where it
@@ -853,13 +858,13 @@ void OverviewController::moveSelection(int dx, int dy)
         updateChrome();
         return;
     }
-    const QPointF centre = m_items[from].bounds.center();
+    const base::PointF centre = m_items[from].bounds.center();
     int best = -1;
     double bestScore = 0;
     for (int index = 0; index < int(m_items.size()); ++index) {
         if (index == from)
             continue;
-        const QPointF d = m_items[index].bounds.center() - centre;
+        const base::PointF d = m_items[index].bounds.center() - centre;
         const double along = d.x() * dx + d.y() * dy;
         if (along <= 1)
             continue;
@@ -877,7 +882,7 @@ void OverviewController::moveSelection(int dx, int dy)
     }
 }
 
-bool OverviewController::onPointerMotion(input::Timestamp timestamp, const QPointF &location)
+bool OverviewController::onPointerMotion(input::Timestamp timestamp, const base::PointF &location)
 {
     m_pointer = location;
     if (!capturesInput())
@@ -891,14 +896,14 @@ bool OverviewController::onPointerMotion(input::Timestamp timestamp, const QPoin
         return m_next && m_next->onPointerMotion(timestamp, location);
     }
     // The dock's auto-hide watches every motion.
-    Q_EMIT m_manager->pointerMoved(location);
+    m_manager->pointerMoved(location);
     takePointer();
     if (!m_press || !m_press->touch)
         move(location);
     return true;
 }
 
-bool OverviewController::onPointerButton(input::Timestamp timestamp, const QPointF &location,
+bool OverviewController::onPointerButton(input::Timestamp timestamp, const base::PointF &location,
                                          uint32_t evdevButton, bool pressed)
 {
     if (!pressed) {
@@ -920,15 +925,15 @@ bool OverviewController::onPointerButton(input::Timestamp timestamp, const QPoin
     return true;
 }
 
-bool OverviewController::onPointerAxis(input::Timestamp timestamp, const QPointF &location,
-                                       const QPointF &offset, bool discrete)
+bool OverviewController::onPointerAxis(input::Timestamp timestamp, const base::PointF &location,
+                                       const base::PointF &offset, bool discrete)
 {
     if (!capturesInput() || hitTest(location).type == Hit::Type::Panel)
         return m_next && m_next->onPointerAxis(timestamp, location, offset, discrete);
     return true;
 }
 
-bool OverviewController::onPointerAxisStop(input::Timestamp timestamp, const QPointF &location)
+bool OverviewController::onPointerAxisStop(input::Timestamp timestamp, const base::PointF &location)
 {
     if (!capturesInput() || hitTest(location).type == Hit::Type::Panel)
         return m_next && m_next->onPointerAxisStop(timestamp, location);
@@ -981,7 +986,7 @@ bool OverviewController::onSecureKey(input::Timestamp timestamp, uint32_t evdevC
 }
 
 bool OverviewController::onTouchDown(input::Timestamp timestamp, int32_t id,
-                                     const QPointF &location)
+                                     const base::PointF &location)
 {
     if (!capturesInput())
         return m_next && m_next->onTouchDown(timestamp, id, location);
@@ -997,7 +1002,7 @@ bool OverviewController::onTouchDown(input::Timestamp timestamp, int32_t id,
 }
 
 bool OverviewController::onTouchMotion(input::Timestamp timestamp, int32_t id,
-                                       const QPointF &location)
+                                       const base::PointF &location)
 {
     if (!m_touches.count(id))
         return m_next && m_next->onTouchMotion(timestamp, id, location);

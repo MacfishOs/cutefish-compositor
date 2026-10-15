@@ -6,21 +6,18 @@
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
 // Adapted for Cutefish: hardware, requested, applied, and persistent-facing
-// identities are separate Qt value types with no Chromium platform graph.
+// identities are separate value types with no Chromium platform graph.
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <optional>
+#include <string>
+#include <vector>
 
-#include <QFlags>
-#include <QList>
-#include <QPoint>
-#include <QRect>
-#include <QSize>
-#include <QString>
-#include <QStringList>
-
+#include "base/geometry.h"
 #include "compositor/output_scale.h"
 
 namespace cutefish::display {
@@ -30,14 +27,14 @@ class DisplayId
 public:
     DisplayId() = default;
 
-    explicit DisplayId(QString value)
+    explicit DisplayId(std::string value)
         : m_value(std::move(value))
     {
     }
 
-    bool isValid() const { return !m_value.isEmpty(); }
+    bool isValid() const { return !m_value.empty(); }
 
-    const QString &value() const { return m_value; }
+    const std::string &value() const { return m_value; }
 
     friend bool operator==(const DisplayId &, const DisplayId &) = default;
 
@@ -47,10 +44,9 @@ public:
     }
 
 private:
-    QString m_value;
+    std::string m_value;
 };
 
-size_t qHash(const DisplayId &id, size_t seed = 0) noexcept;
 
 enum class DisplayRotation : uint32_t {
     Normal = 0,
@@ -84,40 +80,82 @@ enum class DisplayCapability : uint32_t {
     // The night light can tint it.
     ColorTransform = 1 << 7,
 };
-Q_DECLARE_FLAGS(DisplayCapabilities, DisplayCapability)
+
+class DisplayCapabilities
+{
+public:
+    constexpr DisplayCapabilities() = default;
+
+    constexpr DisplayCapabilities(DisplayCapability capability)
+        : m_value(uint32_t(capability))
+    {
+    }
+
+    constexpr bool testFlag(DisplayCapability capability) const
+    {
+        const uint32_t bits = uint32_t(capability);
+        return bits == 0 ? m_value == 0 : (m_value & bits) == bits;
+    }
+
+    constexpr uint32_t toInt() const { return m_value; }
+
+    constexpr DisplayCapabilities &operator|=(DisplayCapabilities other)
+    {
+        m_value |= other.m_value;
+        return *this;
+    }
+
+    friend constexpr DisplayCapabilities operator|(DisplayCapabilities left,
+                                                   DisplayCapabilities right)
+    {
+        return left |= right;
+    }
+
+    friend constexpr bool operator==(DisplayCapabilities, DisplayCapabilities) = default;
+
+private:
+    uint32_t m_value = 0;
+};
+
+constexpr DisplayCapabilities operator|(DisplayCapability left, DisplayCapability right)
+{
+    return DisplayCapabilities(left) | right;
+}
 
 struct DisplayMode {
-    QSize pixelSize;
+    // Invalid until set, as a mode without a size has always been.
+    base::Size pixelSize {-1, -1};
     int refreshMilliHz = 0;
     int pixelClockKHz = 0;
     int horizontalTotal = 0;
     int verticalTotal = 0;
     uint32_t flags = 0;
-    QString name;
+    std::string name;
     bool preferred = false;
 
     bool isValid() const;
-    QString stableKey() const;
+    std::string stableKey() const;
     friend bool operator==(const DisplayMode &, const DisplayMode &) = default;
 };
 
 struct DisplaySnapshot {
     DisplayId sessionId;
-    QString persistentKey;
-    QString portKey;
-    QString edidKey;
-    QString connectorName;
-    QString devicePath;
-    QString baseConnectorKey;
-    QStringList pathTopology;
-    QString make;
-    QString model;
-    QString serialNumber;
-    QSize physicalSizeMm;
+    std::string persistentKey;
+    std::string portKey;
+    std::string edidKey;
+    std::string connectorName;
+    std::string devicePath;
+    std::string baseConnectorKey;
+    std::vector<std::string> pathTopology;
+    std::string make;
+    std::string model;
+    std::string serialNumber;
+    // Negative while unknown, which makes the snapshot invalid.
+    base::Size physicalSizeMm {-1, -1};
     DisplayConnectionType connectionType = DisplayConnectionType::Unknown;
     DisplayRotation panelOrientation = DisplayRotation::Normal;
     DisplayCapabilities capabilities;
-    QList<DisplayMode> modes;
+    std::vector<DisplayMode> modes;
     std::optional<DisplayMode> currentMode;
     std::optional<DisplayMode> nativeMode;
 
@@ -125,10 +163,10 @@ struct DisplaySnapshot {
 };
 
 struct HardwareSnapshot {
-    QString compositorInstanceId;
-    QString seatId;
+    std::string compositorInstanceId;
+    std::string seatId;
     uint64_t topologyGeneration = 0;
-    QList<DisplaySnapshot> displays;
+    std::vector<DisplaySnapshot> displays;
 
     bool isValid() const;
 };
@@ -155,7 +193,7 @@ struct DisplayPlacement {
 };
 
 struct DisplayConfigurationBase {
-    QString compositorInstanceId;
+    std::string compositorInstanceId;
     uint64_t topologyGeneration = 0;
     uint64_t appliedRevision = 0;
 };
@@ -170,32 +208,38 @@ struct DisplayRequest {
 
 struct DisplayConfiguration {
     DisplayConfigurationBase base;
-    QList<DisplayRequest> displays;
+    std::vector<DisplayRequest> displays;
     DisplayId primary;
-    QList<DisplayPlacement> placements;
-    QList<QList<DisplayId>> mirrorGroups;
+    std::vector<DisplayPlacement> placements;
+    std::vector<std::vector<DisplayId>> mirrorGroups;
     // Internal recovery policy; never accepted from IPC or persisted.
     bool allowModeFallback = false;
 };
 
 struct LogicalDisplay {
     DisplayId id;
-    QList<DisplayId> destinations;
-    QString waylandName;
-    QRect bounds;
-    QRect workArea;
+    std::vector<DisplayId> destinations;
+    std::string waylandName;
+    base::Rect bounds;
+    base::Rect workArea;
     compositor::OutputScale scale;
     DisplayRotation rotation = DisplayRotation::Normal;
     bool primary = false;
+
+    bool hasDestination(const DisplayId &destination) const
+    {
+        return std::find(destinations.begin(), destinations.end(), destination)
+                != destinations.end();
+    }
 };
 
 struct AppliedConfiguration {
-    QString compositorInstanceId;
+    std::string compositorInstanceId;
     uint64_t topologyGeneration = 0;
     uint64_t revision = 0;
-    QList<DisplaySnapshot> physicalDisplays;
-    QList<LogicalDisplay> logicalDisplays;
-    QList<DisplayPlacement> placements;
+    std::vector<DisplaySnapshot> physicalDisplays;
+    std::vector<LogicalDisplay> logicalDisplays;
+    std::vector<DisplayPlacement> placements;
 };
 
 enum class DisplayErrorCode : uint32_t {
@@ -219,8 +263,8 @@ enum class DisplayErrorCode : uint32_t {
 
 struct DisplayError {
     DisplayErrorCode code = DisplayErrorCode::None;
-    QString message;
-    QList<DisplayId> affectedDisplays;
+    std::string message;
+    std::vector<DisplayId> affectedDisplays;
 };
 
 struct ConfigurationResult {
@@ -234,4 +278,11 @@ struct ConfigurationResult {
 
 } // namespace cutefish::display
 
-Q_DECLARE_OPERATORS_FOR_FLAGS(cutefish::display::DisplayCapabilities)
+template<>
+struct std::hash<cutefish::display::DisplayId>
+{
+    size_t operator()(const cutefish::display::DisplayId &id) const noexcept
+    {
+        return std::hash<std::string>()(id.value());
+    }
+};

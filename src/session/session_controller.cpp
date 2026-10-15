@@ -68,7 +68,7 @@ void SessionController::setState(SessionState state)
         else
             m_delegate->onSessionUnblocked();
     }
-    qCInfo(cfCompositor) << "Session state" << toString(state);
+    CF_INFO(cfCompositor) << "Session state" << toString(state);
 
     const auto observers = m_observers;
     for (SessionObserver *observer : observers)
@@ -85,22 +85,22 @@ bool SessionController::requestLock()
 
 void SessionController::setDisplayConfiguration(const display::AppliedConfiguration &configuration)
 {
-    QList<SecureOutput> outputs;
+    std::vector<SecureOutput> outputs;
     for (const auto &logical : configuration.logicalDisplays) {
         // Mirrored destinations share bounds but each needs its own presentation acknowledgement.
         for (const auto &destination : logical.destinations)
-            outputs.append({destination.value(), logical.bounds, logical.scale.value(),
-                            logical.primary});
+            outputs.push_back({destination.value(), logical.bounds, logical.scale.value(),
+                               logical.primary});
     }
     setOutputs(outputs);
 }
 
-void SessionController::setOutputs(const QList<SecureOutput> &outputs)
+void SessionController::setOutputs(const std::vector<SecureOutput> &outputs)
 {
     if (m_secure && m_secure->outputs() != outputs) {
         for (const auto &old : m_secure->outputs()) {
-            if (!outputs.contains(old))
-                m_presentedOutputs.remove(old.name);
+            if (std::find(outputs.begin(), outputs.end(), old) == outputs.end())
+                m_presentedOutputs.erase(old.name);
         }
         m_secure->setOutputs(outputs);
         const auto observers = m_observers;
@@ -131,11 +131,11 @@ void SessionController::finishTransition()
         setState(SessionState::Active);
 }
 
-void SessionController::notifyOutputPresented(const QString &outputName)
+void SessionController::notifyOutputPresented(std::string_view outputName)
 {
     if (m_state != SessionState::Locking && m_state != SessionState::Unlocking)
         return;
-    m_presentedOutputs.insert(outputName);
+    m_presentedOutputs.emplace(outputName);
     finishTransition();
 }
 

@@ -4,13 +4,8 @@
 
 #include "backend/drm/drm_output.h"
 
-#include <QDebug>
-#include <QScopedValueRollback>
-#include <QSet>
-#include <QTimer>
 
 #include <GLES2/gl2.h>
-#include <QFileInfo>
 #include <drm_fourcc.h>
 #include <gbm.h>
 #include <xf86drm.h>
@@ -19,7 +14,9 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <optional>
+#include <set>
 
 #include "backend/drm/drm_backend.h"
 #include "backend/drm/drm_cursor.h"
@@ -27,6 +24,8 @@
 #include "backend/drm/drm_framebuffer.h"
 #include "backend/drm/drm_multi_device_planner.h"
 #include "backend/drm/drm_selection.h"
+#include "base/auto_reset.h"
+#include "base/strings.h"
 #include "backend/session/session.h"
 #include "core/logging.h"
 #include "render/egl_renderer.h"
@@ -49,42 +48,39 @@ render::OutputScheduler::Duration framePeriod(double hz)
 
 } // namespace
 
-QList<QByteArray> DrmOutput::requiredConnectorProperties()
+std::vector<std::string> DrmOutput::requiredConnectorProperties()
 {
-    return {QByteArrayLiteral("CRTC_ID")};
+    return {"CRTC_ID"};
 }
 
-QList<QByteArray> DrmOutput::requiredCrtcProperties()
+std::vector<std::string> DrmOutput::requiredCrtcProperties()
 {
-    return {QByteArrayLiteral("MODE_ID"), QByteArrayLiteral("ACTIVE")};
+    return {"MODE_ID", "ACTIVE"};
 }
 
-QList<QByteArray> DrmOutput::requiredPlaneProperties()
+std::vector<std::string> DrmOutput::requiredPlaneProperties()
 {
     return {
-            QByteArrayLiteral("FB_ID"),  QByteArrayLiteral("CRTC_ID"), QByteArrayLiteral("SRC_X"),
-            QByteArrayLiteral("SRC_Y"),  QByteArrayLiteral("SRC_W"),   QByteArrayLiteral("SRC_H"),
-            QByteArrayLiteral("CRTC_X"), QByteArrayLiteral("CRTC_Y"),  QByteArrayLiteral("CRTC_W"),
-            QByteArrayLiteral("CRTC_H"),
+            "FB_ID",  "CRTC_ID", "SRC_X",  "SRC_Y",  "SRC_W",
+            "SRC_H",  "CRTC_X",  "CRTC_Y", "CRTC_W", "CRTC_H",
     };
 }
 
-DrmOutput::DrmOutput(DrmBackend *backend, Config config, QObject *parent)
+DrmOutput::DrmOutput(DrmBackend *backend, Config config)
     : DrmOutput(
               backend->device(), std::move(config),
               [backend] {
                   return backend->session() && backend->session()->isActive();
               },
-              backend->hasMonotonicPresentationClock(), parent)
+              backend->hasMonotonicPresentationClock())
 {
     m_backend = backend;
 }
 
 DrmOutput::DrmOutput(DrmDeviceApi *device, Config config, std::function<bool()> sessionActive,
-                     bool monotonicClock, QObject *parent,
+                     bool monotonicClock,
                      std::function<render::OutputScheduler::Time()> now)
-    : QObject(parent)
-    , m_config(std::move(config))
+    : m_config(std::move(config))
     , m_device(device)
     , m_sessionActive(std::move(sessionActive))
     , m_monotonicClock(monotonicClock)
@@ -92,14 +88,13 @@ DrmOutput::DrmOutput(DrmDeviceApi *device, Config config, std::function<bool()> 
     , m_scheduler(framePeriod(refreshRate()), m_now)
 {
     m_wakeup.setSingleShot(true);
-    m_wakeup.setTimerType(Qt::PreciseTimer);
-    connect(&m_wakeup, &QTimer::timeout, this, &DrmOutput::wakeup);
+    m_wakeup.onTimeout = [this] { wakeup(); };
     // Ozone waits for every flip event, because a stuck GPU process gets
     // restarted (PageFlipWatchdog). Nothing restarts this process, so an event
     // the driver loses would hold every later frame for the rest of the session.
     m_flipTimeout.setSingleShot(true);
     m_flipTimeout.setInterval(std::chrono::seconds(1));
-    connect(&m_flipTimeout, &QTimer::timeout, this, &DrmOutput::onFlipTimeout);
+    m_flipTimeout.onTimeout = [this] { onFlipTimeout(); };
     // ChromeOS's triple-buffered BufferQueue: one frame at KMS, one queued
     // behind it, and the GBM surface's spare buffer for the one being drawn.
     m_scheduler.setMaxPendingFrames(2);
@@ -119,12 +114,14 @@ DrmOutput::~DrmOutput()
     m_target.reset();
     if (m_gbmSurface)
         gbm_surface_destroy(m_gbmSurface);
+    destroyed();
 }
 
-QString DrmOutput::publicName() const
+std::string DrmOutput::publicName() const
 {
     return m_backend && m_backend->usesForeignRenderer()
-            ? QFileInfo(m_backend->devicePath()).fileName() + QLatin1Char('-') + m_config.name
+            ? std::filesystem::path(m_backend->devicePath()).filename().string() + '-'
+                    + m_config.name
             : m_config.name;
 }
 
@@ -135,9 +132,9 @@ std::unique_ptr<DrmOutput::CompositedBuffer> DrmOutput::acquireComposited(gbm_su
     if (!bo)
         return nullptr;
     DrmFramebuffer *framebuffer = nullptr;
-    const QSize size(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
+    const base::Size size(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
     auto route = chooseCrossGpuTransfer({!m_backend->usesForeignRenderer(), true, false, false,
-                                         qint64(size.width()) * size.height()});
+                                         int64_t(size.width()) * size.height()});
     // Whatever the route, the framebuffer is kept on the bo: the surface's two
     // or three buffers are imported or allocated once, not on every frame.
     if (route == CrossGpuTransfer::Direct) {
@@ -147,7 +144,7 @@ std::unique_ptr<DrmOutput::CompositedBuffer> DrmOutput::acquireComposited(gbm_su
         if (!framebuffer) {
             route = chooseCrossGpuTransfer({false, false, false,
                                             gbm_bo_get_format(bo) == DRM_FORMAT_XRGB8888,
-                                            qint64(size.width()) * size.height()});
+                                            int64_t(size.width()) * size.height()});
             if (route == CrossGpuTransfer::CpuCopy) {
                 glFinish();
                 uint32_t stride = 0;
@@ -165,28 +162,29 @@ std::unique_ptr<DrmOutput::CompositedBuffer> DrmOutput::acquireComposited(gbm_su
     if (!framebuffer) {
         m_transferUnavailable = m_backend->usesForeignRenderer();
         gbm_surface_release_buffer(surface, bo);
-        qCWarning(cfDrm) << "No scanout transfer path for" << publicName() << size;
+        CF_WARNING(cfDrm) << "No scanout transfer path for" << publicName()
+                          << size;
         return nullptr;
     }
     if (m_transferRoute != int(route)) {
         m_transferRoute = int(route);
-        qCInfo(cfDrm) << "Scanout transfer for" << publicName()
-                      << (route == CrossGpuTransfer::Direct                 ? "direct"
+        CF_INFO(cfDrm) << "Scanout transfer for" << publicName()
+                       << (route == CrossGpuTransfer::Direct                 ? "direct"
                                   : route == CrossGpuTransfer::DmaBufImport ? "DMA-BUF import"
                                                                             : "bounded CPU copy");
     }
     auto buffer = std::make_unique<CompositedBuffer>();
     buffer->primary = {m_config.planeId,        framebuffer->id(),     framebuffer->format(),
-                       framebuffer->modifier(), QRect(QPoint(), size), QRect(QPoint(), size)};
+                       framebuffer->modifier(), base::Rect(size), base::Rect(size)};
     buffer->release = [surface, bo] {
         gbm_surface_release_buffer(surface, bo);
     };
     return buffer;
 }
 
-QSize DrmOutput::size() const
+base::Size DrmOutput::size() const
 {
-    return QSize(m_config.mode.hdisplay, m_config.mode.vdisplay);
+    return base::Size(m_config.mode.hdisplay, m_config.mode.vdisplay);
 }
 
 double DrmOutput::refreshRate() const
@@ -199,12 +197,12 @@ double DrmOutput::pacingRate() const
     return m_unsynced ? 60.0 : refreshRate();
 }
 
-void DrmOutput::setRenderCallback(std::function<void(render::Renderer &, quint64)> callback)
+void DrmOutput::setRenderCallback(std::function<void(render::Renderer &, uint64_t)> callback)
 {
     m_renderCallback = std::move(callback);
 }
 
-void DrmOutput::setPrepareCallback(std::function<void(render::Renderer &, quint64)> callback)
+void DrmOutput::setPrepareCallback(std::function<void(render::Renderer &, uint64_t)> callback)
 {
     m_prepareCallback = std::move(callback);
 }
@@ -214,7 +212,7 @@ void DrmOutput::setBeginFrameCallback(std::function<bool(double)> callback)
     m_beginFrameCallback = std::move(callback);
 }
 
-void DrmOutput::setScanoutPlanner(std::function<scene::OverlayPlan(const QSize &, size_t)> planner)
+void DrmOutput::setScanoutPlanner(std::function<scene::OverlayPlan(const base::Size &, size_t)> planner)
 {
     m_scanoutPlanner = std::move(planner);
 }
@@ -230,7 +228,7 @@ DrmOutput::renderOffscreen(const render::OutputRenderContext &context,
         return {};
     std::unique_ptr<render::Texture> texture;
     const bool rendered = m_renderer->renderToTexture(texture, context.logicalViewport, [&] {
-        QScopedValueRollback<bool> capturing(m_renderer->capturing, true);
+        base::AutoReset<bool> capturing(m_renderer->capturing, true);
         paint(*m_renderer);
     });
     m_renderer->cancelFrame();
@@ -318,7 +316,7 @@ bool DrmOutput::isSecureConfiguration(const std::vector<PlaneContent> &planes)
     return planes.size() == 1 && !planes.front().isDirectScanout();
 }
 
-gbm_surface *DrmOutput::createSurface(const QSize &size) const
+gbm_surface *DrmOutput::createSurface(const base::Size &size) const
 {
     const auto create = [&](bool linear) {
         return gbm_surface_create(m_backend->gbmDevice(), size.width(), size.height(),
@@ -342,7 +340,7 @@ bool DrmOutput::init(render::EglRenderer *renderer)
 
     m_gbmSurface = createSurface(size());
     if (!m_gbmSurface) {
-        qCCritical(cfDrm) << "Failed to create a GBM surface for" << m_config.name;
+        CF_CRITICAL(cfDrm) << "Failed to create a GBM surface for" << m_config.name;
         return false;
     }
 
@@ -380,9 +378,9 @@ bool DrmOutput::init(render::EglRenderer *renderer, std::unique_ptr<render::EglR
     m_cursor = DrmCursor::create(m_device, m_config.crtcId);
     m_scanout->setHardwareCursor(m_cursor != nullptr);
 
-    qCInfo(cfDrm, "Render target initialized for %s: %zu overlay planes, hardware cursor %s",
-           qUtf8Printable(m_config.name), m_scanout->maxOverlays(),
-           m_cursor ? "available" : "unavailable");
+    CF_INFO(cfDrm).printf("Render target initialized for %s: %zu overlay planes, hardware cursor %s",
+                          m_config.name.c_str(), m_scanout->maxOverlays(),
+                          m_cursor ? "available" : "unavailable");
     return true;
 }
 
@@ -391,14 +389,15 @@ bool DrmOutput::requiresSoftwareBlanking() const
     if (!m_backend)
         return false;
     const auto driver = m_backend->driverName();
-    return driver == QStringLiteral("virtio_gpu") || driver == QStringLiteral("vmwgfx")
-            || driver == QStringLiteral("qxl");
+    return driver == "virtio_gpu" || driver == "vmwgfx"
+            || driver == "qxl";
 }
 
 bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool testOnly,
-                          DrmCommitStatus *status, QString *diagnostic, DrmDeviceApi **failedDevice)
+                          DrmCommitStatus *status, std::string *diagnostic,
+                          DrmDeviceApi **failedDevice)
 {
-    QString detail;
+    std::string detail;
     DrmDeviceApi *device = nullptr;
     auto report = [status, diagnostic, failedDevice, &device, &detail](DrmCommitStatus result) {
         if (status)
@@ -406,13 +405,12 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
         if (failedDevice)
             *failedDevice = result == DrmCommitStatus::Success ? nullptr : device;
         if (diagnostic)
-            *diagnostic = drmCommitMessage(result)
-                    + (detail.isEmpty() ? QString() : QStringLiteral("; ") + detail);
+            *diagnostic = drmCommitMessage(result) + (detail.empty() ? "" : "; " + detail);
         return result == DrmCommitStatus::Success;
     };
-    QSet<std::pair<DrmDeviceApi *, uint32_t>> connectors, crtcs, primaryPlanes;
+    std::set<std::pair<DrmDeviceApi *, uint32_t>> connectors, crtcs, primaryPlanes;
     std::map<DrmBackend *, uint64_t> epochs;
-    std::vector<std::unique_ptr<QScopedValueRollback<bool>>> guards;
+    std::vector<std::unique_ptr<base::AutoReset<bool>>> guards;
     for (const auto &change : configuration) {
         auto *output = change.output;
         if (!output || !output->m_scanout || !output->m_device || output->m_configuring
@@ -426,7 +424,7 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
         primaryPlanes.insert({device, output->m_config.planeId});
         if (output->m_backend)
             epochs[output->m_backend] = output->m_backend->topologyEpoch();
-        guards.push_back(std::make_unique<QScopedValueRollback<bool>>(output->m_configuring, true));
+        guards.push_back(std::make_unique<base::AutoReset<bool>>(output->m_configuring, true));
     }
     const auto valid = [&] {
         for (const auto &[backend, epoch] : epochs)
@@ -498,7 +496,7 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
         item->blanked = change.enabled && change.blanked;
         std::vector<PlaneContent> planes;
         if (change.enabled) {
-            const QSize size(change.mode.hdisplay, change.mode.vdisplay);
+            const base::Size size(change.mode.hdisplay, change.mode.vdisplay);
             if (size.isEmpty() || (!output->m_backend && !output->m_createTarget)
                 || !device->createPropertyBlob(&change.mode, sizeof(change.mode), &item->blob))
                 return false;
@@ -519,7 +517,7 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
                 if (!item->buffer)
                     return false;
                 item->buffer->primary.planeId = output->m_config.planeId;
-                item->buffer->primary.displayRect = QRect(QPoint(), size);
+                item->buffer->primary.displayRect = base::Rect(size);
             } else {
                 item->buffer = output->acquireComposited(item->surface);
                 if (!item->buffer)
@@ -561,14 +559,14 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
         }
         return report(outcome);
     }
-    QList<DrmDeviceTransaction> transactions;
+    std::vector<DrmDeviceTransaction> transactions;
     for (const auto &owned : batches) {
         auto *batch = owned.get();
-        QString key = QString::number(transactions.size());
+        std::string key = std::to_string(transactions.size());
         for (const auto &change : configuration)
             if (change.output->m_device == batch->device && change.output->m_backend)
                 key = change.output->m_backend->devicePath();
-        transactions.append({key,
+        transactions.push_back({key,
                              [&, batch] {
                                  device = batch->device;
                                  DrmCommitCoordinator coordinator(batch->device);
@@ -599,8 +597,8 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
         return valid() ? 0 : 1;
     });
     if (!committed.succeeded) {
-        detail = committed.failedDevice + QStringLiteral(": ") + committed.message;
-        qCWarning(cfDrm).noquote() << detail;
+        detail = committed.failedDevice + ": " + committed.message;
+        CF_WARNING(cfDrm) << detail;
         if (outcome == DrmCommitStatus::Success)
             outcome = DrmCommitStatus::Invalidated;
         for (const auto &batch : batches)
@@ -609,7 +607,7 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
         if (outcome != DrmCommitStatus::RollbackFailed)
             return report(outcome);
     }
-    QList<std::pair<DrmOutput *, uint64_t>> discarded;
+    std::vector<std::pair<DrmOutput *, uint64_t>> discarded;
     for (auto &item : prepared) {
         auto *output = item->output;
         auto *batch = batchFor(output->m_device);
@@ -617,8 +615,8 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
             continue;
         output->m_wakeup.stop();
         output->m_scheduler.suspend();
-        for (const quint64 frame : output->dropOutstandingFrames())
-            discarded.append({output, frame});
+        for (const uint64_t frame : output->dropOutstandingFrames())
+            discarded.push_back({output, frame});
         output->releaseScanoutBuffers();
         output->m_bufferFrame = 0;
         output->destroyModeBlob();
@@ -656,11 +654,11 @@ bool DrmOutput::configure(const std::vector<Configuration> &configuration, bool 
     }
     // Observers must see every route updated before any completion notification.
     for (const auto &[output, frame] : discarded)
-        Q_EMIT output->frameDiscarded(frame);
+        output->frameDiscarded(frame);
     return report(outcome);
 }
 
-bool DrmOutput::fillModesetBuffer(render::EglRenderTarget *target, const QSize &size,
+bool DrmOutput::fillModesetBuffer(render::EglRenderTarget *target, const base::Size &size,
                                   bool copyScanout)
 {
     // What the CRTC shows now, another DRM master's last frame or this output's
@@ -671,13 +669,13 @@ bool DrmOutput::fillModesetBuffer(render::EglRenderTarget *target, const QSize &
     const bool copy = copyScanout && (!m_secureScanout || m_carryOverWhileSecure)
             && m_device->exportCrtcFramebuffer(m_config.crtcId, &current) && current.size == size;
     if (copy)
-        m_renderer->setOutputContext({m_config.name, QRect(QPoint(), size), size, 1, 0, 0});
+        m_renderer->setOutputContext({m_config.name, base::Rect(size), size, 1, 0, 0});
     if (!m_renderer->beginFrame(target))
         return false;
     m_renderer->clear({0, 0, 0, 1});
     // Imported once the target is current, and kept until the frame has ended.
     std::shared_ptr<render::Texture> texture = copy ? m_renderer->importDmaBuf(current) : nullptr;
-    const QRect viewport(QPoint(), size);
+    const base::Rect viewport(size);
     if (texture && m_keepCarriedFrame) {
         // A copy, not the import: the other master may still draw into its buffer.
         m_renderer->renderToTexture(m_carriedFrame, viewport, [&] {
@@ -693,7 +691,7 @@ bool DrmOutput::createModeBlob()
 {
     destroyModeBlob();
     if (!m_device->createPropertyBlob(&m_config.mode, sizeof(m_config.mode), &m_modeBlobId)) {
-        qCCritical(cfDrm) << "Failed to create the mode property blob";
+        CF_CRITICAL(cfDrm) << "Failed to create the mode property blob";
         return false;
     }
     return true;
@@ -732,10 +730,10 @@ bool DrmOutput::enable()
         }
         m_bufferFrame = 0;
         m_enabled = true;
-        m_outstanding.append(frame);
+        m_outstanding.push_back(frame);
         m_scheduler.submitted(frame);
         scheduleFrame(Reason::Resume);
-        qCInfo(cfDrm) << "Output resumed with retained scanout:" << m_config.name;
+        CF_INFO(cfDrm) << "Output resumed with retained scanout:" << m_config.name;
         return true;
     }
     m_enabled = true;
@@ -743,15 +741,15 @@ bool DrmOutput::enable()
     const auto frame = m_scheduler.begin();
     if (!frame || !renderFrame(frame, true)) {
         if (frame)
-            Q_EMIT frameDiscarded(frame);
-        m_outstanding.removeAll(frame);
+            frameDiscarded(frame);
+        std::erase(m_outstanding, frame);
         m_enabled = false;
         m_scheduler.suspend();
         return false;
     }
     m_scheduler.submitted(frame);
-    Q_EMIT frameDrawn(frame, aimedNs());
-    qCInfo(cfDrm) << "Output enabled:" << m_config.name;
+    frameDrawn(frame, aimedNs());
+    CF_INFO(cfDrm) << "Output enabled:" << m_config.name;
     return true;
 }
 
@@ -786,8 +784,8 @@ bool DrmOutput::retireForReprobe(bool connectorExists, bool keepRoute)
             return false;
     }
     m_enabled = false;
-    for (const quint64 frame : dropOutstandingFrames())
-        Q_EMIT frameDiscarded(frame);
+    for (const uint64_t frame : dropOutstandingFrames())
+        frameDiscarded(frame);
     releaseScanoutBuffers();
     m_bufferFrame = 0;
     destroyModeBlob();
@@ -805,8 +803,8 @@ void DrmOutput::disable()
     m_wakeup.stop();
     m_flipTimeout.stop();
     m_scheduler.suspend();
-    for (const quint64 frame : dropOutstandingFrames())
-        Q_EMIT frameDiscarded(frame);
+    for (const uint64_t frame : dropOutstandingFrames())
+        frameDiscarded(frame);
     // An inactive session may still have old scanout references. Keep both
     // frames until their flip retires or a successful modeset replaces them.
     if (m_enabled && m_sessionActive && m_sessionActive() && m_scanout && m_scanout->disable()) {
@@ -843,7 +841,7 @@ void DrmOutput::releaseScanoutBuffers()
     retire(m_scanoutFrame, render::SyncFence());
 }
 
-QList<quint64> DrmOutput::dropOutstandingFrames()
+std::vector<uint64_t> DrmOutput::dropOutstandingFrames()
 {
     if (m_queuedFrame) {
         retire(m_queuedFrame->submitted, render::SyncFence());
@@ -860,8 +858,8 @@ void DrmOutput::commitQueued()
     m_queuedFrame.reset();
     if (!m_enabled || m_blanked || !commit(queued.submitted.planes, false, queued.frame)) {
         retire(queued.submitted, render::SyncFence());
-        m_outstanding.removeAll(queued.frame);
-        Q_EMIT frameDiscarded(queued.frame);
+        std::erase(m_outstanding, queued.frame);
+        frameDiscarded(queued.frame);
         m_scheduler.failed(queued.frame);
         return;
     }
@@ -913,13 +911,13 @@ void DrmOutput::armWakeup()
     // of the deadline, where rounding up would start the frame late.
     const auto remaining = *deadline - m_now();
     const auto ms = std::chrono::floor<std::chrono::milliseconds>(remaining).count();
-    m_wakeup.start(static_cast<int>(std::max<int64_t>(0, ms)));
+    m_wakeup.start(std::chrono::milliseconds(std::max<int64_t>(0, ms)));
 }
 
-quint64 DrmOutput::aimedNs() const
+uint64_t DrmOutput::aimedNs() const
 {
     const auto aimed = m_scheduler.frameTime() + m_scheduler.period();
-    return quint64(std::chrono::duration_cast<std::chrono::nanoseconds>(aimed.time_since_epoch())
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(aimed.time_since_epoch())
                            .count());
 }
 
@@ -939,16 +937,16 @@ void DrmOutput::wakeup()
         if (renderFrame(frame, false)) {
             m_forceFrame = false;
             m_scheduler.submitted(frame);
-            Q_EMIT frameDrawn(frame, aimedNs());
+            frameDrawn(frame, aimedNs());
             const auto took = m_now() - started;
             if (took > m_scheduler.period()) {
-                qCDebug(cfDrm) << "Composited frame" << frame << "for" << m_config.name << "in"
-                               << std::chrono::duration<double, std::milli>(took).count()
-                               << "ms, longer than its refresh period";
+                CF_DEBUG(cfDrm) << "Composited frame" << frame << "for" << m_config.name << "in"
+                                << std::chrono::duration<double, std::milli>(took).count()
+                                << "ms, longer than its refresh period";
             }
         } else {
-            m_outstanding.removeAll(frame);
-            Q_EMIT frameDiscarded(frame);
+            std::erase(m_outstanding, frame);
+            frameDiscarded(frame);
             m_scheduler.failed(frame);
         }
     }
@@ -967,7 +965,7 @@ bool DrmOutput::renderFrame(uint64_t frame, bool modeset)
     // real commit. Composing the same frame without promotions is always
     // possible, and it is what keeps a failed optimization from dropping a
     // frame or leaving a stale buffer on screen.
-    qCWarning(cfDrm) << "Hardware plane commit failed; compositing this frame instead";
+    CF_WARNING(cfDrm) << "Hardware plane commit failed; compositing this frame instead";
     return renderAttempt(frame, modeset, false, prepared, true);
 }
 
@@ -997,8 +995,8 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
     m_renderer->framePeriod =
             std::chrono::duration<double, std::milli>(m_scheduler.period()).count();
     ++m_frameCount;
-    if (!m_outstanding.contains(frame))
-        m_outstanding.append(frame);
+    if (std::find(m_outstanding.begin(), m_outstanding.end(), frame) == m_outstanding.end())
+        m_outstanding.push_back(frame);
     if (!prepared && m_prepareCallback)
         m_prepareCallback(*m_renderer, frame);
     prepared = true;
@@ -1045,7 +1043,7 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
         // Plane promotion changes pixels without changing scene revisions.
         if (retry || planes.size() > 1 || m_scanoutFrame.planes.size() > 1) {
             const auto viewport = m_renderer->outputContext().logicalViewport;
-            m_renderer->prepareDamage(viewport.isEmpty() ? QRect(QPoint(), size()) : viewport,
+            m_renderer->prepareDamage(viewport.isEmpty() ? base::Rect(size()) : viewport,
                                       {});
         }
         // A buffer kept from an earlier frame holds another tint, or none.
@@ -1073,13 +1071,13 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
             --m_untintedRepaints;
         compositedBuffer = m_acquireBuffer();
         if (!compositedBuffer) {
-            qCWarning(cfDrm) << "Failed to obtain a framebuffer for the composited frame";
+            CF_WARNING(cfDrm) << "Failed to obtain a framebuffer for the composited frame";
             clearPromotions();
             return false;
         }
         PlaneContent primary = compositedBuffer->primary;
         primary.planeId = planes.empty() ? m_config.planeId : planes.front().planeId;
-        primary.displayRect = QRect(QPoint(), size());
+        primary.displayRect = base::Rect(size());
         if (planes.empty())
             planes.push_back(std::move(primary));
         else
@@ -1121,10 +1119,10 @@ bool DrmOutput::renderAttempt(uint64_t frame, bool modeset, bool allowPromotion,
         // The scheduler holds at most one frame behind the flip; a stale one
         // here would be a bookkeeping slip, and the newer frame wins.
         if (m_queuedFrame) {
-            const quint64 stale = m_queuedFrame->frame;
+            const uint64_t stale = m_queuedFrame->frame;
             retire(m_queuedFrame->submitted, render::SyncFence());
             m_queuedFrame.reset();
-            Q_EMIT frameDiscarded(stale);
+            frameDiscarded(stale);
             m_scheduler.failed(stale);
         }
         m_queuedFrame = QueuedFrame {frame, std::move(submitted)};
@@ -1165,8 +1163,8 @@ void DrmOutput::onPageFlip(uint64_t frame, uint32_t seconds, uint32_t microsecon
     if (!m_unsynced && sequence == 0 && m_lastSequence == 0 && m_completions > 0) {
         m_unsynced = true;
         m_scheduler.setPeriod(framePeriod(pacingRate()));
-        qCInfo(cfDrm) << m_config.name << "has no vblank; pacing at" << pacingRate()
-                      << "Hz instead of the mode's" << refreshRate();
+        CF_INFO(cfDrm) << m_config.name << "has no vblank; pacing at" << pacingRate()
+                       << "Hz instead of the mode's" << refreshRate();
     }
     m_presentations.complete(frame, seconds, microseconds, sequence, m_monotonicClock,
                              pacingRate(), presentationOutput);
@@ -1215,13 +1213,13 @@ void DrmOutput::finishFlip(uint64_t frame, uint32_t timeMs,
     // A device without vblank stamps when the host finished, which is no
     // refresh to lay the slots on.
     if (m_scheduler.complete(frame, m_unsynced ? std::nullopt : presented)) {
-        m_outstanding.removeAll(frame);
-        Q_EMIT imagePresented(frame,
+        std::erase(m_outstanding, frame);
+        imagePresented(frame,
                               presented ? uint64_t(std::chrono::nanoseconds(
                                                            presented->time_since_epoch())
                                                            .count())
                                         : 0);
-        Q_EMIT framePresented(timeMs, frame);
+        framePresented(timeMs, frame);
     }
     armWakeup();
 }
@@ -1232,8 +1230,11 @@ void DrmOutput::onFlipTimeout()
         return;
     const auto oldest = m_events.begin();
     const uint64_t frame = oldest->first;
-    qCWarning(cfDrm) << "No page flip event on" << m_config.name << "for frame" << frame
-                     << "within" << m_flipTimeout.interval() << "ms; no longer waiting for it";
+    CF_WARNING(cfDrm) << "No page flip event on" << m_config.name << "for frame" << frame
+                      << "within"
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(m_flipTimeout.interval())
+                                .count()
+                     << "ms; no longer waiting for it";
     retireEvent(std::move(oldest->second));
     m_events.erase(oldest);
     // Nothing says the frame reached the screen, so its feedback is discarded,
@@ -1255,37 +1256,76 @@ void DrmOutput::retireEvent(std::unique_ptr<FlipEvent> event)
 
 void DrmOutput::reportStats() const
 {
-    qInfo().noquote() << statsLine();
+    CF_INFO(base::LogCategory::defaultCategory()) << statsLine();
 }
 
-QString DrmOutput::statsLine() const
+std::string DrmOutput::statsLine() const
 {
     const auto &s = m_scheduler.stats();
     const auto ms = [](std::chrono::steady_clock::duration duration) {
         return std::chrono::duration<double, std::milli>(duration).count();
     };
-    QString line;
-    QDebug out(&line);
-    out << "Output scheduling" << m_config.name << "duration-ms"
-        << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
-                                                                 - m_statsStart)
-                   .count()
-        << "process-CPU-ms" << (1000.0 * (std::clock() - m_cpuStart) / CLOCKS_PER_SEC)
-        << "refresh-Hz" << refreshRate() << "pacing-Hz" << pacingRate() << "period-ns"
-        << std::chrono::duration_cast<std::chrono::nanoseconds>(m_scheduler.period()).count()
-        << "renders" << m_frameCount << "KMS-commits" << m_commits << "normal-commits"
-        << m_flipCommits << "unique-completions" << m_completions << "missed-slots" << s.missed
-        << "late-demand" << s.lateDemand << "requests" << s.requests << "coalesced"
-        << s.coalesced << "failures" << s.failures << "stale-completions" << s.staleCompletions
-        << "skipped" << s.skips
-        << "direct-scanout-frames" << m_directScanoutFrames << "overlay-frames" << m_overlayFrames
-        << "plane-test-failures" << (m_scanout ? m_scanout->testFailures() : 0)
-        << "scanout-import-failures" << (m_scanout ? m_scanout->importFailures() : 0)
-        << "hardware-cursor" << (m_cursor != nullptr) << "last-kernel-sequence" << m_lastSequence
-        << "last-kernel-time-ms" << m_lastTimeMs << "draw-budget-ms"
-        << ms(m_scheduler.drawBudget()) << "slowest-draw-ms" << ms(m_scheduler.slowestDrawTime())
-        << "reasons startup/resume/scene/surface/decoration" << s.reasons[0] << s.reasons[1]
-        << s.reasons[2] << s.reasons[3] << s.reasons[4];
+    std::string line;
+    const auto add = [&line](const auto &value) {
+        if (!line.empty())
+            line += ' ';
+        using Value = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<Value, bool>)
+            line += value ? "true" : "false";
+        else if constexpr (std::is_floating_point_v<Value>)
+            line += base::strings::number(double(value));
+        else if constexpr (std::is_arithmetic_v<Value>)
+            line += std::to_string(value);
+        else
+            line += value;
+    };
+    add("Output scheduling");
+    add('"' + m_config.name + '"');
+    add("duration-ms");
+    add(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
+                                                              - m_statsStart)
+                .count());
+    add("process-CPU-ms");
+    add(1000.0 * (std::clock() - m_cpuStart) / CLOCKS_PER_SEC);
+    add("refresh-Hz");
+    add(refreshRate());
+    add("pacing-Hz");
+    add(pacingRate());
+    add("period-ns");
+    add(std::chrono::duration_cast<std::chrono::nanoseconds>(m_scheduler.period()).count());
+    for (const auto &[label, value] : {std::pair<const char *, uint64_t> {"renders", m_frameCount},
+                                       {"KMS-commits", m_commits},
+                                       {"normal-commits", m_flipCommits},
+                                       {"unique-completions", m_completions},
+                                       {"missed-slots", s.missed},
+                                       {"late-demand", s.lateDemand},
+                                       {"requests", s.requests},
+                                       {"coalesced", s.coalesced},
+                                       {"failures", s.failures},
+                                       {"stale-completions", s.staleCompletions},
+                                       {"skipped", s.skips},
+                                       {"direct-scanout-frames", m_directScanoutFrames},
+                                       {"overlay-frames", m_overlayFrames},
+                                       {"plane-test-failures",
+                                        m_scanout ? m_scanout->testFailures() : 0},
+                                       {"scanout-import-failures",
+                                        m_scanout ? m_scanout->importFailures() : 0}}) {
+        add(label);
+        add(value);
+    }
+    add("hardware-cursor");
+    add(m_cursor != nullptr);
+    add("last-kernel-sequence");
+    add(m_lastSequence);
+    add("last-kernel-time-ms");
+    add(m_lastTimeMs);
+    add("draw-budget-ms");
+    add(ms(m_scheduler.drawBudget()));
+    add("slowest-draw-ms");
+    add(ms(m_scheduler.slowestDrawTime()));
+    add("reasons startup/resume/scene/surface/decoration");
+    for (int i = 0; i < 5; ++i)
+        add(s.reasons[i]);
     return line;
 }
 
@@ -1296,7 +1336,7 @@ bool DrmOutput::commit(const std::vector<PlaneContent> &planes, bool modeset, ui
 
     FlipEvent *token = nullptr;
     if (frame) {
-        auto event = std::make_unique<FlipEvent>(FlipEvent {this, frame});
+        auto event = std::make_unique<FlipEvent>(FlipEvent {weakPtr(), frame});
         token = event.get();
         m_events.emplace(frame, std::move(event));
     }
@@ -1307,8 +1347,8 @@ bool DrmOutput::commit(const std::vector<PlaneContent> &planes, bool modeset, ui
     if (!ok) {
         if (frame)
             m_events.erase(frame);
-        qCWarning(cfDrm, "Atomic commit failed (%s): %s", modeset ? "modeset" : "flip",
-                  strerror(errno));
+        CF_WARNING(cfDrm).printf("Atomic commit failed (%s): %s", modeset ? "modeset" : "flip",
+                                 strerror(errno));
         return false;
     }
 
@@ -1332,14 +1372,14 @@ std::map<uint32_t, std::vector<uint64_t>> DrmOutput::primaryPlaneFormats() const
     return {};
 }
 
-std::optional<QPoint> DrmOutput::probedCursor() const
+std::optional<base::Point> DrmOutput::probedCursor() const
 {
     for (const DrmPlane &plane : m_config.planes) {
         if (plane.type != DRM_PLANE_TYPE_CURSOR || plane.properties.value("FB_ID") == 0
             || plane.properties.value("CRTC_ID") != m_config.crtcId)
             continue;
         // Signed properties: an image may hang off the top or left edge.
-        return QPoint(int(int64_t(plane.properties.value("CRTC_X"))),
+        return base::Point(int(int64_t(plane.properties.value("CRTC_X"))),
                       int(int64_t(plane.properties.value("CRTC_Y"))));
     }
     return std::nullopt;
@@ -1360,7 +1400,7 @@ void DrmOutput::hideCursor()
         m_cursor->hide();
 }
 
-void DrmOutput::moveCursor(const QPointF &position)
+void DrmOutput::moveCursor(const base::PointF &position)
 {
     if (m_cursor)
         m_cursor->move(position.toPoint());

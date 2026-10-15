@@ -7,12 +7,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <format>
 #include <utility>
 
-#include <QColor>
-#include <QPainter>
-#include <QPen>
-
+#include "base/geometry.h"
+#include "render/shape_mask.h"
+#include "ui/bitmap_painter.h"
 #include "scene/window_animation.h"
 
 namespace cutefish::scene {
@@ -53,27 +53,27 @@ double snap(double value, double scale)
 
 // Every edge on a device pixel, so a window at rest is as sharp as it is on
 // the desk and one in motion does not shimmer between two pixels.
-QRectF snapped(const QRectF &rect, double scale)
+base::RectF snapped(const base::RectF &rect, double scale)
 {
-    return QRectF(QPointF(snap(rect.left(), scale), snap(rect.top(), scale)),
-                  QPointF(snap(rect.right(), scale), snap(rect.bottom(), scale)));
+    return base::RectF::fromEdges(snap(rect.left(), scale), snap(rect.top(), scale),
+                                  snap(rect.right(), scale), snap(rect.bottom(), scale));
 }
 
-QRectF lerp(const QRectF &a, const QRectF &b, double t)
+base::RectF lerp(const base::RectF &a, const base::RectF &b, double t)
 {
-    return QRectF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t,
+    return base::RectF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t,
                   a.width() + (b.width() - a.width()) * t,
                   a.height() + (b.height() - a.height()) * t);
 }
 
 // `rect` moved and scaled as `from` is onto `to`.
-QRectF mapped(const QRectF &rect, const QRectF &from, const QRectF &to)
+base::RectF mapped(const base::RectF &rect, const base::RectF &from, const base::RectF &to)
 {
     if (from.isEmpty())
         return to;
     const double sx = to.width() / from.width();
     const double sy = to.height() / from.height();
-    return QRectF(to.x() + (rect.x() - from.x()) * sx, to.y() + (rect.y() - from.y()) * sy,
+    return base::RectF(to.x() + (rect.x() - from.x()) * sx, to.y() + (rect.y() - from.y()) * sy,
                   rect.width() * sx, rect.height() * sy);
 }
 
@@ -83,17 +83,12 @@ render::Color faded(render::Color color, float opacity)
     return color;
 }
 
-QColor toQColor(const render::Color &color)
+std::string colorKey(const render::Color &color)
 {
-    return QColor::fromRgbF(color.r, color.g, color.b, color.a);
+    return std::format("{},{},{},{}", color.r, color.g, color.b, color.a);
 }
 
-QString colorKey(const render::Color &color)
-{
-    return QStringLiteral("%1,%2,%3,%4").arg(color.r).arg(color.g).arg(color.b).arg(color.a);
-}
-
-std::function<qint64()> steadyClock()
+std::function<int64_t()> steadyClock()
 {
     return [] {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -102,29 +97,26 @@ std::function<qint64()> steadyClock()
     };
 }
 
-double frameNow(const render::Renderer &renderer, const std::function<qint64()> &clock)
+double frameNow(const render::Renderer &renderer, const std::function<int64_t()> &clock)
 {
     return renderer.frameTime >= 0 ? renderer.frameTime : double(clock());
 }
 
-QRect viewportOf(const render::Renderer &renderer, const Node &node)
+base::Rect viewportOf(const render::Renderer &renderer, const Node &node)
 {
-    const QRect viewport = renderer.outputContext().logicalViewport;
+    const base::Rect viewport = renderer.outputContext().logicalViewport;
     return viewport.isEmpty() ? node.absoluteGeometry() : viewport;
 }
 
-std::pair<QString, quintptr> previewKey(const OverviewDeskBarNode::Bar &bar, quintptr desk)
+std::pair<std::string, uintptr_t> previewKey(const OverviewDeskBarNode::Bar &bar, uintptr_t desk)
 {
-    return {QStringLiteral("%1,%2,%3,%4")
-                    .arg(bar.output.x())
-                    .arg(bar.output.y())
-                    .arg(bar.output.width())
-                    .arg(bar.output.height()),
+    return {std::format("{},{},{},{}", bar.output.x(), bar.output.y(), bar.output.width(),
+                        bar.output.height()),
             desk};
 }
 
 std::vector<OverviewDeskBarNode::Desk>::const_iterator
-findDesk(const std::vector<OverviewDeskBarNode::Desk> &desks, quintptr id)
+findDesk(const std::vector<OverviewDeskBarNode::Desk> &desks, uintptr_t id)
 {
     return std::find_if(desks.begin(), desks.end(), [id](const OverviewDeskBarNode::Desk &desk) {
         return desk.id == id;
@@ -133,25 +125,25 @@ findDesk(const std::vector<OverviewDeskBarNode::Desk> &desks, quintptr id)
 
 // `rect` rounded relative to `rest`, so a moving one lands on the pixels it
 // rests on rather than a pixel late.
-QRectF snappedFrom(const QRectF &rect, const QRectF &rest, double scale)
+base::RectF snappedFrom(const base::RectF &rect, const base::RectF &rest, double scale)
 {
-    const QRectF base = snapped(rest, scale);
-    return QRectF(base.x() + snap(rect.x() - rest.x(), scale),
+    const base::RectF base = snapped(rest, scale);
+    return base::RectF(base.x() + snap(rect.x() - rest.x(), scale),
                   base.y() + snap(rect.y() - rest.y(), scale),
                   base.width() + snap(rect.width() - rest.width(), scale),
                   base.height() + snap(rect.height() - rest.height(), scale));
 }
 
 // `rect` scaled by `scale` about the centre of its top edge.
-QRectF scaledFromTop(const QRectF &rect, double scale)
+base::RectF scaledFromTop(const base::RectF &rect, double scale)
 {
     if (scale == 1)
         return rect;
-    return QRectF(rect.center().x() - rect.width() * scale / 2, rect.top(), rect.width() * scale,
+    return base::RectF(rect.center().x() - rect.width() * scale / 2, rect.top(), rect.width() * scale,
                   rect.height() * scale);
 }
 
-void fillRounded(render::Renderer &renderer, const QRectF &rect, qreal radius,
+void fillRounded(render::Renderer &renderer, const base::RectF &rect, double radius,
                  const render::Color &color)
 {
     renderer.pushRoundedClip(render::RoundedShape {rect, radius});
@@ -161,7 +153,7 @@ void fillRounded(render::Renderer &renderer, const QRectF &rect, qreal radius,
 
 } // namespace
 
-render::Texture *OverviewChromeCache::find(const QString &key, QSizeF *size)
+render::Texture *OverviewChromeCache::find(const std::string &key, base::SizeF *size)
 {
     for (auto it = m_entries.begin(); it != m_entries.end(); ++it) {
         if (it->key != key)
@@ -174,10 +166,10 @@ render::Texture *OverviewChromeCache::find(const QString &key, QSizeF *size)
     return nullptr;
 }
 
-render::Texture *OverviewChromeCache::insert(render::Renderer &renderer, const QString &key,
-                                             const QImage &image, const QSizeF &size)
+render::Texture *OverviewChromeCache::insert(render::Renderer &renderer, const std::string &key,
+                                             const ui::Bitmap &image, const base::SizeF &size)
 {
-    auto texture = renderer.createTexture(image.size(), image.constBits(), image.bytesPerLine(),
+    auto texture = renderer.createTexture(image.size(), image.constBits(), int(image.stride()),
                                           render::PixelFormat::Rgba8888);
     if (!texture)
         return nullptr;
@@ -189,70 +181,60 @@ render::Texture *OverviewChromeCache::insert(render::Renderer &renderer, const Q
 
 render::Texture *OverviewChromeCache::label(render::Renderer &renderer,
                                             const OverviewTextPainter &painter,
-                                            const QString &text, int pixelSize,
+                                            const std::string &text, int pixelSize,
                                             const render::Color &color, int maxWidth,
-                                            QSizeF *size)
+                                            base::SizeF *size)
 {
-    if (!painter || text.isEmpty())
+    if (!painter || text.empty())
         return nullptr;
     const double density = renderer.rasterScale();
-    const QString key = QStringLiteral("label|%1|%2|%3|%4|%5")
-                                .arg(text)
-                                .arg(pixelSize)
-                                .arg(colorKey(color))
-                                .arg(maxWidth)
-                                .arg(density);
+    const std::string key = std::format("label|{}|{}|{}|{}|{}", text, pixelSize, colorKey(color),
+                                        maxWidth, density);
     if (render::Texture *texture = find(key, size))
         return texture;
-    QImage image = painter(text, pixelSize, color, density, maxWidth);
+    ui::Bitmap image = painter(text, pixelSize, color, density, maxWidth);
     if (image.isNull())
         return nullptr;
-    image = image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
-    const QSizeF logical(image.width() / density, image.height() / density);
+    image = image.converted(ui::Bitmap::Format::Rgba8888Premultiplied);
+    const base::SizeF logical(image.width() / density, image.height() / density);
     if (size)
         *size = logical;
     return insert(renderer, key, image, logical);
 }
 
 render::Texture *OverviewChromeCache::glyph(render::Renderer &renderer, Glyph glyph,
-                                            const QSizeF &size, const render::Color &color)
+                                            const base::SizeF &size, const render::Color &color)
 {
     const double density = renderer.rasterScale();
-    const QString key = QStringLiteral("glyph|%1|%2x%3|%4|%5")
-                                .arg(int(glyph))
-                                .arg(size.width())
-                                .arg(size.height())
-                                .arg(colorKey(color))
-                                .arg(density);
+    const std::string key = std::format("glyph|{}|{}x{}|{}|{}", int(glyph), size.width(),
+                                        size.height(), colorKey(color), density);
     if (render::Texture *texture = find(key, nullptr))
         return texture;
-    const QSize pixels(std::max(1, int(std::ceil(size.width() * density))),
+    const base::Size pixels(std::max(1, int(std::ceil(size.width() * density))),
                        std::max(1, int(std::ceil(size.height() * density))));
-    QImage image(pixels, QImage::Format_RGBA8888_Premultiplied);
-    image.fill(Qt::transparent);
+    ui::Bitmap image(pixels, ui::Bitmap::Format::Rgba8888Premultiplied);
     {
-        QPainter painter(&image);
-        painter.setRenderHint(QPainter::Antialiasing);
-        const QRectF bounds(0, 0, pixels.width(), pixels.height());
-        QPen pen(toQColor(color), std::max(1.0, 1.6 * density), Qt::SolidLine, Qt::RoundCap);
+        ui::BitmapPainter painter(image);
+        painter.setAntialiasing(true);
+        const base::RectF bounds(0, 0, pixels.width(), pixels.height());
+        const ui::Color stroke = render::toUiColor(color);
+        const double width = std::max(1.0, 1.6 * density);
         switch (glyph) {
         case Glyph::Close: {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(toQColor(kClosePlateColor));
-            painter.drawEllipse(bounds);
-            painter.setPen(pen);
+            painter.fillEllipse(bounds, render::toUiColor(kClosePlateColor));
             const double inset = bounds.width() * 0.34;
-            const QRectF cross = bounds.adjusted(inset, inset, -inset, -inset);
-            painter.drawLine(cross.topLeft(), cross.bottomRight());
-            painter.drawLine(cross.topRight(), cross.bottomLeft());
+            const base::RectF cross = bounds.adjusted(inset, inset, -inset, -inset);
+            painter.drawLine(cross.topLeft(), cross.bottomRight(), stroke, width, ui::LineCap::Round);
+            painter.drawLine(cross.topRight(), cross.bottomLeft(), stroke, width, ui::LineCap::Round);
             break;
         }
         case Glyph::Plus: {
-            painter.setPen(pen);
-            const QPointF centre = bounds.center();
-            const double half = std::min(bounds.width(), bounds.height()) / 2 - pen.widthF();
-            painter.drawLine(centre - QPointF(half, 0), centre + QPointF(half, 0));
-            painter.drawLine(centre - QPointF(0, half), centre + QPointF(0, half));
+            const base::PointF centre = bounds.center();
+            const double half = std::min(bounds.width(), bounds.height()) / 2 - width;
+            painter.drawLine(centre - base::PointF(half, 0), centre + base::PointF(half, 0), stroke, width,
+                             ui::LineCap::Round);
+            painter.drawLine(centre - base::PointF(0, half), centre + base::PointF(0, half), stroke, width,
+                             ui::LineCap::Round);
             break;
         }
         }
@@ -260,8 +242,8 @@ render::Texture *OverviewChromeCache::glyph(render::Renderer &renderer, Glyph gl
     return insert(renderer, key, image, size);
 }
 
-OverviewNode::OverviewNode(std::function<qint64()> clock)
-    : Node(QStringLiteral("overview"))
+OverviewNode::OverviewNode(std::function<int64_t()> clock)
+    : Node("overview")
     , m_now(clock ? std::move(clock) : steadyClock())
 {
 }
@@ -275,12 +257,12 @@ void OverviewNode::setBackdrop(std::vector<const Node *> nodes)
 void OverviewNode::setItems(std::vector<Item> items, bool animate)
 {
     const double now = double(m_now());
-    std::vector<QRectF> from;
+    std::vector<base::RectF> from;
     from.reserve(items.size());
     if (animate) {
         // Each window already shown sets off from where it is headed now.
         const double t = layoutProgress(now);
-        std::map<const WindowAnimation *, QRectF> current;
+        std::map<const WindowAnimation *, base::RectF> current;
         for (size_t i = 0; i < m_items.size(); ++i) {
             if (m_items[i].windows.empty())
                 continue;
@@ -306,7 +288,7 @@ void OverviewNode::setItems(std::vector<Item> items, bool animate)
     notifyChanged();
 }
 
-void OverviewNode::setDragged(int index, const QRectF &rect)
+void OverviewNode::setDragged(int index, const base::RectF &rect)
 {
     m_dragged = index >= 0 && index < int(m_items.size()) ? index : -1;
     m_dragRect = rect;
@@ -464,7 +446,7 @@ double OverviewNode::endTracking(double timeMs)
     return target;
 }
 
-bool OverviewNode::backdropCovers(const QRect &viewport) const
+bool OverviewNode::backdropCovers(const base::Rect &viewport) const
 {
     // The first thing drawn that is opaque over the whole output; anything
     // drawn before it ends up under it.
@@ -489,10 +471,10 @@ double OverviewNode::layoutProgress(double timeMs) const
     return m_layout ? m_layout->value(timeMs) : 1;
 }
 
-QRectF OverviewNode::presentedRect(int index, double progress, double timeMs) const
+base::RectF OverviewNode::presentedRect(int index, double progress, double timeMs) const
 {
     const Item &item = m_items[index];
-    const QRectF to = index == m_dragged
+    const base::RectF to = index == m_dragged
             ? m_dragRect
             : lerp(m_layoutFrom[index], item.to, layoutProgress(timeMs));
     if (item.windows.empty() || index == m_dragged)
@@ -522,7 +504,7 @@ void OverviewNode::render(render::Renderer &renderer) const
     if (!isActive() || !isVisible())
         return;
     const double now = frameNow(renderer, m_now);
-    const QRect viewport = viewportOf(renderer, *this);
+    const base::Rect viewport = viewportOf(renderer, *this);
     const double progress = this->progress(now);
 
     // The desktop is drawn darkened rather than under a dim pass, and one
@@ -589,19 +571,19 @@ void OverviewNode::renderItem(render::Renderer &renderer, int index, double prog
     const Item &item = m_items[index];
     if (item.windows.empty())
         return;
-    QRectF rect = presentedRect(index, progress, now);
+    base::RectF rect = presentedRect(index, progress, now);
     if (progress > 0)
         rect = snapped(rect, renderer.rasterScale());
-    const QRect reach = viewportOf(renderer, *this)
+    const base::Rect reach = viewportOf(renderer, *this)
                                 .adjusted(-kShadowMargin, -kShadowMargin, kShadowMargin,
                                           kShadowMargin);
     if (!rect.intersects(reach))
         return;
     const double uniform = std::clamp(progress, 0.0, 1.0);
     const bool moving = !isSettled() || (m_layout && !m_layout->isFinished(now));
-    const QRectF from = item.windows.front()->absoluteGeometry();
+    const base::RectF from = item.windows.front()->absoluteGeometry();
     for (const WindowAnimation *window : item.windows) {
-        const QRectF bounds = mapped(window->absoluteGeometry(), from, rect);
+        const base::RectF bounds = mapped(window->absoluteGeometry(), from, rect);
         const double scale = window->absoluteGeometry().isEmpty()
                 ? 1
                 : bounds.width() / window->absoluteGeometry().width();
@@ -632,7 +614,7 @@ void OverviewNode::renderDragged(render::Renderer &renderer) const
     renderItem(renderer, m_dragged, progress(now), now);
 }
 
-render::RoundedShape OverviewNode::restingBody(int index, const QRectF &rect) const
+render::RoundedShape OverviewNode::restingBody(int index, const base::RectF &rect) const
 {
     const Item &item = m_items[index];
     if (item.windows.empty())
@@ -644,7 +626,7 @@ render::RoundedShape OverviewNode::restingBody(int index, const QRectF &rect) co
     return window->presentedBody({rect, 1, 1, m_frame.radius * scale});
 }
 
-void OverviewNode::renderChrome(render::Renderer &renderer, const QRect &viewport,
+void OverviewNode::renderChrome(render::Renderer &renderer, const base::Rect &viewport,
                                 double now) const
 {
     const float opacity = chromeOpacity(now);
@@ -657,7 +639,7 @@ void OverviewNode::renderChrome(render::Renderer &renderer, const QRect &viewpor
     // Around the body, its corners the body's grown by the gap between them.
     const auto ring = [&](int index, const render::Color &color) {
         render::RoundedShape shape = restingBody(index, rectOf(index));
-        shape.bounds.adjust(-kRingOffset, -kRingOffset, kRingOffset, kRingOffset);
+        shape.bounds = shape.bounds.adjusted(-kRingOffset, -kRingOffset, kRingOffset, kRingOffset);
         shape.radius += kRingOffset;
         renderer.drawRoundedOutline(shape, faded(color, opacity), kRingWidth * scale);
     };
@@ -670,18 +652,18 @@ void OverviewNode::renderChrome(render::Renderer &renderer, const QRect &viewpor
         ring(hovered, kRingColor);
 
     const int titled = hovered >= 0 ? hovered : selected;
-    if (titled >= 0 && viewport.intersects(rectOf(titled).toAlignedRect())) {
-        const QRectF rect = rectOf(titled);
+    if (titled >= 0 && viewport.intersects(rectOf(titled).toEnclosingRect())) {
+        const base::RectF rect = rectOf(titled);
         // In the middle of the window, no wider than it leaves room for.
         const int maxWidth = std::min(kTitleMaxWidth,
                                       int(rect.width() - 4 * kTitlePaddingX));
-        QSizeF size;
+        base::SizeF size;
         render::Texture *label = maxWidth > 0
                 ? m_chromeCache.label(renderer, m_textPainter, m_items[titled].title,
                                       kTitlePixelSize, kTitleColor, maxWidth, &size)
                 : nullptr;
         if (label) {
-            QRectF plate(0, 0, size.width() + 2 * kTitlePaddingX,
+            base::RectF plate(0, 0, size.width() + 2 * kTitlePaddingX,
                          size.height() + 2 * kTitlePaddingY);
             plate.moveCenter(rect.center());
             plate = snapped(plate, scale);
@@ -689,11 +671,11 @@ void OverviewNode::renderChrome(render::Renderer &renderer, const QRect &viewpor
             render::GlassParams blur;
             blur.opacity = opacity;
             renderer.pushRoundedClip(shape);
-            renderer.drawBackgroundBlur(plate.toAlignedRect(), qRound(shape.radius),
-                                        plate.toAlignedRect(), blur);
+            renderer.drawBackgroundBlur(plate.toEnclosingRect(), base::roundToInt(shape.radius),
+                                        plate.toEnclosingRect(), blur);
             renderer.fillRectF(plate, faded(kTitlePlateColor, opacity));
             renderer.popRoundedClip();
-            QRectF text(QPointF(), size);
+            base::RectF text(base::PointF(), size);
             text.moveCenter(plate.center());
             renderer.drawTextureF(label, snapped(text, scale), opacity);
         }
@@ -707,7 +689,7 @@ void OverviewNode::releaseRenderResources()
 }
 
 OverviewDeskBarNode::OverviewDeskBarNode(const OverviewNode *overview)
-    : Node(QStringLiteral("overview-desk-bar"))
+    : Node("overview-desk-bar")
     , m_overview(overview)
 {
 }
@@ -723,7 +705,7 @@ OverviewDeskBarNode::Placement OverviewDeskBarNode::Placement::appearing(double 
     return placement;
 }
 
-QRectF OverviewDeskBarNode::Placement::rect(const QRectF &to, double now) const
+base::RectF OverviewDeskBarNode::Placement::rect(const base::RectF &to, double now) const
 {
     return shift ? lerp(from, to, shift->value(now)) : to;
 }
@@ -734,7 +716,7 @@ bool OverviewDeskBarNode::Placement::isMoving(double now) const
             || (fade && !fade->isFinished(now));
 }
 
-void OverviewDeskBarNode::Placement::moveTo(const QRectF &oldTo, const QRectF &to, double now)
+void OverviewDeskBarNode::Placement::moveTo(const base::RectF &oldTo, const base::RectF &to, double now)
 {
     if (oldTo == to)
         return;
@@ -757,7 +739,7 @@ void OverviewDeskBarNode::setBars(std::vector<Bar> bars)
             continue;
         BarMotion &was = m_motions[size_t(old - m_bars.begin())];
         BarMotion &motion = motions[index];
-        const auto leave = [&](const Placement &placement, const QRectF &rect) {
+        const auto leave = [&](const Placement &placement, const base::RectF &rect) {
             Leaving leaving;
             leaving.bar.output = old->output;
             leaving.bar.bounds = old->bounds;
@@ -826,9 +808,9 @@ void OverviewDeskBarNode::invalidatePreviews()
     notifyChanged();
 }
 
-QRectF OverviewDeskBarNode::closeButtonRect(const QRectF &preview)
+base::RectF OverviewDeskBarNode::closeButtonRect(const base::RectF &preview)
 {
-    return QRectF(preview.right() - kCloseButtonMargin - kCloseButtonSize,
+    return base::RectF(preview.right() - kCloseButtonMargin - kCloseButtonSize,
                   preview.top() + kCloseButtonMargin, kCloseButtonSize, kCloseButtonSize);
 }
 
@@ -843,10 +825,10 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
 {
     if (renderer.capturing)
         return;
-    const QRectF bounds = bar.desks[desk].bounds;
+    const base::RectF bounds = bar.desks[desk].bounds;
     Preview &preview = m_previews[previewKey(bar, bar.desks[desk].id)];
     const bool live = bar.desks[desk].active && now - preview.drawnAt >= kPreviewRefreshMs;
-    if (preview.texture && !preview.stale && !live && preview.bounds == bounds
+    if (preview.texture && !preview.stale && !live && base::fuzzyCompare(preview.bounds, bounds)
         && preview.scale == renderer.rasterScale())
         return;
     // One a frame, so the first frames of a swipe are not spent on all of
@@ -856,15 +838,15 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
         return;
     }
     --m_previewsLeft;
-    const QRectF output(bar.output);
-    const QRect target = bounds.toAlignedRect();
+    const base::RectF output(bar.output);
+    const base::Rect target = bounds.toEnclosingRect();
     const bool drawn = renderer.renderToTexture(preview.texture, target, [&] {
         renderer.fillRect(target, kBlack);
         const bool blurSuppressed = renderer.suppressBackgroundBlur;
         renderer.suppressBackgroundBlur = true;
         const auto place = [&](const Node *node) {
             const auto *window = dynamic_cast<const WindowAnimation *>(node);
-            const QRectF geometry = node->absoluteGeometry();
+            const base::RectF geometry = node->absoluteGeometry();
             if (window && geometry.intersects(output))
                 window->renderPresented(renderer, {mapped(geometry, output, bounds)});
         };
@@ -885,13 +867,13 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
 }
 
 void OverviewDeskBarNode::renderDesk(render::Renderer &renderer, const Desk &desk,
-                                     const QRectF &rect, double scale,
+                                     const base::RectF &rect, double scale,
                                      render::Texture *preview, float opacity) const
 {
     if (opacity <= 0)
         return;
     const double density = renderer.rasterScale();
-    const QRectF body = snapped(scaledFromTop(rect, scale), density);
+    const base::RectF body = snapped(scaledFromTop(rect, scale), density);
     const double radius = kPreviewRadius * scale;
     renderer.pushRoundedClip(render::RoundedShape {body, radius});
     if (preview)
@@ -908,17 +890,17 @@ void OverviewDeskBarNode::renderDesk(render::Renderer &renderer, const Desk &des
             render::RoundedShape {body.adjusted(-gap, -gap, gap, gap), radius + gap},
             faded(outline, opacity), width * density);
 
-    QSizeF size;
+    base::SizeF size;
     if (render::Texture *texture =
                 m_chromeCache.label(renderer, m_textPainter, desk.name, kLabelPixelSize, kWhite,
                                     int(rect.width()), &size)) {
-        QRectF label(QPointF(), size);
-        label.moveCenter(QPointF(rect.center().x(),
+        base::RectF label(base::PointF(), size);
+        label.moveCenter(base::PointF(rect.center().x(),
                                  rect.bottom() + kLabelGap + kLabelPixelSize * 0.75));
         renderer.drawTextureF(texture, snapped(label, density), opacity);
     }
     if (desk.closeShown) {
-        const QRectF button = snapped(closeButtonRect(body), density);
+        const base::RectF button = snapped(closeButtonRect(body), density);
         const render::Color cross = desk.closeHovered ? kWhite : faded(kWhite, 0.8f);
         if (render::Texture *glyph = m_chromeCache.glyph(
                     renderer, OverviewChromeCache::Glyph::Close, button.size(), cross))
@@ -926,7 +908,7 @@ void OverviewDeskBarNode::renderDesk(render::Renderer &renderer, const Desk &des
     }
 }
 
-void OverviewDeskBarNode::renderNewDesk(render::Renderer &renderer, const QRectF &rect,
+void OverviewDeskBarNode::renderNewDesk(render::Renderer &renderer, const base::RectF &rect,
                                         bool highlighted, float opacity) const
 {
     if (opacity <= 0)
@@ -936,12 +918,12 @@ void OverviewDeskBarNode::renderNewDesk(render::Renderer &renderer, const QRectF
     render::GlassParams blur;
     blur.opacity = opacity;
     renderer.pushRoundedClip({rect, kPreviewRadius});
-    renderer.drawBackgroundBlur(rect.toAlignedRect(), qRound(kPreviewRadius), rect.toAlignedRect(),
+    renderer.drawBackgroundBlur(rect.toEnclosingRect(), base::roundToInt(kPreviewRadius), rect.toEnclosingRect(),
                                 blur);
     renderer.popRoundedClip();
     fillRounded(renderer, rect, kPreviewRadius,
                 faded(highlighted ? kButtonHighlightColor : kButtonColor, opacity));
-    QRectF plus(0, 0, kPlusSize, kPlusSize);
+    base::RectF plus(0, 0, kPlusSize, kPlusSize);
     plus.moveCenter(rect.center());
     if (render::Texture *glyph = m_chromeCache.glyph(renderer, OverviewChromeCache::Glyph::Plus,
                                                      plus.size(), kWhite))
@@ -961,7 +943,7 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar,
         if (leaving.bar.output != bar.output)
             continue;
         moving = true;
-        const QRectF rect = snapped(leaving.rect.translated(0, offset), density);
+        const base::RectF rect = snapped(leaving.rect.translated(0, offset), density);
         const float fade = opacity * float(leaving.fade.value(now));
         if (leaving.desk)
             renderDesk(renderer, *leaving.desk, rect, leaving.scale, leaving.preview.get(), fade);
@@ -970,8 +952,8 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar,
                           fade);
     }
 
-    const auto place = [&](const Placement *placement, const QRectF &rest) {
-        const QRectF at = rest.translated(0, offset);
+    const auto place = [&](const Placement *placement, const base::RectF &rest) {
+        const base::RectF at = rest.translated(0, offset);
         if (!placement)
             return snapped(at, density);
         moving = moving || placement->isMoving(now);
@@ -986,7 +968,7 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar,
             if (it != motion->desks.end())
                 placement = &it->second;
         }
-        const QRectF rect = place(placement, desk.bounds);
+        const base::RectF rect = place(placement, desk.bounds);
         updatePreview(renderer, bar, index, now);
         const auto preview = m_previews.find(previewKey(bar, desk.id));
         renderDesk(renderer, desk, rect, placement ? placement->scaleAt(now) : 1,
@@ -996,7 +978,7 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar,
 
     if (!bar.newDesk.isEmpty()) {
         const Placement *placement = motion ? &motion->newDesk : nullptr;
-        const QRectF rect = place(placement, bar.newDesk);
+        const base::RectF rect = place(placement, bar.newDesk);
         const double scale = placement ? placement->scaleAt(now) : 1;
         renderNewDesk(renderer, snapped(scaledFromTop(rect, scale), density),
                       bar.newDeskHighlighted,
@@ -1011,7 +993,7 @@ void OverviewDeskBarNode::render(render::Renderer &renderer) const
     if (!m_overview->isActive() || !isVisible())
         return;
     const double now = renderer.frameTime >= 0 ? renderer.frameTime : m_overview->clockTime();
-    const QRect viewport = viewportOf(renderer, *this);
+    const base::Rect viewport = viewportOf(renderer, *this);
     const double progress = m_overview->progress(now);
     m_previewsLeft = kPreviewsPerFrame;
     std::erase_if(m_leaving, [now](const Leaving &leaving) {

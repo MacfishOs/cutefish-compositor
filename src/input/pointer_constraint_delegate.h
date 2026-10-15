@@ -16,8 +16,9 @@
 
 #include <optional>
 
-#include <QPointF>
-#include <QRegion>
+
+#include "base/geometry.h"
+#include "base/region.h"
 
 namespace cutefish::compositor {
 class Surface;
@@ -62,11 +63,11 @@ public:
     // The committed region, in logical surface coordinates, where the pointer
     // must be for the constraint to activate and where a confinement keeps it.
     // Unset means the whole input region; either way it is clipped to it.
-    virtual std::optional<QRegion> region() const = 0;
+    virtual std::optional<base::Region> region() const = 0;
 
     // The committed position, in logical surface coordinates, a lock wants the
     // pointer at when it ends.
-    virtual std::optional<QPointF> cursorPositionHint() const = 0;
+    virtual std::optional<base::PointF> cursorPositionHint() const = 0;
 
 protected:
     virtual ~PointerConstraintDelegate() = default;

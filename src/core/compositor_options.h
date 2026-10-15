@@ -6,13 +6,10 @@
 #define CUTEFISH_CORE_COMPOSITOR_OPTIONS_H_
 
 #include <optional>
-
-#include <QString>
-#include <QStringList>
+#include <string>
+#include <vector>
 
 #include "compositor/output_scale.h"
-
-class QCoreApplication;
 
 namespace cutefish::core {
 
@@ -20,29 +17,32 @@ namespace cutefish::core {
 // again, so every value here is already known good.
 struct CompositorOptions {
     // Returns nothing and reports the reason when a value fails validation.
-    // Exits the process through QCommandLineParser for --help and --version.
-    static std::optional<CompositorOptions> parse(const QCoreApplication &app);
+    // Exits the process for --help, --version and unknown options.
+    static std::optional<CompositorOptions> parse(int argc, char **argv);
 
-    QString socketName;
-    QString drmDevice;
+    std::string socketName;
+    std::string drmDevice;
     bool noDrm = false;
     int headlessOutputs = 1;
     bool wmDemo = false;
     bool wmDemoScript = false;
-    QString shellControlSocket;
+    std::string shellControlSocket;
     bool login = false;
     // Session startup notification descriptor, -1 when the session passed none.
     int readyFd = -1;
-    QStringList clipboardClients;
-    QStringList captureClients;
-    QStringList computerControlClients;
+    std::vector<std::string> clipboardClients;
+    std::vector<std::string> captureClients;
+    std::vector<std::string> computerControlClients;
     // Development override; empty means use the saved selection.
-    QString inputMethodId;
+    std::string inputMethodId;
     compositor::OutputScale scale;
-    QString displayConfigService;
+    double animationDurationScale = 1;
+    std::string displayConfigService;
     bool xwayland = true;
     bool xwaylandSoftware = false;
-    QString xwaylandReadyFile;
+    std::string xwaylandReadyFile;
+    // base::logging rules, e.g. "cutefish.compositor.debug=true".
+    std::string logRules;
 
     bool demoEnabled() const { return wmDemo || wmDemoScript; }
 };

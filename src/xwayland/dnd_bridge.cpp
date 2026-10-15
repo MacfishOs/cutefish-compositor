@@ -13,10 +13,9 @@
 #include <cstring>
 #include <unistd.h>
 
-#include <QPointer>
-
 #include "compositor/surface.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "input/drag.h"
 #include "input/hit_test.h"
 #include "input/seat.h"
@@ -30,8 +29,8 @@ constexpr uint32_t kMinXdndVersion = 3;
 constexpr uint32_t kMaxXdndVersion = 5;
 // Upstream ends its move loop one second after the drop. The data may still be
 // converting then, so the source waits as long as a selection transfer idles.
-constexpr int kFinishTimeoutMs = 10000;
-constexpr int kTrackIntervalMs = 16;
+constexpr std::chrono::milliseconds kFinishTimeout(10000);
+constexpr std::chrono::milliseconds kTrackInterval(16);
 
 // wl_data_device_manager.dnd_action.
 constexpr uint32_t kCopy = 1;
@@ -91,7 +90,7 @@ struct DndBridge::Incoming {
     xcb_window_t source = 0;
     uint32_t version = 0;
     std::shared_ptr<ImportedSource> data;
-    std::optional<QPointF> position;
+    std::optional<base::PointF> position;
     std::string mime;
     uint32_t action = 0;
     // The latest XdndPosition or XdndDrop timestamp.
@@ -105,7 +104,7 @@ struct DndBridge::Incoming {
 class DndBridge::ImportedSource : public clipboard::DataSource
 {
 public:
-    QPointer<DndBridge> bridge;
+    base::WeakPtr<DndBridge> bridge;
     uint64_t generation = 0;
     std::map<std::string, xcb_atom_t> targets;
 
@@ -165,28 +164,29 @@ DndBridge::DndBridge(xcb_connection_t *connection, xcb_window_t root, wm::Window
     , m_root(root)
     , m_manager(manager)
     , m_reply(std::move(reply))
+    , m_finishTimeout(core::mainLoop())
+    , m_tracker(core::mainLoop())
 {
     m_finishTimeout.setSingleShot(true);
-    connect(&m_finishTimeout, &QTimer::timeout, this, [this] {
-        completeDrop(false);
-    });
-    m_tracker.setInterval(kTrackIntervalMs);
-    connect(&m_tracker, &QTimer::timeout, this, &DndBridge::track);
+    m_finishTimeout.onTimeout = [this] { completeDrop(false); };
+    m_tracker.setInterval(kTrackInterval);
+    m_tracker.onTimeout = [this] { track(); };
 
     auto *drag = m_manager->seat()->drag();
-    connect(drag, &input::DragController::entered, this, [this](compositor::Surface *surface) {
-        onDragEntered(surface);
-    });
-    connect(drag, &input::DragController::moved, this, &DndBridge::onDragMoved);
-    connect(drag, &input::DragController::left, this, &DndBridge::onDragLeft);
-    connect(drag, &input::DragController::dropped, this, &DndBridge::onDragDropped);
-    connect(drag, &input::DragController::ended, this, &DndBridge::onDragEnded);
+    m_dragConnections.push_back(drag->entered.connect(
+            [this](compositor::Surface *surface, const base::PointF &) { onDragEntered(surface); }));
+    m_dragConnections.push_back(drag->moved.connect(
+            [this](input::Timestamp, const base::PointF &) { onDragMoved(); }));
+    m_dragConnections.push_back(drag->left.connect([this] { onDragLeft(); }));
+    m_dragConnections.push_back(
+            drag->dropped.connect([this](input::DragOffer *offer) { onDragDropped(offer); }));
+    m_dragConnections.push_back(drag->ended.connect([this] { onDragEnded(); }));
 }
 
 DndBridge::~DndBridge()
 {
     auto *drag = m_manager->seat()->drag();
-    disconnect(drag, nullptr, this, nullptr);
+    m_dragConnections.clear();
     if (m_in && drag->isExternal() && m_in->data && drag->source() == m_in->data)
         drag->cancel();
     m_in.reset();
@@ -199,7 +199,7 @@ DndBridge::~DndBridge()
 
 void DndBridge::poll(unsigned sequence, std::function<void(void *)> callback)
 {
-    m_reply(sequence, [self = QPointer<DndBridge>(this), callback = std::move(callback)](void *p) {
+    m_reply(sequence, [self = m_weakFactory.getWeakPtr(), callback = std::move(callback)](void *p) {
         if (self)
             callback(p);
     });
@@ -397,7 +397,7 @@ void DndBridge::resolveTarget(uint64_t hover, xcb_window_t window)
                               return;
                           m_out->target = target;
                           m_out->version = std::min(version, kMaxXdndVersion);
-                          qCDebug(cfWayland) << "XDND target" << m_out->window << "via" << target
+                          CF_DEBUG(cfWayland) << "XDND target" << m_out->window << "via" << target
                                              << "version" << m_out->version;
                           m_out->offer = drag->createOffer(false);
                           enter();
@@ -436,7 +436,7 @@ void DndBridge::enter()
     } else {
         std::copy(m_exportTypes.begin(), m_exportTypes.end(), inline_.begin());
     }
-    qCDebug(cfWayland) << "XDND enter" << m_out->window << "types" << m_exportTypes.size();
+    CF_DEBUG(cfWayland) << "XDND enter" << m_out->window << "types" << m_exportTypes.size();
     send(m_out->window, m_out->target, "XdndEnter",
          {source, flags, inline_[0], inline_[1], inline_[2]});
     sendPosition();
@@ -463,7 +463,7 @@ void DndBridge::sendPosition()
             : (actions & kCopy)                  ? kCopy
             : (actions & kMove)                  ? kMove
                                                  : actions & kAsk;
-    const QPoint root = toRoot(m_manager->seat()->pointerLocation().toPoint());
+    const base::Point root = toRoot(m_manager->seat()->pointerLocation().toPoint());
     m_out->waiting = true;
     m_out->queued = false;
     // The ownership time: a target converting at CurrentTime may substitute
@@ -505,17 +505,17 @@ void DndBridge::onDragDropped(input::DragOffer *offer)
     if (auto previous = std::move(m_dropped); previous && previous->offer)
         previous->offer->invalidate();
     m_dropped = std::move(m_out);
-    qCDebug(cfWayland) << "XDND drop" << m_dropped->window;
+    CF_DEBUG(cfWayland) << "XDND drop" << m_dropped->window;
     send(m_dropped->window, m_dropped->target, "XdndDrop",
          {m_selection->window(), 0, m_selection->timestamp()});
-    m_finishTimeout.start(kFinishTimeoutMs);
+    m_finishTimeout.start(kFinishTimeout);
 }
 
 void DndBridge::onFinished(const xcb_client_message_event_t &event)
 {
     if (!m_dropped)
         return;
-    qCDebug(cfWayland) << "XDND finished" << event.data.data32[1];
+    CF_DEBUG(cfWayland) << "XDND finished" << event.data.data32[1];
     // Version 5 says whether the drop was taken; older targets only finish.
     completeDrop(m_dropped->version < 5 || (event.data.data32[1] & 1));
 }
@@ -556,7 +556,7 @@ void DndBridge::clearExport()
 void DndBridge::onOwnerChanged(xcb_window_t owner)
 {
     m_owner = owner && !owns(owner) ? owner : 0;
-    qCDebug(cfWayland) << "XdndSelection owner" << owner;
+    CF_DEBUG(cfWayland) << "XdndSelection owner" << owner;
     // A source that lost its selection before the drop has nothing left to give.
     if (m_in && !m_in->dropped)
         resetIncoming();
@@ -577,7 +577,7 @@ void DndBridge::track()
         setProxyMapped(false);
         return;
     }
-    QPointF local;
+    base::PointF local;
     auto *surface = input::findTargetSurface(seat->compositor(), seat->pointerLocation(), &local);
     setProxyMapped(surface && !windowForSurface(surface));
 }
@@ -587,9 +587,9 @@ void DndBridge::setProxyMapped(bool mapped)
     if (!m_proxy || mapped == m_proxyMapped)
         return;
     m_proxyMapped = mapped;
-    qCDebug(cfWayland) << "XDND proxy" << (mapped ? "mapped" : "unmapped");
+    CF_DEBUG(cfWayland) << "XDND proxy" << (mapped ? "mapped" : "unmapped");
     if (mapped) {
-        const QSize size = rootSize();
+        const base::Size size = rootSize();
         const uint32_t values[] = {0, 0, uint32_t(size.width()), uint32_t(size.height()),
                                    XCB_STACK_MODE_ABOVE};
         xcb_configure_window(m_connection, m_proxy,
@@ -608,7 +608,7 @@ void DndBridge::onEnter(const xcb_client_message_event_t &event)
     const auto *d = event.data.data32;
     const uint32_t version = d[1] >> 24;
     // Upstream discards a version it does not speak without answering.
-    qCDebug(cfWayland) << "XDND source enter" << d[0] << "version" << version;
+    CF_DEBUG(cfWayland) << "XDND source enter" << d[0] << "version" << version;
     // Only a drag the pointer is really making: the proxy is never under the
     // pointer otherwise, but any client can name it in a message.
     auto *seat = m_manager->seat();
@@ -646,7 +646,7 @@ void DndBridge::onEnter(const xcb_client_message_event_t &event)
 void DndBridge::startIncoming(const std::vector<xcb_atom_t> &types)
 {
     auto source = std::make_shared<ImportedSource>();
-    source->bridge = this;
+    source->bridge = m_weakFactory.getWeakPtr();
     source->generation = m_selection->generation();
     const xcb_window_t window = m_in->source;
     for (const xcb_atom_t type : types) {
@@ -687,7 +687,7 @@ void DndBridge::onPosition(const xcb_client_message_event_t &event)
     const auto *d = event.data.data32;
     if (!m_in || d[0] != m_in->source)
         return;
-    m_in->position = QPointF(fromRoot(QPoint(int16_t(d[2] >> 16), int16_t(d[2] & 0xffff))));
+    m_in->position = base::PointF(fromRoot(base::Point(int16_t(d[2] >> 16), int16_t(d[2] & 0xffff))));
     m_in->time = d[3];
     auto *drag = m_manager->seat()->drag();
     if (m_in->data && drag->isExternal() && drag->source() == m_in->data)
@@ -718,7 +718,7 @@ void DndBridge::onDrop(const xcb_client_message_event_t &event)
         return;
     m_in->dropped = true;
     m_in->time = event.data.data32[2];
-    qCDebug(cfWayland) << "XDND source drop" << m_in->source << "accepted" << m_in->mime.c_str();
+    CF_DEBUG(cfWayland) << "XDND source drop" << m_in->source << "accepted" << m_in->mime.c_str();
     auto *drag = m_manager->seat()->drag();
     if (m_in->data && drag->isExternal() && drag->source() == m_in->data)
         drag->drop();

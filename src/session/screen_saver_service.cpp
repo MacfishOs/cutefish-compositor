@@ -3,69 +3,77 @@
 // found in the LICENSE file.
 
 #include "session/screen_saver_service.h"
+#include "core/main_loop.h"
 #include "session/session_controller.h"
-#include <QDBusConnectionInterface>
-#include <QDBusError>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QDebug>
+#include "base/logging.h"
+#include <algorithm>
 
 namespace cutefish::session {
+
 namespace {
-const QString serviceName = QStringLiteral("org.freedesktop.ScreenSaver");
-const QString objectPaths[] = {QStringLiteral("/ScreenSaver"),
-                               QStringLiteral("/org/freedesktop/ScreenSaver")};
+
+const base::LogCategory &logs()
+{
+    return base::LogCategory::defaultCategory();
+}
+
+const std::string serviceName = "org.freedesktop.ScreenSaver";
+const std::string interfaceName = "org.freedesktop.ScreenSaver";
+const char *const objectPaths[] = {"/ScreenSaver", "/org/freedesktop/ScreenSaver"};
+const std::string failedError = "org.freedesktop.DBus.Error.Failed";
 } // namespace
 
-ScreenSaverService::ScreenSaverService(SessionController *session, QDBusConnection bus)
+ScreenSaverService::ScreenSaverService(SessionController *session, base::dbus::Connection *bus)
     : m_session(session)
-    , m_bus(std::move(bus))
-    , m_watcher(QString(), m_bus, QDBusServiceWatcher::WatchForUnregistration)
+    , m_bus(bus ? bus : base::dbus::Connection::session(core::mainLoop()))
     , m_active(session->isBlocked())
 {
     m_session->addObserver(this);
-    // A caller that leaves the bus takes all of its cookies with it.
-    connect(&m_watcher, &QDBusServiceWatcher::serviceUnregistered, this,
-            &ScreenSaverService::releaseOwner);
 }
 
 ScreenSaverService::~ScreenSaverService()
 {
     m_session->removeObserver(this);
-    for (const auto &request : m_pending)
-        m_bus.send(request.createErrorReply(QDBusError::Failed,
-                                            QStringLiteral("Compositor is shutting down")));
-    if (m_registered) {
-        m_bus.unregisterService(serviceName);
-        for (const QString &path : objectPaths)
-            m_bus.unregisterObject(path);
-    }
+    for (auto &request : m_pending)
+        request.replyError(failedError, "Compositor is shutting down");
+    if (m_registered)
+        m_bus->releaseName(serviceName);
 }
 
 bool ScreenSaverService::registerService()
 {
     if (m_registered)
         return true;
-    for (const QString &path : objectPaths) {
-        if (m_bus.registerObject(path, this,
-                                 QDBusConnection::ExportScriptableSlots
-                                         | QDBusConnection::ExportScriptableSignals))
-            continue;
-        qWarning() << "Cannot export ScreenSaver at" << path << ":" << m_bus.lastError().message();
-        // Only the paths exported here: another object may hold this one.
-        for (const QString &exported : objectPaths) {
-            if (exported == path)
-                break;
-            m_bus.unregisterObject(exported);
+    if (!m_bus) {
+        CF_WARNING(logs()) << "Cannot export ScreenSaver: no session bus";
+        return false;
+    }
+    std::vector<std::unique_ptr<base::dbus::Object>> objects;
+    for (const char *path : objectPaths) {
+        auto object = std::make_unique<base::dbus::Object>(m_bus, path, interfaceName);
+        object->addMethod("Lock", "", "", [this](base::dbus::MethodCall &call) { lock(&call); });
+        object->addMethod("GetActive", [this] { return GetActive(); });
+        object->addMethod("Inhibit", "ss", "u",
+                          [this](base::dbus::MethodCall &call) { inhibit(call); },
+                          base::dbus::ArgumentNames{{"application_name", "reason_for_inhibit"},
+                                                    {"result"}});
+        object->addMethod("UnInhibit", "u", "",
+                          [this](base::dbus::MethodCall &call) { uninhibit(call); },
+                          base::dbus::ArgumentNames{{"cookie"}, {}});
+        object->addSignal("ActiveChanged", "b", {"active"});
+        // Only the paths exported here go with a failure: another object may
+        // hold this one.
+        if (!object->publish()) {
+            CF_WARNING(logs()) << "Cannot export ScreenSaver at" << path;
+            return false;
         }
+        objects.push_back(std::move(object));
+    }
+    if (!m_bus->requestName(serviceName)) {
+        CF_WARNING(logs()) << "Cannot own ScreenSaver service";
         return false;
     }
-    if (!m_bus.registerService(serviceName)) {
-        for (const QString &path : objectPaths)
-            m_bus.unregisterObject(path);
-        qWarning() << "Cannot own ScreenSaver service:" << m_bus.lastError().message();
-        return false;
-    }
+    m_objects = std::move(objects);
     m_registered = true;
     return true;
 }
@@ -79,22 +87,27 @@ void ScreenSaverService::setInhibition(std::function<void()> acquire,
 
 void ScreenSaverService::Lock()
 {
-    if (m_session->state() == SessionState::Locked)
+    lock(nullptr);
+}
+
+void ScreenSaverService::lock(base::dbus::MethodCall *call)
+{
+    if (m_session->state() == SessionState::Locked) {
+        if (call)
+            call->reply();
         return;
+    }
     if (m_session->state() == SessionState::Login
         || m_session->state() == SessionState::Unlocking) {
-        if (calledFromDBus())
-            sendErrorReply(QDBusError::Failed,
-                           QStringLiteral("Session is not available for locking"));
+        if (call)
+            call->replyError(failedError, "Session is not available for locking");
         return;
     }
     // Callers may suspend or power off only after every output is securely covered.
-    if (calledFromDBus()) {
-        setDelayedReply(true);
-        m_pending.push_back(message());
-    }
+    if (call)
+        m_pending.push_back(*call);
     m_session->requestLock();
-    if (m_session->secureContainer() && m_session->secureContainer()->outputs().isEmpty())
+    if (m_session->secureContainer() && m_session->secureContainer()->outputs().empty())
         m_session->notifyFramePresented();
 }
 
@@ -103,55 +116,51 @@ bool ScreenSaverService::GetActive() const
     return m_session->isBlocked();
 }
 
-uint ScreenSaverService::Inhibit(const QString &, const QString &)
+void ScreenSaverService::inhibit(base::dbus::MethodCall &call)
 {
-    if (!calledFromDBus())
-        return 0;
     if (!m_acquire || !m_release) {
-        sendErrorReply(QDBusError::NotSupported,
-                       QStringLiteral("Idle inhibition is not available in this session"));
-        return 0;
+        call.replyError("org.freedesktop.DBus.Error.NotSupported",
+                        "Idle inhibition is not available in this session");
+        return;
     }
-    const QString owner = message().service();
+    const std::string owner = call.message().sender();
     do {
         ++m_nextCookie;
     } while (!m_nextCookie || m_cookies.contains(m_nextCookie));
-    m_watcher.addWatchedService(owner);
-    m_cookies.insert(m_nextCookie, owner);
+    m_cookies.emplace(m_nextCookie, owner);
     m_acquire();
-    // The watch never reports a caller that left before its match rule was in
-    // place; sent behind that rule on the same connection, NameHasOwner does.
-    auto *check = new QDBusPendingCallWatcher(
-            m_bus.interface()->asyncCall(QStringLiteral("NameHasOwner"), owner), this);
-    connect(check, &QDBusPendingCallWatcher::finished, this,
-            [this, owner](QDBusPendingCallWatcher *call) {
-                call->deleteLater();
-                const QDBusPendingReply<bool> reply = *call;
-                if (!reply.isError() && !reply.value())
-                    releaseOwner(owner);
-            });
-    return m_nextCookie;
+    // The owner is read once the watch is in place, so a caller that left
+    // before it was is released all the same.
+    if (!m_owners.contains(owner)) {
+        m_owners.emplace(owner, m_bus->watchName(owner, [this, owner](const std::string &now) {
+            if (now.empty())
+                releaseOwner(owner);
+        }));
+    }
+    call.reply(m_nextCookie);
 }
 
-void ScreenSaverService::UnInhibit(uint cookie)
+void ScreenSaverService::uninhibit(base::dbus::MethodCall &call)
 {
-    if (!calledFromDBus())
+    uint32_t cookie = 0;
+    call.read(cookie);
+    call.reply();
+    const auto it = m_cookies.find(cookie);
+    if (it == m_cookies.end() || it->second != call.message().sender())
         return;
-    auto it = m_cookies.find(cookie);
-    if (it == m_cookies.end() || it.value() != message().service())
-        return;
-    const QString owner = it.value();
+    const std::string owner = it->second;
     m_cookies.erase(it);
-    if (!m_cookies.values().contains(owner))
-        m_watcher.removeWatchedService(owner);
+    if (std::none_of(m_cookies.begin(), m_cookies.end(),
+                     [&owner](const auto &entry) { return entry.second == owner; }))
+        m_owners.erase(owner);
     if (m_release)
         m_release();
 }
 
-void ScreenSaverService::releaseOwner(const QString &owner)
+void ScreenSaverService::releaseOwner(const std::string &owner)
 {
     for (auto it = m_cookies.begin(); it != m_cookies.end();) {
-        if (it.value() == owner) {
+        if (it->second == owner) {
             it = m_cookies.erase(it);
             if (m_release)
                 m_release();
@@ -159,7 +168,8 @@ void ScreenSaverService::releaseOwner(const QString &owner)
             ++it;
         }
     }
-    m_watcher.removeWatchedService(owner);
+    // Last: the watch calling this goes with it.
+    m_owners.erase(owner);
 }
 
 void ScreenSaverService::onSessionStateChanged(SessionState state)
@@ -167,13 +177,14 @@ void ScreenSaverService::onSessionStateChanged(SessionState state)
     const bool active = isSessionBlocked(state);
     if (active != m_active) {
         m_active = active;
-        emit ActiveChanged(active);
+        activeChanged(active);
+        for (const auto &object : m_objects)
+            object->emitSignal("ActiveChanged", active);
     }
     if (state == SessionState::Locked) {
-        const auto pending = std::move(m_pending);
-        m_pending.clear();
-        for (const auto &request : pending)
-            m_bus.send(request.createReply());
+        auto pending = std::exchange(m_pending, {});
+        for (auto &request : pending)
+            request.reply();
     }
 }
 } // namespace cutefish::session

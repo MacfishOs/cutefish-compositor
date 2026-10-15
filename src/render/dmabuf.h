@@ -19,10 +19,10 @@
 #include <memory>
 #include <vector>
 
-#include <QSize>
 
 #include "core/scoped_fd.h"
 #include "render/texture.h"
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -39,7 +39,7 @@ struct DmaBufPlane {
 // the plane fds themselves. Kept whole rather than reduced to an EGLImage, so
 // the same description can go to DRM/KMS for scanout.
 struct DmaBufAttributes {
-    QSize size;
+    base::Size size;
     uint32_t format = 0; // DRM fourcc
     uint64_t modifier = 0;
     bool yInvert = false;

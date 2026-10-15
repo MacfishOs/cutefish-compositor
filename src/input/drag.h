@@ -10,11 +10,12 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
-#include <QObject>
-#include <QPointF>
-
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/weak_ptr.h"
 #include "clipboard/selection.h"
 #include "compositor/surface_observer.h"
 #include "input/cursor_shape.h"
@@ -28,9 +29,8 @@ namespace cutefish::input {
 
 class Seat;
 
-class DragOffer : public QObject, public std::enable_shared_from_this<DragOffer>
+class DragOffer : public std::enable_shared_from_this<DragOffer>
 {
-    Q_OBJECT
 public:
     enum class State {
         Hover,
@@ -39,7 +39,7 @@ public:
         Cancelled
     };
     DragOffer(std::shared_ptr<clipboard::DataSource> source, uint32_t sourceActions, bool legacy);
-    ~DragOffer() override;
+    ~DragOffer();
     void accept(const char* mime);
     void setActions(uint32_t actions, uint32_t preferred);
     void setModifierAction(uint32_t action);
@@ -63,9 +63,8 @@ public:
 
     const std::shared_ptr<clipboard::DataSource>& source() const { return m_source; }
 
-Q_SIGNALS:
-    void feedbackChanged();
-    void actionChanged(uint32_t action);
+    base::Signal<> feedbackChanged;
+    base::Signal<uint32_t> actionChanged;
 
 private:
     void negotiate();
@@ -87,7 +86,7 @@ class DragWindowDelegate
 {
 public:
     virtual ~DragWindowDelegate() = default;
-    virtual void dragMoved(const QPointF& location) = 0;
+    virtual void dragMoved(const base::PointF& location) = 0;
     // The surface under the pointer, and whether it takes the drop; null when
     // the drag is over nothing.
     virtual void dragTargetChanged(compositor::Surface* target, bool accepted) = 0;
@@ -96,9 +95,8 @@ public:
     virtual void dragEnded(bool released) = 0;
 };
 
-class DragController : public QObject, public compositor::SurfaceObserver
+class DragController : public compositor::SurfaceObserver
 {
-    Q_OBJECT
 public:
     explicit DragController(Seat* seat);
     ~DragController() override;
@@ -117,12 +115,19 @@ public:
 
     compositor::Surface* target() const { return m_target; }
 
+    // Over a target whose offer would take a drop now.
+    bool targetAcceptsDrop() const
+    {
+        const DragOffer* offer = selectedOffer();
+        return m_target && offer && offer->canDrop();
+    }
+
     bool hasSource() const { return bool(m_source); }
 
     const std::shared_ptr<clipboard::DataSource>& source() const { return m_source; }
 
     // Where the drag is, in output coordinates.
-    QPointF location() const { return m_location; }
+    base::PointF location() const { return m_location; }
 
     // For the running drag only, the icon and its subsurfaces included.
     void setIconOpacity(float opacity);
@@ -136,7 +141,7 @@ public:
     // as ash's cancel animation does.
     void setReturnsHome(bool returns);
     // Where the pointer position goes back to; where the drag started otherwise.
-    void setHome(const QPointF& home);
+    void setHome(const base::PointF& home);
 
     // The ended drag's icon is on its way back; returned() follows.
     bool isReturning() const { return m_returning; }
@@ -153,7 +158,7 @@ public:
     // point are sent a cancel.
     void startTouch(compositor::Surface* origin, compositor::Surface* icon,
                     std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
-                    int32_t touchId, const QPointF& location);
+                    int32_t touchId, const base::PointF& location);
     // The touch point a drag follows; empty for a pointer or external drag.
     std::optional<int32_t> touchId() const { return m_touchId; }
     // An X11 drag seen through the XDND proxy. motion() follows XdndPosition,
@@ -161,7 +166,7 @@ public:
     void startExternal(compositor::Surface* origin, std::shared_ptr<clipboard::DataSource> source,
                        uint32_t actions);
     std::shared_ptr<DragOffer> createOffer(bool legacy);
-    void motion(Timestamp timestamp, const QPointF& location);
+    void motion(Timestamp timestamp, const base::PointF& location);
     void button(Timestamp timestamp, uint32_t button, bool pressed);
     bool key(uint32_t code, bool pressed);
     // Drops on the selected offer, or cancels when nothing can take the drop.
@@ -177,25 +182,28 @@ public:
 
     void onSurfaceDestroying(compositor::Surface* surface) override;
     void onSurfaceCommit(compositor::Surface* surface) override;
-Q_SIGNALS:
-    void started();
-    void entered(compositor::Surface* surface, const QPointF& location);
-    void moved(Timestamp timestamp, const QPointF& location);
+
+    base::WeakPtr<DragController> weakPtr() { return m_weakFactory.getWeakPtr(); }
+
+    base::Signal<> started;
+    base::Signal<compositor::Surface*, const base::PointF&> entered;
+    base::Signal<Timestamp, const base::PointF&> moved;
     // Wherever the drag goes, over a target or not; `moved` is target-local.
-    void locationChanged(const QPointF& location);
-    void left();
+    base::Signal<const base::PointF&> locationChanged;
+    base::Signal<> left;
     // The drag was let go, before the source hears how the drop went.
-    void released();
+    base::Signal<> released;
     // The icon of a drag that returns home is back, or had none to slide.
-    void returned();
-    void dropped(DragOffer* offer);
-    void ended();
+    base::Signal<> returned;
+    base::Signal<DragOffer*> dropped;
+    base::Signal<> ended;
 
 private:
     bool begin(compositor::Surface* origin, compositor::Surface* icon,
                std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
-               const QPointF& location);
+               const base::PointF& location);
     void leave();
+    DragOffer* selectedOffer() const { return m_selected.lock().get(); }
     // Cancels the transfer; `released` tells the window delegate it was a drop.
     void end(bool released);
     void detach();
@@ -214,29 +222,32 @@ private:
     compositor::Surface* m_origin = nullptr;
     compositor::Surface* m_icon = nullptr;
     compositor::Surface* m_target = nullptr;
-    QPointF m_location;
+    base::PointF m_location;
     std::shared_ptr<clipboard::DataSource> m_source;
     std::vector<std::weak_ptr<DragOffer>> m_offers;
-    QPointer<DragOffer> m_selected;
+    std::weak_ptr<DragOffer> m_selected;
     uint32_t m_actions = 0;
     float m_iconOpacity = 1.0f;
     bool m_plainIdleCursor = false;
     bool m_returnsHome = false;
-    QPointF m_home;
+    base::PointF m_home;
     bool m_returning = false;
     scene::SurfaceNode* m_returnNode = nullptr;
-    QPoint m_returnFrom;
-    QPoint m_returnTo;
+    base::Point m_returnFrom;
+    base::Point m_returnTo;
     float m_returnOpacity = 1.0f;
     double m_returnStarted = -1;
-    QMetaObject::Connection m_returnFrames;
+    base::Subscription m_returnFrames;
     ButtonFlags m_button = NoButton;
     std::optional<int32_t> m_touchId;
     DragWindowDelegate* m_windowDelegate = nullptr;
     bool m_finishing = false;
     bool m_external = false;
     uint64_t m_generation = 0;
-    QMetaObject::Connection m_sourceConnection;
+    base::Subscription m_sourceConnection;
+    // Each offer's feedbackChanged, dropped once the offer is gone.
+    std::vector<std::pair<std::weak_ptr<DragOffer>, base::Subscription>> m_offerConnections;
+    base::WeakPtrFactory<DragController> m_weakFactory {this};
 };
 
 } // namespace cutefish::input

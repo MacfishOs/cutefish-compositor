@@ -16,10 +16,7 @@
 #ifndef CUTEFISH_WM_WINDOW_SNAP_H_
 #define CUTEFISH_WM_WINDOW_SNAP_H_
 
-#include <QPointF>
-#include <QRect>
-#include <QSize>
-
+#include "base/geometry.h"
 #include "wm/types.h"
 
 namespace cutefish::wm {
@@ -36,23 +33,23 @@ enum class SnapType {
 // one of the screen edges, is where a snap or a maximize is triggered. The
 // tolerance is only added on the edges where the work area reaches the output:
 // past a dock the pointer has to cross the dock first.
-QRect nonSnapArea(const QRect &workArea, const QRect &outputBounds);
+base::Rect nonSnapArea(const base::Rect &workArea, const base::Rect &outputBounds);
 
 // `location` is in output coordinates. Returns what a drag ending there would
 // ask for, before any window constraint is taken into account.
-SnapType snapTypeAt(const QPointF &location, const QRect &workArea, const QRect &outputBounds);
+SnapType snapTypeAt(const base::PointF &location, const base::Rect &workArea, const base::Rect &outputBounds);
 
 // Empty for SnapType::None.
-QRect snapBounds(SnapType type, const QRect &workArea);
+base::Rect snapBounds(SnapType type, const base::Rect &workArea);
 
 WindowStateType snapStateType(SnapType type);
 
 // A window narrower than half the work area cannot be snapped into it.
-bool canSnapSize(const QSize &minimumOuterSize, const QRect &workArea);
+bool canSnapSize(const base::Size &minimumOuterSize, const base::Rect &workArea);
 
 // Whether `bounds` still look snapped: full work-area height, against one of
 // its vertical edges. Ash's WorkspaceWindowResizer::AreBoundsValidSnappedBounds.
-bool areBoundsValidSnappedBounds(WindowStateType type, const QRect &bounds, const QRect &workArea);
+bool areBoundsValidSnappedBounds(WindowStateType type, const base::Rect &bounds, const base::Rect &workArea);
 
 const char *toString(SnapType type);
 

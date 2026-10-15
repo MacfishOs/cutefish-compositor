@@ -34,8 +34,8 @@ struct Layout {
 
 // A window as the rows lay it out: where its centre is, and the room it takes.
 struct Cell {
-    QPointF centre;
-    QSizeF size;
+    base::PointF centre;
+    base::SizeF size;
 };
 
 // The windows taken top to bottom by their centres, cut into at most `count`
@@ -76,7 +76,7 @@ std::vector<Row> rowsOf(const std::vector<Cell> &windows, int count)
 
 // The largest scale, never above 1, at which the rows fit `area` with `gap`
 // between windows and between rows; 0 when they do not fit at all.
-double fittingScale(const std::vector<Row> &rows, const QRectF &area, double gap)
+double fittingScale(const std::vector<Row> &rows, const base::RectF &area, double gap)
 {
     double scale = 1;
     double heights = 0;
@@ -91,7 +91,7 @@ double fittingScale(const std::vector<Row> &rows, const QRectF &area, double gap
 
 // The space between two rectangles along whichever axis parts them; negative
 // when they overlap.
-double gapBetween(const QRectF &a, const QRectF &b)
+double gapBetween(const base::RectF &a, const base::RectF &b)
 {
     const double horizontal = std::max(b.left() - a.right(), a.left() - b.right());
     const double vertical = std::max(b.top() - a.bottom(), a.top() - b.bottom());
@@ -103,11 +103,11 @@ double gapBetween(const QRectF &a, const QRectF &b)
 // scale that made the fullest row fit leaves the rest smaller than they need
 // to be. All grow at the same rate of their own size, so the large ones do not
 // take all the room first.
-void fillGaps(std::vector<QRectF> &rects, const std::vector<QRect> &windows, const QRectF &area,
+void fillGaps(std::vector<base::RectF> &rects, const std::vector<base::Rect> &windows, const base::RectF &area,
               double gap)
 {
-    const QRectF inside = area.adjusted(-1e-6, -1e-6, 1e-6, 1e-6);
-    const auto fits = [&](const QRectF &candidate, size_t index) {
+    const base::RectF inside = area.adjusted(-1e-6, -1e-6, 1e-6, 1e-6);
+    const auto fits = [&](const base::RectF &candidate, size_t index) {
         if (!inside.contains(candidate))
             return false;
         for (size_t other = 0; other < rects.size(); ++other) {
@@ -118,18 +118,18 @@ void fillGaps(std::vector<QRectF> &rects, const std::vector<QRect> &windows, con
         return true;
     };
     int widest = 0;
-    for (const QRect &window : windows)
+    for (const base::Rect &window : windows)
         widest = std::max(widest, window.width());
     // About its centre first, then away from each corner in turn.
-    constexpr std::array<QPointF, 5> kAnchors = {QPointF(0.5, 0.5), QPointF(0, 0), QPointF(1, 0),
-                                                 QPointF(0, 1), QPointF(1, 1)};
+    constexpr std::array<base::PointF, 5> kAnchors = {base::PointF(0.5, 0.5), base::PointF(0, 0), base::PointF(1, 0),
+                                                 base::PointF(0, 1), base::PointF(1, 1)};
     for (double growth = kFirstGrowth; growth * widest >= kLastGrowthPixels; growth /= 2) {
         bool grew = true;
         while (grew) {
             grew = false;
             for (size_t index = 0; index < rects.size(); ++index) {
-                const QRectF rect = rects[index];
-                const QSize window = windows[index].size();
+                const base::RectF rect = rects[index];
+                const base::Size window = windows[index].size();
                 if (rect.width() >= window.width())
                     continue;
                 const double width =
@@ -137,8 +137,8 @@ void fillGaps(std::vector<QRectF> &rects, const std::vector<QRect> &windows, con
                 const double height = width * window.height() / window.width();
                 const double dw = width - rect.width();
                 const double dh = height - rect.height();
-                for (const QPointF &anchor : kAnchors) {
-                    const QRectF candidate(rect.x() - dw * anchor.x(), rect.y() - dh * anchor.y(),
+                for (const base::PointF &anchor : kAnchors) {
+                    const base::RectF candidate(rect.x() - dw * anchor.x(), rect.y() - dh * anchor.y(),
                                            width, height);
                     if (fits(candidate, index)) {
                         rects[index] = candidate;
@@ -158,30 +158,30 @@ double snapped(double value, double deviceScale)
 
 } // namespace
 
-std::vector<QRectF> spreadLayout(const std::vector<QRect> &windows, const QRect &area, int gap,
+std::vector<base::RectF> spreadLayout(const std::vector<base::Rect> &windows, const base::Rect &area, int gap,
                                  double deviceScale)
 {
-    std::vector<QRectF> result;
+    std::vector<base::RectF> result;
     if (windows.empty() || area.isEmpty())
         return result;
     deviceScale = deviceScale > 0 ? deviceScale : 1;
     // Snapping each edge may take a device pixel off a gap.
     const double required = gap + 1 / deviceScale;
-    const QRectF bounds(area);
-    std::vector<QRect> sizes;
+    const base::RectF bounds(area);
+    std::vector<base::Rect> sizes;
     sizes.reserve(windows.size());
     double largest = 0;
-    for (const QRect &window : windows) {
-        sizes.emplace_back(window.topLeft(), window.size().expandedTo(QSize(1, 1)));
+    for (const base::Rect &window : windows) {
+        sizes.emplace_back(window.topLeft(), window.size().expandedTo(base::Size(1, 1)));
         largest = std::max(largest, double(sizes.back().width()) * sizes.back().height());
     }
     // A smaller window gets more room than its size, by the fourth root of how
     // much smaller its area is, so it is not shrunk as far as the largest.
     std::vector<Cell> cells;
     cells.reserve(sizes.size());
-    for (const QRect &window : sizes) {
+    for (const base::Rect &window : sizes) {
         const double boost = std::pow(largest / (double(window.width()) * window.height()), 0.25);
-        cells.push_back({QRectF(window).center(), QSizeF(window.size()) * boost});
+        cells.push_back({base::RectF(window).center(), base::SizeF(window.size()) * boost});
     }
 
     Layout best;
@@ -197,7 +197,7 @@ std::vector<QRectF> spreadLayout(const std::vector<QRect> &windows, const QRect 
 
     // Each row centred, each window centred in its slot and never larger than
     // it is.
-    std::vector<QRectF> placed(sizes.size());
+    std::vector<base::RectF> placed(sizes.size());
     double height = double(best.rows.size() - 1) * required;
     for (const Row &row : best.rows)
         height += row.height * best.scale;
@@ -207,10 +207,10 @@ std::vector<QRectF> spreadLayout(const std::vector<QRect> &windows, const QRect 
                 - (row.width * best.scale + double(row.windows.size() - 1) * required) / 2;
         const double rowHeight = row.height * best.scale;
         for (const size_t index : row.windows) {
-            const QSizeF cell = cells[index].size * best.scale;
-            const QSizeF size = cell.width() > sizes[index].width() ? QSizeF(sizes[index].size())
+            const base::SizeF cell = cells[index].size * best.scale;
+            const base::SizeF size = cell.width() > sizes[index].width() ? base::SizeF(sizes[index].size())
                                                                     : cell;
-            placed[index] = QRectF(QPointF(x + (cell.width() - size.width()) / 2,
+            placed[index] = base::RectF(base::PointF(x + (cell.width() - size.width()) / 2,
                                            y + (rowHeight - size.height()) / 2),
                                    size);
             x += cell.width() + required;
@@ -220,16 +220,16 @@ std::vector<QRectF> spreadLayout(const std::vector<QRect> &windows, const QRect 
     fillGaps(placed, sizes, bounds, required);
 
     // Grown unevenly, the arrangement is centred again.
-    QRectF extent;
-    for (const QRectF &rect : placed)
+    base::RectF extent;
+    for (const base::RectF &rect : placed)
         extent |= rect;
-    const QPointF shift = bounds.center() - extent.center();
+    const base::PointF shift = bounds.center() - extent.center();
     result.reserve(placed.size());
-    for (const QRectF &rect : placed) {
-        const QRectF moved = rect.translated(shift);
-        const QPointF a(snapped(moved.left(), deviceScale), snapped(moved.top(), deviceScale));
-        const QPointF b(snapped(moved.right(), deviceScale), snapped(moved.bottom(), deviceScale));
-        result.emplace_back(a, b);
+    for (const base::RectF &rect : placed) {
+        const base::RectF moved = rect.translated(shift);
+        const base::PointF a(snapped(moved.left(), deviceScale), snapped(moved.top(), deviceScale));
+        const base::PointF b(snapped(moved.right(), deviceScale), snapped(moved.bottom(), deviceScale));
+        result.push_back(base::RectF::fromEdges(a.x(), a.y(), b.x(), b.y()));
     }
     return result;
 }

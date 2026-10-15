@@ -33,7 +33,7 @@ WaylandKeyboardDelegate::WaylandKeyboardDelegate(wl_resource *keyboardResource,
                                                  clipboard::SelectionController *selection)
     : m_keyboardResource(keyboardResource)
     , m_serialTracker(serialTracker)
-    , m_selection(selection)
+    , m_selection(selection ? selection->weakPtr() : nullptr)
 {
 }
 
@@ -124,18 +124,18 @@ void WaylandKeyboardDelegate::onKeyboardLayoutUpdated(const std::string &keymap)
     const size_t size = keymap.size() + 1;
     const int fd = memfd_create("cutefish-keymap", MFD_CLOEXEC);
     if (fd < 0) {
-        qCWarning(cfWayland) << "Failed to create a keymap memfd";
+        CF_WARNING(cfWayland) << "Failed to create a keymap memfd";
         return;
     }
     if (ftruncate(fd, static_cast<off_t>(size)) != 0) {
-        qCWarning(cfWayland) << "Failed to size the keymap memfd";
+        CF_WARNING(cfWayland) << "Failed to size the keymap memfd";
         close(fd);
         return;
     }
 
     void *memory = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (memory == MAP_FAILED) {
-        qCWarning(cfWayland) << "Failed to map the keymap memfd";
+        CF_WARNING(cfWayland) << "Failed to map the keymap memfd";
         close(fd);
         return;
     }

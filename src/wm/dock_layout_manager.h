@@ -12,13 +12,12 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <vector>
 
-#include <QObject>
-#include <QPoint>
-#include <QPointF>
-#include <QRect>
-#include <QTimer>
-
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/timer.h"
+#include "core/main_loop.h"
 #include "wm/types.h"
 #include "wm/window_observer.h"
 
@@ -73,10 +72,8 @@ enum class WorkspaceState {
 // following its progress, and lets them back as it leaves.
 //
 // Must be destroyed before the WindowManager it observes.
-class DockLayoutManager : public QObject, public WindowObserver
+class DockLayoutManager : public WindowObserver
 {
-    Q_OBJECT
-
 public:
     // The strip along the dock's screen edge that brings a hidden dock back.
     static constexpr int kRevealStripPx = 5;
@@ -84,7 +81,7 @@ public:
     static constexpr int kRevealDelayMs = 200;
     static constexpr int kSlideDurationMs = 200;
 
-    explicit DockLayoutManager(WindowManager *manager, QObject *parent = nullptr);
+    explicit DockLayoutManager(WindowManager *manager);
     ~DockLayoutManager() override;
 
     DockAutoHideBehavior behavior() const { return m_behavior; }
@@ -103,7 +100,7 @@ public:
     DockVisibilityState visibilityState(const Window *dock) const;
     DockAutoHideState autoHideState(const Window *dock) const;
 
-    WorkspaceState workspaceStateFor(const QRect &output) const;
+    WorkspaceState workspaceStateFor(const base::Rect &output) const;
 
     // Re-evaluates every dock now. Every observer below funnels into this.
     void update();
@@ -117,29 +114,29 @@ public:
 
     // --- WindowObserver ---
 
-    void onWindowBoundsChanged(Window *window, const QRect &oldBounds) override;
+    void onWindowBoundsChanged(Window *window, const base::Rect &oldBounds) override;
     void onWindowStateTypeChanged(Window *window, WindowStateType oldType) override;
     void onWindowVisibilityChanged(Window *window, bool visible) override;
     void onWindowTransientParentChanged(Window *window, Window *oldParent) override;
 
-private Q_SLOTS:
+private:
     void onWindowAdded(cutefish::wm::Window *window);
     void onWindowRemoved(cutefish::wm::Window *window);
-    void onPointerMoved(const QPointF &location);
+    void onPointerMoved(const base::PointF &location);
 
 private:
     struct Dock {
         DockVisibilityState visibility = DockVisibilityState::Visible;
         DockAutoHideState autoHide = DockAutoHideState::Shown;
         ScreenEdge edge = ScreenEdge::Bottom;
-        QTimer revealTimer;
+        base::Timer revealTimer {core::mainLoop()};
         bool sliding = false;
         double slideStarted = -1;
-        QPoint slideFrom;
-        QPoint slideTo;
+        base::Point slideFrom;
+        base::Point slideTo;
         // Where its own state puts it, before the overview: drawn this far
         // from its bounds, and not drawn at all when parked.
-        QPoint offset;
+        base::Point offset;
         bool parked = false;
     };
 
@@ -151,18 +148,18 @@ private:
     void updateDock(Window *dock, Dock &entry);
     // The reveal delay passed: shows the dock if the pointer is still there.
     void revealNow(Window *dock);
-    DockVisibilityState computeVisibility(const Window *dock, const QRect &output) const;
+    DockVisibilityState computeVisibility(const Window *dock, const base::Rect &output) const;
     // `revealing`: the dock is shown or on its way, so the pointer anywhere on
     // it keeps it, not only at the edge strip.
     DockAutoHideState computeAutoHideState(const Window *dock, const Dock &entry,
-                                           const QRect &output, bool revealing) const;
+                                           const base::Rect &output, bool revealing) const;
     bool isAwayForSession() const { return m_sessionStarting || m_sessionEnding; }
-    bool hasVisibleWindow(const QRect &output) const;
-    bool isLauncherShowing(const QRect &output) const;
+    bool hasVisibleWindow(const base::Rect &output) const;
+    bool isLauncherShowing(const base::Rect &output) const;
     void applyAutoHideState(Window *dock, Dock &entry, DockAutoHideState state);
     // Aims the dock at where its current state puts it: on screen, or just
     // past its edge. Animated unless the dock is already parked there.
-    void slideTo(Window *dock, Dock &entry, const QPoint &offset);
+    void slideTo(Window *dock, Dock &entry, const base::Point &offset);
     // Draws the dock where its own offset and the overview put it.
     void present(Window *dock, const Dock &entry);
     void requestFrame();
@@ -172,9 +169,10 @@ private:
     bool m_sessionStarting = false;
     bool m_sessionEnding = false;
     std::map<Window *, std::unique_ptr<Dock>> m_docks;
-    std::optional<QPointF> m_pointer;
+    std::optional<base::PointF> m_pointer;
     // How far in the overview was at the last frame, 0 to 1.
     double m_overviewProgress = 0;
+    std::vector<base::Subscription> m_managerSignals;
 };
 
 } // namespace cutefish::wm

@@ -11,7 +11,7 @@
 #include <set>
 #include <vector>
 
-#include <QString>
+#include <string_view>
 
 #include "input/types.h"
 
@@ -21,7 +21,7 @@ class XkbTracker;
 
 // Whether a window's application id (xdg_toplevel.set_app_id, or the X11
 // class) names a terminal, the one kind of application treated apart.
-bool isTerminal(const QString &applicationId);
+bool isTerminal(std::string_view applicationId);
 
 // Turns the keys the compositor did not consume into the keys clients see.
 //

@@ -9,6 +9,7 @@
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -33,18 +34,18 @@ private:
 
 struct BackdropSource {
     unsigned int framebuffer;
-    QSize size;
-    QPointF offset;
+    base::Size size;
+    base::PointF offset;
     // How the framebuffer is turned against the layout: an output's
     // transform, 0 for an offscreen pass.
     uint32_t transform = 0;
 
     // `size` as the layout sees it.
-    QSize oriented() const { return transform % 2 ? size.transposed() : size; }
+    base::Size oriented() const { return transform % 2 ? size.transposed() : size; }
 
     // `rect`, in layout device pixels, in GL window coordinates of the
     // framebuffer, bottom up.
-    QRect framebufferRect(const QRect &rect) const;
+    base::Rect framebufferRect(const base::Rect &rect) const;
 };
 
 class GlRenderPass
@@ -63,13 +64,13 @@ public:
         Copy,
     };
 
-    const QSize &viewport() const { return m_viewport; }
+    const base::Size &viewport() const { return m_viewport; }
 
-    const QPointF &offset() const { return m_offset; }
+    const base::PointF &offset() const { return m_offset; }
 
     BlendMode blendMode() const { return m_blendMode; }
 
-    void setGeometry(const QSize &viewport, const QPointF &offset)
+    void setGeometry(const base::Size &viewport, const base::PointF &offset)
     {
         m_viewport = viewport;
         m_offset = offset;
@@ -80,10 +81,10 @@ public:
     std::vector<BackdropSource> backdropSources(double scale, uint32_t transform) const;
     // Frees the GL objects kept between passes; the context must be current.
     void releaseResources();
-    QImage capture(Renderer &renderer, const QSize &size, const std::function<void()> &paint);
-    QImage renderToImage(Renderer &renderer, const QSize &size, const std::function<void()> &paint);
-    bool render(Renderer &renderer, std::unique_ptr<Texture> &texture, const QRect &bounds,
-                const std::function<void()> &paint, const QRect &repaint = QRect());
+    ui::Bitmap capture(Renderer &renderer, const base::Size &size, const std::function<void()> &paint);
+    ui::Bitmap renderToImage(Renderer &renderer, const base::Size &size, const std::function<void()> &paint);
+    bool render(Renderer &renderer, std::unique_ptr<Texture> &texture, const base::Rect &bounds,
+                const std::function<void()> &paint, const base::Rect &repaint = base::Rect());
     // Mipmaps for a render() result; the next render() into it drops them.
     void generateMipmaps(Texture *texture);
     void limitMipmapLevel(Texture *texture, int level);
@@ -91,29 +92,29 @@ public:
     // Offscreen capture of `paint` under `context`: the logical viewport and
     // scale come from the context rather than the display, so a window can be
     // painted on its own at its own origin.
-    QImage captureImage(Renderer &renderer, const OutputRenderContext &context, const QSize &size,
+    ui::Bitmap captureImage(Renderer &renderer, const OutputRenderContext &context, const base::Size &size,
                         const std::function<void()> &paint);
     // The same, read into a pixel buffer object and collected by take(); null
     // without GLES 3.
     std::shared_ptr<PendingImage> readBack(Renderer &renderer, const OutputRenderContext &context,
-                                           const QSize &size, const std::function<void()> &paint);
+                                           const base::Size &size, const std::function<void()> &paint);
     // The same, ending up top-down in the DMA-BUF behind `image`: the capture
     // texture is drawn flipped into a renderbuffer bound to the image, so the
     // pixels never leave the GPU. False if the image cannot be rendered into.
-    bool captureToImage(Renderer &renderer, const OutputRenderContext &context, const QSize &size,
+    bool captureToImage(Renderer &renderer, const OutputRenderContext &context, const base::Size &size,
                         EGLImageKHR image, const std::function<void()> &paint);
 
 private:
     std::unique_ptr<GlTexture> captureTexture(Renderer &renderer,
                                               const OutputRenderContext &context,
-                                              const QSize &size,
+                                              const base::Size &size,
                                               const std::function<void()> &paint);
     int maxTextureSize();
 
     std::shared_ptr<EglContext> m_context;
     int m_maxTextureSize = 0;
-    QSize m_viewport;
-    QPointF m_offset;
+    base::Size m_viewport;
+    base::PointF m_offset;
     BlendMode m_blendMode = BlendMode::SourceOver;
     std::vector<BackdropSource> m_sources;
     // The framebuffer objects render() draws through, one per nesting depth,

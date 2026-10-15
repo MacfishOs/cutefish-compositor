@@ -28,6 +28,7 @@
 #include <wayland-server-core.h>
 #include <xkbcommon/xkbcommon.h>
 
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "cursor-shape-v1-client-protocol.h"
@@ -52,6 +53,7 @@
 #include "wayland/protocols/zwp_relative_pointer_manager.h"
 #include "wayland/serial_tracker.h"
 #include "wayland/server.h"
+#include "wm/types.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 
@@ -234,7 +236,7 @@ struct Client {
     }
 
     // A mapped surface of `size`, kept alive for the lifetime of the client.
-    wl_surface* makeSurface(const QSize& size)
+    wl_surface* makeSurface(const base::Size& size)
     {
         const int stride = size.width() * 4;
         const size_t bytes = static_cast<size_t>(stride) * size.height();
@@ -565,9 +567,9 @@ class SeatProtocolTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node* surfaceContainer =
-        scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+        scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node* cursorContainer =
-        scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("cursor")));
+        scene.root()->addChild(std::make_unique<scene::Node>("cursor"));
     compositor::Compositor compositor {surfaceContainer};
     input::Seat seat {&compositor};
     input::InputManager manager {&seat};
@@ -581,11 +583,11 @@ protected:
 
     void SetUp() override
     {
-        scene.setSize(QSize(800, 600));
+        scene.setSize(base::Size(800, 600));
         seat.setCursorContainer(cursorContainer);
-        manager.setBounds(QSize(800, 600));
+        manager.setBounds(base::Size(800, 600));
         manager.setEventSink(&windowManager);
-        windowManager.setOutputBounds(QRect(0, 0, 800, 600));
+        windowManager.setOutputBounds(base::Rect(0, 0, 800, 600));
     }
 
     // Runs `body` on the server thread and waits for it.
@@ -659,7 +661,7 @@ protected:
     }
 
     // The compositor cascades new surfaces; the tests want known positions.
-    void place(size_t index, const QPoint& position)
+    void place(size_t index, const base::Point& position)
     {
         ASSERT_LT(index, compositor.surfaces().size());
         compositor.surfaces()[index]->setPosition(position);
@@ -667,19 +669,19 @@ protected:
 
     // Gives the surface at `index` a window at `position`, standing in for
     // xdg_toplevel, which these surfaces never take.
-    void adopt(size_t index, const QPoint& position)
+    void adopt(size_t index, const base::Point& position)
     {
         ASSERT_LT(index, compositor.surfaces().size());
         compositor::Surface* surface = compositor.surfaces()[index];
         wm::Window* window = windowManager.createWindow(surface);
-        window->setBounds(QRect(position, window->bounds().size()));
+        window->setBounds(base::Rect(position, window->bounds().size()));
     }
 
     // Adopts the surface at `index` at `position` and activates its window.
     // Returns where its content is.
-    QRect activateWindow(size_t index, const QPoint& position)
+    base::Rect activateWindow(size_t index, const base::Point& position)
     {
-        QRect content;
+        base::Rect content;
         check([&] {
             if (!windowManager.windowForSurface(compositor.surfaces()[index]))
                 adopt(index, position);
@@ -690,9 +692,9 @@ protected:
         return content;
     }
 
-    QPointF pointer()
+    base::PointF pointer()
     {
-        QPointF position;
+        base::PointF position;
         check([&] { position = manager.pointerPosition(); });
         return position;
     }
@@ -716,11 +718,11 @@ TEST_F(SeatProtocolTest, PointerEnterMotionButtonAndLeaveAreBatchedIntoFrames)
 {
     run([&](Client& c) {
         c.getPointer();
-        wl_surface* surface = c.makeSurface(QSize(100, 80));
+        wl_surface* surface = c.makeSurface(base::Size(100, 80));
         c.sync();
-        check([&] { place(0, QPoint(200, 100)); });
+        check([&] { place(0, base::Point(200, 100)); });
 
-        check([&] { seat.onPointerMotion(at(1), QPointF(210, 110)); });
+        check([&] { seat.onPointerMotion(at(1), base::PointF(210, 110)); });
         c.sync();
 
         EXPECT_EQ(surface, c.observed.enterSurface);
@@ -728,15 +730,15 @@ TEST_F(SeatProtocolTest, PointerEnterMotionButtonAndLeaveAreBatchedIntoFrames)
         EXPECT_EQ(wl_fixed_from_double(10), c.observed.enterY);
         EXPECT_EQ(std::vector<std::string>({"enter", "frame"}), c.observed.pointerEvents);
 
-        check([&] { seat.onPointerMotion(at(2), QPointF(215.5, 120)); });
+        check([&] { seat.onPointerMotion(at(2), base::PointF(215.5, 120)); });
         c.sync();
         ASSERT_EQ(1u, c.observed.motions.size());
         EXPECT_EQ(wl_fixed_from_double(15.5), c.observed.motions[0].first);
         EXPECT_EQ(wl_fixed_from_double(20), c.observed.motions[0].second);
 
         check([&] {
-            seat.onPointerButton(at(3), QPointF(215.5, 120), BTN_LEFT, true);
-            seat.onPointerButton(at(4), QPointF(215.5, 120), BTN_LEFT, false);
+            seat.onPointerButton(at(3), base::PointF(215.5, 120), BTN_LEFT, true);
+            seat.onPointerButton(at(4), base::PointF(215.5, 120), BTN_LEFT, false);
         });
         c.sync();
         ASSERT_EQ(2u, c.observed.buttons.size());
@@ -745,7 +747,7 @@ TEST_F(SeatProtocolTest, PointerEnterMotionButtonAndLeaveAreBatchedIntoFrames)
         EXPECT_EQ(uint32_t(WL_POINTER_BUTTON_STATE_RELEASED),
                   std::get<2>(c.observed.buttons[1]));
 
-        check([&] { seat.onPointerMotion(at(5), QPointF(700, 500)); });
+        check([&] { seat.onPointerMotion(at(5), base::PointF(700, 500)); });
         c.sync();
         EXPECT_EQ("leave", c.observed.pointerEvents[c.observed.pointerEvents.size() - 2]);
         EXPECT_EQ("frame", c.observed.pointerEvents.back());
@@ -758,12 +760,12 @@ TEST_F(SeatProtocolTest, TouchPointsStayWithTheSurfaceTheyWentDownOn)
 {
     run([&](Client& c) {
         c.getTouch();
-        wl_surface* surface = c.makeSurface(QSize(100, 80));
+        wl_surface* surface = c.makeSurface(base::Size(100, 80));
         c.sync();
-        check([&] { place(0, QPoint(200, 100)); });
+        check([&] { place(0, base::Point(200, 100)); });
 
         check([&] {
-            seat.onTouchDown(at(1), 0, QPointF(210, 120));
+            seat.onTouchDown(at(1), 0, base::PointF(210, 120));
             seat.onTouchFrame();
         });
         c.sync();
@@ -771,7 +773,7 @@ TEST_F(SeatProtocolTest, TouchPointsStayWithTheSurfaceTheyWentDownOn)
 
         // Motion off the surface still belongs to it, in its coordinates.
         check([&] {
-            seat.onTouchMotion(at(2), 0, QPointF(500, 400));
+            seat.onTouchMotion(at(2), 0, base::PointF(500, 400));
             seat.onTouchFrame();
             seat.onTouchUp(at(3), 0);
             seat.onTouchFrame();
@@ -783,7 +785,7 @@ TEST_F(SeatProtocolTest, TouchPointsStayWithTheSurfaceTheyWentDownOn)
 
         c.observed.touchEvents.clear();
         check([&] {
-            seat.onTouchDown(at(4), 1, QPointF(250, 150));
+            seat.onTouchDown(at(4), 1, base::PointF(250, 150));
             seat.onTouchFrame();
             seat.onTouchCancel();
         });
@@ -797,15 +799,15 @@ TEST_F(SeatProtocolTest, PointerSerialsAreDistinctAndCarryTheirEventType)
 {
     run([&](Client& c) {
         c.getPointer();
-        c.makeSurface(QSize(100, 100));
+        c.makeSurface(base::Size(100, 100));
         c.sync();
-        check([&] { place(0, QPoint(0, 0)); });
+        check([&] { place(0, base::Point(0, 0)); });
 
         check([&] {
-            seat.onPointerMotion(at(1), QPointF(10, 10));
-            seat.onPointerButton(at(2), QPointF(10, 10), BTN_RIGHT, true);
-            seat.onPointerButton(at(3), QPointF(10, 10), BTN_RIGHT, false);
-            seat.onPointerMotion(at(4), QPointF(500, 500));
+            seat.onPointerMotion(at(1), base::PointF(10, 10));
+            seat.onPointerButton(at(2), base::PointF(10, 10), BTN_RIGHT, true);
+            seat.onPointerButton(at(3), base::PointF(10, 10), BTN_RIGHT, false);
+            seat.onPointerMotion(at(4), base::PointF(500, 500));
         });
         c.sync();
 
@@ -835,16 +837,16 @@ TEST_F(SeatProtocolTest, AxisEventsCarrySourceDiscreteAndStop)
     run(
         [&](Client& c) {
             c.getPointer();
-            c.makeSurface(QSize(100, 100));
+            c.makeSurface(base::Size(100, 100));
             c.sync();
             check([&] {
-                place(0, QPoint(0, 0));
-                seat.onPointerMotion(at(1), QPointF(10, 10));
+                place(0, base::Point(0, 0));
+                seat.onPointerMotion(at(1), base::PointF(10, 10));
             });
             c.sync();
 
             // One wheel click down is 10 axis units and one discrete step.
-            check([&] { seat.onPointerAxis(at(2), QPointF(10, 10), QPointF(0, 10), true); });
+            check([&] { seat.onPointerAxis(at(2), base::PointF(10, 10), base::PointF(0, 10), true); });
             c.sync();
             ASSERT_EQ(1u, c.observed.axisSources.size());
             EXPECT_EQ(uint32_t(WL_POINTER_AXIS_SOURCE_WHEEL), c.observed.axisSources[0]);
@@ -864,8 +866,8 @@ TEST_F(SeatProtocolTest, AxisEventsCarrySourceDiscreteAndStop)
 
             // A finger scroll has no discrete steps and ends with axis_stop.
             check([&] {
-                seat.onPointerAxis(at(3), QPointF(10, 10), QPointF(-4.5, 2.25), false);
-                seat.onPointerAxisStop(at(4), QPointF(10, 10));
+                seat.onPointerAxis(at(3), base::PointF(10, 10), base::PointF(-4.5, 2.25), false);
+                seat.onPointerAxisStop(at(4), base::PointF(10, 10));
             });
             c.sync();
             ASSERT_EQ(2u, c.observed.axisSources.size() - 1);
@@ -883,14 +885,14 @@ TEST_F(SeatProtocolTest, AVersionEightSeatGetsWheelFractionsAsValue120)
     run([&](Client& c) {
         ASSERT_EQ(8u, c.globals["wl_seat"].second);
         c.getPointer();
-        c.makeSurface(QSize(100, 100));
+        c.makeSurface(base::Size(100, 100));
         c.sync();
         check([&] {
-            place(0, QPoint(0, 0));
-            seat.onPointerMotion(at(1), QPointF(10, 10));
+            place(0, base::Point(0, 0));
+            seat.onPointerMotion(at(1), base::PointF(10, 10));
             // An eighth of a click down, then a whole click left.
-            seat.onPointerAxis(at(2), QPointF(10, 10), QPointF(0, 1.25), true);
-            seat.onPointerAxis(at(3), QPointF(10, 10), QPointF(-10, 0), true);
+            seat.onPointerAxis(at(2), base::PointF(10, 10), base::PointF(0, 1.25), true);
+            seat.onPointerAxis(at(3), base::PointF(10, 10), base::PointF(-10, 0), true);
         });
         c.sync();
         EXPECT_TRUE(c.observed.axisDiscrete.empty());
@@ -913,21 +915,21 @@ TEST_F(SeatProtocolTest, AnOlderSeatCountsWheelFractionsIntoWholeClicks)
     run(
         [&](Client& c) {
             c.getPointer();
-            c.makeSurface(QSize(100, 100));
+            c.makeSurface(base::Size(100, 100));
             c.sync();
             check([&] {
-                place(0, QPoint(0, 0));
-                seat.onPointerMotion(at(1), QPointF(10, 10));
+                place(0, base::Point(0, 0));
+                seat.onPointerMotion(at(1), base::PointF(10, 10));
                 // Seven eighths of a click: no step yet, but every axis value.
                 for (int i = 0; i < 7; ++i)
-                    seat.onPointerAxis(at(2 + i), QPointF(10, 10), QPointF(0, 1.25), true);
+                    seat.onPointerAxis(at(2 + i), base::PointF(10, 10), base::PointF(0, 1.25), true);
             });
             c.sync();
             EXPECT_TRUE(c.observed.axisDiscrete.empty());
             EXPECT_EQ(14u, c.observed.axes.size());
 
             check([&] {
-                seat.onPointerAxis(at(9), QPointF(10, 10), QPointF(0, 1.25), true);
+                seat.onPointerAxis(at(9), base::PointF(10, 10), base::PointF(0, 1.25), true);
             });
             c.sync();
             ASSERT_EQ(1u, c.observed.axisDiscrete.size());
@@ -935,9 +937,9 @@ TEST_F(SeatProtocolTest, AnOlderSeatCountsWheelFractionsIntoWholeClicks)
 
             // Turning back drops the fraction gathered the other way.
             check([&] {
-                seat.onPointerAxis(at(10), QPointF(10, 10), QPointF(0, 5), true);
+                seat.onPointerAxis(at(10), base::PointF(10, 10), base::PointF(0, 5), true);
                 for (int i = 0; i < 8; ++i)
-                    seat.onPointerAxis(at(11 + i), QPointF(10, 10), QPointF(0, -1.25), true);
+                    seat.onPointerAxis(at(11 + i), base::PointF(10, 10), base::PointF(0, -1.25), true);
             });
             c.sync();
             ASSERT_EQ(2u, c.observed.axisDiscrete.size());
@@ -950,24 +952,24 @@ TEST_F(SeatProtocolTest, AnOlderSeatCountsWheelFractionsIntoWholeClicks)
 TEST_F(SeatProtocolTest, SubsurfaceHitTestingTargetsTheChild)
 {
     run([&](Client& c) {
-        wl_surface* parent = c.makeSurface(QSize(120, 120));
-        wl_surface* child = c.makeSurface(QSize(40, 40));
+        wl_surface* parent = c.makeSurface(base::Size(120, 120));
+        wl_surface* child = c.makeSurface(base::Size(40, 40));
         wl_subsurface* sub = wl_subcompositor_get_subsurface(c.subcompositor, child, parent);
         wl_subsurface_set_position(sub, 20, 20);
         wl_surface_commit(parent);
         c.getPointer();
         c.sync();
-        check([&] { place(0, QPoint(100, 100)); });
+        check([&] { place(0, base::Point(100, 100)); });
 
         // Over the parent only.
-        check([&] { seat.onPointerMotion(at(1), QPointF(110, 110)); });
+        check([&] { seat.onPointerMotion(at(1), base::PointF(110, 110)); });
         c.sync();
         EXPECT_EQ(parent, c.observed.enterSurface);
         EXPECT_EQ(wl_fixed_from_double(10), c.observed.enterX);
 
         // Over the subsurface: leave the parent, enter the child, with the
         // location relative to the child.
-        check([&] { seat.onPointerMotion(at(2), QPointF(125, 130)); });
+        check([&] { seat.onPointerMotion(at(2), base::PointF(125, 130)); });
         c.sync();
         EXPECT_EQ(child, c.observed.enterSurface);
         EXPECT_EQ(wl_fixed_from_double(5), c.observed.enterX);
@@ -981,15 +983,15 @@ TEST_F(SeatProtocolTest, TheCursorSurfaceIsPositionedByItsHotspot)
 {
     run([&](Client& c) {
         c.getPointer();
-        c.makeSurface(QSize(200, 200));
-        wl_surface* cursor = c.makeSurface(QSize(24, 24));
+        c.makeSurface(base::Size(200, 200));
+        wl_surface* cursor = c.makeSurface(base::Size(24, 24));
         c.sync();
         check([&] {
-            place(0, QPoint(0, 0));
+            place(0, base::Point(0, 0));
             // Out of the way: an unassigned cursor surface is an ordinary
             // surface, and the compositor cascades new ones near the origin.
-            place(1, QPoint(600, 400));
-            seat.onPointerMotion(at(1), QPointF(50, 60));
+            place(1, base::Point(600, 400));
+            seat.onPointerMotion(at(1), base::PointF(50, 60));
         });
         c.sync();
 
@@ -999,12 +1001,12 @@ TEST_F(SeatProtocolTest, TheCursorSurfaceIsPositionedByItsHotspot)
             compositor::Surface* cursorSurface = compositor.surfaces()[1];
             EXPECT_TRUE(cursorSurface->hasRole());
             EXPECT_EQ(cursorContainer, cursorSurface->node()->parent());
-            EXPECT_EQ(QPoint(44, 52), cursorSurface->position());
+            EXPECT_EQ(base::Point(44, 52), cursorSurface->position());
         });
 
-        check([&] { seat.onPointerMotion(at(2), QPointF(100, 100)); });
+        check([&] { seat.onPointerMotion(at(2), base::PointF(100, 100)); });
         c.sync();
-        check([&] { EXPECT_EQ(QPoint(94, 92), compositor.surfaces()[1]->position()); });
+        check([&] { EXPECT_EQ(base::Point(94, 92), compositor.surfaces()[1]->position()); });
 
         // A null surface hides the cursor.
         wl_pointer_set_cursor(c.pointer, c.observed.enterSerial, nullptr, 0, 0);
@@ -1038,7 +1040,7 @@ TEST_F(SeatProtocolTest, KeyboardSendsKeymapRepeatInfoEnterKeysAndModifiers)
             xkb_keymap_unref(keymap);
         xkb_context_unref(context);
 
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
 
         // Two keys held before focus are reported by enter.
@@ -1095,12 +1097,12 @@ TEST_F(SeatProtocolTest, ClickingASurfaceGivesItKeyboardFocus)
     run([&](Client& c) {
         c.getPointer();
         c.getKeyboard();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        check([&] { adopt(0, QPoint(0, 0)); });
+        check([&] { adopt(0, base::Point(0, 0)); });
 
         check([&] {
-            manager.onPointerMotionAbsolute(at(1), QPointF(50, 50));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(50, 50));
             manager.onPointerButton(at(2), BTN_LEFT, true);
         });
         c.sync();
@@ -1121,12 +1123,12 @@ TEST_F(SeatProtocolTest, DestroyingASurfaceClearsPointerAndKeyboardFocus)
     run([&](Client& c) {
         c.getPointer();
         c.getKeyboard();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        check([&] { adopt(0, QPoint(0, 0)); });
+        check([&] { adopt(0, base::Point(0, 0)); });
 
         check([&] {
-            manager.onPointerMotionAbsolute(at(1), QPointF(50, 50));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(50, 50));
             manager.onPointerButton(at(2), BTN_LEFT, true);
         });
         c.sync();
@@ -1149,7 +1151,7 @@ TEST_F(SeatProtocolTest, DestroyingASurfaceClearsPointerAndKeyboardFocus)
 
         // Events after the surface is gone reach nobody and crash nothing.
         check([&] {
-            seat.onPointerMotion(at(3), QPointF(60, 60));
+            seat.onPointerMotion(at(3), base::PointF(60, 60));
             seat.onKey(at(4), KEY_A, true);
             seat.onKey(at(5), KEY_A, false);
         });
@@ -1165,13 +1167,13 @@ TEST_F(SeatProtocolTest, AVersionFourSeatGetsNoFrameAxisSourceOrDiscrete)
         [&](Client& c) {
             c.getPointer();
             c.getKeyboard();
-            c.makeSurface(QSize(100, 100));
+            c.makeSurface(base::Size(100, 100));
             c.sync();
             check([&] {
-                place(0, QPoint(0, 0));
-                seat.onPointerMotion(at(1), QPointF(10, 10));
-                seat.onPointerAxis(at(2), QPointF(10, 10), QPointF(0, 10), true);
-                seat.onPointerAxisStop(at(3), QPointF(10, 10));
+                place(0, base::Point(0, 0));
+                seat.onPointerMotion(at(1), base::PointF(10, 10));
+                seat.onPointerAxis(at(2), base::PointF(10, 10), base::PointF(0, 10), true);
+                seat.onPointerAxisStop(at(3), base::PointF(10, 10));
             });
             c.sync();
 
@@ -1333,13 +1335,13 @@ TEST_F(SeatProtocolTest, NormalWindowManagerDeliversEveryFunctionKeyPair)
 {
     run([&](Client& c) {
         c.getKeyboard();
-        c.makeSurface(QSize(100, 100));
+        c.makeSurface(base::Size(100, 100));
         c.sync();
         check([&] {
-            adopt(0, QPoint(100, 100));
+            adopt(0, base::Point(100, 100));
             auto* window = windowManager.windows().front();
             window->activate();
-            const QRect bounds = window->bounds();
+            const base::Rect bounds = window->bounds();
             for (uint32_t key = KEY_F1; key <= KEY_F9; ++key) {
                 manager.onKey(at(1), key, true);
                 manager.onKey(at(2), key, false);
@@ -1366,19 +1368,19 @@ TEST_F(SeatProtocolTest, ALockHoldsThePointerAndRelativeMotionGoesOn)
     run([&](Client& c) {
         c.getPointer();
         c.getRelativePointer();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        const QRect content = activateWindow(0, QPoint(100, 100));
-        check([&] { manager.onPointerMotionAbsolute(at(1), content.center()); });
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
+        check([&] { manager.onPointerMotionAbsolute(at(1), base::PointF(wm::centerPixel(content))); });
         c.lock(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"locked"}), c.observed.constraintEvents);
 
         const size_t motions = c.observed.motions.size();
         c.observed.pointerEvents.clear();
-        check([&] { manager.onPointerMotion(at(2), QPointF(30, -20), QPointF(10, -5)); });
+        check([&] { manager.onPointerMotion(at(2), base::PointF(30, -20), base::PointF(10, -5)); });
         c.sync();
-        EXPECT_EQ(QPointF(content.center()), pointer());
+        EXPECT_TRUE(base::fuzzyCompare(base::PointF(wm::centerPixel(content)), pointer())) << pointer();
         EXPECT_EQ(motions, c.observed.motions.size());
         EXPECT_EQ(std::vector<std::string>({"relative_motion", "frame"}),
                   c.observed.pointerEvents);
@@ -1397,10 +1399,10 @@ TEST_F(SeatProtocolTest, BreakingALockWarpsToItsHintAndOnlyAClickLocksAgain)
 {
     run([&](Client& c) {
         c.getPointer();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        const QRect content = activateWindow(0, QPoint(100, 100));
-        check([&] { manager.onPointerMotionAbsolute(at(1), content.center()); });
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
+        check([&] { manager.onPointerMotionAbsolute(at(1), base::PointF(wm::centerPixel(content))); });
         auto* locked = c.lock(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
         zwp_locked_pointer_v1_set_cursor_position_hint(locked, wl_fixed_from_int(20),
                                                        wl_fixed_from_int(30));
@@ -1408,7 +1410,7 @@ TEST_F(SeatProtocolTest, BreakingALockWarpsToItsHintAndOnlyAClickLocksAgain)
         // The hint is double-buffered.
         check([&] {
             EXPECT_TRUE(seat.breakInputCapture());
-            EXPECT_EQ(QPointF(content.center()), manager.pointerPosition());
+            EXPECT_EQ(base::PointF(wm::centerPixel(content)), manager.pointerPosition());
             EXPECT_EQ(nullptr, seat.pointerConstraints()->active());
         });
         c.sync();
@@ -1416,7 +1418,7 @@ TEST_F(SeatProtocolTest, BreakingALockWarpsToItsHintAndOnlyAClickLocksAgain)
 
         // Not even the pointer re-entering the region takes it back.
         check([&] {
-            manager.onPointerMotion(at(2), QPointF(1, 1));
+            manager.onPointerMotion(at(2), base::PointF(1, 1));
             EXPECT_EQ(nullptr, seat.pointerConstraints()->active());
             manager.onPointerButton(at(3), BTN_LEFT, true);
             manager.onPointerButton(at(4), BTN_LEFT, false);
@@ -1430,14 +1432,15 @@ TEST_F(SeatProtocolTest, BreakingALockWarpsToItsHintAndOnlyAClickLocksAgain)
         const size_t motions = c.observed.motions.size();
         check([&] { EXPECT_TRUE(seat.breakInputCapture()); });
         c.sync();
-        EXPECT_EQ(QPointF(content.topLeft() + QPoint(20, 30)), pointer());
+        EXPECT_TRUE(base::fuzzyCompare(base::PointF(content.topLeft() + base::Point(20, 30)), pointer()))
+            << pointer();
         // The client hears where the pointer went.
         ASSERT_EQ(motions + 1, c.observed.motions.size());
         EXPECT_EQ(wl_fixed_from_int(20), c.observed.motions.back().first);
         EXPECT_EQ(wl_fixed_from_int(30), c.observed.motions.back().second);
         check([&] {
-            manager.onPointerMotion(at(5), QPointF(5, 5));
-            EXPECT_EQ(QPointF(content.topLeft() + QPoint(25, 35)), manager.pointerPosition());
+            manager.onPointerMotion(at(5), base::PointF(5, 5));
+            EXPECT_EQ(base::PointF(content.topLeft() + base::Point(25, 35)), manager.pointerPosition());
         });
     });
 }
@@ -1446,27 +1449,27 @@ TEST_F(SeatProtocolTest, OnlyTheActiveWindowLocksAndAOneshotLockEndsWithIt)
 {
     run([&](Client& c) {
         c.getPointer();
-        wl_surface* first = c.makeSurface(QSize(100, 100));
-        c.makeSurface(QSize(100, 100));
+        wl_surface* first = c.makeSurface(base::Size(100, 100));
+        c.makeSurface(base::Size(100, 100));
         c.sync();
-        activateWindow(1, QPoint(400, 100));
+        activateWindow(1, base::Point(400, 100));
         check([&] {
-            adopt(0, QPoint(100, 100));
+            adopt(0, base::Point(100, 100));
             manager.onPointerMotionAbsolute(
                 at(1),
-                windowManager.windowForSurface(compositor.surfaces()[0])->contentBounds().center());
+                base::PointF(wm::centerPixel(windowManager.windowForSurface(compositor.surfaces()[0])->contentBounds())));
         });
         c.lock(first, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_ONESHOT);
         c.sync();
         EXPECT_TRUE(c.observed.constraintEvents.empty());
 
-        activateWindow(0, QPoint());
+        activateWindow(0, base::Point());
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"locked"}), c.observed.constraintEvents);
 
-        activateWindow(1, QPoint());
+        activateWindow(1, base::Point());
         c.sync();
-        activateWindow(0, QPoint());
+        activateWindow(0, base::Point());
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"locked", "unlocked"}), c.observed.constraintEvents);
         check([&] { EXPECT_EQ(nullptr, seat.pointerConstraints()->active()); });
@@ -1478,11 +1481,11 @@ TEST_F(SeatProtocolTest, AConfinementKeepsThePointerInsideItsRegion)
     run([&](Client& c) {
         c.getPointer();
         c.getRelativePointer();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        const QRect content = activateWindow(0, QPoint(100, 100));
-        const QPointF origin = content.topLeft();
-        check([&] { manager.onPointerMotionAbsolute(at(1), origin + QPointF(5, 5)); });
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
+        const base::PointF origin = content.topLeft();
+        check([&] { manager.onPointerMotionAbsolute(at(1), origin + base::PointF(5, 5)); });
         wl_region* region = wl_compositor_create_region(c.compositor);
         wl_region_add(region, 10, 10, 50, 40);
         auto* confined =
@@ -1491,13 +1494,13 @@ TEST_F(SeatProtocolTest, AConfinementKeepsThePointerInsideItsRegion)
         c.sync();
         // Outside the region it waits for the pointer to come in.
         EXPECT_TRUE(c.observed.constraintEvents.empty());
-        check([&] { manager.onPointerMotion(at(2), QPointF(15, 15)); });
+        check([&] { manager.onPointerMotion(at(2), base::PointF(15, 15)); });
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"confined"}), c.observed.constraintEvents);
 
-        check([&] { manager.onPointerMotion(at(3), QPointF(100, 100)); });
+        check([&] { manager.onPointerMotion(at(3), base::PointF(100, 100)); });
         c.sync();
-        QPointF local = pointer() - origin;
+        base::PointF local = pointer() - origin;
         EXPECT_NEAR(60, local.x(), 0.01);
         EXPECT_NEAR(50, local.y(), 0.01);
         EXPECT_LT(local.x(), 60);
@@ -1505,18 +1508,18 @@ TEST_F(SeatProtocolTest, AConfinementKeepsThePointerInsideItsRegion)
         // It still hits the surface: the pointer never left it.
         EXPECT_EQ(std::vector<std::string>({"confined"}), c.observed.constraintEvents);
 
-        check([&] { manager.onPointerMotion(at(4), QPointF(-200, 0)); });
+        check([&] { manager.onPointerMotion(at(4), base::PointF(-200, 0)); });
         local = pointer() - origin;
         EXPECT_EQ(10, local.x());
 
         // A null region is the whole input region, from the next commit.
         zwp_confined_pointer_v1_set_region(confined, nullptr);
         c.sync();
-        check([&] { manager.onPointerMotion(at(5), QPointF(-200, 0)); });
+        check([&] { manager.onPointerMotion(at(5), base::PointF(-200, 0)); });
         EXPECT_EQ(10, (pointer() - origin).x());
         wl_surface_commit(surface);
         c.sync();
-        check([&] { manager.onPointerMotion(at(6), QPointF(-200, 0)); });
+        check([&] { manager.onPointerMotion(at(6), base::PointF(-200, 0)); });
         EXPECT_EQ(0, (pointer() - origin).x());
     });
 }
@@ -1525,10 +1528,10 @@ TEST_F(SeatProtocolTest, DestroyingTheSurfaceOrTheConstraintReleasesThePointer)
 {
     run([&](Client& c) {
         c.getPointer();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        const QRect content = activateWindow(0, QPoint(100, 100));
-        check([&] { manager.onPointerMotionAbsolute(at(1), content.center()); });
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
+        check([&] { manager.onPointerMotionAbsolute(at(1), base::PointF(wm::centerPixel(content))); });
         auto* locked = c.lock(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
         c.sync();
         ASSERT_EQ(std::vector<std::string>({"locked"}), c.observed.constraintEvents);
@@ -1540,9 +1543,9 @@ TEST_F(SeatProtocolTest, DestroyingTheSurfaceOrTheConstraintReleasesThePointer)
         c.sync();
         check([&] {
             EXPECT_FALSE(seat.pointerConstraints()->isLocked());
-            EXPECT_EQ(QPointF(content.topLeft() + QPoint(10, 20)), manager.pointerPosition());
-            manager.onPointerMotion(at(2), QPointF(10, 0));
-            EXPECT_EQ(QPointF(content.topLeft() + QPoint(20, 20)), manager.pointerPosition());
+            EXPECT_EQ(base::PointF(content.topLeft() + base::Point(10, 20)), manager.pointerPosition());
+            manager.onPointerMotion(at(2), base::PointF(10, 0));
+            EXPECT_EQ(base::PointF(content.topLeft() + base::Point(20, 20)), manager.pointerPosition());
         });
 
         c.lock(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
@@ -1562,18 +1565,18 @@ TEST_F(SeatProtocolTest, LocksOnSeveralSubsurfacesSurviveBreakingAndPointerRelea
 {
     run([&](Client& c) {
         c.getPointer();
-        wl_surface* parent = c.makeSurface(QSize(120, 120));
+        wl_surface* parent = c.makeSurface(base::Size(120, 120));
         std::vector<wl_subsurface*> subs;
         std::vector<wl_surface*> children;
         for (int i = 0; i < 3; ++i) {
-            children.push_back(c.makeSurface(QSize(20, 20)));
+            children.push_back(c.makeSurface(base::Size(20, 20)));
             subs.push_back(wl_subcompositor_get_subsurface(c.subcompositor, children.back(), parent));
             wl_subsurface_set_position(subs.back(), 10 + i * 30, 10);
         }
         wl_surface_commit(parent);
         c.sync();
-        const QRect content = activateWindow(0, QPoint(100, 100));
-        check([&] { manager.onPointerMotionAbsolute(at(1), content.topLeft() + QPoint(15, 15)); });
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
+        check([&] { manager.onPointerMotionAbsolute(at(1), base::PointF(content.topLeft() + base::Point(15, 15))); });
         for (wl_surface* child : children)
             c.lock(child, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
         c.sync();
@@ -1585,8 +1588,8 @@ TEST_F(SeatProtocolTest, LocksOnSeveralSubsurfacesSurviveBreakingAndPointerRelea
         c.pointer = nullptr;
         c.sync();
         check([&] {
-            manager.onPointerMotionAbsolute(at(2), QPointF(50, 50));
-            manager.onPointerMotion(at(3), QPointF(5, 5));
+            manager.onPointerMotionAbsolute(at(2), base::PointF(50, 50));
+            manager.onPointerMotion(at(3), base::PointF(5, 5));
             manager.onPointerButton(at(4), BTN_LEFT, true);
             manager.onPointerButton(at(5), BTN_LEFT, false);
             EXPECT_FALSE(seat.pointerConstraints()->isLocked());
@@ -1597,7 +1600,7 @@ TEST_F(SeatProtocolTest, LocksOnSeveralSubsurfacesSurviveBreakingAndPointerRelea
         for (wl_surface* child : children)
             c.destroySurface(child);
         c.sync();
-        check([&] { manager.onPointerMotion(at(6), QPointF(5, 5)); });
+        check([&] { manager.onPointerMotion(at(6), base::PointF(5, 5)); });
         c.sync();
     });
 }
@@ -1612,7 +1615,7 @@ TEST_F(SeatProtocolTest, ALockOnASurfaceWithoutAWindowStaysInactive)
         c.lock(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
         c.sync();
         check([&] {
-            manager.onPointerMotionAbsolute(at(1), QPointF(10, 10));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(10, 10));
             manager.onPointerButton(at(2), BTN_LEFT, true);
             manager.onPointerButton(at(3), BTN_LEFT, false);
             EXPECT_EQ(nullptr, seat.pointerConstraints()->active());
@@ -1621,7 +1624,7 @@ TEST_F(SeatProtocolTest, ALockOnASurfaceWithoutAWindowStaysInactive)
         EXPECT_TRUE(c.observed.constraintEvents.empty());
         wl_surface_destroy(surface);
         c.sync();
-        check([&] { manager.onPointerMotion(at(4), QPointF(5, 5)); });
+        check([&] { manager.onPointerMotion(at(4), base::PointF(5, 5)); });
         c.sync();
         EXPECT_EQ(0, wl_display_get_error(c.display));
     });
@@ -1631,7 +1634,7 @@ TEST_F(SeatProtocolTest, ASecondConstraintOnASurfaceIsAProtocolError)
 {
     run([&](Client& c) {
         c.getPointer();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
         c.lock(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
         c.confine(surface, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_ONESHOT);
@@ -1648,17 +1651,17 @@ TEST_F(SeatProtocolTest, AShortcutsInhibitorIsActiveWithKeyboardFocus)
     run([&](Client& c) {
         c.getPointer();
         c.getKeyboard();
-        wl_surface* first = c.makeSurface(QSize(100, 100));
-        c.makeSurface(QSize(100, 100));
+        wl_surface* first = c.makeSurface(base::Size(100, 100));
+        c.makeSurface(base::Size(100, 100));
         c.sync();
-        activateWindow(1, QPoint(400, 100));
-        const QRect content = activateWindow(0, QPoint(100, 100));
+        activateWindow(1, base::Point(400, 100));
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
         c.inhibitShortcuts(first);
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"active"}), c.observed.constraintEvents);
 
-        activateWindow(1, QPoint());
-        activateWindow(0, QPoint());
+        activateWindow(1, base::Point());
+        activateWindow(0, base::Point());
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"active", "inactive", "active"}),
                   c.observed.constraintEvents);
@@ -1668,13 +1671,13 @@ TEST_F(SeatProtocolTest, AShortcutsInhibitorIsActiveWithKeyboardFocus)
             EXPECT_TRUE(seat.breakInputCapture());
             EXPECT_FALSE(seat.shortcutsInhibition()->isActive());
         });
-        activateWindow(1, QPoint());
-        activateWindow(0, QPoint());
+        activateWindow(1, base::Point());
+        activateWindow(0, base::Point());
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"active", "inactive", "active", "inactive"}),
                   c.observed.constraintEvents);
         check([&] {
-            manager.onPointerMotionAbsolute(at(1), content.center());
+            manager.onPointerMotionAbsolute(at(1), base::PointF(wm::centerPixel(content)));
             manager.onPointerButton(at(2), BTN_LEFT, true);
             manager.onPointerButton(at(3), BTN_LEFT, false);
             EXPECT_TRUE(seat.shortcutsInhibition()->isActive());
@@ -1697,23 +1700,23 @@ TEST_F(SeatProtocolTest, SwipePinchAndHoldGesturesReachTheSurfaceUnderThePointer
         ASSERT_EQ(3u, c.globals["zwp_pointer_gestures_v1"].second);
         c.getPointer();
         c.getGestures();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        const QRect content = activateWindow(0, QPoint(100, 100));
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
         check([&] {
-            manager.onPointerMotionAbsolute(at(1), content.center());
+            manager.onPointerMotionAbsolute(at(1), base::PointF(wm::centerPixel(content)));
             manager.onPointerGestureBegin(at(2), input::GestureType::Swipe, 3);
-            manager.onPointerGestureUpdate(at(3), input::GestureType::Swipe, QPointF(4, -2),
-                                           QPointF(4, -2), 1, 0);
+            manager.onPointerGestureUpdate(at(3), input::GestureType::Swipe, base::PointF(4, -2),
+                                           base::PointF(4, -2), 1, 0);
             manager.onPointerGestureEnd(at(4), input::GestureType::Swipe, false);
             manager.onPointerGestureBegin(at(5), input::GestureType::Pinch, 2);
-            manager.onPointerGestureUpdate(at(6), input::GestureType::Pinch, QPointF(1, 1),
-                                           QPointF(1, 1), 1.5, 10);
+            manager.onPointerGestureUpdate(at(6), input::GestureType::Pinch, base::PointF(1, 1),
+                                           base::PointF(1, 1), 1.5, 10);
             manager.onPointerGestureEnd(at(7), input::GestureType::Pinch, true);
             manager.onPointerGestureBegin(at(8), input::GestureType::Hold, 2);
             manager.onPointerGestureEnd(at(9), input::GestureType::Hold, false);
             // The pointer does not move with a gesture.
-            EXPECT_EQ(QPointF(content.center()), manager.pointerPosition());
+            EXPECT_EQ(base::PointF(wm::centerPixel(content)), manager.pointerPosition());
         });
         c.sync();
         EXPECT_EQ(std::vector<std::string>({"swipe_begin 3", "swipe_update 4 -2", "swipe_end 0",
@@ -1732,22 +1735,22 @@ TEST_F(SeatProtocolTest, AGestureEndsCancelledWhenItsSurfaceGoesAndStartsNowhere
     run([&](Client& c) {
         c.getPointer();
         c.getGestures();
-        wl_surface* surface = c.makeSurface(QSize(100, 100));
+        wl_surface* surface = c.makeSurface(base::Size(100, 100));
         c.sync();
-        const QRect content = activateWindow(0, QPoint(100, 100));
+        const base::Rect content = activateWindow(0, base::Point(100, 100));
         check([&] {
             // Nothing under the pointer: nothing begins, and nothing ends.
-            manager.onPointerMotionAbsolute(at(1), QPointF(700, 500));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(700, 500));
             manager.onPointerGestureBegin(at(2), input::GestureType::Swipe, 3);
-            manager.onPointerGestureUpdate(at(3), input::GestureType::Swipe, QPointF(4, 0),
-                                           QPointF(4, 0), 1, 0);
+            manager.onPointerGestureUpdate(at(3), input::GestureType::Swipe, base::PointF(4, 0),
+                                           base::PointF(4, 0), 1, 0);
             manager.onPointerGestureEnd(at(4), input::GestureType::Swipe, false);
         });
         c.sync();
         EXPECT_TRUE(c.observed.gestureEvents.empty());
 
         check([&] {
-            manager.onPointerMotionAbsolute(at(5), content.center());
+            manager.onPointerMotionAbsolute(at(5), base::PointF(wm::centerPixel(content)));
             manager.onPointerGestureBegin(at(6), input::GestureType::Pinch, 2);
         });
         c.sync();
@@ -1763,8 +1766,8 @@ TEST_F(SeatProtocolTest, AGestureEndsCancelledWhenItsSurfaceGoesAndStartsNowhere
 
         // The rest of the gesture goes nowhere.
         check([&] {
-            manager.onPointerGestureUpdate(at(7), input::GestureType::Pinch, QPointF(1, 1),
-                                           QPointF(1, 1), 2, 0);
+            manager.onPointerGestureUpdate(at(7), input::GestureType::Pinch, base::PointF(1, 1),
+                                           base::PointF(1, 1), 2, 0);
             manager.onPointerGestureEnd(at(8), input::GestureType::Pinch, false);
         });
         c.sync();

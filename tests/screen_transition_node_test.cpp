@@ -7,6 +7,7 @@
 #include "fake_renderer.h"
 #include "scene/scene.h"
 #include "scene/screen_transition_node.h"
+#include "base/geometry.h"
 
 using namespace cutefish;
 using Transition = scene::ScreenTransitionNode;
@@ -16,15 +17,15 @@ namespace {
 class SnapshotTexture : public render::Texture
 {
 public:
-    explicit SnapshotTexture(QSize size)
+    explicit SnapshotTexture(base::Size size)
         : m_size(size)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 class SnapshotRenderer : public testsupport::FakeRenderer
@@ -32,18 +33,19 @@ class SnapshotRenderer : public testsupport::FakeRenderer
 public:
     int captures = 0;
 
-    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
                          const std::function<void()> &paint) override
     {
         ++captures;
         paint();
-        texture = std::make_unique<SnapshotTexture>(bounds.size() * 2);
+        texture = std::make_unique<SnapshotTexture>(
+                base::Size(bounds.width() * 2, bounds.height() * 2));
         return true;
     }
 };
 
 struct Fixture {
-    qint64 now = 1000;
+    int64_t now = 1000;
     scene::Scene scene;
     Transition *transition = nullptr;
     SnapshotRenderer renderer;
@@ -61,12 +63,12 @@ struct Fixture {
         transition->setGeometry({0, 0, 1920, 1080});
     }
 
-    void start(int degrees = 90, QSize snapshot = {1920, 1080})
+    void start(int degrees = 90, base::Size snapshot = {1920, 1080})
     {
         Transition::Outputs outputs;
         auto texture = std::make_unique<SnapshotTexture>(snapshot);
         outgoing = texture.get();
-        outputs[QStringLiteral("Virtual-1")] = {std::move(texture), degrees};
+        outputs["Virtual-1"] = {std::move(texture), degrees};
         transition->start(
                 std::move(outputs),
                 [this](render::Renderer &) {
@@ -78,12 +80,11 @@ struct Fixture {
                 1000);
     }
 
-    QList<testsupport::FakeRenderer::Call>
-    paint(const QString &output = QStringLiteral("Virtual-1"),
-          const QRect &viewport = {0, 0, 960, 540})
+    auto paint(const std::string &output = "Virtual-1",
+          const base::Rect &viewport = {0, 0, 960, 540})
     {
         renderer.calls.clear();
-        renderer.setOutputContext({output, viewport, QSize(1920, 1080), 2, 0, 0, {}});
+        renderer.setOutputContext({output, viewport, base::Size(1920, 1080), 2, 0, 0, {}});
         transition->render(renderer);
         return renderer.calls;
     }
@@ -100,10 +101,10 @@ TEST(ScreenTransitionNode, RotationHoldsTheOutgoingFrameOverAMask)
     f.now += 500;
     const auto calls = f.paint();
     ASSERT_EQ(calls.size(), 2);
-    EXPECT_EQ(calls[0].kind, QStringLiteral("fill"));
-    EXPECT_EQ(calls[0].rect, QRect(0, 0, 960, 540));
+    EXPECT_EQ(calls[0].kind, "fill");
+    EXPECT_EQ(calls[0].rect, base::Rect(0, 0, 960, 540));
     EXPECT_EQ(calls[1].texture, f.outgoing);
-    EXPECT_EQ(calls[1].target, QRectF(0, 0, 960, 540));
+    EXPECT_EQ(calls[1].target, base::RectF(0, 0, 960, 540));
     EXPECT_EQ(calls[1].mapping, Transition::aboutCenter({480, 270}, -180));
     EXPECT_FLOAT_EQ(calls[1].alpha, 1);
     EXPECT_FALSE(f.transition->isAnimating());
@@ -122,7 +123,7 @@ TEST(ScreenTransitionNode, RotationCopiesTheNewContentAndAnimatesBothLayers)
     EXPECT_EQ(f.renderer.captures, 1);
     EXPECT_EQ(f.incomingPaints, 1);
     ASSERT_EQ(calls.size(), 3);
-    EXPECT_EQ(calls[0].kind, QStringLiteral("fill"));
+    EXPECT_EQ(calls[0].kind, "fill");
     EXPECT_NE(calls[1].texture, f.outgoing);
     EXPECT_EQ(calls[2].texture, f.outgoing);
     // The outgoing landscape frame is turned upright over the portrait viewport.
@@ -137,7 +138,7 @@ TEST(ScreenTransitionNode, RotationCopiesTheNewContentAndAnimatesBothLayers)
     EXPECT_LT(calls[2].alpha, 1);
 
     f.now += Transition::kRotationDurationMs;
-    EXPECT_TRUE(f.paint().isEmpty());
+    EXPECT_TRUE(f.paint().empty());
     EXPECT_FALSE(f.transition->isActive());
 }
 
@@ -150,7 +151,7 @@ TEST(ScreenTransitionNode, UnturnedFrameHoldsThenFadesOverTheNewContent)
     auto calls = f.paint();
     ASSERT_EQ(calls.size(), 2);
     EXPECT_EQ(calls[1].texture, f.outgoing);
-    EXPECT_EQ(calls[1].target, QRectF(0, 0, 960, 540));
+    EXPECT_EQ(calls[1].target, base::RectF(0, 0, 960, 540));
     EXPECT_EQ(calls[1].mapping, Transition::aboutCenter({480, 270}, 0));
     EXPECT_FLOAT_EQ(calls[1].alpha, 1);
 
@@ -165,7 +166,7 @@ TEST(ScreenTransitionNode, UnturnedFrameHoldsThenFadesOverTheNewContent)
     EXPECT_GT(calls[2].alpha, 0);
     EXPECT_LT(calls[2].alpha, 1);
     f.now += Transition::kRotationDurationMs;
-    EXPECT_TRUE(f.paint().isEmpty());
+    EXPECT_TRUE(f.paint().empty());
 }
 
 TEST(ScreenTransitionNode, RotationStartsAtTheDeadlineWithoutReadyContent)
@@ -218,9 +219,9 @@ TEST(ScreenTransitionNode, RotationSampleMatchesUpstreamLayers)
 
 TEST(ScreenTransitionNode, CoverRectTurnsTheOutgoingFrame)
 {
-    const QRectF cover = Transition::coverRect({1920, 1080}, 90, {0, 0, 1080, 1920});
-    EXPECT_EQ(cover, QRectF(-420, 420, 1920, 1080));
-    EXPECT_EQ(Transition::coverRect({1920, 1080}, 0, {0, 0, 960, 540}), QRectF(0, 0, 960, 540));
+    const base::RectF cover = Transition::coverRect({1920, 1080}, 90, {0, 0, 1080, 1920});
+    EXPECT_EQ(cover, base::RectF(-420, 420, 1920, 1080));
+    EXPECT_EQ(Transition::coverRect({1920, 1080}, 0, {0, 0, 960, 540}), base::RectF(0, 0, 960, 540));
 }
 
 TEST(ScreenTransitionNode, FastOutLinearInMatchesChromium)

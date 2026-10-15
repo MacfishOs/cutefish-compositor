@@ -80,7 +80,7 @@ void PrivilegedClients::onConnectionDestroyed(wl_listener *listener, void *)
     // The listener is removed with the client; do not touch it again.
     connection->listening = false;
     connection->client = nullptr;
-    qCInfo(cfWayland) << "Trusted" << connection->label << "client disconnected";
+    CF_INFO(cfWayland) << "Trusted" << connection->label << "client disconnected";
     if (connection->disconnected)
         connection->disconnected();
 }
@@ -112,7 +112,7 @@ wl_client *PrivilegedClients::adopt(TrustedConnection &connection, int fd)
 
     wl_client *client = wl_client_create(m_display, fd);
     if (!client) {
-        qCWarning(cfWayland) << "Cannot create the trusted" << connection.label << "client";
+        CF_WARNING(cfWayland) << "Cannot create the trusted" << connection.label << "client";
         close(fd);
         return nullptr;
     }
@@ -123,7 +123,7 @@ wl_client *PrivilegedClients::adopt(TrustedConnection &connection, int fd)
     wl_client_add_destroy_listener(client, &connection.destroy.listener);
     connection.listening = true;
 
-    qCInfo(cfWayland) << "Trusted" << connection.label << "client adopted";
+    CF_INFO(cfWayland) << "Trusted" << connection.label << "client adopted";
     return client;
 }
 

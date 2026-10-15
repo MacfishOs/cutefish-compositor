@@ -16,10 +16,11 @@ struct SpringParameters {
     double dampingRatio = 1;
 };
 
-// CUTEFISH_ANIMATION_DURATION_SCALE stretches every spring and tween, the way
+// --animation-duration-scale stretches every spring and tween, the way
 // ui::ScopedAnimationDurationScaleMode stretches Chromium's animations, so
-// motion can be judged in slow motion. 1 when unset or not a positive number.
+// motion can be judged in slow motion. 1 unless set to a positive number.
 double durationScale();
+void setDurationScale(double scale);
 
 // gfx::CubicBezier::Solve for a timing curve from (0, 0) to (1, 1), sampled at
 // `x`, which is clamped to [0, 1].

@@ -9,13 +9,11 @@
 #include <memory>
 #include <vector>
 
-#include <QPoint>
-#include <QRect>
-#include <QRegion>
-#include <QString>
+#include <string>
 #include <deque>
 
 #include "render/renderer.h"
+#include "base/region.h"
 
 namespace cutefish::scene {
 
@@ -25,12 +23,12 @@ namespace cutefish::scene {
 class Node
 {
 public:
-    explicit Node(const QString &name = QString());
+    explicit Node(std::string name = {});
     Node(const Node &) = delete;
     Node &operator=(const Node &) = delete;
     virtual ~Node();
 
-    QString name() const { return m_name; }
+    const std::string &name() const { return m_name; }
 
     Node *parent() const { return m_parent; }
 
@@ -52,19 +50,19 @@ public:
 
     size_t childrenBelowParent() const { return m_childrenBelowParent; }
 
-    QRect geometry() const { return m_geometry; }
+    base::Rect geometry() const { return m_geometry; }
 
-    void setGeometry(const QRect &geometry);
+    void setGeometry(const base::Rect &geometry);
 
-    QPoint position() const { return m_geometry.topLeft(); }
+    base::Point position() const { return m_geometry.topLeft(); }
 
-    void setPosition(const QPoint &position) { setGeometry(QRect(position, m_geometry.size())); }
+    void setPosition(const base::Point &position) { setGeometry(base::Rect(position, m_geometry.size())); }
 
     // Position in output coordinates.
-    QPoint absolutePosition() const;
-    QRect absoluteGeometry() const;
+    base::Point absolutePosition() const;
+    base::Rect absoluteGeometry() const;
 
-    virtual QRect absolutePaintBounds() const { return absoluteGeometry(); }
+    virtual base::Rect absolutePaintBounds() const { return absoluteGeometry(); }
 
     bool isVisible() const { return m_visible; }
 
@@ -73,7 +71,7 @@ public:
     void setChangeCallback(std::function<void()> callback) { m_changed = std::move(callback); }
 
     void notifyChanged() const;
-    void notifyDamage(const QRegion &damage);
+    void notifyDamage(const base::Region &damage);
 
     // Runs the change callbacks without changing anything, for a hidden child
     // that still paints. Nothing runs under a hidden ancestor.
@@ -89,7 +87,7 @@ public:
 
     uint64_t contentRevision() const { return m_contentRevision; }
 
-    QRegion damageSince(uint64_t revision) const;
+    base::Region damageSince(uint64_t revision) const;
 
     // True only if this node and every ancestor is visible.
     bool isEffectivelyVisible() const;
@@ -121,9 +119,9 @@ public:
     // Whether an output with this viewport and scale is about to draw the
     // subtree again whole, as into a texture kept between frames that no
     // longer holds it, rather than only where it changed.
-    virtual bool redrawsSubtree(const QRect &, double) const { return false; }
+    virtual bool redrawsSubtree(const base::Rect &, double) const { return false; }
 
-    virtual bool acceptsInput(const QPointF &) const { return true; }
+    virtual bool acceptsInput(const base::PointF &) const { return true; }
 
     // Drawn as usual, but left out of the input hit test, as aura's
     // ScopedWindowEventTargetingBlocker does for a window dragged with a drag.
@@ -175,7 +173,7 @@ public:
     virtual void releaseRenderResources();
 
 protected:
-    virtual void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const;
+    virtual void paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const;
 
     // render() whether or not this node itself is visible, for a subtree drawn
     // somewhere of its own while hidden, as a desk preview draws another desk.
@@ -189,14 +187,14 @@ private:
     const uint64_t m_damageId;
     mutable uint64_t m_revision = 0;
     uint64_t m_contentRevision = 0;
-    std::deque<std::pair<uint64_t, QRegion>> m_damageHistory;
+    std::deque<std::pair<uint64_t, base::Region>> m_damageHistory;
     std::function<void()> m_changed;
-    QString m_name;
+    std::string m_name;
     Node *m_parent = nullptr;
     std::vector<std::unique_ptr<Node>> m_children;
     // Paint order; mirrors m_children but is reordered by raise()/lower().
     std::vector<Node *> m_childOrder;
-    QRect m_geometry;
+    base::Rect m_geometry;
     bool m_visible = true;
     bool m_promotedToOverlay = false;
     bool m_eventTargetingBlocked = false;
@@ -208,7 +206,7 @@ private:
 class ColorNode : public Node
 {
 public:
-    explicit ColorNode(const render::Color &color, const QString &name = QString());
+    explicit ColorNode(const render::Color &color, std::string name = {});
 
     render::Color color() const { return m_color; }
 
@@ -222,7 +220,7 @@ public:
     }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const override;
+    void paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const override;
 
 private:
     render::Color m_color;
@@ -232,7 +230,7 @@ private:
 class TextureNode : public Node
 {
 public:
-    explicit TextureNode(render::Texture *texture, const QString &name = QString());
+    explicit TextureNode(render::Texture *texture, std::string name = {});
 
     render::Texture *texture() const { return m_texture; }
 
@@ -255,7 +253,7 @@ public:
     Content content() const override { return m_texture ? Content::Translucent : Content::None; }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const override;
+    void paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const override;
 
 private:
     render::Texture *m_texture = nullptr;

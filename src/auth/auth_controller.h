@@ -5,44 +5,23 @@
 #ifndef CUTEFISH_AUTH_AUTH_CONTROLLER_H
 #define CUTEFISH_AUTH_AUTH_CONTROLLER_H
 
-#include <QObject>
-#include <QString>
-#include <QStringList>
+#include <string>
+#include <vector>
 
 #include "auth/login_sessions.h"
+#include "base/signal.h"
 
 namespace cutefish::auth {
 
 class AuthBackend;
 
-class AuthController : public QObject
+class AuthController
 {
-    Q_OBJECT
-
-    Q_PROPERTY(int mode READ modeValue CONSTANT)
-    Q_PROPERTY(QString userName READ userName WRITE setUserName NOTIFY userChanged)
-    Q_PROPERTY(bool canSelectUser READ canSelectUser CONSTANT)
-    Q_PROPERTY(QString displayName READ displayName NOTIFY userChanged)
-    Q_PROPERTY(QString iconSource READ iconSource NOTIFY userChanged)
-    Q_PROPERTY(QString prompt READ prompt NOTIFY promptChanged)
-    Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY stateChanged)
-    Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
-    Q_PROPERTY(bool failed READ failed NOTIFY stateChanged)
-    Q_PROPERTY(bool succeeded READ succeeded NOTIFY stateChanged)
-    Q_PROPERTY(QStringList userNames READ userNames NOTIFY usersChanged)
-    Q_PROPERTY(int userIndex READ userIndex WRITE setUserIndex NOTIFY userChanged)
-    Q_PROPERTY(bool canPickUser READ canPickUser NOTIFY usersChanged)
-    Q_PROPERTY(bool typesUserName READ typesUserName NOTIFY usersChanged)
-    Q_PROPERTY(QStringList sessionNames READ sessionNames NOTIFY sessionsChanged)
-    Q_PROPERTY(int sessionIndex READ sessionIndex WRITE setSessionIndex NOTIFY sessionChanged)
-    Q_PROPERTY(bool canSelectSession READ canSelectSession NOTIFY sessionsChanged)
-
 public:
     enum Mode {
         Login,
         Lock,
     };
-    Q_ENUM(Mode)
 
     enum State {
         Idle,
@@ -50,31 +29,23 @@ public:
         Failed,
         Succeeded,
     };
-    Q_ENUM(State)
 
-    AuthController(Mode mode, AuthBackend *backend, QObject *parent = nullptr);
-    ~AuthController() override;
+    AuthController(Mode mode, AuthBackend *backend);
+    AuthController(const AuthController &) = delete;
+    AuthController &operator=(const AuthController &) = delete;
+    ~AuthController();
 
     Mode mode() const { return m_mode; }
-
-    int modeValue() const { return int(m_mode); }
-
     State state() const { return m_state; }
 
-    QString userName() const { return m_userName; }
-
-    QString displayName() const { return m_displayName; }
-
-    QString iconSource() const { return m_iconSource; }
-
-    QString prompt() const { return m_prompt; }
-
-    QString errorMessage() const { return m_errorMessage; }
+    std::string userName() const { return m_userName; }
+    std::string displayName() const { return m_displayName; }
+    std::string iconSource() const { return m_iconSource; }
+    std::string prompt() const { return m_prompt; }
+    std::string errorMessage() const { return m_errorMessage; }
 
     bool busy() const { return m_state == Authenticating; }
-
     bool failed() const { return m_state == Failed; }
-
     bool succeeded() const { return m_state == Succeeded; }
 
     bool canSelectUser() const { return m_mode == Login; }
@@ -82,74 +53,62 @@ public:
     // Login only: the accounts to log in as, by display name, and which one.
     // With a single account there is nothing to pick; with none found the
     // name is typed instead.
-    QStringList userNames() const;
-
-    int userIndex() const { return int(m_users.indexOf(m_userName)); }
-
+    std::vector<std::string> userNames() const;
+    int userIndex() const;
     void setUserIndex(int index);
-
     bool canPickUser() const { return m_users.size() > 1; }
-
-    bool typesUserName() const { return m_mode == Login && m_users.isEmpty(); }
-
-    void setUsers(QStringList users);
+    bool typesUserName() const { return m_mode == Login && m_users.empty(); }
+    void setUsers(std::vector<std::string> users);
 
     // Login only: the wayland-sessions the login can start, and which one.
     // Choosing a user picks the session that user logged in with last.
-    QStringList sessionNames() const;
-
+    std::vector<std::string> sessionNames() const;
     int sessionIndex() const { return m_sessionIndex; }
-
     void setSessionIndex(int index);
-
     bool canSelectSession() const { return m_sessions.size() > 1; }
+    void setSessions(std::vector<LoginSession> sessions);
 
-    void setSessions(QList<LoginSession> sessions);
+    void setUserName(const std::string &name);
 
-    void setUserName(const QString &name);
     void start();
-
-    Q_INVOKABLE void authenticate(QString password);
-
+    // Wipes the password it is given once it holds it as a Secret.
+    void authenticate(std::string password);
     // Back to Idle: clears the error and the prompt. Called when the user
     // starts typing again after a rejection.
-    Q_INVOKABLE void reset();
+    void reset();
 
-Q_SIGNALS:
-    void stateChanged();
-    void userChanged();
-    void promptChanged();
-    void sessionChanged();
-    void sessionsChanged();
-    void usersChanged();
-
+    base::Signal<> stateChanged;
+    base::Signal<> userChanged;
+    base::Signal<> promptChanged;
+    base::Signal<> sessionChanged;
+    base::Signal<> sessionsChanged;
+    base::Signal<> usersChanged;
     // The credential was rejected. The view shakes and clears its field; it
     // does not decide anything about the session.
-    void authenticationFailed();
-
+    base::Signal<> authenticationFailed;
     // The backend confirmed, and has been told to proceed. Emitted once.
-    void authenticationSucceeded();
+    base::Signal<> authenticationSucceeded;
 
 private:
-    void setState(State state, const QString &errorMessage = QString());
+    void setState(State state, const std::string &errorMessage = {});
     void resolveUser();
-    void selectSessionFor(const QString &userName);
+    void selectSessionFor(const std::string &userName);
 
     Mode m_mode;
     AuthBackend *m_backend = nullptr;
     State m_state = Idle;
-    QString m_userName;
-    QString m_displayName;
-    QString m_iconSource;
-    QString m_prompt;
-    QString m_errorMessage;
-    QStringList m_users;
-    QList<LoginSession> m_sessions;
+    std::string m_userName;
+    std::string m_displayName;
+    std::string m_iconSource;
+    std::string m_prompt;
+    std::string m_errorMessage;
+    std::vector<std::string> m_users;
+    std::vector<LoginSession> m_sessions;
     int m_sessionIndex = -1;
-
     // accept() is irreversible - it unlocks the session or starts one - so it
     // is guarded rather than merely called from a single place.
     bool m_accepted = false;
+    std::vector<base::Subscription> m_backendSubscriptions;
 };
 
 } // namespace cutefish::auth

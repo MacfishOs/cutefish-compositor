@@ -18,26 +18,26 @@ namespace {
 
 display::DisplayId id(const char* value)
 {
-    return display::DisplayId(QString::fromLatin1(value));
+    return display::DisplayId(std::string(value));
 }
 
-display::DisplayMode mode(QSize size)
+display::DisplayMode mode(base::Size size)
 {
     return {size, 60000, 148500, size.width() + 100, size.height() + 50, 0,
-            QStringLiteral("mode"), true};
+            "mode", true};
 }
 
-display::DisplaySnapshot output(const char* name, QSize size)
+display::DisplaySnapshot output(const char* name, base::Size size)
 {
     display::DisplaySnapshot value;
     value.sessionId = id(name);
-    value.persistentKey = QStringLiteral("edid-") + QString::fromLatin1(name);
-    value.portKey = QStringLiteral("port-") + QString::fromLatin1(name);
-    value.connectorName = QString::fromLatin1(name);
-    value.devicePath = QStringLiteral("/dev/dri/card0");
-    value.physicalSizeMm = QSize(600, 340);
+    value.persistentKey = "edid-" + std::string(name);
+    value.portKey = "port-" + std::string(name);
+    value.connectorName = std::string(name);
+    value.devicePath = "/dev/dri/card0";
+    value.physicalSizeMm = base::Size(600, 340);
     value.modes = {mode(size)};
-    value.currentMode = value.modes.first();
+    value.currentMode = value.modes.front();
     value.capabilities = display::DisplayCapability::Scale |
         display::DisplayCapability::Rotation;
     return value;
@@ -61,20 +61,20 @@ display::DisplayConfiguration configuration(const display::HardwareSnapshot& har
 
 TEST(DisplayConfigurationValidator, NormalizesAnExactMixedScaleRotatedRequest)
 {
-    const display::HardwareSnapshot hardware {QStringLiteral("instance"), QStringLiteral("seat0"),
+    const display::HardwareSnapshot hardware {"instance", "seat0",
                                               3,
                                               {output("internal", {1920, 1080}),
                                                output("external", {2560, 1440})}};
     const auto result = display::DisplayConfigurationValidator::validateExtended(
         hardware, 7, configuration(hardware));
-    ASSERT_TRUE(result.succeeded) << result.error.message.toStdString();
-    EXPECT_EQ(result.logicalBounds.value(id("internal")), QRect(0, 0, 1920, 1080));
-    EXPECT_EQ(result.logicalBounds.value(id("external")), QRect(1920, 0, 1152, 2048));
+    ASSERT_TRUE(result.succeeded) << result.error.message;
+    EXPECT_EQ(result.logicalBounds.at(id("internal")), base::Rect(0, 0, 1920, 1080));
+    EXPECT_EQ(result.logicalBounds.at(id("external")), base::Rect(1920, 0, 1152, 2048));
 }
 
 TEST(DisplayConfigurationValidator, RejectsStaleUnknownUnsupportedAndAllDisabledRequests)
 {
-    display::HardwareSnapshot hardware {QStringLiteral("instance"), QStringLiteral("seat0"), 3,
+    display::HardwareSnapshot hardware {"instance", "seat0", 3,
                                         {output("internal", {1920, 1080}),
                                          output("external", {2560, 1440})}};
     auto requested = configuration(hardware);
@@ -117,7 +117,7 @@ TEST(DisplayConfigurationValidator, RejectsStaleUnknownUnsupportedAndAllDisabled
 
 TEST(DisplayConfigurationValidator, AcceptsDifferentModeSoftwareMirrorDestinations)
 {
-    display::HardwareSnapshot hardware {QStringLiteral("instance"), QStringLiteral("seat0"), 3,
+    display::HardwareSnapshot hardware {"instance", "seat0", 3,
                                         {output("internal", {1920, 1080}),
                                          output("external", {2560, 1440})}};
     for (auto& display : hardware.displays)
@@ -128,7 +128,7 @@ TEST(DisplayConfigurationValidator, AcceptsDifferentModeSoftwareMirrorDestinatio
     requested.mirrorGroups = {{id("internal"), id("external")}};
     const auto result =
         display::DisplayConfigurationValidator::validateExtended(hardware, 7, requested);
-    ASSERT_TRUE(result.succeeded) << result.error.message.toStdString();
+    ASSERT_TRUE(result.succeeded) << result.error.message;
     EXPECT_TRUE(result.logicalBounds.contains(id("internal")));
     EXPECT_FALSE(result.logicalBounds.contains(id("external")));
 }

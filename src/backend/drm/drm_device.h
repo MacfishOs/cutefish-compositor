@@ -39,13 +39,13 @@ public:
 
     bool atomicCommit(const AtomicRequest &request, uint32_t flags, void *userData) override;
 
-    bool setCursor(uint32_t crtcId, uint32_t handle, const QSize &size,
-                   const QPoint &hotspot) override;
-    bool moveCursor(uint32_t crtcId, const QPoint &position) override;
+    bool setCursor(uint32_t crtcId, uint32_t handle, const base::Size &size,
+                   const base::Point &hotspot) override;
+    bool moveCursor(uint32_t crtcId, const base::Point &position) override;
 
-    QSize maxCursorSize() const override { return m_maxCursorSize; }
+    base::Size maxCursorSize() const override { return m_maxCursorSize; }
 
-    bool createDumbBuffer(const QSize &size, DumbBufferInfo *info) override;
+    bool createDumbBuffer(const base::Size &size, DumbBufferInfo *info) override;
     bool destroyDumbBuffer(uint32_t handle) override;
     void *mapDumbBuffer(uint32_t handle, uint64_t size) override;
     void unmapDumbBuffer(void *data, uint64_t size) override;
@@ -55,7 +55,7 @@ public:
 private:
     int m_fd = -1;
     gbm_device *m_gbm = nullptr;
-    QSize m_maxCursorSize;
+    base::Size m_maxCursorSize;
     // drmModeSetCursor2 carries the hotspot; drivers without it need the
     // caller to fold the hotspot into the cursor position instead.
     bool m_hasCursor2 = true;

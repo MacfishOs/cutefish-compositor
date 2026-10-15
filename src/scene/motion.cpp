@@ -42,17 +42,20 @@ double bezierParameter(double x1, double x2, double x)
 
 } // namespace
 
+namespace {
+
+double s_durationScale = 1;
+
+} // namespace
+
 double durationScale()
 {
-    static const double scale = [] {
-        const char *value = std::getenv("CUTEFISH_ANIMATION_DURATION_SCALE");
-        if (!value)
-            return 1.0;
-        char *end = nullptr;
-        const double parsed = std::strtod(value, &end);
-        return end != value && std::isfinite(parsed) && parsed > 0 ? parsed : 1.0;
-    }();
-    return scale;
+    return s_durationScale;
+}
+
+void setDurationScale(double scale)
+{
+    s_durationScale = std::isfinite(scale) && scale > 0 ? scale : 1;
 }
 
 double cubicBezier(double x1, double y1, double x2, double y2, double x)

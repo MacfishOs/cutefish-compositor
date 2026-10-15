@@ -8,10 +8,6 @@
 #include <cstring>
 #include <vector>
 
-#include <QCoreApplication>
-#include <QSocketNotifier>
-
-#include "base/event_loop.h"
 #include "core/logging.h"
 #include "render/egl_context.h"
 #include "render/gl_texture.h"
@@ -47,7 +43,7 @@ ui::EmbeddedGpu *currentGpu(const std::shared_ptr<render::EglContext> &context)
     if (host.failed || !host.allowed || !context)
         return nullptr;
     if (host.gpu && host.gpu->isAbandoned()) {
-        qCWarning(cfCompositor) << "The panels' GPU context was lost; drawing them on the CPU";
+        CF_WARNING(cfCompositor) << "The panels' GPU context was lost; drawing them on the CPU";
         host.gpu.reset();
         host.failed = true;
         return nullptr;
@@ -55,7 +51,7 @@ ui::EmbeddedGpu *currentGpu(const std::shared_ptr<render::EglContext> &context)
     if (!host.gpu) {
         host.gpu = ui::EmbeddedGpu::createForCurrentContext();
         if (!host.gpu) {
-            qCWarning(cfCompositor) << "Skia cannot draw on the renderer's context; drawing the panels on the CPU";
+            CF_WARNING(cfCompositor) << "Skia cannot draw on the renderer's context; drawing the panels on the CPU";
             host.failed = true;
             return nullptr;
         }
@@ -69,15 +65,9 @@ ui::EmbeddedGpu *currentGpu(const std::shared_ptr<render::EglContext> &context)
 
 ui::Application &application()
 {
-    static ui::Application *instance = [] {
-        auto *created = new ui::Application(0, nullptr, ui::Application::Platform::Embedded);
-        // Owned by Qt's application, so it goes before the loop it reads.
-        auto *notifier = new QSocketNotifier(created->loop().fd(), QSocketNotifier::Read,
-                                             QCoreApplication::instance());
-        QObject::connect(notifier, &QSocketNotifier::activated, notifier,
-                         [created] { created->loop().dispatch(); });
-        return created;
-    }();
+    // On the thread's current loop, the main loop.
+    static ui::Application *instance =
+            new ui::Application(0, nullptr, ui::Application::Platform::Embedded);
     return *instance;
 }
 
@@ -112,25 +102,24 @@ bool PanelTexture::renderImage()
     if (!frame.pixels || frame.width <= 0 || frame.height <= 0)
         return false;
     m_gpuCurrent = false;
-    const QSize size(frame.width, frame.height);
+    const base::Size size(frame.width, frame.height);
     // The damage is since the window's last frame, which may have gone to the GPU.
-    const bool whole = m_image.size() != size || m_image.devicePixelRatio() != m_window->scale()
-            || m_imageBehind;
+    const bool whole = m_image.size() != size || m_imageScale != m_window->scale() || m_imageBehind;
     m_imageBehind = false;
     if (whole) {
         // The upload's format, so no frame converts it.
-        m_image = QImage(size, QImage::Format_RGBA8888_Premultiplied);
-        m_image.setDevicePixelRatio(m_window->scale());
+        m_image = ui::Bitmap(size, ui::Bitmap::Format::Rgba8888Premultiplied);
+        m_imageScale = m_window->scale();
     } else if (frame.damage.empty()) {
         return false;
     }
-    QRegion changed;
+    base::Region changed;
     if (whole)
-        changed = QRect(QPoint(), size);
+        changed = base::Rect(size);
     for (const ui::Rect &rect : frame.damage)
-        changed |= QRect(rect.x, rect.y, rect.width, rect.height) & QRect(QPoint(), size);
-    for (const QRect &rect : changed) {
-        for (int row = rect.top(); row <= rect.bottom(); ++row) {
+        changed |= base::Rect(rect.x, rect.y, rect.width, rect.height) & base::Rect(size);
+    for (const base::Rect &rect : changed) {
+        for (int row = rect.y(); row < rect.bottom(); ++row) {
             std::memcpy(m_image.scanLine(row) + size_t(rect.x()) * 4,
                         frame.pixels + size_t(row) * frame.stride + size_t(rect.x()) * 4,
                         size_t(rect.width()) * 4);
@@ -152,7 +141,7 @@ render::Texture *PanelTexture::texture(render::Renderer &renderer, bool dirty)
 
 render::Texture *PanelTexture::gpuTexture(render::Renderer &renderer, bool dirty)
 {
-    const QSize size(m_window->pixelWidth(), m_window->pixelHeight());
+    const base::Size size(m_window->pixelWidth(), m_window->pixelHeight());
     if (size.isEmpty() || &renderer == m_cpuRenderer || !gpuHost().allowed)
         return nullptr;
     auto *texture = dynamic_cast<render::GlTexture *>(m_gpuTexture.get());
@@ -195,7 +184,7 @@ render::Texture *PanelTexture::cpuTexture(render::Renderer &renderer, bool dirty
     if (m_cpuTexture && m_cpuTexture->size() == m_image.size()) {
         if (!m_pendingUpload.isEmpty()
             && !renderer.updateTexture(m_cpuTexture.get(), m_image.constBits(),
-                                       int(m_image.bytesPerLine()), render::PixelFormat::Rgba8888,
+                                       int(m_image.stride()), render::PixelFormat::Rgba8888,
                                        m_pendingUpload)) {
             m_cpuTexture.reset();
         }
@@ -206,10 +195,10 @@ render::Texture *PanelTexture::cpuTexture(render::Renderer &renderer, bool dirty
         // The renderer uploads the texture's own size and cannot see the
         // image's, so a panel redrawn at another size needs a new one.
         m_cpuTexture = renderer.createTexture(m_image.size(), m_image.constBits(),
-                                              int(m_image.bytesPerLine()),
+                                              int(m_image.stride()),
                                               render::PixelFormat::Rgba8888);
     }
-    m_pendingUpload = QRegion();
+    m_pendingUpload.clear();
     return m_cpuTexture.get();
 }
 
@@ -219,7 +208,7 @@ void PanelTexture::releaseRenderResources()
     m_cpuTexture.reset();
     m_gpuTexture.reset();
     m_gpuCurrent = false;
-    m_pendingUpload = QRect(QPoint(), m_image.size());
+    m_pendingUpload = m_image.rect();
     GpuHost &host = gpuHost();
     if (host.gpu && host.context) {
         {

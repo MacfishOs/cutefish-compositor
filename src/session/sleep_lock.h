@@ -4,10 +4,9 @@
 
 #pragma once
 
+#include "base/dbus.h"
+#include "base/timer.h"
 #include "session/session_state.h"
-#include <QDBusConnection>
-#include <QDBusUnixFileDescriptor>
-#include <QObject>
 
 namespace cutefish::session {
 class SessionController;
@@ -17,12 +16,13 @@ class SessionController;
 // sleep back until the lock is on every output, so waking never shows the
 // desktop. Upstream: ash/system/power/power_event_observer.cc, which delays
 // suspend the same way until the lock screen has been composited.
-class SleepLock : public QObject, public SessionObserver
+class SleepLock : public SessionObserver
 {
-    Q_OBJECT
 public:
-    explicit SleepLock(SessionController *session,
-                       QDBusConnection bus = QDBusConnection::systemBus());
+    // The system bus when no connection is given.
+    explicit SleepLock(SessionController *session, base::dbus::Connection *bus = nullptr);
+    SleepLock(const SleepLock &) = delete;
+    SleepLock &operator=(const SleepLock &) = delete;
     ~SleepLock() override;
 
     // Follows logind's PrepareForSleep and takes the inhibitor.
@@ -32,17 +32,19 @@ public:
 
     void onSessionStateChanged(SessionState state) override;
 
-private slots:
-    void prepareForSleep(bool sleeping);
-
 private:
+    void prepareForSleep(bool sleeping);
     void inhibit();
     void releaseWhenLocked();
 
     SessionController *m_session;
-    QDBusConnection m_bus;
-    QDBusUnixFileDescriptor m_inhibitor;
-    bool m_inhibiting = false;
+    base::dbus::Connection *m_bus;
+    base::dbus::Proxy m_manager;
+    base::dbus::Match m_prepareForSleep;
+    base::dbus::PendingCall m_inhibiting;
+    base::dbus::UnixFd m_inhibitor;
+    // Not from inside the controller's own state change.
+    base::Timer m_relock;
     bool m_sleeping = false;
     bool m_started = false;
 };

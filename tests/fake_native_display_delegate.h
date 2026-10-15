@@ -32,21 +32,21 @@ public:
     }
     ConfigureMode lastConfigureMode() const { return m_lastConfigureMode; }
 
-    void invalidate(uint64_t generation) { emit hardwareInvalidated(generation); }
+    void invalidate(uint64_t generation) { hardwareInvalidated(generation); }
 
     void takeDisplayControl(ControlCallback callback) override { callback(true); }
     void relinquishDisplayControl(ControlCallback callback) override { callback(true); }
     void queryHardware(QueryCallback callback) override;
     void configure(const display::DisplayConfiguration& configuration, ConfigureMode mode,
                    ConfigureCallback callback) override;
-    void setDisplayPower(const QList<display::DisplayId>& displays, PowerState state,
+    void setDisplayPower(const std::vector<display::DisplayId>& displays, PowerState state,
                          ConfigureCallback callback) override;
 
 private:
     display::HardwareSnapshot m_snapshot;
     std::optional<display::ConfigurationResult> m_nextResult;
     std::optional<display::DisplayConfiguration> m_lastConfiguration;
-    QList<display::DisplayId> m_lastPowerDisplays;
+    std::vector<display::DisplayId> m_lastPowerDisplays;
     PowerState m_lastPowerState = PowerState::On;
     ConfigureMode m_lastConfigureMode = ConfigureMode::TestOnly;
     int m_queryCount = 0;

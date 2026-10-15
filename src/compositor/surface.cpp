@@ -11,18 +11,18 @@
 #include "compositor/surface.h"
 
 #include <poll.h>
+#include <sys/epoll.h>
 
 #include <algorithm>
 #include <cmath>
 #include <utility>
 
-#include <QSocketNotifier>
-#include <QTimer>
-
+#include "base/event_loop.h"
 #include "compositor/compositor.h"
 #include "compositor/sub_surface.h"
 #include "compositor/surface_observer.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "core/scoped_fd.h"
 #include "render/drm_syncobj.h"
 #include "render/renderer.h"
@@ -45,31 +45,68 @@ bool transformSwapsAxes(Transform transform)
     }
 }
 
-// SkRegion, and QRegion after it, cannot represent a rect whose extent reaches
-// INT32_MAX; clients send exactly that to mean "all of it".
-QRect clampDamage(const QRect &rect)
+// SkRegion, and base::Region after it, cannot represent a rect whose extent
+// reaches INT32_MAX; clients send exactly that to mean "all of it".
+base::Rect clampDamage(const base::Rect &rect)
 {
     constexpr int kMax = 0x7FFFFFFE;
-    QRect result = rect;
+    base::Rect result = rect;
     if (result.width() == 0x7FFFFFFF)
         result.setWidth(kMax);
     if (result.height() == 0x7FFFFFFF)
         result.setHeight(kMax);
-    return result.intersected(QRect(-kMax / 2, -kMax / 2, kMax, kMax));
+    return result.intersected(base::Rect(-kMax / 2, -kMax / 2, kMax, kMax));
 }
+
+// The size of a surface without a buffer.
+constexpr base::Size kNoSize(-1, -1);
 
 // Held commits across all surfaces, so that the common case never walks a tree.
 size_t s_heldCommits = 0;
 uint64_t s_commitSequence = 0;
 
-struct NotifierDeleter {
-    // The notifier may be the one whose activation is being handled.
-    void operator()(QSocketNotifier *notifier) const
+// A readability watch on the main loop, removed with its owner. The watch may
+// remove itself from its own callback, so the id is shared with it.
+class FenceWatch
+{
+public:
+    FenceWatch() = default;
+    FenceWatch(FenceWatch &&) = default;
+    FenceWatch &operator=(FenceWatch &&) = default;
+    ~FenceWatch() { stop(); }
+
+    void start(int fd, std::function<void()> ready)
     {
-        notifier->setEnabled(false);
-        notifier->deleteLater();
+        stop();
+        base::EventLoop *loop = core::mainLoop();
+        m_id = std::make_shared<int>(0);
+        *m_id = loop->watch(fd, EPOLLIN, [loop, id = m_id, ready = std::move(ready)](uint32_t) {
+            // Level-triggered: a signalled fence behind an older commit would
+            // fire on every iteration.
+            loop->unwatch(std::exchange(*id, 0));
+            ready();
+        });
     }
+
+    void stop()
+    {
+        if (m_id && *m_id)
+            core::mainLoop()->unwatch(std::exchange(*m_id, 0));
+    }
+
+private:
+    std::shared_ptr<int> m_id;
 };
+
+// Edges inclusive, and never true when either rectangle has no width or no
+// height.
+bool rectFContains(const base::Rect &outer, const ui::RectF &inner)
+{
+    if (outer.width() == 0 || outer.height() == 0 || inner.width == 0 || inner.height == 0)
+        return false;
+    return inner.x >= outer.x() && inner.right() <= outer.right() && inner.y >= outer.y()
+            && inner.bottom() <= outer.bottom();
+}
 
 } // namespace
 
@@ -79,7 +116,7 @@ struct Surface::CommitRequest {
     struct Fence {
         // Readable once signalled: a sync_file or a syncobj eventfd.
         ScopedFd fd;
-        std::unique_ptr<QSocketNotifier, NotifierDeleter> notifier;
+        FenceWatch watch;
     };
 
     CommitRequest() = default;
@@ -100,7 +137,7 @@ struct Surface::CommitRequest {
     void addFence(ScopedFd fd)
     {
         if (fd.isValid())
-            fences.push_back(Fence {std::move(fd), nullptr});
+            fences.push_back(Fence {std::move(fd), {}});
     }
 
     bool isReady()
@@ -218,9 +255,9 @@ Surface::~Surface()
         m_node->parent()->removeChild(m_node);
 }
 
-void Surface::attach(const std::shared_ptr<Buffer> &buffer, const QPoint &offset)
+void Surface::attach(const std::shared_ptr<Buffer> &buffer, const base::Point &offset)
 {
-    m_pending.buffer = BufferAttachment {buffer, buffer ? buffer->size() : QSize()};
+    m_pending.buffer = BufferAttachment {buffer, buffer ? buffer->size() : kNoSize};
     m_pending.basicState.offset = offset;
 }
 
@@ -249,12 +286,12 @@ void Surface::setBufferRelease(std::shared_ptr<BufferRelease> release)
     m_pending.release = std::move(release);
 }
 
-void Surface::damage(const QRect &rect)
+void Surface::damage(const base::Rect &rect)
 {
     m_pending.damage += clampDamage(rect);
 }
 
-void Surface::damageBuffer(const QRect &rect)
+void Surface::damageBuffer(const base::Rect &rect)
 {
     m_pending.bufferDamage += clampDamage(rect);
 }
@@ -264,34 +301,35 @@ void Surface::requestFrameCallback(FrameCallback callback)
     m_pending.frameCallbacks.push_back(std::move(callback));
 }
 
-void Surface::setBackgroundBlur(const QRect &rect, int radius)
+void Surface::setBackgroundBlur(const base::Rect &rect, int radius)
 {
     m_pending.basicState.blurRect = rect;
     m_pending.basicState.blurRadius = radius;
 }
 
-QPainterPath Surface::backgroundBlurShape() const
+ui::Path Surface::backgroundBlurShape() const
 {
-    const QRect rect = backgroundBlurRect();
-    const QPainterPath &shape = m_state.basicState.blurShape;
+    const base::Rect rect = backgroundBlurRect();
+    const ui::Path &shape = m_state.basicState.blurShape;
     if (rect.isEmpty() || shape.isEmpty())
         return {};
     // Glass keeps its lens on the rectangle, so the shape may reach past it.
     if (glass().enabled)
         return shape;
-    if (QRectF(rect).contains(shape.controlPointRect()))
+    if (rectFContains(rect, shape.controlPointRect()))
         return shape;
-    QPainterPath bounds;
-    bounds.addRect(rect);
+    ui::Path bounds;
+    bounds.addRect(ui::RectF {double(rect.x()), double(rect.y()), double(rect.width()),
+                              double(rect.height())});
     return shape.intersected(bounds);
 }
 
-void Surface::setOpaqueRegion(const QRegion &region)
+void Surface::setOpaqueRegion(const base::Region &region)
 {
     m_pending.basicState.opaqueRegion = region;
 }
 
-void Surface::setInputRegion(const QRegion &region)
+void Surface::setInputRegion(const base::Region &region)
 {
     m_pending.basicState.inputRegion = region;
 }
@@ -413,7 +451,7 @@ void Surface::applyCommit(CommitRequest &request)
             || (m_cached.buffer && incoming.buffer
                 && m_cached.buffer->size != incoming.buffer->size);
     // Synchronized commits accumulate offsets before the parent applies them.
-    const QPoint offset = m_cached.basicState.offset + incoming.basicState.offset;
+    const base::Point offset = m_cached.basicState.offset + incoming.basicState.offset;
     m_cached.basicState = incoming.basicState;
     m_cached.basicState.offset = offset;
     m_lastCommitAttachedBuffer = request.attachedBuffer;
@@ -484,16 +522,10 @@ void Surface::holdCommit(std::unique_ptr<CommitRequest> request)
 {
     request->held = true;
     for (CommitRequest::Fence &fence : request->fences) {
-        auto *notifier = new QSocketNotifier(fence.fd.get(), QSocketNotifier::Read);
-        fence.notifier.reset(notifier);
-        QObject::connect(notifier, &QSocketNotifier::activated, notifier,
-                         [notifier, alive = m_lifetime] {
-                             // Level-triggered: a signalled fence behind an
-                             // older commit would fire on every iteration.
-                             notifier->setEnabled(false);
-                             if (*alive)
-                                 (*alive)->applyReadyCommits();
-                         });
+        fence.watch.start(fence.fd.get(), [alive = m_lifetime] {
+            if (*alive)
+                (*alive)->applyReadyCommits();
+        });
     }
     m_heldCommits.push_back(std::move(request));
     ++s_heldCommits;
@@ -558,13 +590,13 @@ void Surface::applyCachedState()
         m_cachedPresentation.reset();
     m_state.damage = damageRegion();
     m_state.bufferDamage = {};
-    const QSize oldSize = contentSize();
+    const base::Size oldSize = contentSize();
     const bool mappingChanged = m_state.basicState.crop != m_cached.basicState.crop
             || m_state.basicState.viewport != m_cached.basicState.viewport
             || m_state.basicState.bufferScale != m_cached.basicState.bufferScale
             || m_state.basicState.clientScale != m_cached.basicState.clientScale
             || m_state.basicState.bufferTransform != m_cached.basicState.bufferTransform;
-    const QPoint offset = m_state.basicState.offset + m_cached.basicState.offset;
+    const base::Point offset = m_state.basicState.offset + m_cached.basicState.offset;
     m_state.basicState = m_cached.basicState;
     m_state.basicState.offset = offset;
     m_cached.basicState.offset = {};
@@ -598,7 +630,7 @@ void Surface::applyCachedState()
         m_uploadAll = true;
     } else {
         m_uploadDamage += m_cached.bufferDamage;
-        for (const QRect &rect : m_cached.damage)
+        for (const base::Rect &rect : m_cached.damage)
             m_uploadDamage += surfaceRectToBuffer(rect);
     }
     m_state.damage += m_cached.damage;
@@ -611,8 +643,8 @@ void Surface::applyCachedState()
     m_cached.frameCallbacks.clear();
     if ((mappingChanged || m_cached.fullDamage)
         && (!oldSize.isEmpty() || m_state.basicState.crop || m_state.basicState.viewport)) {
-        m_state.damage += QRect(QPoint(), oldSize);
-        m_state.damage += QRect(QPoint(), contentSize());
+        m_state.damage += base::Rect(base::Point(), oldSize);
+        m_state.damage += base::Rect(base::Point(), contentSize());
     }
     m_cached.fullDamage = false;
     m_state.damage = damageRegion();
@@ -622,7 +654,7 @@ void Surface::applyCachedState()
     m_subSurfaces = m_cachedSubSurfaces;
     updateSubSurfaceStacking();
     if (m_node) {
-        m_node->setGeometry(QRect(m_position, contentSize()));
+        m_node->setGeometry(base::Rect(m_position, contentSize()));
         // The opaque region is committed state and can change without the
         // buffer changing, so it is applied here rather than at upload.
         m_node->setOpaque(isFullyOpaque());
@@ -661,7 +693,7 @@ bool Surface::hasSurfaceObserver(const SurfaceObserver *observer) const
 // The local region is this surface's own input region clipped to its content;
 // the full region unions in every subsurface, which is what a parent's hit test
 // needs before descending.
-void Surface::setExternalInputRegion(std::optional<QRegion> region)
+void Surface::setExternalInputRegion(std::optional<base::Region> region)
 {
     m_externalInputRegion = std::move(region);
     updateHitTestRegion();
@@ -674,9 +706,10 @@ void Surface::updateHitTestRegion()
     for (const auto &entry : m_subSurfaces)
         m_subSurfaceStack.emplace_back(entry.surface, entry.position);
 
-    const QRect content(QPoint(0, 0), contentSize());
-    const std::optional<QRegion> &inputRegion = m_state.basicState.inputRegion;
-    m_localHitTestRegion = inputRegion ? (*inputRegion & QRegion(content)) : QRegion(content);
+    const base::Rect content(base::Point(0, 0), contentSize());
+    const std::optional<base::Region> &inputRegion = m_state.basicState.inputRegion;
+    m_localHitTestRegion =
+            inputRegion ? (*inputRegion & base::Region(content)) : base::Region(content);
 
     if (m_externalInputRegion)
         m_localHitTestRegion &= *m_externalInputRegion;
@@ -795,7 +828,7 @@ void Surface::removeSubSurface(Surface *child)
     // here: this runs inside protocol requests and surface destruction.
     if (s_heldCommits) {
         for (Surface *surface : {this, child}) {
-            QTimer::singleShot(0, [alive = surface->lifetimeToken()] {
+            core::mainLoop()->post([alive = surface->lifetimeToken()] {
                 if (*alive)
                     (*alive)->applyReadyCommits();
             });
@@ -803,7 +836,7 @@ void Surface::removeSubSurface(Surface *child)
     }
 }
 
-void Surface::setSubSurfacePosition(Surface *child, const QPoint &position)
+void Surface::setSubSurfacePosition(Surface *child, const base::Point &position)
 {
     for (auto &entry : m_pendingSubSurfaces)
         if (entry.surface == child)
@@ -861,35 +894,35 @@ std::shared_ptr<Buffer> Surface::buffer() const
     return m_state.buffer ? m_state.buffer->buffer.lock() : nullptr;
 }
 
-QSize Surface::bufferSize() const
+base::Size Surface::bufferSize() const
 {
-    return m_state.buffer ? m_state.buffer->size : QSize();
+    return m_state.buffer ? m_state.buffer->size : kNoSize;
 }
 
-QSize Surface::contentSize() const
+base::Size Surface::contentSize() const
 {
-    const QSize size = bufferSize();
+    const base::Size size = bufferSize();
     if (size.isEmpty())
-        return QSize();
+        return kNoSize;
 
     if (m_state.basicState.viewport)
         return *m_state.basicState.viewport;
-    QSize content;
+    base::Size content;
     if (m_state.basicState.crop) {
         content = m_state.basicState.crop->size().toSize();
     } else {
         const int scale = std::max(1, m_state.basicState.bufferScale);
-        const QSize scaled(size.width() / scale, size.height() / scale);
+        const base::Size scaled(size.width() / scale, size.height() / scale);
         content = transformSwapsAxes(m_state.basicState.bufferTransform)
-                ? QSize(scaled.height(), scaled.width())
+                ? base::Size(scaled.height(), scaled.width())
                 : scaled;
     }
     // Acts as an implicit viewport destination; a client viewport arrives in
     // logical units already.
     const double clientScale = m_state.basicState.clientScale;
     if (clientScale != 1)
-        content = QSize(std::max(1, qRound(content.width() / clientScale)),
-                        std::max(1, qRound(content.height() / clientScale)));
+        content = base::Size(std::max(1, base::roundToInt(content.width() / clientScale)),
+                             std::max(1, base::roundToInt(content.height() / clientScale)));
     return content;
 }
 
@@ -904,103 +937,106 @@ Surface::ViewportError Surface::cachedViewportError() const
         return ViewportError::BadSize;
     const auto &attachment = m_cached.buffer ? m_cached.buffer : m_state.buffer;
     if (attachment && !attachment->size.isEmpty()) {
-        QSizeF size(attachment->size);
+        base::SizeF size(attachment->size);
         if (transformSwapsAxes(state.bufferTransform))
-            size.transpose();
-        size /= std::max(1, state.bufferScale);
-        if (!QRectF(QPointF(), size).contains(*state.crop))
+            size = size.transposed();
+        size = size / std::max(1, state.bufferScale);
+        if (!base::RectF(size).contains(*state.crop))
             return ViewportError::OutOfBuffer;
     }
     return ViewportError::None;
 }
 
-QTransform Surface::surfaceToBuffer() const
+base::AffineTransform Surface::surfaceToBuffer() const
 {
-    const QSize size = bufferSize();
-    const QSize content = contentSize();
+    const base::Size size = bufferSize();
+    const base::Size content = contentSize();
     if (size.isEmpty() || content.isEmpty())
         return {};
 
+    using base::AffineTransform;
     // Exo ToBufferTransformMatrix: normalized raw buffer to transformed buffer.
-    QTransform transform;
+    AffineTransform transform;
     switch (bufferTransform()) {
     case Transform::Normal:
         break;
     case Transform::Rotate90:
-        transform = QTransform(0, -1, 1, 0, 0, 1);
+        transform = AffineTransform(0, -1, 1, 0, 0, 1);
         break;
     case Transform::Rotate180:
-        transform = QTransform(-1, 0, 0, -1, 1, 1);
+        transform = AffineTransform(-1, 0, 0, -1, 1, 1);
         break;
     case Transform::Rotate270:
-        transform = QTransform(0, 1, -1, 0, 1, 0);
+        transform = AffineTransform(0, 1, -1, 0, 1, 0);
         break;
     case Transform::Flipped:
-        transform = QTransform(-1, 0, 0, 1, 1, 0);
+        transform = AffineTransform(-1, 0, 0, 1, 1, 0);
         break;
     case Transform::FlippedRotate90:
-        transform = QTransform(0, 1, 1, 0, 0, 0);
+        transform = AffineTransform(0, 1, 1, 0, 0, 0);
         break;
     case Transform::FlippedRotate180:
-        transform = QTransform(1, 0, 0, -1, 0, 1);
+        transform = AffineTransform(1, 0, 0, -1, 0, 1);
         break;
     case Transform::FlippedRotate270:
-        transform = QTransform(0, -1, -1, 0, 1, 1);
+        transform = AffineTransform(0, -1, -1, 0, 1, 1);
         break;
     }
-    QSizeF transformed(size);
+    base::SizeF transformed(size);
     if (transformSwapsAxes(bufferTransform()))
-        transformed.transpose();
-    transformed /= std::max(1, bufferScale());
-    const QRectF source = crop().value_or(QRectF(QPointF(), transformed));
+        transformed = transformed.transposed();
+    transformed = transformed / std::max(1, bufferScale());
+    const base::RectF source = crop().value_or(base::RectF(transformed));
     // Exo's crop normalization and inverse buffer transform, retaining corner orientation.
-    return QTransform::fromScale(source.width() / content.width(),
-                                 source.height() / content.height())
-            * QTransform::fromTranslate(source.x(), source.y())
-            * QTransform::fromScale(1 / transformed.width(), 1 / transformed.height())
-            * transform.inverted() * QTransform::fromScale(size.width(), size.height());
+    return AffineTransform::fromScale(source.width() / content.width(),
+                                      source.height() / content.height())
+            * AffineTransform::fromTranslate(source.x(), source.y())
+            * AffineTransform::fromScale(1 / transformed.width(), 1 / transformed.height())
+            * transform.inverted() * AffineTransform::fromScale(size.width(), size.height());
 }
 
-QTransform Surface::textureMapping() const
+base::AffineTransform Surface::textureMapping() const
 {
     if (bufferSize().isEmpty() || contentSize().isEmpty())
         return {};
-    return QTransform::fromScale(contentSize().width(), contentSize().height()) * surfaceToBuffer()
-            * QTransform::fromScale(1.0 / bufferSize().width(), 1.0 / bufferSize().height());
+    return base::AffineTransform::fromScale(contentSize().width(), contentSize().height())
+            * surfaceToBuffer()
+            * base::AffineTransform::fromScale(1.0 / bufferSize().width(),
+                                               1.0 / bufferSize().height());
 }
 
-QRect Surface::bufferRectToSurface(const QRect &rect) const
+base::Rect Surface::bufferRectToSurface(const base::Rect &rect) const
 {
     if (contentSize().isEmpty())
         return {};
-    const QTransform mapping = surfaceToBuffer();
+    const base::AffineTransform mapping = surfaceToBuffer();
     const double determinant = mapping.determinant();
-    // Valid extreme scaling can fall below QTransform::inverted's singularity tolerance.
-    const QTransform inverse(
+    // Valid extreme scaling can fall below AffineTransform::inverted's singularity tolerance.
+    const base::AffineTransform inverse(
             mapping.m22() / determinant, -mapping.m12() / determinant, -mapping.m21() / determinant,
             mapping.m11() / determinant,
             (mapping.m21() * mapping.dy() - mapping.m22() * mapping.dx()) / determinant,
             (mapping.m12() * mapping.dx() - mapping.m11() * mapping.dy()) / determinant);
-    const QRectF mapped = inverse.mapRect(QRectF(rect));
-    return mapped.intersected(QRectF(QPointF(), QSizeF(contentSize()))).toAlignedRect();
+    const base::RectF mapped = inverse.mapRect(base::RectF(rect));
+    return mapped.intersected(base::RectF(base::SizeF(contentSize()))).toEnclosingRect();
 }
 
-QRect Surface::surfaceRectToBuffer(const QRect &rect) const
+base::Rect Surface::surfaceRectToBuffer(const base::Rect &rect) const
 {
     if (contentSize().isEmpty())
         return {};
     // Linear sampling blends neighbours, but a texel changes only where the
     // buffer did; outward rounding keeps the partly covered ones.
     return surfaceToBuffer()
-            .mapRect(QRectF(rect))
-            .toAlignedRect()
-            .intersected(QRect(QPoint(), bufferSize()));
+            .mapRect(base::RectF(rect))
+            .toEnclosingRect()
+            .intersected(base::Rect(bufferSize()));
 }
 
-QRegion Surface::damageRegion() const
+base::Region Surface::damageRegion() const
 {
-    QRegion result = m_state.damage;
-    for (const QRect &rect : m_state.bufferDamage)
+    base::Region result = m_state.damage;
+    for (const base::Rect &rect : m_state.bufferDamage)
         result += bufferRectToSurface(rect);
     return result;
 }
@@ -1035,11 +1071,11 @@ void Surface::setHidden(bool hidden)
         m_compositor->scheduleRepaint();
 }
 
-void Surface::setPosition(const QPoint &position)
+void Surface::setPosition(const base::Point &position)
 {
     m_position = position;
     if (m_node) {
-        m_node->setGeometry(QRect(m_position, contentSize()));
+        m_node->setGeometry(base::Rect(m_position, contentSize()));
         // The opaque region is committed state and can change without the
         // buffer changing, so it is applied here rather than at upload.
         m_node->setOpaque(isFullyOpaque());
@@ -1054,8 +1090,8 @@ bool Surface::updateTexture(render::Renderer &renderer)
         return false;
 
     m_textureDirty = false;
-    m_state.damage = QRegion();
-    m_state.bufferDamage = QRegion();
+    m_state.damage = base::Region();
+    m_state.bufferDamage = base::Region();
 
     // Texture uploads run after protocol dispatch, which may destroy wl_buffer.
     auto uploadBuffer = std::move(m_uploadBuffer);
@@ -1098,8 +1134,8 @@ bool Surface::updateTexture(render::Renderer &renderer)
     bool uploaded = false;
     // Outside its damage the buffer holds what the texture already has, as
     // wlroots and mutter take it; exo copies shm whole into shared images.
-    const QRegion damage = std::exchange(m_uploadAll, false)
-            ? QRegion(QRect(QPoint(), buffer->size()))
+    const base::Region damage = std::exchange(m_uploadAll, false)
+            ? base::Region(base::Rect(base::Point(), buffer->size()))
             : m_uploadDamage;
     m_uploadDamage = {};
     buffer->beginPixelAccess();
@@ -1130,15 +1166,13 @@ bool Surface::updateTexture(render::Renderer &renderer)
 // lets a display controller put it on a plane without blending.
 bool Surface::isFullyOpaque() const
 {
-    const QSize size = contentSize();
+    const base::Size size = contentSize();
     if (size.isEmpty())
         return false;
     std::shared_ptr<Buffer> buffer = this->buffer();
     if (buffer && !render::pixelFormatHasAlpha(buffer->format()))
         return true;
-    // QRegion::contains(QRect) is true on mere overlap; exo's cc::Region asks
-    // for full containment, which is what a blend-free plane needs.
-    return QRegion(QRect(QPoint(0, 0), size)).subtracted(opaqueRegion()).isEmpty();
+    return opaqueRegion().contains(base::Rect(base::Point(0, 0), size));
 }
 
 void Surface::frameSubmitted(uint64_t generation)
@@ -1245,7 +1279,7 @@ void Surface::updateMenuAddress()
 {
     MenuAddress address;
     for (auto it = m_menuSources.rbegin(); it != m_menuSources.rend(); ++it) {
-        if (!it->second.service.isEmpty() && !it->second.path.isEmpty()) {
+        if (!it->second.service.empty() && !it->second.path.empty()) {
             address = it->second;
             break;
         }

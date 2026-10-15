@@ -20,10 +20,10 @@ TEST(DisplayTransform, FractionalScaleUsesRotatedLogicalExtent)
                                      display::DisplayRotation::Normal);
     display::DisplayTransform rotated({0, 0}, {1920, 1080}, scale,
                                       display::DisplayRotation::Rotate90);
-    EXPECT_EQ(normal.logicalBounds(), QRect(-300, 40, 1536, 864));
-    EXPECT_EQ(rotated.logicalSize(), QSize(864, 1536));
-    EXPECT_TRUE(normal.containsGlobal(QPointF(-300, 40)));
-    EXPECT_FALSE(normal.containsGlobal(QPointF(1236, 40)));
+    EXPECT_EQ(normal.logicalBounds(), base::Rect(-300, 40, 1536, 864));
+    EXPECT_EQ(rotated.logicalSize(), base::Size(864, 1536));
+    EXPECT_TRUE(normal.containsGlobal(base::PointF(-300, 40)));
+    EXPECT_FALSE(normal.containsGlobal(base::PointF(1236, 40)));
 }
 
 TEST(DisplayTransform, EveryRotationRoundTripsPointsAndRectangles)
@@ -33,13 +33,13 @@ TEST(DisplayTransform, EveryRotationRoundTripsPointsAndRectangles)
          {display::DisplayRotation::Normal, display::DisplayRotation::Rotate90,
           display::DisplayRotation::Rotate180, display::DisplayRotation::Rotate270}) {
         display::DisplayTransform transform({-640, 120}, {1513, 819}, scale, rotation);
-        const QPointF global(-500.25, 300.75);
-        const QPointF roundTrip = transform.nativeToGlobal(transform.globalToNative(global));
+        const base::PointF global(-500.25, 300.75);
+        const base::PointF roundTrip = transform.nativeToGlobal(transform.globalToNative(global));
         EXPECT_NEAR(roundTrip.x(), global.x(), 0.0001);
         EXPECT_NEAR(roundTrip.y(), global.y(), 0.0001);
 
-        const QRectF rectangle(-510.5, 150.25, 80.75, 100.5);
-        const QRectF mapped = transform.nativeToGlobal(transform.globalToNative(rectangle));
+        const base::RectF rectangle(-510.5, 150.25, 80.75, 100.5);
+        const base::RectF mapped = transform.nativeToGlobal(transform.globalToNative(rectangle));
         EXPECT_NEAR(mapped.x(), rectangle.x(), 0.0001);
         EXPECT_NEAR(mapped.y(), rectangle.y(), 0.0001);
         EXPECT_NEAR(mapped.width(), rectangle.width(), 0.0001);
@@ -51,7 +51,7 @@ TEST(DisplayTransform, AdjacentHalfOpenBoundsHaveOneOwner)
 {
     display::DisplayTransform left({-100, 0}, {100, 100}, {}, display::DisplayRotation::Normal);
     display::DisplayTransform right({0, 0}, {100, 100}, {}, display::DisplayRotation::Normal);
-    EXPECT_TRUE(left.containsGlobal(QPointF(-0.001, 50)));
-    EXPECT_FALSE(left.containsGlobal(QPointF(0, 50)));
-    EXPECT_TRUE(right.containsGlobal(QPointF(0, 50)));
+    EXPECT_TRUE(left.containsGlobal(base::PointF(-0.001, 50)));
+    EXPECT_FALSE(left.containsGlobal(base::PointF(0, 50)));
+    EXPECT_TRUE(right.containsGlobal(base::PointF(0, 50)));
 }

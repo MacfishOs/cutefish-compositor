@@ -3,42 +3,59 @@
 // found in the LICENSE file.
 
 #include "session/sleep_lock.h"
+#include "core/main_loop.h"
 #include "session/session_controller.h"
-#include <QDBusMessage>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QDebug>
-#include <QTimer>
+#include "base/logging.h"
 
 namespace cutefish::session {
+
 namespace {
-const QString service = QStringLiteral("org.freedesktop.login1");
-const QString path = QStringLiteral("/org/freedesktop/login1");
-const QString manager = QStringLiteral("org.freedesktop.login1.Manager");
+
+const base::LogCategory &logs()
+{
+    return base::LogCategory::defaultCategory();
+}
+
+const char *const service = "org.freedesktop.login1";
+const char *const path = "/org/freedesktop/login1";
+const char *const manager = "org.freedesktop.login1.Manager";
 } // namespace
 
-SleepLock::SleepLock(SessionController *session, QDBusConnection bus)
+SleepLock::SleepLock(SessionController *session, base::dbus::Connection *bus)
     : m_session(session)
-    , m_bus(std::move(bus))
+    , m_bus(bus ? bus : base::dbus::Connection::system(core::mainLoop()))
+    , m_manager(m_bus, service, path, manager)
+    , m_relock(core::mainLoop())
 {
+    m_relock.setSingleShot(true);
+    m_relock.onTimeout = [this] {
+        if (m_sleeping && !m_session->isBlocked())
+            m_session->requestLock();
+    };
     m_session->addObserver(this);
 }
 
 SleepLock::~SleepLock()
 {
     m_session->removeObserver(this);
-    if (m_started)
-        m_bus.disconnect(service, path, manager, QStringLiteral("PrepareForSleep"), this,
-                         SLOT(prepareForSleep(bool)));
 }
 
 bool SleepLock::start()
 {
     if (m_started)
         return true;
-    if (!m_bus.connect(service, path, manager, QStringLiteral("PrepareForSleep"), this,
-                       SLOT(prepareForSleep(bool)))) {
-        qWarning() << "Cannot follow logind's PrepareForSleep:" << m_bus.lastError().message();
+    if (!m_bus) {
+        CF_WARNING(logs()) << "Cannot follow logind's PrepareForSleep: no system bus";
+        return false;
+    }
+    m_prepareForSleep =
+            m_manager.onSignal("PrepareForSleep", [this](const base::dbus::Message &message) {
+                bool sleeping = false;
+                if (message.read(sleeping))
+                    prepareForSleep(sleeping);
+            });
+    if (m_prepareForSleep.isNull()) {
+        CF_WARNING(logs()) << "Cannot follow logind's PrepareForSleep";
         return false;
     }
     m_started = true;
@@ -48,28 +65,23 @@ bool SleepLock::start()
 
 void SleepLock::inhibit()
 {
-    if (m_inhibiting || m_inhibitor.isValid())
+    if (!m_inhibiting.isNull() || m_inhibitor.isValid())
         return;
-    m_inhibiting = true;
-    auto message = QDBusMessage::createMethodCall(service, path, manager, QStringLiteral("Inhibit"));
-    message << QStringLiteral("sleep") << QStringLiteral("Cutefish")
-            << QStringLiteral("Lock the screen before sleeping") << QStringLiteral("delay");
-    auto *watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(message), this);
-    connect(watcher, &QDBusPendingCallWatcher::finished, this,
-            [this](QDBusPendingCallWatcher *call) {
-                m_inhibiting = false;
-                const QDBusPendingReply<QDBusUnixFileDescriptor> reply = *call;
-                // The reply holds a copy of the descriptor too.
-                call->deleteLater();
+    m_inhibiting = m_manager.callAsync(
+            "Inhibit",
+            [this](const base::dbus::Reply &reply) {
+                base::dbus::PendingCall done = std::move(m_inhibiting);
                 if (reply.isError()) {
-                    qWarning() << "Cannot delay sleep to lock the screen:"
-                               << reply.error().message();
+                    CF_WARNING(logs()) << "Cannot delay sleep to lock the screen:"
+                               << reply.error().message;
                     return;
                 }
                 // Too late for this sleep; the next wake asks again.
                 if (!m_sleeping)
-                    m_inhibitor = reply.value();
-            });
+                    m_inhibitor = reply.value<base::dbus::UnixFd>().value_or(base::dbus::UnixFd());
+            },
+            std::string("sleep"), std::string("Cutefish"),
+            std::string("Lock the screen before sleeping"), std::string("delay"));
 }
 
 void SleepLock::prepareForSleep(bool sleeping)
@@ -91,10 +103,7 @@ void SleepLock::onSessionStateChanged(SessionState state)
         return;
     if (state == SessionState::Active) {
         // Not from inside the controller's own state change.
-        QTimer::singleShot(0, this, [this] {
-            if (m_sleeping && !m_session->isBlocked())
-                m_session->requestLock();
-        });
+        m_relock.start();
         return;
     }
     releaseWhenLocked();
@@ -104,6 +113,6 @@ void SleepLock::releaseWhenLocked()
 {
     const SessionState state = m_session->state();
     if (state == SessionState::Locked || state == SessionState::Login)
-        m_inhibitor = QDBusUnixFileDescriptor();
+        m_inhibitor = base::dbus::UnixFd();
 }
 } // namespace cutefish::session

@@ -6,14 +6,17 @@
 #include <GLES3/gl3.h>
 #include <array>
 #include <csignal>
+#include <cstdlib>
 #include <ext-image-capture-source-v1-client-protocol.h>
 #include <cutefish-window-management-v1-client-protocol.h>
 #include <drm_fourcc.h>
+#include <filesystem>
 #include <future>
 #include <gbm.h>
 #include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
 #include <optional>
+#include <string_view>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -23,18 +26,12 @@
 #include <xcb/xfixes.h>
 #include <xwayland-shell-v1-client-protocol.h>
 
-#include <QCoreApplication>
-#include <QDeadlineTimer>
-#include <QFile>
-#include <QFileInfo>
-#include <QImage>
-#include <QProcess>
-#include <QScopeGuard>
-#include <QStandardPaths>
-#include <QSysInfo>
-#include <QTemporaryDir>
-#include <QThread>
-
+#include "base/auto_reset.h"
+#include "base/file.h"
+#include "base/paths.h"
+#include "base/process.h"
+#include "base/strings.h"
+#include "base/timer.h"
 #include "compositor/compositor.h"
 #include "compositor/output.h"
 #include "compositor/surface.h"
@@ -46,10 +43,13 @@
 #include "input/pointer_constraint_delegate.h"
 #include "input/pointer_constraints.h"
 #include "input/seat.h"
+#include "loop_test_util.h"
 #include "scene/scene.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "process_test_util.h"
 #include "shm_test_util.h"
+#include "temporary_directory.h"
 #include "wayland/privileged_client.h"
 #include "wayland/protocols/cutefish_window_management.h"
 #include "wayland/protocols/primary_selection.h"
@@ -77,10 +77,7 @@ namespace {
 
 bool until(const std::function<bool()> &predicate, int timeout = 10000)
 {
-    QDeadlineTimer deadline(timeout);
-    while (!predicate() && !deadline.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    return predicate();
+    return test::runUntil(predicate, std::chrono::milliseconds(timeout));
 }
 
 template <typename F> auto xcbReply(F operation)
@@ -90,6 +87,13 @@ template <typename F> auto xcbReply(F operation)
         return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
     }));
     return future.get();
+}
+
+std::string hostName()
+{
+    char name[256] = {};
+    gethostname(name, sizeof(name) - 1);
+    return name;
 }
 
 xcb_atom_t intern(xcb_connection_t *c, const char *name)
@@ -107,22 +111,16 @@ class XwaylandTest : public testing::Test
 protected:
     void SetUp() override
     {
-        if (!QCoreApplication::instance()) {
-            static int argc = 1;
-            static char name[] = "xwayland-test";
-            static char *argv[] = {name, nullptr};
-            app = std::make_unique<QCoreApplication>(argc, argv);
-        }
-        qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
+        setenv("XDG_RUNTIME_DIR", runtime.path().c_str(), 1);
         server = std::make_unique<wayland::Server>();
         compositor = std::make_unique<compositor::Compositor>(scene.root());
         seat = std::make_unique<input::Seat>(compositor.get());
         manager = std::make_unique<wm::WindowManager>(compositor.get(), seat.get());
-        manager->setOutputBounds(QRect(0, 0, 800, 600));
+        manager->setOutputBounds(base::Rect(0, 0, 800, 600));
         manager->setFrameProvider(&frames);
         privileged = std::make_unique<wayland::PrivilegedClients>(server->display());
         waylandSeat = std::make_unique<wayland::WaylandSeat>(seat.get(), server->serialTracker());
-        output.pixelSize = QSize(800, 600);
+        output.pixelSize = base::Size(800, 600);
         ASSERT_TRUE(wayland::createCompositorGlobal(server->display(), compositor.get()));
         ASSERT_TRUE(wayland::createShmGlobal(server->display(), compositor.get()));
         ASSERT_TRUE(wayland::createSubcompositorGlobal(server->display()));
@@ -160,15 +158,14 @@ protected:
         if (!xwayland->start(options))
             return false;
         return until([&] {
-                   return xwayland->isReady() || !xwayland->error().isEmpty();
+                   return xwayland->isReady() || !xwayland->error().empty();
                })
                 && xwayland->isReady();
     }
 
-    std::unique_ptr<QCoreApplication> app;
     int pingTimeoutMs = 5000;
     size_t windowLimit = xwayland::SurfaceAssociation::limit;
-    QTemporaryDir runtime;
+    test::TemporaryDirectory runtime;
     scene::Scene scene;
     decoration::Theme theme;
     decoration::DecorationProvider frames {&theme};
@@ -269,7 +266,7 @@ TEST_F(XwaylandTest, MissingExecutable)
     options.executable = "/nonexistent/cutefish-Xwayland";
     ASSERT_TRUE(xwayland->start(options));
     ASSERT_TRUE(until([&] {
-        return !xwayland->error().isEmpty();
+        return !xwayland->error().empty();
     }));
     EXPECT_FALSE(xwayland->isReady());
     EXPECT_EQ(server->trackedClientCount(), 0);
@@ -281,7 +278,7 @@ TEST_F(XwaylandTest, EarlyExit)
     options.executable = "/bin/false";
     ASSERT_TRUE(xwayland->start(options));
     ASSERT_TRUE(until([&] {
-        return !xwayland->error().isEmpty();
+        return !xwayland->error().empty();
     }));
     EXPECT_FALSE(xwayland->isReady());
 }
@@ -289,31 +286,31 @@ TEST_F(XwaylandTest, EarlyExit)
 TEST_F(XwaylandTest, MalformedPartialAndTimeout)
 {
     for (const auto *mode : {"partial", "malformed", "timeout"}) {
-        qputenv("CUTEFISH_XWAYLAND_FAULT", mode);
+        setenv("CUTEFISH_XWAYLAND_FAULT", mode, 1);
         xwayland::XwaylandServer::Options options;
         options.executable = XWAYLAND_FAULT_PATH;
         options.timeoutMs = 100;
         ASSERT_TRUE(xwayland->start(options));
         ASSERT_TRUE(until([&] {
-            return !xwayland->error().isEmpty();
+            return !xwayland->error().empty();
         }));
         EXPECT_FALSE(xwayland->isReady());
         EXPECT_EQ(server->trackedClientCount(), 0);
     }
-    qunsetenv("CUTEFISH_XWAYLAND_FAULT");
+    unsetenv("CUTEFISH_XWAYLAND_FAULT");
 }
 
 TEST_F(XwaylandTest, RealStartupRepeatedAndCrash)
 {
-    if (!QFile::exists("/usr/bin/Xwayland"))
+    if (!std::filesystem::exists("/usr/bin/Xwayland"))
         GTEST_SKIP() << "system Xwayland unavailable";
     int nativeSockets[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, nativeSockets), 0);
     auto *nativeServer = wl_client_create(server->display(), nativeSockets[0]);
     auto *nativeClient = wl_display_connect_to_fd(nativeSockets[1]);
     for (int i = 0; i < 3; ++i) {
-        ASSERT_TRUE(start()) << xwayland->error().toStdString();
-        EXPECT_TRUE(QFile::exists(runtime.path() + "/ready.json"));
+        ASSERT_TRUE(start()) << xwayland->error();
+        EXPECT_TRUE(std::filesystem::exists(runtime.path() + "/ready.json"));
         EXPECT_FALSE(privileged->isTrusted(privileged->shellClient()));
         if (i == 1) {
             // A crash restarts on the same display with the same Xauthority, so
@@ -324,21 +321,21 @@ TEST_F(XwaylandTest, RealStartupRepeatedAndCrash)
             kill(pid, SIGKILL);
             ASSERT_TRUE(until([&] {
                 return xwayland->isReady() && xwayland->processId() != pid;
-            })) << xwayland->error().toStdString();
-            EXPECT_TRUE(xwayland->error().isEmpty());
+            })) << xwayland->error();
+            EXPECT_TRUE(xwayland->error().empty());
             EXPECT_EQ(xwayland->display(), display);
             EXPECT_EQ(xwayland->authority(), authority);
-            EXPECT_TRUE(QFile::exists(runtime.path() + "/ready.json"));
-            qputenv("XAUTHORITY", authority.toUtf8());
+            EXPECT_TRUE(std::filesystem::exists(runtime.path() + "/ready.json"));
+            setenv("XAUTHORITY", authority.c_str(), 1);
             auto *c = xcbReply([&] {
-                return xcb_connect(display.toUtf8().constData(), nullptr);
+                return xcb_connect(display.c_str(), nullptr);
             });
             EXPECT_EQ(xcb_connection_has_error(c), 0);
             xcb_disconnect(c);
         }
         xwayland->stop();
         EXPECT_FALSE(xwayland->isReady());
-        EXPECT_FALSE(QFile::exists(runtime.path() + "/ready.json"));
+        EXPECT_FALSE(std::filesystem::exists(runtime.path() + "/ready.json"));
         EXPECT_EQ(server->trackedClientCount(), 1);
         auto sync = std::async(std::launch::async, [&] {
             return wl_display_roundtrip(nativeClient);
@@ -355,11 +352,11 @@ TEST_F(XwaylandTest, RealStartupRepeatedAndCrash)
 
 TEST_F(XwaylandTest, RepeatedCrashesGiveUpAndWithdrawTheDisplay)
 {
-    if (!QFile::exists("/usr/bin/Xwayland"))
+    if (!std::filesystem::exists("/usr/bin/Xwayland"))
         GTEST_SKIP() << "system Xwayland unavailable";
-    ASSERT_TRUE(start(1)) << xwayland->error().toStdString();
-    QString failure;
-    xwayland->failure = [&](const QString &error) {
+    ASSERT_TRUE(start(1)) << xwayland->error();
+    std::string failure;
+    xwayland->failure = [&](const std::string &error) {
         failure = error;
     };
     auto pid = xwayland->processId();
@@ -367,16 +364,16 @@ TEST_F(XwaylandTest, RepeatedCrashesGiveUpAndWithdrawTheDisplay)
     ASSERT_TRUE(until([&] {
         return xwayland->isReady() && xwayland->processId() != pid;
     }));
-    EXPECT_TRUE(failure.isEmpty());
+    EXPECT_TRUE(failure.empty());
     // The one restart a minute is used up, so the next crash is final.
     kill(xwayland->processId(), SIGKILL);
     ASSERT_TRUE(until([&] {
-        return !xwayland->error().isEmpty();
+        return !xwayland->error().empty();
     }));
-    EXPECT_FALSE(failure.isEmpty());
+    EXPECT_FALSE(failure.empty());
     EXPECT_FALSE(xwayland->isReady());
-    EXPECT_TRUE(xwayland->display().isEmpty());
-    EXPECT_FALSE(QFile::exists(runtime.path() + "/ready.json"));
+    EXPECT_TRUE(xwayland->display().empty());
+    EXPECT_FALSE(std::filesystem::exists(runtime.path() + "/ready.json"));
 }
 
 // A client holding the most windows is disconnected at the limit; the other
@@ -384,17 +381,17 @@ TEST_F(XwaylandTest, RepeatedCrashesGiveUpAndWithdrawTheDisplay)
 TEST_F(XwaylandTest, WindowLimitDisconnectsOnlyTheGreediestClient)
 {
     windowLimit = 16;
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
+    ASSERT_TRUE(start()) << xwayland->error();
     const auto pid = xwayland->processId();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     const auto connect = [&] {
         return xcbReply([&] {
-            return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+            return xcb_connect(xwayland->display().c_str(), nullptr);
         });
     };
     auto *greedy = connect();
     auto *modest = connect();
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(greedy);
         xcb_disconnect(modest);
     });
@@ -434,14 +431,14 @@ TEST_F(XwaylandTest, WindowLimitDisconnectsOnlyTheGreediestClient)
 TEST_F(XwaylandTest, AWindowMovedOffTheRootIsForgottenAndAdoptedWhenItReturns)
 {
     windowLimit = 8;
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
+    ASSERT_TRUE(start()) << xwayland->error();
     const auto pid = xwayland->processId();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -471,14 +468,14 @@ TEST_F(XwaylandTest, AWindowMovedOffTheRootIsForgottenAndAdoptedWhenItReturns)
     xcb_flush(c);
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1
-                && manager->windows()[0]->rootSurface()->contentSize() == QSize(200, 100);
+                && manager->windows()[0]->rootSurface()->contentSize() == base::Size(200, 100);
     }));
     auto *geometry = xcbReply([&] {
         return xcb_get_geometry_reply(c, xcb_get_geometry(c, returning), nullptr);
     });
-    const QSize size = geometry ? QSize(geometry->width, geometry->height) : QSize();
+    const base::Size size = geometry ? base::Size(geometry->width, geometry->height) : base::Size();
     free(geometry);
-    EXPECT_EQ(size, QSize(200, 100));
+    EXPECT_EQ(size, base::Size(200, 100));
     auto *reply = xcbReply([&] {
         return xcb_get_input_focus_reply(c, xcb_get_input_focus(c), nullptr);
     });
@@ -492,13 +489,13 @@ TEST_F(XwaylandTest, AWindowMovedOffTheRootIsForgottenAndAdoptedWhenItReturns)
 // Xwayland's would leave every later window unmatched but for the SendEvent check.
 TEST_F(XwaylandTest, ASurfaceSerialSentByAClientIsIgnored)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -527,26 +524,26 @@ TEST_F(XwaylandTest, ASurfaceSerialSentByAClientIsIgnored)
 // lost connections are all reported in one iteration: one crash, one restart.
 TEST_F(XwaylandTest, ACrashReportedOnEveryChannelAtOnceCountsOnce)
 {
-    ASSERT_TRUE(start(1)) << xwayland->error().toStdString();
+    ASSERT_TRUE(start(1)) << xwayland->error();
     const auto pid = xwayland->processId();
     ASSERT_EQ(kill(pid, SIGKILL), 0);
-    const QString stat = QStringLiteral("/proc/%1/stat").arg(pid);
-    QDeadlineTimer dead(5000);
+    const std::string stat = "/proc/" + std::to_string(pid) + "/stat";
+    const auto dead = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
     for (;;) {
-        QFile file(stat);
-        if (!file.open(QIODevice::ReadOnly))
+        const std::optional<std::string> line = base::file::read(stat);
+        if (!line)
             break;
-        const QByteArray line = file.readAll();
-        const int state = line.lastIndexOf(')') + 2;
-        if (state > 1 && state < line.size() && line[state] == 'Z')
+        const size_t paren = line->rfind(')');
+        const size_t state = paren == std::string::npos ? 0 : paren + 2;
+        if (state > 1 && state < line->size() && (*line)[state] == 'Z')
             break;
-        ASSERT_FALSE(dead.hasExpired());
-        QThread::msleep(5);
+        ASSERT_FALSE(std::chrono::steady_clock::now() >= dead);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     ASSERT_TRUE(until([&] {
         return xwayland->isReady() && xwayland->processId() != pid;
-    })) << xwayland->error().toStdString();
-    EXPECT_TRUE(xwayland->error().isEmpty());
+    })) << xwayland->error();
+    EXPECT_TRUE(xwayland->error().empty());
 }
 
 TEST_F(XwaylandTest, ScaledX11ClientsDrawAtDeviceResolution)
@@ -554,13 +551,13 @@ TEST_F(XwaylandTest, ScaledX11ClientsDrawAtDeviceResolution)
     // Scale 2: the X11 screen, windows and pointer are in device pixels, and
     // the logical window is half as large.
     xwayland->setScale(2);
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -568,12 +565,12 @@ TEST_F(XwaylandTest, ScaledX11ClientsDrawAtDeviceResolution)
         auto *r = xcbReply([&] {
             return xcb_get_geometry_reply(c, xcb_get_geometry(c, screen->root), nullptr);
         });
-        const QSize size = r ? QSize(r->width, r->height) : QSize();
+        const base::Size size = r ? base::Size(r->width, r->height) : base::Size();
         free(r);
         return size;
     };
     ASSERT_TRUE(until([&] {
-        return rootSize() == QSize(1600, 1200);
+        return rootSize() == base::Size(1600, 1200);
     }));
     auto cardinals = [&](const char *name) {
         std::vector<uint32_t> values;
@@ -599,15 +596,15 @@ TEST_F(XwaylandTest, ScaledX11ClientsDrawAtDeviceResolution)
                                                            XCB_ATOM_STRING, 0, 4096),
                                           nullptr);
         });
-        QByteArray value;
+        std::string value;
         if (r)
-            value = QByteArray(static_cast<const char *>(xcb_get_property_value(r)),
-                               xcb_get_property_value_length(r));
+            value.assign(static_cast<const char *>(xcb_get_property_value(r)),
+                         xcb_get_property_value_length(r));
         free(r);
         return value;
     };
     ASSERT_TRUE(until([&] {
-        return resources().contains("Xft.dpi:\t192");
+        return resources().find("Xft.dpi:\t192") != std::string::npos;
     }));
     auto *owner = xcbReply([&] {
         return xcb_get_selection_owner_reply(
@@ -622,20 +619,20 @@ TEST_F(XwaylandTest, ScaledX11ClientsDrawAtDeviceResolution)
             return xcb_get_property_reply(
                     c, xcb_get_property(c, 0, settingsWindow, atom, atom, 0, 1024), nullptr);
         });
-        QByteArray value;
+        std::string value;
         if (r)
-            value = QByteArray(static_cast<const char *>(xcb_get_property_value(r)),
-                               xcb_get_property_value_length(r));
+            value.assign(static_cast<const char *>(xcb_get_property_value(r)),
+                         xcb_get_property_value_length(r));
         free(r);
         return value;
     };
     // The window scaling factor is the INT32 after its name and serial.
-    auto setting = [&](const QByteArray &data, const QByteArray &name) {
-        const auto at = data.indexOf(name);
-        if (at < 0)
+    auto setting = [&](const std::string &data, std::string_view name) {
+        const size_t at = data.find(name);
+        if (at == std::string::npos)
             return -1;
-        const int value = at + ((name.size() + 3) & ~3) + 4;
-        return *reinterpret_cast<const int32_t *>(data.constData() + value);
+        const size_t value = at + ((name.size() + 3) & ~size_t(3)) + 4;
+        return *reinterpret_cast<const int32_t *>(data.data() + value);
     };
     EXPECT_EQ(setting(xsettings(), "Gdk/WindowScalingFactor"), 2);
     EXPECT_EQ(setting(xsettings(), "Xft/DPI"), 192 * 1024);
@@ -649,76 +646,73 @@ TEST_F(XwaylandTest, ScaledX11ClientsDrawAtDeviceResolution)
     xcb_flush(c);
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1
-                && manager->windows()[0]->rootSurface()->contentSize() == QSize(300, 200);
+                && manager->windows()[0]->rootSurface()->contentSize() == base::Size(300, 200);
     }));
     auto *window = manager->windows()[0];
-    EXPECT_EQ(window->contentBounds().size(), QSize(300, 200));
-    EXPECT_EQ(window->rootSurface()->bufferSize(), QSize(600, 400));
+    EXPECT_EQ(window->contentBounds().size(), base::Size(300, 200));
+    EXPECT_EQ(window->rootSurface()->bufferSize(), base::Size(600, 400));
 
     // A logical point lands on the X11 pixel under it.
-    const QPoint inside = window->contentBounds().topLeft() + QPoint(100, 50);
-    seat->onPointerMotion(std::chrono::steady_clock::now(), inside);
-    seat->onPointerButton(std::chrono::steady_clock::now(), inside, BTN_LEFT, true);
-    seat->onPointerButton(std::chrono::steady_clock::now(), inside, BTN_LEFT, false);
-    QPoint pressed(-1, -1);
+    const base::Point inside = window->contentBounds().topLeft() + base::Point(100, 50);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(inside));
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(inside), BTN_LEFT, true);
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(inside), BTN_LEFT, false);
+    base::Point pressed(-1, -1);
     ASSERT_TRUE(until([&] {
         while (auto *e = xcb_poll_for_event(c)) {
             if ((e->response_type & 0x7f) == XCB_BUTTON_PRESS) {
                 auto *press = reinterpret_cast<xcb_button_press_event_t *>(e);
-                pressed = QPoint(press->event_x, press->event_y);
+                pressed = base::Point(press->event_x, press->event_y);
             }
             free(e);
         }
-        return pressed != QPoint(-1, -1);
+        return pressed != base::Point(-1, -1);
     }));
-    EXPECT_EQ(pressed, QPoint(200, 100));
+    EXPECT_EQ(pressed, base::Point(200, 100));
 
     // Back to scale 1 at run time: the screen, the window and Xft.dpi follow.
     xwayland->setScale(1);
     wayland::updateOutputGlobal(outputGlobal, &output);
     ASSERT_TRUE(until([&] {
-        return rootSize() == QSize(800, 600);
+        return rootSize() == base::Size(800, 600);
     }));
     auto windowSize = [&] {
         auto *r = xcbReply([&] {
             return xcb_get_geometry_reply(c, xcb_get_geometry(c, id), nullptr);
         });
-        const QSize size = r ? QSize(r->width, r->height) : QSize();
+        const base::Size size = r ? base::Size(r->width, r->height) : base::Size();
         free(r);
         return size;
     };
     ASSERT_TRUE(until([&] {
-        return windowSize() == QSize(300, 200)
-                && window->rootSurface()->contentSize() == QSize(300, 200);
+        return windowSize() == base::Size(300, 200)
+                && window->rootSurface()->contentSize() == base::Size(300, 200);
     }));
     EXPECT_TRUE(until([&] {
-        return resources().contains("Xft.dpi:\t96");
+        return resources().find("Xft.dpi:\t96") != std::string::npos;
     }));
     EXPECT_EQ(setting(xsettings(), "Gdk/WindowScalingFactor"), 1);
 }
 
 TEST_F(XwaylandTest, WindowProcessIsTheLocalClientBehindTheConnection)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
+    ASSERT_TRUE(start()) << xwayland->error();
     // A forwarded client, as with ssh -X, names the machine it runs on and
     // reaches the server through a local proxy, whose pid is not the client's.
     for (const bool forwarded : {false, true}) {
-        QProcess client;
-        auto env = QProcessEnvironment::systemEnvironment();
-        env.insert("DISPLAY", xwayland->display());
-        env.insert("XAUTHORITY", xwayland->authority());
-        client.setProcessEnvironment(env);
-        client.start(X11_TEST_CLIENT,
-                     {forwarded ? QStringLiteral("elsewhere.invalid") : QSysInfo::machineHostName()});
+        test::ChildProcess client;
+        client.start(X11_TEST_CLIENT, {forwarded ? std::string("elsewhere.invalid") : hostName()},
+                     test::environmentWith({}, {{"DISPLAY", xwayland->display()},
+                                                {"XAUTHORITY", xwayland->authority()}}));
         ASSERT_TRUE(until([&] {
-            return manager->windows().size() == 1 || client.state() == QProcess::NotRunning;
+            return manager->windows().size() == 1 || !client.running();
         }));
-        ASSERT_EQ(manager->windows().size(), 1u) << client.readAllStandardError().toStdString();
-        EXPECT_EQ(manager->windows()[0]->processId(), forwarded ? 0 : client.processId());
+        ASSERT_EQ(manager->windows().size(), 1u) << client.errors();
+        EXPECT_EQ(manager->windows()[0]->processId(), forwarded ? 0 : client.process.pid());
 
-        client.kill();
+        client.process.kill();
         ASSERT_TRUE(until([&] {
-            return client.state() == QProcess::NotRunning && manager->windows().empty();
+            return !client.running() && manager->windows().empty();
         }));
     }
 }
@@ -726,13 +720,13 @@ TEST_F(XwaylandTest, WindowProcessIsTheLocalClientBehindTheConnection)
 TEST_F(XwaylandTest, UnansweredNetWmPingMarksTheWindowAndCloseKillsTheClient)
 {
     pingTimeoutMs = 100;
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -783,9 +777,7 @@ TEST_F(XwaylandTest, UnansweredNetWmPingMarksTheWindowAndCloseKillsTheClient)
     EXPECT_EQ(pings[0].window, id);
     EXPECT_EQ(pings[0].data.data32[2], id);
     pong(pings[0]);
-    QDeadlineTimer settle(300);
-    while (!settle.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    test::runFor(std::chrono::milliseconds(300));
     EXPECT_TRUE(window->isResponsive());
 
     // An unanswered one turns it unresponsive; a late answer still counts.
@@ -818,13 +810,13 @@ TEST_F(XwaylandTest, UnansweredNetWmPingMarksTheWindowAndCloseKillsTheClient)
 
 TEST_F(XwaylandTest, NetWmStateAboveAndSkipTaskbarReachTheWindow)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -903,13 +895,13 @@ TEST_F(XwaylandTest, NetWmStateAboveAndSkipTaskbarReachTheWindow)
 
 TEST_F(XwaylandTest, NetWmWindowOpacityFadesTheWholeWindow)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -947,13 +939,13 @@ TEST_F(XwaylandTest, NetWmWindowOpacityFadesTheWholeWindow)
 
 TEST_F(XwaylandTest, OnlyAChangedFollowedPropertyIsReadAndNothingIsWrittenTwice)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -968,9 +960,9 @@ TEST_F(XwaylandTest, OnlyAChangedFollowedPropertyIsReadAndNothingIsWrittenTwice)
     const xcb_atom_t userTime = intern(c, "_NET_WM_USER_TIME");
     const std::vector<xcb_atom_t> written = {intern(c, "_NET_WM_STATE"), intern(c, "WM_STATE"),
                                              intern(c, "_NET_FRAME_EXTENTS")};
-    const auto setName = [&](const QByteArray &title) {
+    const auto setName = [&](std::string_view title) {
         xcb_change_property(c, XCB_PROP_MODE_REPLACE, id, name, utf8, 8, title.size(),
-                            title.constData());
+                            title.data());
         xcb_flush(c);
     };
     setName("first");
@@ -1017,7 +1009,7 @@ TEST_F(XwaylandTest, OnlyAChangedFollowedPropertyIsReadAndNothingIsWrittenTwice)
     EXPECT_EQ(writes, 0);
 
     // A move tells the client where it is, without rewriting its state.
-    const QRect bounds = window->bounds();
+    const base::Rect bounds = window->bounds();
     window->setBounds(bounds.translated(10, 0));
     ASSERT_TRUE(until([&] {
         drain();
@@ -1032,7 +1024,7 @@ TEST_F(XwaylandTest, OnlyAChangedFollowedPropertyIsReadAndNothingIsWrittenTwice)
 
 TEST_F(XwaylandTest, OnDemandServerStartsForTheFirstClient)
 {
-    if (!QFile::exists("/usr/bin/Xwayland"))
+    if (!std::filesystem::exists("/usr/bin/Xwayland"))
         GTEST_SKIP() << "system Xwayland unavailable";
     xwayland::XwaylandServer::Options options;
     options.software = true;
@@ -1042,28 +1034,26 @@ TEST_F(XwaylandTest, OnDemandServerStartsForTheFirstClient)
     xwayland->started = [&] {
         ++started;
     };
-    ASSERT_TRUE(xwayland->start(options)) << xwayland->error().toStdString();
+    ASSERT_TRUE(xwayland->start(options)) << xwayland->error();
     // The display is the session's at once, with nothing running behind it.
-    const QString display = xwayland->display();
-    ASSERT_FALSE(display.isEmpty());
-    EXPECT_TRUE(QFile::exists(runtime.path() + "/ready.json"));
-    const QString lock = "/tmp/.X" + display.mid(1) + "-lock";
-    const QString socket = "/tmp/.X11-unix/X" + display.mid(1);
-    EXPECT_TRUE(QFile::exists(lock));
-    EXPECT_TRUE(QFile::exists(socket));
-    QDeadlineTimer idle(300);
-    while (!idle.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    const std::string display = xwayland->display();
+    ASSERT_FALSE(display.empty());
+    EXPECT_TRUE(std::filesystem::exists(runtime.path() + "/ready.json"));
+    const std::string lock = "/tmp/.X" + display.substr(1) + "-lock";
+    const std::string socket = "/tmp/.X11-unix/X" + display.substr(1);
+    EXPECT_TRUE(std::filesystem::exists(lock));
+    EXPECT_TRUE(std::filesystem::exists(socket));
+    test::runFor(std::chrono::milliseconds(300));
     EXPECT_FALSE(xwayland->isReady());
     EXPECT_EQ(xwayland->processId(), 0);
     EXPECT_EQ(started, 0);
 
     // The first client's connection is the one Xwayland accepts.
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     for (int round = 0; round < 2; ++round) {
         SCOPED_TRACE(round);
         auto *c = xcbReply([&] {
-            return xcb_connect(display.toUtf8().constData(), nullptr);
+            return xcb_connect(display.c_str(), nullptr);
         });
         ASSERT_EQ(xcb_connection_has_error(c), 0);
         EXPECT_TRUE(xwayland->isReady());
@@ -1089,26 +1079,26 @@ TEST_F(XwaylandTest, OnDemandServerStartsForTheFirstClient)
             ASSERT_TRUE(until([&] {
                 return !xwayland->isReady() && xwayland->processId() == 0;
             }));
-            EXPECT_TRUE(xwayland->error().isEmpty());
+            EXPECT_TRUE(xwayland->error().empty());
             EXPECT_EQ(xwayland->display(), display);
-            EXPECT_TRUE(QFile::exists(runtime.path() + "/ready.json"));
+            EXPECT_TRUE(std::filesystem::exists(runtime.path() + "/ready.json"));
         }
     }
     xwayland->stop();
-    EXPECT_FALSE(QFile::exists(lock));
-    EXPECT_FALSE(QFile::exists(socket));
-    EXPECT_FALSE(QFile::exists(runtime.path() + "/ready.json"));
+    EXPECT_FALSE(std::filesystem::exists(lock));
+    EXPECT_FALSE(std::filesystem::exists(socket));
+    EXPECT_FALSE(std::filesystem::exists(runtime.path() + "/ready.json"));
 }
 
 TEST_F(XwaylandTest, NetWmSyncRequestHoldsResizesForTheClientCounter)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     free(xcbReply([&] {
@@ -1145,7 +1135,7 @@ TEST_F(XwaylandTest, NetWmSyncRequestHoldsResizesForTheClientCounter)
     }));
 
     std::vector<uint32_t> requests;
-    std::vector<QSize> configures;
+    std::vector<base::Size> configures;
     const xcb_atom_t wmProtocols = intern(c, "WM_PROTOCOLS");
     auto poll = [&] {
         while (auto *e = xcb_poll_for_event(c)) {
@@ -1159,56 +1149,57 @@ TEST_F(XwaylandTest, NetWmSyncRequestHoldsResizesForTheClientCounter)
             } else if (type == XCB_CONFIGURE_NOTIFY) {
                 auto *n = reinterpret_cast<xcb_configure_notify_event_t *>(e);
                 if (n->window == id
-                    && (configures.empty() || configures.back() != QSize(n->width, n->height)))
+                    && (configures.empty() || configures.back() != base::Size(n->width, n->height)))
                     configures.emplace_back(n->width, n->height);
             }
             free(e);
         }
     };
-    auto resize = [&](const QSize &size) {
+    auto resize = [&](const base::Size &size) {
         const auto insets = window->frameInsets();
-        window->setBounds(QRect(window->bounds().topLeft(), insets.outset(size)));
+        window->setBounds(base::Rect(window->bounds().topLeft(), insets.outset(size)));
     };
     auto settle = [&](int ms) {
-        QDeadlineTimer deadline(ms);
-        while (!deadline.hasExpired()) {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-            poll();
-        }
+        until(
+                [&] {
+                    poll();
+                    return false;
+                },
+                ms);
     };
     settle(100);
     configures.clear();
 
     // A request precedes the new size.
-    resize(QSize(240, 120));
+    resize(base::Size(240, 120));
     ASSERT_TRUE(until([&] {
         poll();
-        return !configures.empty() && configures.back() == QSize(240, 120);
+        return !configures.empty() && configures.back() == base::Size(240, 120);
     }));
     ASSERT_EQ(requests.size(), 1u);
     EXPECT_EQ(requests[0], 1u);
 
     // Until the counter reaches it, further sizes wait, and only the last goes.
-    resize(QSize(260, 130));
-    resize(QSize(280, 140));
+    resize(base::Size(260, 130));
+    resize(base::Size(280, 140));
     settle(200);
-    EXPECT_EQ(configures.back(), QSize(240, 120));
+    EXPECT_EQ(configures.back(), base::Size(240, 120));
     EXPECT_EQ(requests.size(), 1u);
     xcb_sync_set_counter(c, counter, {0, requests[0]});
     xcb_flush(c);
     ASSERT_TRUE(until([&] {
         poll();
-        return configures.back() == QSize(280, 140);
+        return configures.back() == base::Size(280, 140);
     }));
     EXPECT_EQ(requests.size(), 2u);
 
     // A client that never answers holds a resize back for a second at most.
-    resize(QSize(300, 150));
+    resize(base::Size(300, 150));
     settle(300);
-    EXPECT_EQ(configures.back(), QSize(280, 140));
+    EXPECT_EQ(configures.back(), base::Size(280, 140));
     ASSERT_TRUE(until([&] {
         poll();
-        return configures.back() == QSize(300, 150);
+        return configures.back() == base::Size(300, 150);
     }));
 }
 
@@ -1218,13 +1209,13 @@ TEST_F(XwaylandTest, NetWmSyncRequestHoldsResizesForTheClientCounter)
 TEST_F(XwaylandTest, X11PointerGrabsWarpsAndKeyboardGrabsUseTheWaylandProtocols)
 {
     xwayland->setScale(2);
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -1248,12 +1239,12 @@ TEST_F(XwaylandTest, X11PointerGrabsWarpsAndKeyboardGrabsUseTheWaylandProtocols)
     auto *window = manager->windows()[0];
     window->activate();
     input::InputManager input(seat.get());
-    input.setBounds(QSize(800, 600));
+    input.setBounds(base::Size(800, 600));
     auto pointerInWindow = [&] {
         auto *r = xcbReply([&] {
             return xcb_query_pointer_reply(c, xcb_query_pointer(c, id), nullptr);
         });
-        const QPoint position = r ? QPoint(r->win_x, r->win_y) : QPoint(-1, -1);
+        const base::Point position = r ? base::Point(r->win_x, r->win_y) : base::Point(-1, -1);
         free(r);
         return position;
     };
@@ -1264,15 +1255,16 @@ TEST_F(XwaylandTest, X11PointerGrabsWarpsAndKeyboardGrabsUseTheWaylandProtocols)
             return xcb_translate_coordinates_reply(
                     c, xcb_translate_coordinates(c, id, screen->root, 0, 0), nullptr);
         });
-        const QPoint position = r ? QPoint(r->dst_x, r->dst_y) : QPoint(-1, -1);
+        const base::Point position = r ? base::Point(r->dst_x, r->dst_y) : base::Point(-1, -1);
         free(r);
-        return position == window->contentBounds().topLeft() * 2;
+        const base::Point origin = window->contentBounds().topLeft();
+        return position == base::Point(origin.x() * 2, origin.y() * 2);
     }));
-    const QPoint origin = window->contentBounds().topLeft();
+    const base::Point origin = window->contentBounds().topLeft();
     auto enter = [&] {
-        input.onPointerMotionAbsolute({}, origin + QPoint(100, 100));
+        input.onPointerMotionAbsolute({}, base::PointF(origin + base::Point(100, 100)));
         return until([&] {
-            return pointerInWindow() == QPoint(200, 200);
+            return pointerInWindow() == base::Point(200, 200);
         });
     };
     ASSERT_TRUE(enter());
@@ -1292,8 +1284,8 @@ TEST_F(XwaylandTest, X11PointerGrabsWarpsAndKeyboardGrabsUseTheWaylandProtocols)
         return constraints->active()
                 && constraints->active()->kind() == input::PointerConstraintDelegate::Kind::Confine;
     }));
-    input.onPointerMotion({}, QPointF(500, 500));
-    const QRect content = window->contentBounds();
+    input.onPointerMotion({}, base::PointF(500, 500));
+    const base::Rect content = window->contentBounds();
     EXPECT_NEAR(content.x() + content.width(), input.pointerPosition().x(), 0.01);
     EXPECT_NEAR(content.y() + content.height(), input.pointerPosition().y(), 0.01);
     EXPECT_LT(input.pointerPosition().x(), content.x() + content.width());
@@ -1314,11 +1306,11 @@ TEST_F(XwaylandTest, X11PointerGrabsWarpsAndKeyboardGrabsUseTheWaylandProtocols)
     ASSERT_TRUE(until([&] {
         return constraints->isLocked();
     }));
-    const QPointF locked = input.pointerPosition();
-    input.onPointerMotion({}, QPointF(10, 5));
+    const base::PointF locked = input.pointerPosition();
+    input.onPointerMotion({}, base::PointF(10, 5));
     EXPECT_EQ(locked, input.pointerPosition());
     EXPECT_TRUE(until([&] {
-        return pointerInWindow() == QPoint(70, 70);
+        return pointerInWindow() == base::Point(70, 70);
     }));
     xcb_xfixes_show_cursor(c, id);
     xcb_flush(c);
@@ -1326,7 +1318,7 @@ TEST_F(XwaylandTest, X11PointerGrabsWarpsAndKeyboardGrabsUseTheWaylandProtocols)
         return !constraints->isLocked();
     }));
     // The lock's cursor hint puts the pointer where X11 had it.
-    EXPECT_EQ(QPointF(origin) + QPointF(35, 35), input.pointerPosition());
+    EXPECT_EQ(base::PointF(origin) + base::PointF(35, 35), input.pointerPosition());
 
     auto *keyboardGrab = xcbReply([&] {
         return xcb_grab_keyboard_reply(c,
@@ -1363,7 +1355,7 @@ TEST_F(XwaylandTest, AuthenticationRequired)
     auth.data = invalid;
     auth.datalen = sizeof(invalid);
     auto *connection = xcbReply([&] {
-        return xcb_connect_to_display_with_auth_info(xwayland->display().toUtf8().constData(),
+        return xcb_connect_to_display_with_auth_info(xwayland->display().c_str(),
                                                      &auth, nullptr);
     });
     EXPECT_NE(xcb_connection_has_error(connection), 0);
@@ -1398,12 +1390,12 @@ TEST_F(XwaylandTest, ClipboardBothDirectionsAndIncrementalTransfers)
         pump();
         return native.serial != 0;
     }));
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto root = xcb_setup_roots_iterator(xcb_get_setup(c)).data->root;
@@ -1550,7 +1542,7 @@ TEST_F(XwaylandTest, ClipboardBothDirectionsAndIncrementalTransfers)
         }));
         int fds[2];
         ASSERT_EQ(pipe2(fds, O_CLOEXEC | O_NONBLOCK), 0);
-        auto closeRead = qScopeGuard([&] {
+        base::ScopeGuard closeRead([&] {
             close(fds[0]);
         });
         wl_data_offer_receive(native.selection, mime.c_str(), fds[1]);
@@ -1583,7 +1575,7 @@ TEST_F(XwaylandTest, ClipboardBothDirectionsAndIncrementalTransfers)
             xcb_flush(c);
             int cached[2];
             ASSERT_EQ(pipe2(cached, O_CLOEXEC | O_NONBLOCK), 0);
-            auto closeCached = qScopeGuard([&] {
+            base::ScopeGuard closeCached([&] {
                 close(cached[0]);
             });
             wl_data_offer_receive(native.selection, mime.c_str(), cached[1]);
@@ -1608,12 +1600,12 @@ TEST_F(XwaylandTest, ClipboardBothDirectionsAndIncrementalTransfers)
 TEST_F(XwaylandTest, ClipboardManagerRejectsFailedConversion)
 {
     ASSERT_TRUE(start());
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     const auto owner = xcb_generate_id(c);
@@ -1684,11 +1676,11 @@ TEST_F(XwaylandTest, ClipboardManagerRejectsFailedConversion)
     }));
     int fds[2];
     ASSERT_EQ(pipe2(fds, O_CLOEXEC | O_NONBLOCK), 0);
-    auto closeRead = qScopeGuard([&] {
+    base::ScopeGuard closeRead([&] {
         close(fds[0]);
     });
     seat->selection()->source()->send("text/plain;charset=utf-8", fds[1]);
-    QByteArray received;
+    std::string received;
     ASSERT_TRUE(until([&] {
         pump();
         char bytes[32];
@@ -1697,25 +1689,27 @@ TEST_F(XwaylandTest, ClipboardManagerRejectsFailedConversion)
             received.append(bytes, count);
         return count == 0;
     }));
-    EXPECT_EQ(received, QString::fromUtf8("café").toUtf8());
+    EXPECT_EQ(received, "caf\xc3\xa9");
 }
 
 TEST_F(XwaylandTest, QtClipboardAcrossProtocols)
 {
+    if (std::string_view(QT_CLIPBOARD_CLIENT).empty())
+        GTEST_SKIP() << "Built without the Qt test clients";
     wayland::WaylandXdgShell xdg(compositor.get(), manager.get(), seat.get(),
                                  server->serialTracker());
     ASSERT_TRUE(wayland::createXdgShellGlobal(server->display(), &xdg));
     ASSERT_TRUE(wayland::createXdgDecorationGlobal(server->display()));
     ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server->display(), waylandSeat.get()));
     ASSERT_TRUE(wayland::createPrimarySelectionGlobal(server->display(), waylandSeat.get()));
-    ASSERT_TRUE(server->addSocket(QStringLiteral("xwayland-clipboard-test")));
+    ASSERT_TRUE(server->addSocket("xwayland-clipboard-test"));
     ASSERT_TRUE(start());
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *probe = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(probe), 0);
-    auto closeProbe = qScopeGuard([&] {
+    base::ScopeGuard closeProbe([&] {
         xcb_disconnect(probe);
     });
     const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
@@ -1738,54 +1732,53 @@ TEST_F(XwaylandTest, QtClipboardAcrossProtocols)
             return ready;
         });
     };
-    auto window = [&](const QString &title) -> wm::Window * {
+    auto window = [&](const std::string &title) -> wm::Window * {
         for (auto *w : manager->windows()) {
             if (w->title() == title)
                 return w;
         }
         return nullptr;
     };
+    const auto contains = [](const std::string &output, std::string_view marker) {
+        return output.find(marker) != std::string::npos;
+    };
     for (bool x11Source : {false, true}) {
         for (const auto *format : {"text", "binary", "urls", "primary"}) {
             SCOPED_TRACE(format);
             SCOPED_TRACE(x11Source);
-            QProcess source, destination;
-            auto cleanup = qScopeGuard([&] {
-                for (auto *process : {&source, &destination}) {
-                    if (process->state() != QProcess::NotRunning) {
-                        process->kill();
-                        process->waitForFinished(2000);
+            test::ChildProcess source, destination;
+            base::ScopeGuard cleanup([&] {
+                for (auto *child : {&source, &destination}) {
+                    if (child->running()) {
+                        child->process.kill();
+                        child->process.waitForFinished(std::chrono::milliseconds(2000));
                     }
                 }
                 until([&] {
                     return manager->windows().empty();
                 });
             });
-            auto launch = [&](QProcess &process, bool x11, const QString &title) {
-                auto env = QProcessEnvironment::systemEnvironment();
-                env.remove("QT_QPA_PLATFORMTHEME");
-                env.insert("QT_QPA_PLATFORM", x11 ? "xcb" : "wayland");
-                env.insert("DISPLAY", xwayland->display());
-                env.insert("XAUTHORITY", xwayland->authority());
-                env.insert("WAYLAND_DISPLAY", server->socketName());
-                process.setProcessEnvironment(env);
-                process.start(QStringLiteral(QT_CLIPBOARD_CLIENT),
-                              {title, QString::fromLatin1(format)});
+            auto launch = [&](test::ChildProcess &process, bool x11, const std::string &title) {
+                process.start(QT_CLIPBOARD_CLIENT, {title, format},
+                              test::environmentWith({"QT_QPA_PLATFORMTHEME"},
+                                                    {{"QT_QPA_PLATFORM", x11 ? "xcb" : "wayland"},
+                                                     {"DISPLAY", xwayland->display()},
+                                                     {"XAUTHORITY", xwayland->authority()},
+                                                     {"WAYLAND_DISPLAY", server->socketName()}}));
             };
             launch(source, x11Source, "clipboard-source");
             ASSERT_TRUE(until([&] {
                 return window("clipboard-source");
-            })) << source.errorString().toStdString()
-                << " exit " << source.exitCode() << source.readAllStandardError().constData();
+            })) << "exit " << source.exitCode << source.errors();
             window("clipboard-source")->activate();
-            QByteArray activationOutput;
+            std::string activationOutput;
             ASSERT_TRUE(until([&] {
-                activationOutput += source.readAllStandardOutput();
-                return activationOutput.contains("FOCUSED");
+                activationOutput += source.readOutput();
+                return contains(activationOutput, "FOCUSED");
             }));
             if (x11Source)
                 ASSERT_TRUE(xFocusReady());
-            if (x11Source && QString::fromLatin1(format) == "text") {
+            if (x11Source && std::string_view(format) == "text") {
                 seat->onKey({}, KEY_D, true);
                 seat->onKey({}, KEY_D, false);
                 ASSERT_TRUE(until([&] {
@@ -1793,70 +1786,69 @@ TEST_F(XwaylandTest, QtClipboardAcrossProtocols)
                 }));
                 EXPECT_EQ(window("clipboard-dialog")->transientParent(),
                           window("clipboard-source"));
-                QByteArray dialogOutput;
+                std::string dialogOutput;
                 ASSERT_TRUE(until([&] {
-                    dialogOutput += source.readAllStandardOutput();
-                    return dialogOutput.contains("ACTIVE clipboard-dialog");
+                    dialogOutput += source.readOutput();
+                    return contains(dialogOutput, "ACTIVE clipboard-dialog");
                 }));
                 ASSERT_TRUE(xFocusReady());
                 seat->onKey({}, KEY_ESC, true);
                 seat->onKey({}, KEY_ESC, false);
                 ASSERT_TRUE(until([&] {
                     return !window("clipboard-dialog");
-                })) << source.readAllStandardError().constData();
+                })) << source.errors();
                 window("clipboard-source")->activate();
                 dialogOutput.clear();
                 ASSERT_TRUE(until([&] {
-                    dialogOutput += source.readAllStandardOutput();
-                    return dialogOutput.contains("ACTIVE clipboard-source");
+                    dialogOutput += source.readOutput();
+                    return contains(dialogOutput, "ACTIVE clipboard-source");
                 }));
                 seat->onKey({}, KEY_M, true);
                 seat->onKey({}, KEY_M, false);
-                QByteArray menuOutput;
+                std::string menuOutput;
                 ASSERT_TRUE(until([&] {
-                    menuOutput += source.readAllStandardOutput();
-                    return menuOutput.contains("MENU");
+                    menuOutput += source.readOutput();
+                    return contains(menuOutput, "MENU");
                 }));
                 EXPECT_EQ(manager->windows().size(), 1u);
                 seat->onKey({}, KEY_ESC, true);
                 seat->onKey({}, KEY_ESC, false);
                 ASSERT_TRUE(until([&] {
-                    menuOutput += source.readAllStandardOutput();
-                    return menuOutput.contains("MENU_CLOSED");
+                    menuOutput += source.readOutput();
+                    return contains(menuOutput, "MENU_CLOSED");
                 }));
                 EXPECT_EQ(seat->focusedSurface(), window("clipboard-source")->rootSurface());
                 EXPECT_TRUE(window("clipboard-source")->isActive());
             }
             seat->onKey({}, KEY_C, true);
             seat->onKey({}, KEY_C, false);
-            QByteArray sourceOutput;
+            std::string sourceOutput;
             ASSERT_TRUE(until([&] {
-                sourceOutput += source.readAllStandardOutput();
-                return sourceOutput.contains("PUBLISHED")
-                        && (QString::fromLatin1(format) == "primary"
-                                    ? seat->primarySelection()->source()
-                                    : seat->selection()->source());
-            })) << source.readAllStandardError().constData();
+                sourceOutput += source.readOutput();
+                return contains(sourceOutput, "PUBLISHED")
+                        && (std::string_view(format) == "primary" ? seat->primarySelection()->source()
+                                                                  : seat->selection()->source());
+            })) << source.errors();
             launch(destination, !x11Source, "clipboard-destination");
             ASSERT_TRUE(until([&] {
                 return window("clipboard-destination");
-            })) << destination.readAllStandardError().constData();
+            })) << destination.errors();
             window("clipboard-destination")->activate();
-            QByteArray destinationOutput;
+            std::string destinationOutput;
             ASSERT_TRUE(until([&] {
-                destinationOutput += destination.readAllStandardOutput();
-                return destinationOutput.contains("FOCUSED");
+                destinationOutput += destination.readOutput();
+                return contains(destinationOutput, "FOCUSED");
             }));
             if (!x11Source)
                 ASSERT_TRUE(xFocusReady());
             seat->onKey({}, KEY_V, true);
             seat->onKey({}, KEY_V, false);
             ASSERT_TRUE(until([&] {
-                return destination.state() == QProcess::NotRunning;
+                return !destination.running();
             }));
-            EXPECT_EQ(destination.exitCode(), 0) << destination.readAllStandardError().constData();
-            destinationOutput += destination.readAllStandardOutput();
-            EXPECT_TRUE(destinationOutput.contains("PASS"));
+            EXPECT_EQ(destination.exitCode, 0) << destination.errors();
+            destinationOutput += destination.readOutput();
+            EXPECT_TRUE(contains(destinationOutput, "PASS"));
         }
     }
     wl_display_destroy_clients(server->display());
@@ -1864,9 +1856,9 @@ TEST_F(XwaylandTest, QtClipboardAcrossProtocols)
 
 TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
-    auto connection = std::async(std::launch::async, [display = xwayland->display().toStdString()] {
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
+    auto connection = std::async(std::launch::async, [display = xwayland->display()] {
         return xcb_connect(display.c_str(), nullptr);
     });
     ASSERT_TRUE(until([&] {
@@ -1901,7 +1893,7 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
     xcb_flush(c);
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1;
-    })) << xwayland->error().toStdString();
+    })) << xwayland->error();
     auto *window = manager->windows()[0];
     EXPECT_EQ(window->title(), title);
     EXPECT_EQ(window->applicationId(), "cutefishtest");
@@ -1923,7 +1915,7 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
         }
         return receivedFocus;
     }));
-    window->requestBounds(QRect(100, 120, 420, 300));
+    window->requestBounds(base::Rect(100, 120, 420, 300));
     // The WM and test client use separate X connections without request ordering.
     ASSERT_TRUE(until([&] {
         auto *geometry = xcbReply([&] {
@@ -1983,7 +1975,7 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
     xcb_configure_window(c, id, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, newSize);
     xcb_flush(c);
     ASSERT_TRUE(until([&] {
-        return window->contentBounds().size() == QSize(400, 240);
+        return window->contentBounds().size() == base::Size(400, 240);
     }));
     window->maximize();
     EXPECT_EQ(window->stateType(), wm::WindowStateType::Maximized);
@@ -2056,8 +2048,8 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
     ASSERT_TRUE(until([&] {
         return window->rootSurface()->node()->hasContentShape();
     }));
-    EXPECT_TRUE(window->rootSurface()->hitTestRegion().contains(QPoint(20, 20)));
-    EXPECT_FALSE(window->rootSurface()->hitTestRegion().contains(QPoint(75, 20)));
+    EXPECT_TRUE(window->rootSurface()->hitTestRegion().contains(base::Point(20, 20)));
+    EXPECT_FALSE(window->rootSurface()->hitTestRegion().contains(base::Point(75, 20)));
     EXPECT_FALSE(window->rootSurface()->node()->isOpaque());
     xcb_shape_rectangles(c, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, XCB_CLIP_ORDERING_UNSORTED, id,
                          0, 0, 0, nullptr);
@@ -2092,10 +2084,10 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
     struct Task {
         cutefish_window_management_v1 *manager = nullptr;
         cutefish_window_v1 *window = nullptr;
-        QString title, app;
+        std::string title, app;
         bool minimized = false, closed = false;
         int announcements = 0;
-        quint64 parentId = 0;
+        uint64_t parentId = 0;
         int parentCount = 0;
     } task;
 
@@ -2122,7 +2114,7 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
             [](void *, auto *) {},
             [](void *p, auto *, uint32_t high, uint32_t low) {
                 auto *task = static_cast<Task *>(p);
-                task->parentId = (quint64(high) << 32) | low;
+                task->parentId = (uint64_t(high) << 32) | low;
                 ++task->parentCount;
             },
             [](void *, auto *, uint32_t) {},
@@ -2213,12 +2205,12 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
 TEST_F(XwaylandTest, ClientLeaderLegacyHintsAndMappingOrder)
 {
     ASSERT_TRUE(start());
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -2260,7 +2252,7 @@ TEST_F(XwaylandTest, ClientLeaderLegacyHintsAndMappingOrder)
             grouped = w;
     }
     ASSERT_TRUE(grouped);
-    EXPECT_EQ(grouped->minimumSize(), QSize(120, 90));
+    EXPECT_EQ(grouped->minimumSize(), base::Size(120, 90));
     const auto listAtom = intern(c, "_NET_CLIENT_LIST");
     ASSERT_TRUE(until([&] {
         auto *r = xcbReply([&] {
@@ -2288,12 +2280,12 @@ TEST_F(XwaylandTest, ClientLeaderLegacyHintsAndMappingOrder)
 TEST_F(XwaylandTest, ATransientMappedModalIsModalBeforeItIsActivated)
 {
     ASSERT_TRUE(start());
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -2314,12 +2306,11 @@ TEST_F(XwaylandTest, ATransientMappedModalIsModalBeforeItIsActivated)
     std::optional<bool> modalWhenActivated;
     // The captures are locals: the connection must go with this scope, not
     // with the manager, which outlives the test body.
-    QObject scope;
-    QObject::connect(manager.get(), &wm::WindowManager::activeWindowChanged, &scope,
-                     [&](wm::Window *window) {
-                         if (window && window != parentWindow && !modalWhenActivated)
-                             modalWhenActivated = window->isModal();
-                     });
+    const base::Subscription scope =
+            manager->activeWindowChanged.connect([&](wm::Window *window) {
+                if (window && window != parentWindow && !modalWhenActivated)
+                    modalWhenActivated = window->isModal();
+            });
     xcb_change_property(c, XCB_PROP_MODE_REPLACE, dialog, XCB_ATOM_WM_TRANSIENT_FOR,
                         XCB_ATOM_WINDOW, 32, 1, &parent);
     const auto modalAtom = intern(c, "_NET_WM_STATE_MODAL");
@@ -2352,12 +2343,12 @@ TEST_F(XwaylandTest, ATransientMappedModalIsModalBeforeItIsActivated)
 TEST_F(XwaylandTest, StateSetJustBeforeMappingIsNotLostToAnEarlySurface)
 {
     ASSERT_TRUE(start());
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -2388,8 +2379,8 @@ TEST_F(XwaylandTest, StateSetJustBeforeMappingIsNotLostToAnEarlySurface)
     xcb_map_window(c, dialog);
     xcb_flush(c);
     // One iteration: the window manager takes the map request and nothing after.
-    QThread::msleep(100);
-    QCoreApplication::processEvents();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    test::processPendingEvents();
     // Only the Wayland side runs while Xwayland maps and draws the dialog.
     auto dialogSurface = [&]() -> compositor::Surface * {
         for (auto *surface : compositor->surfaces()) {
@@ -2398,8 +2389,8 @@ TEST_F(XwaylandTest, StateSetJustBeforeMappingIsNotLostToAnEarlySurface)
         }
         return nullptr;
     };
-    QDeadlineTimer deadline(5000);
-    while (!dialogSurface() && !deadline.hasExpired()) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
+    while (!dialogSurface() && std::chrono::steady_clock::now() < deadline) {
         server->dispatch(std::chrono::milliseconds(10));
         server->flush();
     }
@@ -2420,12 +2411,12 @@ TEST_F(XwaylandTest, StateSetJustBeforeMappingIsNotLostToAnEarlySurface)
 TEST_F(XwaylandTest, StateRequestedBeforeTheWindowIsManagedIsKept)
 {
     ASSERT_TRUE(start());
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     auto *c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(c);
     });
     auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -2477,20 +2468,21 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
 {
     for (const double scale : {1.0, 1.5, 2.0}) {
         SCOPED_TRACE(scale);
-        output.scale = *compositor::OutputScale::fromNumerator(qRound(scale * 120));
-        output.pixelSize = QSize(qRound(800 * scale), qRound(600 * scale));
+        output.scale = *compositor::OutputScale::fromNumerator(base::roundToInt(scale * 120));
+        output.pixelSize = base::Size(base::roundToInt(800 * scale), base::roundToInt(600 * scale));
         compositor->setOutputScale(output.scale);
         wayland::updateOutputGlobal(outputGlobal, &output);
-        const auto devicePath = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-        int drmFd = devicePath.isEmpty() ? -1 : open(devicePath.constData(), O_RDWR | O_CLOEXEC);
+        const char *variable = getenv("CUTEFISH_TEST_DRM_DEVICE");
+        const std::string devicePath = variable ? variable : "";
+        int drmFd = devicePath.empty() ? -1 : open(devicePath.c_str(), O_RDWR | O_CLOEXEC);
         gbm_device *device = drmFd >= 0 ? gbm_create_device(drmFd) : nullptr;
-        auto deviceCleanup = qScopeGuard([&] {
+        base::ScopeGuard deviceCleanup([&] {
             if (device)
                 gbm_device_destroy(device);
             if (drmFd >= 0)
                 close(drmFd);
         });
-        ASSERT_TRUE(devicePath.isEmpty() || device);
+        ASSERT_TRUE(devicePath.empty() || device);
         auto renderer = device ? render::EglRenderer::create(device, DRM_FORMAT_XRGB8888)
                                : render::EglRendererTestAccess::create();
         ASSERT_NE(renderer, nullptr);
@@ -2514,7 +2506,7 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
                                                                nullptr, output.pixelSize);
         }
         ASSERT_TRUE(target);
-        auto cleanup = qScopeGuard([&] {
+        base::ScopeGuard cleanup([&] {
             xwayland->stop();
             scene.root()->releaseRenderResources();
             renderer->clearTextureCache();
@@ -2522,9 +2514,9 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
         });
         ASSERT_TRUE(renderer->beginFrame(target.get()));
         ASSERT_TRUE(start());
-        qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+        setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
         auto *c = xcbReply([&] {
-            return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+            return xcb_connect(xwayland->display().c_str(), nullptr);
         });
         ASSERT_EQ(xcb_connection_has_error(c), 0);
         auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -2545,10 +2537,10 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
         renderer->setRasterScale(scale);
         renderer->clear({0, 0, 0, 1});
         scene.root()->render(*renderer);
-        const auto center = window->contentBounds().center();
+        const auto center = wm::centerPixel(window->contentBounds());
         uint8_t pixel[4] {};
-        glReadPixels(qRound(center.x() * scale),
-                     output.pixelSize.height() - 1 - qRound(center.y() * scale), 1, 1, GL_RGBA,
+        glReadPixels(base::roundToInt(center.x() * scale),
+                     output.pixelSize.height() - 1 - base::roundToInt(center.y() * scale), 1, 1, GL_RGBA,
                      GL_UNSIGNED_BYTE, pixel);
         EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
         EXPECT_GT(pixel[0], 240);
@@ -2563,8 +2555,8 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
         }));
         renderer->clear({0, 0, 0, 1});
         scene.root()->render(*renderer);
-        glReadPixels(qRound(center.x() * scale),
-                     output.pixelSize.height() - 1 - qRound(center.y() * scale), 1, 1, GL_RGBA,
+        glReadPixels(base::roundToInt(center.x() * scale),
+                     output.pixelSize.height() - 1 - base::roundToInt(center.y() * scale), 1, 1, GL_RGBA,
                      GL_UNSIGNED_BYTE, pixel);
         EXPECT_LT(pixel[0], 30);
         EXPECT_LT(pixel[1], 30);
@@ -2574,9 +2566,9 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
         ASSERT_TRUE(until([&] {
             return !window->rootSurface()->node()->hasContentShape();
         }));
-        seat->onPointerMotion(std::chrono::steady_clock::now(), center);
-        seat->onPointerButton(std::chrono::steady_clock::now(), center, BTN_LEFT, true);
-        seat->onPointerButton(std::chrono::steady_clock::now(), center, BTN_LEFT, false);
+        seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(center));
+        seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(center), BTN_LEFT, true);
+        seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(center), BTN_LEFT, false);
         seat->onKey(std::chrono::steady_clock::now(), KEY_A, true);
         seat->onKey(std::chrono::steady_clock::now(), KEY_A, false);
         bool key = false, button = false;
@@ -2591,7 +2583,8 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
         const auto popup = xcb_generate_id(c);
         const bool overrideRedirect = scale != 1.5;
         uint32_t popupValues[] = {0, uint32_t(overrideRedirect)};
-        auto popupRect = QRect(window->contentBounds().topLeft() + QPoint(20, 20), QSize(80, 60));
+        auto popupRect =
+                base::Rect(window->contentBounds().topLeft() + base::Point(20, 20), base::Size(80, 60));
         xcb_create_window(c, XCB_COPY_FROM_PARENT, popup, screen->root, popupRect.x(),
                           popupRect.y(), 80, 60, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
                           screen->root_visual, XCB_CW_BACK_PIXEL | XCB_CW_OVERRIDE_REDIRECT,
@@ -2605,8 +2598,9 @@ TEST_F(XwaylandTest, RealSoftwareRenderingAndInput)
         xcb_flush(c);
         compositor::Surface *popupSurface = nullptr;
         ASSERT_TRUE(until([&] {
-            QPointF local;
-            auto *hit = input::findTargetSurface(compositor.get(), popupRect.center(), &local);
+            base::PointF local;
+            auto *hit = input::findTargetSurface(compositor.get(),
+                                                 base::PointF(popupRect.center()), &local);
             if (hit && hit != window->rootSurface())
                 popupSurface = hit;
             return popupSurface != nullptr;
@@ -2652,7 +2646,7 @@ struct XdndPeer {
         return atom;
     }
 
-    void create(const QRect &rect)
+    void create(const base::Rect &rect)
     {
         auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
         root = screen->root;
@@ -2736,7 +2730,7 @@ struct XdndPeer {
 };
 
 // A mapped native Wayland surface for the other end of a drag.
-compositor::Surface *mapNativeSurface(clipboard_test::Client &native, const QPoint &position)
+compositor::Surface *mapNativeSurface(clipboard_test::Client &native, const base::Point &position)
 {
     auto *resource = wl_client_get_object(
             native.serverClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(native.surface)));
@@ -2744,7 +2738,7 @@ compositor::Surface *mapNativeSurface(clipboard_test::Client &native, const QPoi
     if (!surface)
         return nullptr;
     auto pool = testsupport::makePool(100 * 100 * 4);
-    surface->attach(pool->createBuffer(QSize(100, 100), 0, 400, render::PixelFormat::Bgra8888,
+    surface->attach(pool->createBuffer(base::Size(100, 100), 0, 400, render::PixelFormat::Bgra8888,
                                        nullptr),
                     {});
     surface->commit();
@@ -2766,23 +2760,23 @@ TEST_F(XwaylandTest, WaylandDragDropsOnAnX11Window)
         native.pump();
         return mapNativeSurface(native, {500, 0});
     }));
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     XdndPeer x;
     x.c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(x.c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(x.c);
     });
-    x.create(QRect(0, 0, 300, 200));
+    x.create(base::Rect(0, 0, 300, 200));
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1;
     }));
-    const QPoint over = manager->windows()[0]->contentBounds().center();
+    const base::Point over = wm::centerPixel(manager->windows()[0]->contentBounds());
 
-    seat->onPointerMotion(std::chrono::steady_clock::now(), QPointF(550, 50));
-    seat->onPointerButton(std::chrono::steady_clock::now(), QPointF(550, 50), BTN_LEFT, true);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(550, 50));
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(550, 50), BTN_LEFT, true);
     ASSERT_TRUE(until([&] {
         native.pump();
         return native.buttonSerial != 0;
@@ -2797,7 +2791,7 @@ TEST_F(XwaylandTest, WaylandDragDropsOnAnX11Window)
         return seat->drag()->active();
     }));
 
-    seat->onPointerMotion(std::chrono::steady_clock::now(), over);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(over));
     ASSERT_TRUE(until([&] {
         native.pump();
         x.poll();
@@ -2818,7 +2812,7 @@ TEST_F(XwaylandTest, WaylandDragDropsOnAnX11Window)
         x.poll();
         return native.sourceAction == WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
     }));
-    seat->onPointerButton(std::chrono::steady_clock::now(), over, BTN_LEFT, false);
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(over), BTN_LEFT, false);
     ASSERT_TRUE(until([&] {
         native.pump();
         x.poll();
@@ -2863,33 +2857,33 @@ TEST_F(XwaylandTest, X11DragDropsOnAWaylandSurface)
         native.pump();
         return mapNativeSurface(native, {500, 0});
     }));
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     XdndPeer x;
     x.c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(x.c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(x.c);
     });
-    x.create(QRect(0, 0, 300, 200));
+    x.create(base::Rect(0, 0, 300, 200));
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1;
     }));
-    const QPoint inside = manager->windows()[0]->contentBounds().center();
+    const base::Point inside = wm::centerPixel(manager->windows()[0]->contentBounds());
     x.payload = "x11 bytes";
 
     // The press gives Xwayland the implicit grab an X11 drag runs under.
-    seat->onPointerMotion(std::chrono::steady_clock::now(), inside);
-    seat->onPointerButton(std::chrono::steady_clock::now(), inside, BTN_LEFT, true);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(inside));
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(inside), BTN_LEFT, true);
     ASSERT_TRUE(until([&] {
         x.poll();
         return x.pressed;
     }));
     xcb_set_selection_owner(x.c, x.window, x["XdndSelection"], x.pressTime);
     xcb_flush(x.c);
-    const QPoint target(550, 50);
-    seat->onPointerMotion(std::chrono::steady_clock::now(), target);
+    const base::Point target(550, 50);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(target));
 
     // Off every X11 window, the proxy is what the X11 source finds under the pointer.
     xcb_window_t proxy = 0;
@@ -2916,7 +2910,7 @@ TEST_F(XwaylandTest, X11DragDropsOnAWaylandSurface)
     EXPECT_NE(std::find(offered.begin(), offered.end(), "text/plain"), offered.end());
     EXPECT_NE(std::find(offered.begin(), offered.end(), "text/plain;charset=utf-8"),
               offered.end());
-    EXPECT_EQ(native.dragEnterPosition, QPointF(50, 50));
+    EXPECT_EQ(native.dragEnterPosition, cutefish::base::PointF(50, 50));
     EXPECT_EQ(x.last("XdndStatus")->data.data32[1] & 1, 0u);
 
     wl_data_offer_accept(native.dragOffer, native.dragSerial, "text/plain");
@@ -2931,7 +2925,7 @@ TEST_F(XwaylandTest, X11DragDropsOnAWaylandSurface)
     EXPECT_EQ(x.last("XdndStatus")->data.data32[0], proxy);
     EXPECT_EQ(x.last("XdndStatus")->data.data32[4], x["XdndActionCopy"]);
 
-    seat->onPointerButton(std::chrono::steady_clock::now(), target, BTN_LEFT, false);
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(target), BTN_LEFT, false);
     x.send(proxy, "XdndDrop", {x.window, 0, XCB_CURRENT_TIME});
     ASSERT_TRUE(until([&] {
         native.pump();
@@ -2940,7 +2934,7 @@ TEST_F(XwaylandTest, X11DragDropsOnAWaylandSurface)
     }));
     int fds[2];
     ASSERT_EQ(pipe2(fds, O_CLOEXEC | O_NONBLOCK), 0);
-    auto closeRead = qScopeGuard([&] {
+    base::ScopeGuard closeRead([&] {
         close(fds[0]);
     });
     wl_data_offer_receive(native.dragOffer, "text/plain", fds[1]);
@@ -2981,22 +2975,22 @@ TEST_F(XwaylandTest, X11DragWithATypeListCanLeaveAndBeRefused)
         native.pump();
         return mapNativeSurface(native, {500, 0});
     }));
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     XdndPeer x;
     x.c = xcbReply([&] {
-        return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+        return xcb_connect(xwayland->display().c_str(), nullptr);
     });
     ASSERT_EQ(xcb_connection_has_error(x.c), 0);
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(x.c);
     });
-    x.create(QRect(0, 0, 300, 200));
+    x.create(base::Rect(0, 0, 300, 200));
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1;
     }));
-    const QPoint inside = manager->windows()[0]->contentBounds().center();
-    seat->onPointerMotion(std::chrono::steady_clock::now(), inside);
-    seat->onPointerButton(std::chrono::steady_clock::now(), inside, BTN_LEFT, true);
+    const base::Point inside = wm::centerPixel(manager->windows()[0]->contentBounds());
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(inside));
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(inside), BTN_LEFT, true);
     ASSERT_TRUE(until([&] {
         x.poll();
         return x.pressed;
@@ -3008,8 +3002,8 @@ TEST_F(XwaylandTest, X11DragWithATypeListCanLeaveAndBeRefused)
     xcb_change_property(x.c, XCB_PROP_MODE_REPLACE, x.window, x["XdndTypeList"], XCB_ATOM_ATOM, 32,
                         std::size(types), types);
     xcb_flush(x.c);
-    const QPoint target(550, 50);
-    seat->onPointerMotion(std::chrono::steady_clock::now(), target);
+    const base::Point target(550, 50);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(target));
     xcb_window_t proxy = 0;
     ASSERT_TRUE(until([&] {
         x.poll();
@@ -3054,7 +3048,7 @@ TEST_F(XwaylandTest, X11DragWithATypeListCanLeaveAndBeRefused)
         x.poll();
         return native.dragOffer != nullptr;
     }));
-    seat->onPointerButton(std::chrono::steady_clock::now(), target, BTN_LEFT, false);
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(target), BTN_LEFT, false);
     x.send(proxy, "XdndDrop", {x.window, 0, XCB_CURRENT_TIME});
     ASSERT_TRUE(until([&] {
         native.pump();
@@ -3078,12 +3072,13 @@ TEST_F(XwaylandTest, X11DragWithATypeListCanLeaveAndBeRefused)
         return m.type == x["XdndStatus"];
     });
     enter();
-    QDeadlineTimer settle(300);
-    while (!settle.hasExpired()) {
-        native.pump();
-        x.poll();
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-    }
+    until(
+            [&] {
+                native.pump();
+                x.poll();
+                return false;
+            },
+            300);
     EXPECT_FALSE(seat->drag()->active());
     EXPECT_EQ(std::count_if(x.messages.begin(), x.messages.end(),
                             [&](const auto &m) {
@@ -3094,6 +3089,8 @@ TEST_F(XwaylandTest, X11DragWithATypeListCanLeaveAndBeRefused)
 
 TEST_F(XwaylandTest, WaylandDragFollowsXdndProxyAndCancelsWhenRefused)
 {
+    if (std::string_view(QT_DND_CLIENT).empty())
+        GTEST_SKIP() << "Built without the Qt test clients";
     ASSERT_TRUE(start());
     ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server->display(), waylandSeat.get()));
     clipboard_test::Client native(*server);
@@ -3106,15 +3103,15 @@ TEST_F(XwaylandTest, WaylandDragFollowsXdndProxyAndCancelsWhenRefused)
         native.pump();
         return mapNativeSurface(native, {500, 0});
     }));
-    qputenv("XAUTHORITY", xwayland->authority().toUtf8());
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
     XdndPeer x, proxyPeer;
     for (auto *peer : {&x, &proxyPeer}) {
         peer->c = xcbReply([&] {
-            return xcb_connect(xwayland->display().toUtf8().constData(), nullptr);
+            return xcb_connect(xwayland->display().c_str(), nullptr);
         });
         ASSERT_EQ(xcb_connection_has_error(peer->c), 0);
     }
-    auto cleanup = qScopeGuard([&] {
+    base::ScopeGuard cleanup([&] {
         xcb_disconnect(x.c);
         xcb_disconnect(proxyPeer.c);
     });
@@ -3129,17 +3126,17 @@ TEST_F(XwaylandTest, WaylandDragFollowsXdndProxyAndCancelsWhenRefused)
     xcb_change_property(proxyPeer.c, XCB_PROP_MODE_REPLACE, proxyPeer.window,
                         proxyPeer["XdndProxy"], XCB_ATOM_WINDOW, 32, 1, &proxyPeer.window);
     xcb_flush(proxyPeer.c);
-    x.create(QRect(0, 0, 300, 200));
+    x.create(base::Rect(0, 0, 300, 200));
     xcb_change_property(x.c, XCB_PROP_MODE_REPLACE, x.window, x["XdndProxy"], XCB_ATOM_WINDOW, 32,
                         1, &proxyPeer.window);
     xcb_flush(x.c);
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1;
     }));
-    const QPoint over = manager->windows()[0]->contentBounds().center();
+    const base::Point over = wm::centerPixel(manager->windows()[0]->contentBounds());
 
-    seat->onPointerMotion(std::chrono::steady_clock::now(), QPointF(550, 50));
-    seat->onPointerButton(std::chrono::steady_clock::now(), QPointF(550, 50), BTN_LEFT, true);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(550, 50));
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(550, 50), BTN_LEFT, true);
     ASSERT_TRUE(until([&] {
         native.pump();
         return native.buttonSerial != 0;
@@ -3152,7 +3149,7 @@ TEST_F(XwaylandTest, WaylandDragFollowsXdndProxyAndCancelsWhenRefused)
         native.pump();
         return seat->drag()->active();
     }));
-    seat->onPointerMotion(std::chrono::steady_clock::now(), over);
+    seat->onPointerMotion(std::chrono::steady_clock::now(), base::PointF(over));
     ASSERT_TRUE(until([&] {
         native.pump();
         x.poll();
@@ -3165,7 +3162,7 @@ TEST_F(XwaylandTest, WaylandDragFollowsXdndProxyAndCancelsWhenRefused)
     const xcb_window_t dragSource = proxyPeer.last("XdndEnter")->data.data32[0];
 
     proxyPeer.send(dragSource, "XdndStatus", {x.window, 0, 0, 0, 0});
-    seat->onPointerButton(std::chrono::steady_clock::now(), over, BTN_LEFT, false);
+    seat->onPointerButton(std::chrono::steady_clock::now(), base::PointF(over), BTN_LEFT, false);
     ASSERT_TRUE(until([&] {
         native.pump();
         proxyPeer.poll();
@@ -3180,103 +3177,111 @@ TEST_F(XwaylandTest, WaylandDragFollowsXdndProxyAndCancelsWhenRefused)
 class XwaylandDndToolkitTest : public XwaylandTest
 {
 protected:
-    struct Child : QProcess {
-        QByteArray output;
+    using Child = test::ChildProcess;
 
-        ~Child() override
-        {
-            if (state() != NotRunning) {
-                kill();
-                waitForFinished(2000);
-            }
-        }
+    // Xwayland waits for frame callbacks before it commits again.
+    static void driveFrames(base::Timer &frames, compositor::Compositor *compositor)
+    {
+        frames.onTimeout = [compositor] {
+            compositor->frameSubmitted();
+            compositor->frameDrawn(wayland::nowInMilliseconds());
+        };
+        frames.start(std::chrono::milliseconds(5));
+    }
 
-        bool saw(const char *marker)
-        {
-            output += readAllStandardOutput();
-            return output.contains(marker);
-        }
-    };
+    // A client of the X11 side at the Xwayland scale, as the toolkit tests run it.
+    std::vector<std::string> scaledClientEnvironment() const
+    {
+        return test::environmentWith(
+                {"QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
+                 "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS", "QT_AUTO_SCREEN_SCALE_FACTOR",
+                 "GDK_SCALE", "GDK_DPI_SCALE", "LD_PRELOAD", "WAYLAND_SOCKET"},
+                {{"DISPLAY", xwayland->display()},
+                 {"XAUTHORITY", xwayland->authority()},
+                 {"QT_QPA_PLATFORM", "xcb"},
+                 {"GDK_BACKEND", "x11"},
+                 {"WAYLAND_DISPLAY", "nonexistent-native-display"},
+                 {"XDG_RUNTIME_DIR", runtime.path()}});
+    }
+
+    static bool startScaled(Child &client, bool gtk, std::vector<std::string> environment)
+    {
+        return client.start(gtk ? "/usr/bin/python3" : QT_DND_CLIENT,
+                            gtk ? std::vector<std::string> {GTK_DND_CLIENT, "scaled"}
+                                : std::vector<std::string> {"scaled"},
+                            std::move(environment));
+    }
 
     void matrix(bool sourceX11, bool sourceGtk, bool destinationGtk)
     {
-        if (QStandardPaths::findExecutable("python3").isEmpty())
+        if (base::paths::findExecutable("python3").empty())
             GTEST_SKIP() << "python3 unavailable";
-        ASSERT_TRUE(start()) << xwayland->error().toStdString();
+        ASSERT_TRUE(start()) << xwayland->error();
         wayland::WaylandXdgShell xdg(compositor.get(), manager.get(), seat.get(),
                                      server->serialTracker());
         ASSERT_TRUE(wayland::createXdgShellGlobal(server->display(), &xdg));
         ASSERT_TRUE(wayland::createXdgDecorationGlobal(server->display()));
         ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server->display(), waylandSeat.get()));
-        ASSERT_TRUE(server->addSocket(QStringLiteral("xwayland-dnd-test")));
-        QTimer frames;
-        QObject::connect(&frames, &QTimer::timeout, &frames, [&] {
-            compositor->frameSubmitted();
-            compositor->frameDrawn(wayland::nowInMilliseconds());
-        });
-        frames.start(5);
+        ASSERT_TRUE(server->addSocket("xwayland-dnd-test"));
+        base::Timer frames;
+        driveFrames(frames, compositor.get());
         Child source, destination;
-        auto launch = [&](Child &process, bool x11, bool gtk, const QString &title) {
-            auto env = QProcessEnvironment::systemEnvironment();
-            for (const auto *name : {"DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
-                                     "QT_QPA_PLATFORMTHEME", "QT_QUICK_BACKEND", "LD_PRELOAD",
-                                     "WAYLAND_SOCKET"})
-                env.remove(QString::fromLatin1(name));
-            env.insert("XDG_RUNTIME_DIR", runtime.path());
+        auto launch = [&](Child &process, bool x11, bool gtk, const std::string &title) {
+            std::map<std::string, std::string> added {
+                    {"XDG_RUNTIME_DIR", runtime.path()}};
             if (x11) {
-                env.insert("DISPLAY", xwayland->display());
-                env.insert("XAUTHORITY", xwayland->authority());
-                env.insert("QT_QPA_PLATFORM", "xcb");
-                env.insert("GDK_BACKEND", "x11");
-                env.insert("WAYLAND_DISPLAY", "nonexistent-native-display");
+                added.insert({{"DISPLAY", xwayland->display()},
+                              {"XAUTHORITY", xwayland->authority()},
+                              {"QT_QPA_PLATFORM", "xcb"},
+                              {"GDK_BACKEND", "x11"},
+                              {"WAYLAND_DISPLAY", "nonexistent-native-display"}});
             } else {
-                env.insert("QT_QPA_PLATFORM", "wayland");
-                env.insert("GDK_BACKEND", "wayland");
-                env.insert("WAYLAND_DISPLAY", server->socketName());
+                added.insert({{"QT_QPA_PLATFORM", "wayland"},
+                              {"GDK_BACKEND", "wayland"},
+                              {"WAYLAND_DISPLAY", server->socketName()}});
             }
-            process.setProcessEnvironment(env);
-            process.start(gtk ? QStringLiteral("/usr/bin/python3") : QStringLiteral(QT_DND_CLIENT),
-                          gtk ? QStringList {QStringLiteral(GTK_DND_CLIENT), title}
-                              : QStringList {title});
+            process.start(gtk ? "/usr/bin/python3" : QT_DND_CLIENT,
+                          gtk ? std::vector<std::string> {GTK_DND_CLIENT, title}
+                              : std::vector<std::string> {title},
+                          test::environmentWith({"DISPLAY", "QT_PLUGIN_PATH",
+                                                 "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
+                                                 "QT_QUICK_BACKEND", "LD_PRELOAD", "WAYLAND_SOCKET"},
+                                                added));
         };
-        auto window = [&](const QString &title) -> wm::Window * {
+        auto window = [&](const std::string &title) -> wm::Window * {
             for (auto *w : manager->windows()) {
                 if (w->title() == title)
                     return w;
             }
             return nullptr;
         };
-        launch(source, sourceX11, sourceGtk, QStringLiteral("dnd-source"));
+        launch(source, sourceX11, sourceGtk, "dnd-source");
         ASSERT_TRUE(until([&] {
             return window("dnd-source") != nullptr;
         }))
-                << source.readAllStandardError().constData();
-        launch(destination, !sourceX11, destinationGtk, QStringLiteral("dnd-destination"));
+                << source.errors();
+        launch(destination, !sourceX11, destinationGtk, "dnd-destination");
         ASSERT_TRUE(until([&] {
             return window("dnd-destination") != nullptr;
         }))
-                << destination.readAllStandardError().constData();
+                << destination.errors();
         auto *sourceWindow = window("dnd-source");
         auto *destinationWindow = window("dnd-destination");
-        sourceWindow->setBounds(QRect(QPoint(20, 60), sourceWindow->bounds().size()));
-        destinationWindow->setBounds(QRect(QPoint(400, 60), destinationWindow->bounds().size()));
+        sourceWindow->setBounds(base::Rect(base::Point(20, 60), sourceWindow->bounds().size()));
+        destinationWindow->setBounds(
+                base::Rect(base::Point(400, 60), destinationWindow->bounds().size()));
         ASSERT_TRUE(until([&] {
             return sourceWindow->rootSurface()->isMapped()
                     && destinationWindow->rootSurface()->isMapped()
                     && sourceWindow->surfaceNode()->absolutePosition()
-                    == sourceWindow->contentBounds().topLeft() + sourceWindow->surfaceOrigin()
+                    == (sourceWindow->contentBounds().topLeft() + sourceWindow->surfaceOrigin())
                     && destinationWindow->surfaceNode()->absolutePosition()
-                    == destinationWindow->contentBounds().topLeft()
-                            + destinationWindow->surfaceOrigin();
+                    == (destinationWindow->contentBounds().topLeft()
+                                       + destinationWindow->surfaceOrigin());
         }));
-        // processEvents returns as soon as nothing is pending; the toolkits and
-        // Xwayland need real time between input events.
+        // The toolkits and Xwayland need real time between input events.
         auto settle = [](int ms) {
-            QDeadlineTimer deadline(ms);
-            while (!deadline.hasExpired()) {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-                QThread::msleep(1);
-            }
+            test::runFor(std::chrono::milliseconds(ms));
         };
         settle(200);
         sourceWindow->activate();
@@ -3284,24 +3289,24 @@ protected:
         input.setEventSink(manager.get());
         input.setBounds({800, 600});
         // Below a GTK header bar, inside the widget that takes part in the drag.
-        const QPointF startPosition =
-                sourceWindow->surfaceNode()->absolutePosition() + QPoint(60, 85);
-        const QPointF endPosition =
-                destinationWindow->surfaceNode()->absolutePosition() + QPoint(60, 85);
+        const base::PointF startPosition =
+                sourceWindow->surfaceNode()->absolutePosition() + base::Point(60, 85);
+        const base::PointF endPosition =
+                destinationWindow->surfaceNode()->absolutePosition() + base::Point(60, 85);
         input.onPointerMotionAbsolute({}, startPosition);
         settle(100);
         input.onPointerButton({}, BTN_LEFT, true);
         settle(100);
         // Toolkits start a drag past a threshold, in steps.
         for (int i = 1; i <= 5; ++i) {
-            input.onPointerMotionAbsolute({}, startPosition + QPoint(6 * i, 4 * i));
+            input.onPointerMotionAbsolute({}, startPosition + base::Point(6 * i, 4 * i));
             settle(30);
         }
         ASSERT_TRUE(until([&] {
             return source.saw("STARTED");
         }))
-                << source.readAllStandardError().constData();
-        const QPointF step = (endPosition - startPosition) / 20;
+                << source.errors();
+        const base::PointF step = (endPosition - startPosition) / 20;
         for (int i = 1; i <= 20; ++i) {
             input.onPointerMotionAbsolute({}, startPosition + step * i);
             settle(30);
@@ -3311,13 +3316,11 @@ protected:
         EXPECT_TRUE(until([&] {
             return destination.saw("PASS");
         }))
-                << destination.output.constData()
-                << destination.readAllStandardError().constData()
-                << source.readAllStandardError().constData();
+                << destination.output() << destination.errors() << source.errors();
         EXPECT_TRUE(until([&] {
             return source.saw("FINISHED");
         }))
-                << source.output.constData() << source.readAllStandardError().constData();
+                << source.output() << source.errors();
         EXPECT_FALSE(seat->drag()->active());
         wl_display_destroy_clients(server->display());
     }
@@ -3327,27 +3330,14 @@ protected:
 // device resolution: the X11 window is twice their logical size.
 TEST_F(XwaylandDndToolkitTest, ToolkitsDrawAtTheXwaylandScale)
 {
+    if (std::string_view(QT_DND_CLIENT).empty())
+        GTEST_SKIP() << "Built without the Qt test clients";
     xwayland->setScale(2);
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
+    ASSERT_TRUE(start()) << xwayland->error();
     for (const bool gtk : {false, true}) {
         SCOPED_TRACE(gtk ? "GTK" : "Qt");
         Child client;
-        auto env = QProcessEnvironment::systemEnvironment();
-        for (const auto *name : {"QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
-                                 "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS",
-                                 "QT_AUTO_SCREEN_SCALE_FACTOR", "GDK_SCALE", "GDK_DPI_SCALE",
-                                 "LD_PRELOAD", "WAYLAND_SOCKET"})
-            env.remove(QString::fromLatin1(name));
-        env.insert("DISPLAY", xwayland->display());
-        env.insert("XAUTHORITY", xwayland->authority());
-        env.insert("QT_QPA_PLATFORM", "xcb");
-        env.insert("GDK_BACKEND", "x11");
-        env.insert("WAYLAND_DISPLAY", "nonexistent-native-display");
-        env.insert("XDG_RUNTIME_DIR", runtime.path());
-        client.setProcessEnvironment(env);
-        client.start(gtk ? QStringLiteral("/usr/bin/python3") : QStringLiteral(QT_DND_CLIENT),
-                     gtk ? QStringList {QStringLiteral(GTK_DND_CLIENT), QStringLiteral("scaled")}
-                         : QStringList {QStringLiteral("scaled")});
+        startScaled(client, gtk, scaledClientEnvironment());
         wm::Window *window = nullptr;
         ASSERT_TRUE(until([&] {
             for (auto *w : manager->windows()) {
@@ -3356,20 +3346,21 @@ TEST_F(XwaylandDndToolkitTest, ToolkitsDrawAtTheXwaylandScale)
             }
             return window != nullptr;
         }))
-                << client.readAllStandardError().constData();
-        const QSize buffer = window->rootSurface()->bufferSize();
-        const QSize content = window->rootSurface()->contentSize();
-        EXPECT_EQ(content, QSize(qRound(buffer.width() / 2.0), qRound(buffer.height() / 2.0)));
+                << client.errors();
+        const base::Size buffer = window->rootSurface()->bufferSize();
+        const base::Size content = window->rootSurface()->contentSize();
+        EXPECT_EQ(content, base::Size(base::roundToInt(buffer.width() / 2.0),
+                                  base::roundToInt(buffer.height() / 2.0)));
         // Qt sizes the client area exactly; GTK adds its own decoration.
         if (gtk) {
             EXPECT_GE(buffer.width(), 360);
             EXPECT_GE(buffer.height(), 240);
         } else {
-            EXPECT_EQ(buffer, QSize(360, 240));
-            EXPECT_EQ(content, QSize(180, 120));
+            EXPECT_EQ(buffer, base::Size(360, 240));
+            EXPECT_EQ(content, base::Size(180, 120));
         }
-        client.kill();
-        client.waitForFinished(2000);
+        client.process.kill();
+        client.process.waitForFinished(std::chrono::milliseconds(2000));
         ASSERT_TRUE(until([&] {
             return manager->windows().empty();
         }));
@@ -3380,35 +3371,17 @@ TEST_F(XwaylandDndToolkitTest, ToolkitsDrawAtTheXwaylandScale)
 // new scale into the window the XWM has already resized.
 TEST_F(XwaylandDndToolkitTest, RunningToolkitsFollowAScaleChange)
 {
-    ASSERT_TRUE(start()) << xwayland->error().toStdString();
-    // Xwayland waits for frame callbacks before it commits again.
-    QTimer frames;
-    QObject::connect(&frames, &QTimer::timeout, &frames, [&] {
-        compositor->frameSubmitted();
-        compositor->frameDrawn(wayland::nowInMilliseconds());
-    });
-    frames.start(5);
+    if (std::string_view(QT_DND_CLIENT).empty())
+        GTEST_SKIP() << "Built without the Qt test clients";
+    ASSERT_TRUE(start()) << xwayland->error();
+    base::Timer frames;
+    driveFrames(frames, compositor.get());
     for (const bool gtk : {false, true}) {
         SCOPED_TRACE(gtk ? "GTK" : "Qt");
         xwayland->setScale(1);
         wayland::updateOutputGlobal(outputGlobal, &output);
         Child client;
-        auto env = QProcessEnvironment::systemEnvironment();
-        for (const auto *name : {"QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
-                                 "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS",
-                                 "QT_AUTO_SCREEN_SCALE_FACTOR", "GDK_SCALE", "GDK_DPI_SCALE",
-                                 "LD_PRELOAD", "WAYLAND_SOCKET"})
-            env.remove(QString::fromLatin1(name));
-        env.insert("DISPLAY", xwayland->display());
-        env.insert("XAUTHORITY", xwayland->authority());
-        env.insert("QT_QPA_PLATFORM", "xcb");
-        env.insert("GDK_BACKEND", "x11");
-        env.insert("WAYLAND_DISPLAY", "nonexistent-native-display");
-        env.insert("XDG_RUNTIME_DIR", runtime.path());
-        client.setProcessEnvironment(env);
-        client.start(gtk ? QStringLiteral("/usr/bin/python3") : QStringLiteral(QT_DND_CLIENT),
-                     gtk ? QStringList {QStringLiteral(GTK_DND_CLIENT), QStringLiteral("scaled")}
-                         : QStringList {QStringLiteral("scaled")});
+        startScaled(client, gtk, scaledClientEnvironment());
         wm::Window *window = nullptr;
         ASSERT_TRUE(until([&] {
             for (auto *w : manager->windows()) {
@@ -3417,8 +3390,8 @@ TEST_F(XwaylandDndToolkitTest, RunningToolkitsFollowAScaleChange)
             }
             return window != nullptr;
         }))
-                << client.readAllStandardError().constData();
-        const QSize logical = window->rootSurface()->contentSize();
+                << client.errors();
+        const base::Size logical = window->rootSurface()->contentSize();
         EXPECT_EQ(window->rootSurface()->bufferSize(), logical);
 
         xwayland->setScale(2);
@@ -3427,7 +3400,7 @@ TEST_F(XwaylandDndToolkitTest, RunningToolkitsFollowAScaleChange)
         // Qt may settle a pixel short while its size increments follow the
         // new scale; the renderer keeps that sharp.
         EXPECT_TRUE(until([&] {
-            const QSize buffer = window->rootSurface()->bufferSize();
+            const base::Size buffer = window->rootSurface()->bufferSize();
             return std::abs(buffer.width() - logical.width() * 2) <= 1
                     && std::abs(buffer.height() - logical.height() * 2) <= 1
                     && window->rootSurface()->contentSize() == logical;
@@ -3436,8 +3409,8 @@ TEST_F(XwaylandDndToolkitTest, RunningToolkitsFollowAScaleChange)
                 << window->rootSurface()->bufferSize().height() << " content "
                 << window->rootSurface()->contentSize().width() << "x"
                 << window->rootSurface()->contentSize().height();
-        client.kill();
-        client.waitForFinished(2000);
+        client.process.kill();
+        client.process.waitForFinished(std::chrono::milliseconds(2000));
         ASSERT_TRUE(until([&] {
             return manager->windows().empty();
         }));
@@ -3467,40 +3440,38 @@ TEST_F(XwaylandDndToolkitTest, GtkWaylandToQtX11)
 class XwaylandApplicationTest : public XwaylandTest
 {
 protected:
-    void exercise(const QString &executable, const QStringList &args)
+    void exercise(const std::string &executable, const std::vector<std::string> &args)
     {
-        ASSERT_TRUE(start()) << xwayland->error().toStdString();
-        QProcess client;
-        auto env = QProcessEnvironment::systemEnvironment();
-        env.insert("DISPLAY", xwayland->display());
-        env.insert("XAUTHORITY", xwayland->authority());
-        env.insert("GDK_BACKEND", "x11");
-        env.insert("QT_QPA_PLATFORM", "xcb");
-        env.insert("WAYLAND_DISPLAY", "nonexistent-native-display");
-        env.remove("WAYLAND_SOCKET");
-        client.setProcessEnvironment(env);
-        client.start(executable, args);
+        ASSERT_TRUE(start()) << xwayland->error();
+        test::ChildProcess client;
+        client.start(executable, args,
+                     test::environmentWith({"WAYLAND_SOCKET"},
+                                           {{"DISPLAY", xwayland->display()},
+                                            {"XAUTHORITY", xwayland->authority()},
+                                            {"GDK_BACKEND", "x11"},
+                                            {"QT_QPA_PLATFORM", "xcb"},
+                                            {"WAYLAND_DISPLAY", "nonexistent-native-display"}}));
         ASSERT_TRUE(until([&] {
-            return !manager->windows().empty() || client.state() == QProcess::NotRunning;
+            return !manager->windows().empty() || !client.running();
         }));
-        ASSERT_FALSE(manager->windows().empty()) << client.readAllStandardError().toStdString();
+        ASSERT_FALSE(manager->windows().empty()) << client.errors();
         auto *window = manager->windows()[0];
         EXPECT_TRUE(window->rootSurface()->hasContents());
-        EXPECT_FALSE(window->applicationId().isEmpty());
-        EXPECT_EQ(window->processId(), client.processId());
-        EXPECT_FALSE(window->title().isEmpty());
+        EXPECT_FALSE(window->applicationId().empty());
+        EXPECT_EQ(window->processId(), client.process.pid());
+        EXPECT_FALSE(window->title().empty());
         {
-            const auto devicePath = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-            int drmFd =
-                    devicePath.isEmpty() ? -1 : open(devicePath.constData(), O_RDWR | O_CLOEXEC);
+            const char *variable = getenv("CUTEFISH_TEST_DRM_DEVICE");
+            const std::string devicePath = variable ? variable : "";
+            int drmFd = devicePath.empty() ? -1 : open(devicePath.c_str(), O_RDWR | O_CLOEXEC);
             gbm_device *device = drmFd >= 0 ? gbm_create_device(drmFd) : nullptr;
-            auto deviceCleanup = qScopeGuard([&] {
+            base::ScopeGuard deviceCleanup([&] {
                 if (device)
                     gbm_device_destroy(device);
                 if (drmFd >= 0)
                     close(drmFd);
             });
-            ASSERT_TRUE(devicePath.isEmpty() || device);
+            ASSERT_TRUE(devicePath.empty() || device);
             auto renderer = device ? render::EglRenderer::create(device, DRM_FORMAT_XRGB8888)
                                    : render::EglRendererTestAccess::create();
             ASSERT_NE(renderer, nullptr);
@@ -3512,24 +3483,24 @@ protected:
             std::unique_ptr<render::EglRenderTarget> target;
             if (device) {
                 ASSERT_TRUE(gbmSurface);
-                target = renderer->createTarget(gbmSurface.get(), QSize(800, 600));
+                target = renderer->createTarget(gbmSurface.get(), base::Size(800, 600));
             } else {
                 const EGLint attrs[] = {EGL_WIDTH, 800, EGL_HEIGHT, 600, EGL_NONE};
                 auto surface = eglCreatePbufferSurface(renderer->eglDisplay(),
                                                        renderer->eglConfig(), attrs);
                 ASSERT_NE(surface, EGL_NO_SURFACE);
                 target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
-                                                                   nullptr, QSize(800, 600));
+                                                                   nullptr, base::Size(800, 600));
             }
             ASSERT_TRUE(target);
-            auto cleanup = qScopeGuard([&] {
+            base::ScopeGuard cleanup([&] {
                 scene.root()->releaseRenderResources();
                 renderer->clearTextureCache();
                 renderer->releaseTarget(target.get());
             });
             ASSERT_TRUE(renderer->beginFrame(target.get()));
             static_cast<scene::WindowAnimation *>(window->node())->finish();
-            QImage pixels(800, 600, QImage::Format_RGBA8888);
+            std::vector<uint8_t> pixels(800 * 600 * 4);
             uint64_t generation = 0;
             ASSERT_TRUE(until([&] {
                 compositor->updateTextures(*renderer);
@@ -3537,19 +3508,19 @@ protected:
                     return false;
                 renderer->clear({0.12f, 0.12f, 0.12f, 1});
                 scene.root()->render(*renderer);
-                glReadPixels(0, 0, 800, 600, GL_RGBA, GL_UNSIGNED_BYTE, pixels.bits());
+                glReadPixels(0, 0, 800, 600, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 compositor->frameSubmitted(++generation);
                 compositor->frameDrawn(generation * 16, generation);
                 server->flush();
-                if (QFileInfo(executable).fileName() != "xterm")
+                if (std::filesystem::path(executable).filename() != "xterm")
                     return true;
                 int ink = 0;
                 const auto clientArea = window->contentBounds()
                                                 .adjusted(4, 4, -4, -4)
-                                                .intersected(QRect(0, 0, 800, 600));
-                for (int y = clientArea.top(); y <= clientArea.bottom(); ++y) {
-                    for (int x = clientArea.left(); x <= clientArea.right(); ++x) {
-                        if (pixels.pixelColor(x, 599 - y).red() < 100)
+                                                .intersected(base::Rect(0, 0, 800, 600));
+                for (int y = clientArea.top(); y < clientArea.bottom(); ++y) {
+                    for (int x = clientArea.left(); x < clientArea.right(); ++x) {
+                        if (pixels[((599 - y) * 800 + x) * 4] < 100)
                             ++ink;
                     }
                 }
@@ -3557,7 +3528,7 @@ protected:
             }));
             EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
         }
-        window->requestBounds(QRect(70, 80, 420, 340));
+        window->requestBounds(base::Rect(70, 80, 420, 340));
         window->maximize();
         EXPECT_EQ(window->stateType(), wm::WindowStateType::Maximized);
         window->minimize();
@@ -3570,10 +3541,10 @@ protected:
         EXPECT_TRUE(until([&] {
             return manager->windows().empty();
         }));
-        if (client.state() != QProcess::NotRunning) {
-            client.terminate();
+        if (client.running()) {
+            client.process.terminate();
             EXPECT_TRUE(until([&] {
-                return client.state() == QProcess::NotRunning;
+                return !client.running();
             }));
         }
     }
@@ -3581,17 +3552,17 @@ protected:
 
 TEST_F(XwaylandApplicationTest, GtkX11)
 {
-    const auto executable = QStandardPaths::findExecutable("gtk3-demo");
-    if (executable.isEmpty())
+    const std::string executable = base::paths::findExecutable("gtk3-demo");
+    if (executable.empty())
         GTEST_SKIP() << "gtk3-demo unavailable";
     exercise(executable, {});
 }
 
 TEST_F(XwaylandApplicationTest, Xterm)
 {
-    const auto executable =
-            qEnvironmentVariable("CUTEFISH_XTERM", QStandardPaths::findExecutable("xterm"));
-    if (executable.isEmpty())
+    const char *xterm = getenv("CUTEFISH_XTERM");
+    const std::string executable = xterm ? xterm : base::paths::findExecutable("xterm");
+    if (executable.empty())
         GTEST_SKIP() << "xterm unavailable; set CUTEFISH_XTERM to a test binary";
     exercise(executable,
              {"-title", "Cutefish X11 terminal", "-e", "/bin/sh", "-c",

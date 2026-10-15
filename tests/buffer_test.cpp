@@ -30,7 +30,7 @@ namespace {
 class RetainingBuffer : public Buffer
 {
 public:
-    QSize size() const override { return QSize(8, 8); }
+    cutefish::base::Size size() const override { return {8, 8}; }
 
     render::PixelFormat format() const override { return render::PixelFormat::Bgra8888; }
 
@@ -44,9 +44,10 @@ public:
 class BufferTest : public testing::Test
 {
 protected:
-    std::shared_ptr<ShmBuffer> makeBuffer(const QSize &size = QSize(16, 16))
+    std::shared_ptr<ShmBuffer> makeBuffer(const base::Size &size = base::Size(16, 16))
     {
-        return m_pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgra8888,
+        return m_pool->createBuffer(size, 0, size.width() * 4,
+                                    render::PixelFormat::Bgra8888,
                                     nullptr);
     }
 
@@ -85,7 +86,7 @@ TEST_F(BufferTest, CommitAloneDoesNotRelease)
     });
 
     Surface *surface = makeSurface();
-    surface->attach(buffer, QPoint());
+    surface->attach(buffer, base::Point());
     surface->commit();
 
     EXPECT_EQ(1u, buffer->attachCount());
@@ -102,7 +103,7 @@ TEST_F(BufferTest, ShmContentsAreReleasedOnceUploaded)
     });
 
     Surface *surface = makeSurface();
-    surface->attach(buffer, QPoint());
+    surface->attach(buffer, base::Point());
     surface->commit();
     ASSERT_EQ(0, releases);
 
@@ -148,9 +149,9 @@ TEST_F(BufferTest, ReplacementDetachesTheOldBuffer)
     });
 
     Surface *surface = makeSurface();
-    surface->attach(first, QPoint());
+    surface->attach(first, base::Point());
     surface->commit();
-    surface->attach(second, QPoint());
+    surface->attach(second, base::Point());
     surface->commit();
 
     EXPECT_EQ(0u, first->attachCount());
@@ -169,12 +170,12 @@ TEST_F(BufferTest, ReCommittingTheSameBufferOwesAnotherRelease)
     });
 
     Surface *surface = makeSurface();
-    surface->attach(buffer, QPoint());
+    surface->attach(buffer, base::Point());
     surface->commit();
     surface->updateTexture(m_renderer);
     ASSERT_EQ(1, releases);
 
-    surface->attach(buffer, QPoint());
+    surface->attach(buffer, base::Point());
     surface->commit();
     EXPECT_FALSE(buffer->isReleased());
     EXPECT_EQ(1u, buffer->attachCount()) << "attach runs before detach, so it never hits zero";
@@ -202,9 +203,9 @@ TEST_F(BufferTest, TheSameBufferOnTwoSurfaces)
 
 TEST_F(BufferTest, DestroyingTheBufferLeavesTheSurfaceUsable)
 {
-    std::shared_ptr<ShmBuffer> buffer = makeBuffer(QSize(32, 24));
+    std::shared_ptr<ShmBuffer> buffer = makeBuffer(base::Size(32, 24));
     Surface *surface = makeSurface();
-    surface->attach(buffer, QPoint());
+    surface->attach(buffer, base::Point());
     surface->commit();
     ASSERT_TRUE(surface->updateTexture(m_renderer));
 
@@ -214,8 +215,8 @@ TEST_F(BufferTest, DestroyingTheBufferLeavesTheSurfaceUsable)
     EXPECT_EQ(nullptr, surface->buffer());
     // The size of the committed content survives the buffer, as does the
     // texture the compositor already owns.
-    EXPECT_EQ(QSize(32, 24), surface->bufferSize());
-    EXPECT_EQ(QSize(32, 24), surface->contentSize());
+    EXPECT_EQ(base::Size(32, 24), surface->bufferSize());
+    EXPECT_EQ(base::Size(32, 24), surface->contentSize());
     ASSERT_NE(nullptr, surface->node());
     EXPECT_NE(nullptr, surface->node()->texture());
 
@@ -232,7 +233,7 @@ TEST_F(BufferTest, DestroyingTheSurfaceDetaches)
     });
 
     Surface *surface = makeSurface();
-    surface->attach(buffer, QPoint());
+    surface->attach(buffer, base::Point());
     surface->commit();
 
     m_surfaces.clear();

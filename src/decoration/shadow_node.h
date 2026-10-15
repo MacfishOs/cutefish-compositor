@@ -18,13 +18,11 @@
 #ifndef CUTEFISH_DECORATION_SHADOW_NODE_H_
 #define CUTEFISH_DECORATION_SHADOW_NODE_H_
 
-#include <QMargins>
-#include <QPainterPath>
-#include <QRect>
-
+#include "base/geometry.h"
 #include "decoration/raster.h"
 #include "scene/node.h"
 #include "wm/shadow_types.h"
+#include "ui/path.h"
 #include "wm/window_shadow.h"
 
 namespace cutefish::wm {
@@ -47,8 +45,8 @@ public:
     // scanout planner - sees everything the shadow paints. Repeating a call
     // that changes nothing costs nothing.
     // A non-empty `silhouette`, relative to `content`, replaces the corners and radius.
-    void update(const QRect &content, wm::ShadowElevation elevation, const Corners &corners,
-                int radius, const QPainterPath &silhouette = {});
+    void update(const base::Rect &content, wm::ShadowElevation elevation, const Corners &corners,
+                int radius, const ui::Path &silhouette = {});
 
     wm::ShadowElevation elevation() const { return m_elevation; }
 
@@ -58,13 +56,13 @@ public:
 
     int radius() const { return m_radius; }
 
-    const QPainterPath &silhouette() const { return m_silhouette; }
+    const ui::Path &silhouette() const { return m_silhouette; }
 
-    QMargins margins() const { return m_margins; }
+    base::Insets margins() const { return m_margins; }
 
     // Where the client surface sits in the window, so the shadow moves with it
     // onto physical pixels.
-    void setSurfaceOrigin(const QPoint &origin);
+    void setSurfaceOrigin(const base::Point &origin);
 
     // A drawn shadow is blended over whatever is behind the window, so the
     // frame it appears in has to be composited.
@@ -74,20 +72,20 @@ public:
     }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &absoluteGeometry) const override;
+    void paint(render::Renderer &renderer, const base::Rect &bounds) const override;
 
 private:
     const Theme *m_theme = nullptr;
-    QRect m_content;
+    base::Rect m_content;
     Corners m_corners;
     int m_radius = 0;
-    QPainterPath m_silhouette;
-    QPoint m_surfaceOrigin;
+    ui::Path m_silhouette;
+    base::Point m_surfaceOrigin;
     // What the controller asked for, and what is actually drawn - which is
     // None as well whenever the window is too small for the style.
     wm::ShadowElevation m_requested = wm::ShadowElevation::None;
     wm::ShadowElevation m_elevation = wm::ShadowElevation::None;
-    QMargins m_margins;
+    base::Insets m_margins;
 };
 
 // What wm::ShadowController drives. Owns the node, which lives under the
@@ -105,11 +103,11 @@ public:
 
     wm::ShadowElevation elevation() const override { return m_elevation; }
 
-    void setContentBounds(const QRect &bounds) override;
+    void setContentBounds(const base::Rect &bounds) override;
 
-    QRect contentBounds() const override { return m_contentBounds; }
+    base::Rect contentBounds() const override { return m_contentBounds; }
 
-    QRect shadowBounds() const override;
+    base::Rect shadowBounds() const override;
     void stackAtBottom() override;
 
     // Null when the window has no scene at all.
@@ -121,7 +119,7 @@ private:
     wm::Window *m_window = nullptr;
     Theme *m_theme = nullptr;
     ShadowNode *m_node = nullptr;
-    QRect m_contentBounds;
+    base::Rect m_contentBounds;
     wm::ShadowElevation m_elevation = wm::ShadowElevation::None;
 };
 

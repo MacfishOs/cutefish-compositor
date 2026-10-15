@@ -2,34 +2,37 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/dbus.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "fake_renderer.h"
 #include "input/seat.h"
+#include "loop_test_util.h"
 #include "scene/scene.h"
 #include "session/applications_service.h"
 #include "shm_test_util.h"
 #include "wm/quit_all.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
-#include <QDBusConnection>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QTest>
+
+#include <gtest/gtest.h>
+#include <optional>
 
 using namespace cutefish;
+namespace dbus = base::dbus;
 
-class ApplicationsServiceTest : public QObject
+namespace {
+
+class ApplicationsServiceTest : public testing::Test
 {
-    Q_OBJECT
-private:
-    QDBusConnection client = QDBusConnection::connectToBus(
-            QDBusConnection::SessionBus, QStringLiteral("applications-test-client"));
+protected:
+    std::unique_ptr<dbus::Connection> client = dbus::Connection::open(dbus::Connection::Bus::Session, core::mainLoop());
 
     struct Desktop {
         scene::Scene scene;
         scene::Node *surfaces =
-                scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+                scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
         compositor::Compositor compositor {surfaces};
         testsupport::FakeRenderer renderer;
         input::Seat seat {&compositor};
@@ -39,7 +42,7 @@ private:
 
         ~Desktop() { seat.shutdown(); }
 
-        wm::Window *open(const QString &applicationId)
+        wm::Window *open(const std::string &applicationId)
         {
             owned.push_back(compositor.createSurface());
             auto *surface = owned.back().get();
@@ -54,71 +57,72 @@ private:
         }
     };
 
-    QDBusPendingCall quitAll()
+    struct Pending {
+        std::optional<dbus::Reply> reply;
+        dbus::PendingCall call;
+    };
+
+    std::unique_ptr<Pending> quitAll()
     {
-        return client.asyncCall(QDBusMessage::createMethodCall(
-                QStringLiteral("com.cutefish.Applications1"),
-                QStringLiteral("/com/cutefish/Applications1"),
-                QStringLiteral("com.cutefish.Applications1"), QStringLiteral("QuitAll")));
+        auto pending = std::make_unique<Pending>();
+        Pending *raw = pending.get();
+        dbus::Proxy proxy(client.get(), "com.cutefish.Applications1", "/com/cutefish/Applications1",
+                          "com.cutefish.Applications1");
+        pending->call = proxy.callAsync("QuitAll", [raw](const dbus::Reply &reply) { raw->reply = reply; });
+        return pending;
     }
 
-private slots:
-    void initTestCase() { QVERIFY(client.isConnected()); }
-
-    void repliesOnceEveryApplicationHasQuit()
-    {
-        Desktop desktop;
-        wm::Window *editor = desktop.open(QStringLiteral("kate"));
-        wm::QuitAll quit(&desktop.manager);
-        std::vector<bool> ending;
-        session::ApplicationsService service(&quit, [&ending](bool value) {
-            ending.push_back(value);
-        });
-        QVERIFY(service.registerService());
-
-        QDBusPendingCallWatcher first(quitAll());
-        QDBusPendingCallWatcher second(quitAll());
-        QTRY_VERIFY(quit.isRunning());
-        QTest::qWait(50);
-        QVERIFY(!first.isFinished());
-        QCOMPARE(ending, std::vector<bool> {true});
-
-        desktop.manager.destroyWindow(editor);
-        QTRY_VERIFY(first.isFinished() && second.isFinished());
-        for (auto *watcher : {&first, &second}) {
-            const QDBusPendingReply<QString, QString> reply = *watcher;
-            QVERIFY(!reply.isError());
-            QCOMPARE(reply.argumentAt<0>(), QStringLiteral("quit"));
-        }
-        // The session ends from here, with the docks still away.
-        QCOMPARE(ending, std::vector<bool> {true});
-    }
-
-    void aCancelledQuitBringsTheDocksBack()
-    {
-        Desktop desktop;
-        desktop.open(QStringLiteral("frozen"));
-        qint64 now = 0;
-        wm::QuitAll quit(&desktop.manager, [&now] {
-            return now;
-        });
-        std::vector<bool> ending;
-        session::ApplicationsService service(&quit, [&ending](bool value) {
-            ending.push_back(value);
-        });
-        QVERIFY(service.registerService());
-
-        QDBusPendingCallWatcher call(quitAll());
-        QTRY_VERIFY(quit.isRunning());
-        now = wm::QuitAll::kUnresponsiveAfterMs + 1;
-        QTRY_VERIFY(call.isFinished());
-        const QDBusPendingReply<QString, QString> reply = call;
-        QCOMPARE(reply.argumentAt<0>(), QStringLiteral("unresponsive"));
-        QCOMPARE(reply.argumentAt<1>(), QStringLiteral("frozen"));
-        QCOMPARE(ending, (std::vector<bool> {true, false}));
-    }
+    bool waitFor(const std::function<bool()> &done) { return test::runUntil(done); }
 };
 
-QTEST_GUILESS_MAIN(ApplicationsServiceTest)
+} // namespace
 
-#include "applications_service_test.moc"
+TEST_F(ApplicationsServiceTest, RepliesOnceEveryApplicationHasQuit)
+{
+    ASSERT_TRUE(client);
+    Desktop desktop;
+    wm::Window *editor = desktop.open("kate");
+    wm::QuitAll quit(&desktop.manager);
+    std::vector<bool> ending;
+    session::ApplicationsService service(&quit, [&ending](bool value) { ending.push_back(value); });
+    ASSERT_TRUE(service.registerService());
+
+    auto first = quitAll();
+    auto second = quitAll();
+    EXPECT_TRUE(waitFor([&] { return quit.isRunning(); }));
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_FALSE(first->reply);
+    EXPECT_EQ(ending, std::vector<bool> {true});
+
+    desktop.manager.destroyWindow(editor);
+    EXPECT_TRUE(waitFor([&] { return first->reply && second->reply; }));
+    for (auto *pending : {first.get(), second.get()}) {
+        ASSERT_TRUE(pending->reply);
+        std::string outcome, applicationId;
+        EXPECT_TRUE(pending->reply->read(outcome, applicationId));
+        EXPECT_EQ(outcome, "quit");
+    }
+    // The session ends from here, with the docks still away.
+    EXPECT_EQ(ending, std::vector<bool> {true});
+}
+
+TEST_F(ApplicationsServiceTest, ACancelledQuitBringsTheDocksBack)
+{
+    Desktop desktop;
+    desktop.open("frozen");
+    int64_t now = 0;
+    wm::QuitAll quit(&desktop.manager, [&now] { return now; });
+    std::vector<bool> ending;
+    session::ApplicationsService service(&quit, [&ending](bool value) { ending.push_back(value); });
+    ASSERT_TRUE(service.registerService());
+
+    auto call = quitAll();
+    EXPECT_TRUE(waitFor([&] { return quit.isRunning(); }));
+    now = wm::QuitAll::kUnresponsiveAfterMs + 1;
+    ASSERT_TRUE(waitFor([&] { return call->reply.has_value(); }));
+    std::string outcome, applicationId;
+    EXPECT_TRUE(call->reply->read(outcome, applicationId));
+    EXPECT_EQ(outcome, "unresponsive");
+    EXPECT_EQ(applicationId, "frozen");
+    EXPECT_EQ(ending, (std::vector<bool> {true, false}));
+}

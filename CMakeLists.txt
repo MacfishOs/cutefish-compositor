@@ -9,7 +9,6 @@ project(cutefish-compositor
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_AUTOMOC ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -21,7 +20,6 @@ include(GNUInstallDirs)
 option(BUILD_TESTING "Build the test suite" OFF)
 include(CTest)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Network Concurrent)
 find_package(PkgConfig REQUIRED)
 find_package(CutefishToolkit REQUIRED)
 pkg_check_modules(TitleText REQUIRED IMPORTED_TARGET harfbuzz freetype2 fontconfig icu-uc icu-i18n)
@@ -177,17 +175,20 @@ target_include_directories(cutefish-protocols PUBLIC ${CUTEFISH_PROTOCOL_DIR})
 target_link_libraries(cutefish-protocols PUBLIC PkgConfig::WaylandServer)
 set_target_properties(cutefish-protocols PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Shared logging categories, preference files and process environment.
+# Shared logging categories, preference files, process environment and the
+# main thread's toolkit loop.
 add_library(cutefish-core STATIC
     src/core/logging.cpp
     src/core/logging.h
+    src/core/main_loop.cpp
+    src/core/main_loop.h
     src/core/preferences.cpp
     src/core/preferences.h
     src/core/process_environment.cpp
     src/core/process_environment.h
 )
 target_include_directories(cutefish-core PUBLIC src)
-target_link_libraries(cutefish-core PUBLIC Qt6::Core)
+target_link_libraries(cutefish-core PUBLIC Cutefish::ToolkitBase)
 set_target_properties(cutefish-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Backend-independent display contracts. DRM, Wayland and UI adapters consume
@@ -226,27 +227,17 @@ add_library(cutefish-display STATIC
     src/display/recommended_scale.h
 )
 target_include_directories(cutefish-display PUBLIC src)
-target_link_libraries(cutefish-display PUBLIC cutefish-core Qt6::Core)
+target_link_libraries(cutefish-display PUBLIC cutefish-core Cutefish::ToolkitBase)
 set_target_properties(cutefish-display PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-set(DISPLAY_CONFIG_XML ${CMAKE_CURRENT_SOURCE_DIR}/src/ipc/com.cutefish.DisplayConfig1.xml)
-set_source_files_properties(${DISPLAY_CONFIG_XML} PROPERTIES
-    INCLUDE ipc/display_dbus_types.h)
-qt_add_dbus_interface(DISPLAY_CONFIG_DBUS_SOURCES ${DISPLAY_CONFIG_XML}
-    display_config_interface)
-qt_add_dbus_adaptor(DISPLAY_CONFIG_DBUS_ADAPTOR_SOURCES ${DISPLAY_CONFIG_XML}
-    ipc/display_config_service.h cutefish::display::ipc::DisplayConfigService
-    display_config_adaptor DisplayConfigAdaptor)
 add_library(cutefish-display-ipc STATIC
     src/ipc/display_config_service.cpp
     src/ipc/display_config_service.h
     src/ipc/display_dbus_types.cpp
     src/ipc/display_dbus_types.h
-    ${DISPLAY_CONFIG_DBUS_SOURCES}
-    ${DISPLAY_CONFIG_DBUS_ADAPTOR_SOURCES}
 )
-target_include_directories(cutefish-display-ipc PUBLIC src ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(cutefish-display-ipc PUBLIC cutefish-display Qt6::DBus)
+target_include_directories(cutefish-display-ipc PUBLIC src)
+target_link_libraries(cutefish-display-ipc PUBLIC cutefish-display)
 set_target_properties(cutefish-display-ipc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Protocol/compositor core, shared by the executable and the tests.
@@ -321,7 +312,7 @@ add_library(cutefish-scene STATIC
     src/render/texture.h
 )
 target_include_directories(cutefish-scene PUBLIC src)
-target_link_libraries(cutefish-scene PUBLIC cutefish-core cutefish-sync Qt6::Gui)
+target_link_libraries(cutefish-scene PUBLIC cutefish-core cutefish-sync Cutefish::ToolkitBase Cutefish::Toolkit)
 set_target_properties(cutefish-scene PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Compositor model and the Wayland protocol implementations that drive it.
@@ -357,12 +348,18 @@ add_library(cutefish-compositor-core STATIC
     src/wayland/protocols/wl_shm.h
 )
 target_include_directories(cutefish-compositor-core PUBLIC src)
-# Qt6::Gui is here for QRegion, which stands in for Exo's cc::Region.
-target_link_libraries(cutefish-compositor-core PUBLIC cutefish-wayland cutefish-scene cutefish-protocols Qt6::Gui)
+# Cutefish::Toolkit for the blur shape's ui::Path.
+target_link_libraries(cutefish-compositor-core PUBLIC cutefish-wayland cutefish-scene cutefish-protocols
+    Cutefish::Toolkit)
 set_target_properties(cutefish-compositor-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Compositor-side input: seat, pointer, keyboard, xkb. Free of libinput and of
 # the Wayland protocol so it stays testable.
+# The session bus services of input, shortcuts and cursors.
+add_library(cutefish-input-dbus STATIC src/input/dbus_export.cpp src/input/dbus_export.h)
+target_include_directories(cutefish-input-dbus PUBLIC src)
+target_link_libraries(cutefish-input-dbus PUBLIC cutefish-core Cutefish::ToolkitBase)
+
 add_library(cutefish-mouse-settings STATIC
     src/input/mouse_settings.cpp
     src/input/mouse_settings.h
@@ -376,21 +373,21 @@ add_library(cutefish-mouse-settings STATIC
     src/input/touchscreen_settings.h
 )
 target_include_directories(cutefish-mouse-settings PUBLIC src)
-target_link_libraries(cutefish-mouse-settings PUBLIC cutefish-core Qt6::Core Qt6::DBus)
+target_link_libraries(cutefish-mouse-settings PUBLIC cutefish-input-dbus)
 
 add_library(cutefish-keyboard-settings STATIC
     src/input/keyboard_settings.cpp
     src/input/keyboard_settings.h
 )
 target_include_directories(cutefish-keyboard-settings PUBLIC src)
-target_link_libraries(cutefish-keyboard-settings PUBLIC cutefish-core Qt6::Core Qt6::DBus)
+target_link_libraries(cutefish-keyboard-settings PUBLIC cutefish-input-dbus)
 
 add_library(cutefish-input-method-settings STATIC
     src/input/input_method_settings.cpp
     src/input/input_method_settings.h
 )
 target_include_directories(cutefish-input-method-settings PUBLIC src)
-target_link_libraries(cutefish-input-method-settings PUBLIC cutefish-core Qt6::Core Qt6::DBus)
+target_link_libraries(cutefish-input-method-settings PUBLIC cutefish-input-dbus)
 
 add_library(cutefish-input STATIC
     src/clipboard/selection.cpp
@@ -432,7 +429,8 @@ add_library(cutefish-input STATIC
     src/input/input_manager.h
 )
 target_include_directories(cutefish-input PUBLIC src)
-target_link_libraries(cutefish-input PUBLIC cutefish-display cutefish-compositor-core PkgConfig::Xkbcommon)
+target_link_libraries(cutefish-input PUBLIC cutefish-display cutefish-compositor-core Cutefish::ToolkitBase
+    PkgConfig::Xkbcommon)
 set_target_properties(cutefish-input PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Window manager. Above the compositor and the input model, below the Wayland
@@ -520,7 +518,8 @@ add_library(cutefish-wm STATIC
     src/wm/demo_controller.h
 )
 target_include_directories(cutefish-wm PUBLIC src)
-target_link_libraries(cutefish-wm PUBLIC cutefish-input cutefish-compositor-core cutefish-display)
+target_link_libraries(cutefish-wm PUBLIC cutefish-input cutefish-compositor-core cutefish-display
+    cutefish-core Cutefish::ToolkitBase)
 set_target_properties(cutefish-wm PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Server-side window decoration. Above the window manager and the scene, below
@@ -548,7 +547,7 @@ add_library(cutefish-decoration STATIC
     src/decoration/theme_preferences.h
 )
 target_include_directories(cutefish-decoration PUBLIC src)
-target_link_libraries(cutefish-decoration PUBLIC cutefish-wm cutefish-scene Qt6::DBus
+target_link_libraries(cutefish-decoration PUBLIC cutefish-wm cutefish-scene Cutefish::Toolkit
     PRIVATE PkgConfig::TitleText)
 set_target_properties(cutefish-decoration PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -592,7 +591,7 @@ add_library(cutefish-wayland-input STATIC
     src/wayland/protocols/wl_data_device_manager.h
 )
 target_include_directories(cutefish-wayland-input PUBLIC src)
-target_link_libraries(cutefish-wayland-input PUBLIC cutefish-input cutefish-wayland Qt6::DBus)
+target_link_libraries(cutefish-wayland-input PUBLIC cutefish-input cutefish-wayland)
 set_target_properties(cutefish-wayland-input PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # xdg-shell: the protocol tables and the positioner. Above the window manager,
@@ -620,7 +619,7 @@ add_library(cutefish-session STATIC
     src/session/window_debug_service.h
 )
 target_include_directories(cutefish-session PUBLIC src)
-target_link_libraries(cutefish-session PUBLIC cutefish-compositor-core cutefish-wm Qt6::DBus Qt6::Concurrent)
+target_link_libraries(cutefish-session PUBLIC cutefish-compositor-core cutefish-wm Cutefish::Toolkit)
 set_target_properties(cutefish-session PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # An agent driving the seat once the user agrees, over
@@ -634,7 +633,7 @@ add_library(cutefish-computer-control STATIC
     src/computer_control/permission_consent.h
 )
 target_include_directories(cutefish-computer-control PUBLIC src)
-target_link_libraries(cutefish-computer-control PUBLIC cutefish-input Qt6::DBus)
+target_link_libraries(cutefish-computer-control PUBLIC cutefish-input Cutefish::ToolkitBase)
 set_target_properties(cutefish-computer-control PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keyboard shortcuts: the Ash accelerator controller and its configuration,
@@ -670,7 +669,7 @@ add_library(cutefish-accelerators STATIC
     src/accelerators/hot_corner_settings.h
 )
 target_include_directories(cutefish-accelerators PUBLIC src)
-target_link_libraries(cutefish-accelerators PUBLIC cutefish-wm cutefish-session Qt6::DBus PkgConfig::Xkbcommon)
+target_link_libraries(cutefish-accelerators PUBLIC cutefish-wm cutefish-session cutefish-input-dbus PkgConfig::Xkbcommon)
 set_target_properties(cutefish-accelerators PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(cutefish-wayland-shell STATIC
@@ -703,6 +702,14 @@ target_link_libraries(cutefish-wayland-shell
     PUBLIC cutefish-wm cutefish-wayland cutefish-protocols cutefish-wayland-input
            cutefish-wayland-dmabuf)
 set_target_properties(cutefish-wayland-shell PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Where the host's Qt 6 libraries and plugins are, for the cutefish-egl check.
+set(CUTEFISH_QT_LIBRARY_DIR "${CMAKE_INSTALL_FULL_LIBDIR}" CACHE PATH
+    "Directory of the host's Qt 6 libraries")
+set(CUTEFISH_QT_PLUGIN_DIR "${CMAKE_INSTALL_FULL_LIBDIR}/qt6/plugins" CACHE PATH
+    "Directory of the host's Qt 6 plugins")
+target_compile_definitions(cutefish-wayland-shell PRIVATE
+    CUTEFISH_QT_LIBRARY_DIR="${CUTEFISH_QT_LIBRARY_DIR}"
+    CUTEFISH_QT_PLUGIN_DIR="${CUTEFISH_QT_PLUGIN_DIR}")
 
 # The private shell protocols. Above the window manager, like xdg-shell: all
 # policy stays in wm/, and no wl_resource crosses into it.
@@ -868,8 +875,8 @@ add_library(cutefish-auth STATIC
     src/auth/greetd_backend.cpp src/auth/greetd_backend.h
     src/auth/login_sessions.cpp src/auth/login_sessions.h)
 target_include_directories(cutefish-auth PUBLIC src)
-target_link_libraries(cutefish-auth PUBLIC cutefish-session cutefish-toolkit-host Qt6::Network
-    Qt6::DBus)
+target_link_libraries(cutefish-auth PUBLIC cutefish-session cutefish-toolkit-host
+    PRIVATE PkgConfig::TitleText)
 target_compile_definitions(cutefish-auth PRIVATE
     CUTEFISH_AUTH_HELPER="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-auth-helper")
 
@@ -932,10 +939,11 @@ target_link_libraries(cutefish-compositor
 
 pkg_check_modules(WaylandCaptureClient REQUIRED IMPORTED_TARGET wayland-client)
 add_executable(cutefish-screenshot src/tools/screenshot.cpp)
-target_link_libraries(cutefish-screenshot PRIVATE cutefish-protocols PkgConfig::WaylandCaptureClient Qt6::Gui)
+target_link_libraries(cutefish-screenshot PRIVATE cutefish-protocols PkgConfig::WaylandCaptureClient
+    Cutefish::Toolkit)
 
 add_executable(cutefish-displayctl src/tools/displayctl.cpp)
-target_link_libraries(cutefish-displayctl PRIVATE cutefish-display-ipc Qt6::Core Qt6::DBus)
+target_link_libraries(cutefish-displayctl PRIVATE cutefish-display-ipc Cutefish::ToolkitBase)
 
 option(CUTEFISH_ENABLE_XWAYLAND "Build the native Xwayland frontend" ON)
 if(CUTEFISH_ENABLE_XWAYLAND)
@@ -956,7 +964,8 @@ if(CUTEFISH_ENABLE_XWAYLAND)
         ${xwayland-shell-v1_SOURCES}
         ${xwayland-keyboard-grab-unstable-v1_SOURCES})
     target_include_directories(cutefish-xwayland PUBLIC src ${CUTEFISH_PROTOCOL_DIR})
-    target_link_libraries(cutefish-xwayland PUBLIC cutefish-wayland-private-shell PkgConfig::Xcb Threads::Threads)
+    target_link_libraries(cutefish-xwayland PUBLIC cutefish-wayland-private-shell PkgConfig::Xcb Threads::Threads
+        Cutefish::ToolkitBase)
     target_link_libraries(cutefish-compositor PRIVATE cutefish-xwayland)
     target_compile_definitions(cutefish-compositor PRIVATE CUTEFISH_ENABLE_XWAYLAND)
     install(FILES ${WAYLAND_PROTOCOLS_DATADIR}/staging/xwayland-shell/xwayland-shell-v1.xml
@@ -977,7 +986,7 @@ add_library(cutefish-cursor STATIC src/cursor/theme.cpp src/cursor/cursor.cpp
     src/cursor/output_cursor_router.cpp src/cursor/output_cursor_router.h)
 target_include_directories(cutefish-cursor PUBLIC src)
 target_sources(cutefish-cursor PRIVATE src/cursor/preferences.cpp src/cursor/preferences.h)
-target_link_libraries(cutefish-cursor PUBLIC cutefish-input cutefish-display Qt6::DBus)
+target_link_libraries(cutefish-cursor PUBLIC cutefish-input cutefish-display Cutefish::Toolkit)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-cursor)
 if(BUILD_TESTING)
     add_subdirectory(tests)

@@ -6,10 +6,9 @@
 #define CUTEFISH_WM_WORK_AREA_H_
 
 #include <map>
+#include <string>
 
-#include <QRect>
-#include <QString>
-
+#include "base/geometry.h"
 #include "wm/types.h"
 
 namespace cutefish::wm {
@@ -26,13 +25,13 @@ public:
     struct Zone {
         ScreenEdge edge = ScreenEdge::Top;
         int thickness = 0;
-        QString outputName;
+        std::string outputName;
     };
 
     // Returns true when the aggregate changed and the work area has to be
     // recomputed.
     bool set(const void* token, ScreenEdge edge, int thickness,
-             const QString& outputName = QString());
+             const std::string& outputName = {});
     bool clear(const void* token);
     // Drops every reservation at once; what a shell disconnect does.
     bool clearAll();
@@ -42,8 +41,8 @@ public:
     // `outputBounds` minus every reservation. Reservations on the same edge do
     // not stack: the largest one wins, so a dock that briefly has two
     // reservations in flight cannot shrink the work area twice.
-    QRect apply(const QRect& outputBounds) const;
-    QRect apply(const QRect& outputBounds, const QString& outputName, bool primary) const;
+    base::Rect apply(const base::Rect& outputBounds) const;
+    base::Rect apply(const base::Rect& outputBounds, const std::string& outputName, bool primary) const;
 
 private:
     std::map<const void*, Zone> m_zones;

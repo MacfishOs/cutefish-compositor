@@ -55,7 +55,7 @@ void Buffer::onAttach(bool cached)
 void Buffer::onDetach(bool cached)
 {
     if (m_attachCount == 0) {
-        qCWarning(cfCompositor) << "Buffer detached more often than attached";
+        CF_WARNING(cfCompositor) << "Buffer detached more often than attached";
         return;
     }
     --m_attachCount;
@@ -106,7 +106,7 @@ void Buffer::onScanoutAcquired()
 void Buffer::onScanoutReleased(render::SyncFence fence)
 {
     if (m_scanoutCount == 0) {
-        qCWarning(cfCompositor) << "Buffer left scanout more often than it entered it";
+        CF_WARNING(cfCompositor) << "Buffer left scanout more often than it entered it";
         return;
     }
     --m_scanoutCount;
@@ -154,7 +154,7 @@ void Buffer::maybeRelease()
         m_releaseCallback();
 }
 
-ShmBuffer::ShmBuffer(std::shared_ptr<ShmPool> pool, const QSize& size, int32_t offset,
+ShmBuffer::ShmBuffer(std::shared_ptr<ShmPool> pool, const base::Size& size, int32_t offset,
                      int32_t stride, render::PixelFormat format)
     : m_pool(std::move(pool))
     , m_size(size)

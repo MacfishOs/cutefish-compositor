@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-#include <QString>
+#include <string>
 
 #include "decoration/raster.h"
 #include "decoration/shadow.h"
@@ -85,9 +85,9 @@ struct Metrics {
     {
         const auto lobes = [](float wide, float narrow, int offset, float strength,
                               float contact = 1.0f) {
-            return ShadowStyle {{{wide, QPoint(0, offset), 0.22f * strength},
-                                 {narrow, QPoint(0, (offset + 1) / 2), 0.15f * strength},
-                                 {1.5f, QPoint(0, 1), 0.16f * strength * contact}}};
+            return ShadowStyle {{{wide, base::Point(0, offset), 0.22f * strength},
+                                 {narrow, base::Point(0, (offset + 1) / 2), 0.15f * strength},
+                                 {1.5f, base::Point(0, 1), 0.16f * strength * contact}}};
         };
         switch (elevation) {
         case wm::ShadowElevation::None:
@@ -158,7 +158,7 @@ public:
 
     // Follows the session's system font size; frames re-raster their caption
     // on the next paint, so this only notifies observers.
-    void setCaptionPointSize(qreal points);
+    void setCaptionPointSize(double points);
 
     // Switches every window silhouette between continuous and circular corners
     // (render::setContinuousCorners), drops the shadows rasterized for the old
@@ -178,7 +178,7 @@ public:
     // A texture for `key`, rasterized by `make` the first time it is asked for.
     // Textures belong to the renderer that created them, so the whole cache is
     // dropped if a different one turns up.
-    render::Texture *texture(render::Renderer &renderer, const QString &key,
+    render::Texture *texture(render::Renderer &renderer, const std::string &key,
                              const std::function<Image()> &make);
 
     // Drops every cached texture. Must run while the renderer's context is
@@ -195,7 +195,7 @@ private:
     std::vector<ThemeObserver *> m_observers;
 
     render::Renderer *m_renderer = nullptr;
-    std::map<QString, std::unique_ptr<render::Texture>> m_textures;
+    std::map<std::string, std::unique_ptr<render::Texture>> m_textures;
 };
 
 } // namespace cutefish::decoration

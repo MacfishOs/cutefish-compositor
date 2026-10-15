@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <QRegion>
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -15,6 +14,9 @@
 #include "render/damage.h"
 #include "scene/node.h"
 #include "scene/surface_node.h"
+#include "base/region.h"
+#include "base/transform.h"
+#include "ui/geometry_conversions.h"
 
 namespace cutefish::scene {
 
@@ -42,9 +44,9 @@ public:
     // A blur reads what lies behind it. `backdropChanged`, when given, says
     // whether that changed where the tree tracked here does not reach, as for
     // a window drawn offscreen over the output.
-    QRegion update(const Node &root, const QRect &viewport, double scale = 1,
+    base::Region update(const Node &root, const base::Rect &viewport, double scale = 1,
                    uint32_t transform = 0,
-                   const std::function<bool(const QRect &)> &backdropChanged = {})
+                   const std::function<bool(const base::Rect &)> &backdropChanged = {})
     {
         Frame frame;
         if (m_cached && !backdropChanged && m_cached->matches(root, viewport, scale, transform))
@@ -61,7 +63,7 @@ public:
     // Whether update() would find anything to repaint, leaving the history be.
     // An output asks this before it draws; the collection is kept for the
     // update() that follows, unless a node changes in between.
-    bool hasDamage(const Node &root, const QRect &viewport, double scale = 1,
+    bool hasDamage(const Node &root, const base::Rect &viewport, double scale = 1,
                    uint32_t transform = 0) const
     {
         m_cached.emplace(Cached {Node::mutations(), &root, viewport, scale, transform,
@@ -73,9 +75,9 @@ public:
     // whole wherever it reaches one. Left out are those `kept` says the
     // renderer draws again from a result kept from the last pass, as their
     // backdrop has not changed since.
-    std::vector<QRect> samples(const std::function<bool(uint64_t)> &kept = {}) const
+    std::vector<base::Rect> samples(const std::function<bool(uint64_t)> &kept = {}) const
     {
-        std::vector<QRect> result;
+        std::vector<base::Rect> result;
         for (const Blur &blur : m_blurs)
             if (blur.stale || !kept || !kept(blur.owner))
                 result.push_back(blur.sampled);
@@ -94,20 +96,20 @@ public:
 
 private:
     struct Entry {
-        QRect bounds;
+        base::Rect bounds;
         uint64_t revision;
         uint64_t contentRevision;
     };
 
     struct Blur {
-        QRect sampled;
+        base::Rect sampled;
         uint64_t owner;
         // Whether what it reads changed, or it moved.
         bool stale;
     };
 
     struct Frame {
-        QRegion damage;
+        base::Region damage;
         std::map<uint64_t, Entry> history;
         std::vector<Blur> blurs;
     };
@@ -115,12 +117,12 @@ private:
     struct Cached {
         uint64_t mutations;
         const Node *root;
-        QRect viewport;
+        base::Rect viewport;
         double scale;
         uint32_t transform;
         Frame frame;
 
-        bool matches(const Node &node, const QRect &rect, double s, uint32_t t) const
+        bool matches(const Node &node, const base::Rect &rect, double s, uint32_t t) const
         {
             return mutations == Node::mutations() && root == &node && viewport == rect
                     && scale == s && transform == t;
@@ -131,17 +133,17 @@ private:
     // stays put, while a window texture's moves with the window, whose subtree
     // then reads as unchanged, the way a cc render surface's damage is tracked
     // in the surface's own space and not the target's.
-    Frame collect(const Node &root, const QRect &viewport, double scale, uint32_t transform,
-                  const std::function<bool(const QRect &)> &backdropChanged) const
+    Frame collect(const Node &root, const base::Rect &viewport, double scale, uint32_t transform,
+                  const std::function<bool(const base::Rect &)> &backdropChanged) const
     {
         Frame frame;
         bool filtered = false;
-        const QPoint origin = viewport.topLeft();
+        const base::Point origin = viewport.topLeft();
         // Damage in drawing order, with each blur where it is drawn: only what
         // is drawn before a blur changes what it reads, as in cc's tracker.
         struct Step {
-            QRegion damage;
-            QRect blurred;
+            base::Region damage;
+            base::Rect blurred;
             size_t blur = SIZE_MAX;
         };
         std::vector<Step> steps;
@@ -155,14 +157,14 @@ private:
                     self(self, *children[i], false, false);
                 return;
             }
-            const QRect absolute = node.absolutePaintBounds();
+            const base::Rect absolute = node.absolutePaintBounds();
             const Entry current {absolute.translated(-origin), node.revision(),
                                  node.contentRevision()};
             const auto previous = m_history.find(node.damageId());
             const bool changed = ancestorChanged || previous == m_history.end()
                     || previous->second.bounds != current.bounds
                     || previous->second.revision != current.revision;
-            QRegion damage;
+            base::Region damage;
             if (changed) {
                 damage += current.bounds;
                 if (previous != m_history.end())
@@ -189,11 +191,11 @@ private:
                 } else {
                     // Every blur input, including the outward-rounded sample halo.
                     const int halo = render::kBackdropBlurSupport + int(std::ceil(2 / scale));
-                    const QRect sampled = absolute.adjusted(-halo, -halo, halo, halo);
-                    const QPoint position = node.absolutePosition();
-                    const QRect blurred = surface->backgroundBlurRect().translated(position).united(
-                            surface->backgroundBlurShape().boundingRect().translated(position)
-                                    .toAlignedRect());
+                    const base::Rect sampled = absolute.adjusted(-halo, -halo, halo, halo);
+                    const base::Point position = node.absolutePosition();
+                    const base::Rect blurred = surface->backgroundBlurRect().translated(position).united(
+                            ui::toBase(surface->backgroundBlurShape().boundingRect()).translated(position)
+                                    .toEnclosingRect());
                     steps.push_back({{}, blurred.adjusted(-1, -1, 1, 1), frame.blurs.size()});
                     frame.blurs.push_back(
                             {sampled, node.damageId(),
@@ -205,7 +207,7 @@ private:
                 self(self, *children[i], changed, redrawsChildren);
         };
         visit(visit, root, false, false);
-        QRegion &damage = frame.damage;
+        base::Region &damage = frame.damage;
         // A node gone from the tree is taken as drawn below everything.
         for (const auto &[id, previous] : m_history)
             if (!frame.history.contains(id))
@@ -222,30 +224,30 @@ private:
                 damage += step.blurred.translated(-origin);
         }
         if (full)
-            damage = QRect(QPoint(), viewport.size());
+            damage = base::Rect(base::Point(), viewport.size());
         damage = damage.translated(origin).intersected(viewport);
         return frame;
     }
 
-    static QRegion expandedContentDamage(const Node &node, const QRegion &damage)
+    static base::Region expandedContentDamage(const Node &node, const base::Region &damage)
     {
         const auto *surface = dynamic_cast<const SurfaceNode *>(&node);
         if (!surface || !surface->texture() || node.geometry().isEmpty() || damage.isEmpty())
             return damage;
-        const QSize size = node.geometry().size(), pixels = surface->texture()->size();
-        const QTransform toBuffer = QTransform::fromScale(1.0 / size.width(), 1.0 / size.height())
+        const base::Size size = node.geometry().size(), pixels = surface->texture()->size();
+        const base::AffineTransform toBuffer = base::AffineTransform::fromScale(1.0 / size.width(), 1.0 / size.height())
                 * surface->textureMapping()
-                * QTransform::fromScale(pixels.width(), pixels.height());
+                * base::AffineTransform::fromScale(pixels.width(), pixels.height());
         bool invertible = false;
-        const QTransform toSurface = toBuffer.inverted(&invertible);
-        const QRect bounds(QPoint(), size);
+        const base::AffineTransform toSurface = toBuffer.inverted(&invertible);
+        const base::Rect bounds(base::Point(), size);
         if (!invertible)
             return bounds;
-        QRegion result;
+        base::Region result;
         // Linear sampling can change neighboring pixels beyond the damaged texel.
-        for (const QRect &rect : damage.intersected(bounds)) {
-            const QRectF source = toBuffer.mapRect(QRectF(rect)).adjusted(-1, -1, 1, 1);
-            result += toSurface.mapRect(source).toAlignedRect().intersected(bounds);
+        for (const base::Rect &rect : damage.intersected(bounds)) {
+            const base::RectF source = toBuffer.mapRect(base::RectF(rect)).adjusted(-1, -1, 1, 1);
+            result += toSurface.mapRect(source).toEnclosingRect().intersected(bounds);
         }
         return result;
     }
@@ -254,7 +256,7 @@ private:
     size_t m_childBegin = 0;
     size_t m_childEnd = SIZE_MAX;
     std::map<uint64_t, Entry> m_history;
-    QRect m_viewport;
+    base::Rect m_viewport;
     std::vector<Blur> m_blurs;
     mutable std::optional<Cached> m_cached;
 };

@@ -17,6 +17,8 @@
 #include <cstring>
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <bit>
+#include <climits>
 #include <csignal>
 #include <unistd.h>
 #include <xcb/composite.h>
@@ -25,16 +27,13 @@
 #include <xcb/xcbext.h>
 #include <xcb/xfixes.h>
 
-#include <QAbstractEventDispatcher>
-#include <QByteArrayList>
-#include <QSysInfo>
-#include <QCoreApplication>
-#include <QDebug>
-#include <QSocketNotifier>
-#include <QTimer>
-
+#include "base/event_loop.h"
+#include "base/logging.h"
+#include "base/strings.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "dnd_bridge.h"
+#include "fd_watch.h"
 #include "input/seat.h"
 #include "selection_bridge.h"
 #include "surface_association.h"
@@ -45,6 +44,18 @@
 
 namespace cutefish::xwayland {
 namespace {
+
+const base::LogCategory &logs()
+{
+    return base::LogCategory::defaultCategory();
+}
+
+// A property's value as bytes.
+std::string_view propertyBytes(xcb_get_property_reply_t *reply)
+{
+    return std::string_view(static_cast<const char *>(xcb_get_property_value(reply)),
+                            size_t(xcb_get_property_value_length(reply)));
+}
 
 int constrainedExtent(int value, int base, int increment, int minimum, int maximum)
 {
@@ -160,14 +171,27 @@ unsigned queryClientPid(xcb_connection_t *connection, uint32_t window)
 }
 
 // Whether WM_CLIENT_MACHINE names this machine. Unset counts as local: the
-// socket is. Toolkits write gethostname(), which machineHostName() returns.
-bool runsOnThisMachine(const QByteArray &machine)
+// socket is. Toolkits write gethostname().
+bool runsOnThisMachine(const std::string &machine)
 {
-    return machine.isEmpty() || machine == QSysInfo::machineHostName().toUtf8();
+    char host[HOST_NAME_MAX + 1] = {};
+    gethostname(host, sizeof(host) - 1);
+    return machine.empty() || machine == host;
+}
+
+// Latin-1 text lower-cased as Unicode does it, then as UTF-8.
+std::string lowerLatin1ToUtf8(std::string latin1)
+{
+    for (char &c : latin1) {
+        const auto byte = uint8_t(c);
+        if ((byte >= 'A' && byte <= 'Z') || (byte >= 0xc0 && byte <= 0xde && byte != 0xd7))
+            c = char(byte + 0x20);
+    }
+    return base::strings::latin1ToUtf8(latin1);
 }
 
 // The pid in a QueryClientIds reply, or zero when it has none.
-qint64 clientPidFromReply(const void *reply)
+int64_t clientPidFromReply(const void *reply)
 {
     const auto *bytes = static_cast<const uint8_t *>(reply);
     uint32_t words = 0, count = 0;
@@ -201,14 +225,15 @@ struct Xwm::X11Window : compositor::SurfaceObserver, wm::WindowObserver {
     compositor::Surface *surface = nullptr;
     wm::Window *window = nullptr;
     // Logical geometry, and the X11 geometry it came from.
-    QRect geometry, xGeometry;
+    base::Rect geometry, xGeometry;
     // Adopted from a ReparentNotify, which has no size; xGeometry holds a
     // placeholder one until the geometry is read or configured.
     bool sizeUnknown = false;
     // In X11 pixels, relative to the window.
-    std::optional<QRegion> boundingShape, inputShape;
+    std::optional<base::Region> boundingShape, inputShape;
     uint64_t shapeGeneration = 0;
-    QString title, legacyTitle, instance, clazz, leaderClass;
+    // UTF-8; WM_CLASS's parts stay Latin-1, as the property holds them.
+    std::string title, legacyTitle, instance, clazz, leaderClass;
     bool hasTitle = false, popup = false, roleLocked = false;
     uint64_t mapOrder = 0;
     uint32_t transient = 0;
@@ -218,8 +243,9 @@ struct Xwm::X11Window : compositor::SurfaceObserver, wm::WindowObserver {
     bool dialog = false, urgent = false, demandsAttention = false, initiallyMinimized = false;
     bool dragIcon = false;
     uint32_t leader = 0;
-    QString startupId;
-    QSize minimum {1, 1}, maximum, increment {1, 1}, base {0, 0};
+    std::string startupId;
+    // No maximum: an empty size.
+    base::Size minimum {1, 1}, maximum, increment {1, 1}, base {0, 0};
     bool mapped = false, overrideRedirect = false, decorated = true;
     bool input = true, takeFocus = false, deleteWindow = false, pingable = false;
     // Requested through _NET_WM_STATE; there is no pager, but the state is kept.
@@ -228,7 +254,7 @@ struct Xwm::X11Window : compositor::SurfaceObserver, wm::WindowObserver {
     // clients set zero to stay mapped but unseen.
     float opacity = 1;
     uint32_t pingSerial = 0;
-    QByteArray clientMachine;
+    std::string clientMachine;
     // _NET_WM_SYNC_REQUEST: the client's counter, our alarm on it, the last
     // value requested, and a size change held back until it is reached.
     bool syncable = false, syncPending = false, syncDeferred = false;
@@ -269,7 +295,7 @@ struct Xwm::X11Window : compositor::SurfaceObserver, wm::WindowObserver {
 
     void onWindowDestroying(wm::Window *) override { window = nullptr; }
 
-    void onWindowBoundsChanged(wm::Window *, const QRect &) override { xwm->synchronize(*this); }
+    void onWindowBoundsChanged(wm::Window *, const base::Rect &) override { xwm->synchronize(*this); }
 
     void onWindowStateTypeChanged(wm::Window *, wm::WindowStateType) override
     {
@@ -286,6 +312,16 @@ struct Xwm::X11Window : compositor::SurfaceObserver, wm::WindowObserver {
     void onWindowVisibilityChanged(wm::Window *, bool) override { xwm->synchronize(*this); }
 };
 
+std::string Xwm::displayTitle(const X11Window &w)
+{
+    return w.hasTitle ? w.title : w.legacyTitle;
+}
+
+std::string Xwm::applicationId(const X11Window &w)
+{
+    return lowerLatin1ToUtf8(w.clazz.empty() ? w.leaderClass : w.clazz);
+}
+
 Xwm::Xwm(wm::WindowManager *manager, SurfaceAssociation *association)
     : m_manager(manager)
     , m_association(association)
@@ -300,7 +336,7 @@ Xwm::Xwm(wm::WindowManager *manager, SurfaceAssociation *association)
         surface->addSurfaceObserver(&w);
         present(w);
     };
-    connect(manager, &wm::WindowManager::activeWindowChanged, this, [this] {
+    m_activeWindowChanged = manager->activeWindowChanged.connect([this](wm::Window *) {
         if (m_ready)
             roots();
     });
@@ -309,6 +345,8 @@ Xwm::Xwm(wm::WindowManager *manager, SurfaceAssociation *association)
 Xwm::~Xwm()
 {
     m_association->associated = {};
+    if (m_drainHook)
+        core::mainLoop()->removePrepareHook(m_drainHook);
     if (m_notifier)
         m_notifier->setEnabled(false);
     if (m_shutdownFd >= 0)
@@ -338,7 +376,8 @@ void Xwm::start(int fd)
     }
     // XCB's setup handshake can wait for Wayland. Only this worker blocks;
     // ownership transfers to the compositor thread after setup is complete.
-    m_setupThread = std::thread([this, fd] {
+    m_setupThread = std::thread([this, fd, loop = core::mainLoop()->handle(),
+                                 weak = m_weakFactory.getWeakPtr()] {
         m_connection = xcb_connect_to_fd(fd, nullptr);
         const auto *setup = xcb_get_setup(m_connection);
         bool ok = !xcb_connection_has_error(m_connection) && setup;
@@ -383,18 +422,19 @@ void Xwm::start(int fd)
                 free(version);
             }
         }
-        QMetaObject::invokeMethod(
-                this,
-                [this, ok] {
-                    m_setupThread.join();
-                    if (!ok) {
-                        if (initialized)
-                            initialized(false);
-                        return;
-                    }
-                    this->setup();
-                },
-                Qt::QueuedConnection);
+        // The weak pointer is only read back on the loop's thread.
+        loop.post([weak, ok] {
+            Xwm *self = weak.get();
+            if (!self)
+                return;
+            self->m_setupThread.join();
+            if (!ok) {
+                if (self->initialized)
+                    self->initialized(false);
+                return;
+            }
+            self->setup();
+        });
     });
 }
 
@@ -406,41 +446,41 @@ xcb_atom_t Xwm::atom(const char *name) const
 
 // Sommelier's direct scale does the same between host and guest; see
 // sommelier-transform.cc.
-QPoint Xwm::fromX(const QPoint &point) const
+base::Point Xwm::fromX(const base::Point &point) const
 {
-    return QPoint(qRound(point.x() / m_scale), qRound(point.y() / m_scale))
+    return base::Point(base::roundToInt(point.x() / m_scale), base::roundToInt(point.y() / m_scale))
             + m_manager->outputBounds().topLeft();
 }
 
-QPoint Xwm::toX(const QPoint &point) const
+base::Point Xwm::toX(const base::Point &point) const
 {
-    const QPoint local = point - m_manager->outputBounds().topLeft();
-    return QPoint(qRound(local.x() * m_scale), qRound(local.y() * m_scale));
+    const base::Point local = point - m_manager->outputBounds().topLeft();
+    return base::Point(base::roundToInt(local.x() * m_scale), base::roundToInt(local.y() * m_scale));
 }
 
-QSize Xwm::sizeFromX(const QSize &size) const
+base::Size Xwm::sizeFromX(const base::Size &size) const
 {
-    return QSize(std::max(1, qRound(size.width() / m_scale)),
-                 std::max(1, qRound(size.height() / m_scale)));
+    return base::Size(std::max(1, base::roundToInt(size.width() / m_scale)),
+                      std::max(1, base::roundToInt(size.height() / m_scale)));
 }
 
-QSize Xwm::sizeToX(const QSize &size) const
+base::Size Xwm::sizeToX(const base::Size &size) const
 {
-    return QSize(std::max(1, qRound(size.width() * m_scale)),
-                 std::max(1, qRound(size.height() * m_scale)));
+    return base::Size(std::max(1, base::roundToInt(size.width() * m_scale)),
+                      std::max(1, base::roundToInt(size.height() * m_scale)));
 }
 
-QRegion Xwm::regionFromX(const QRegion &region) const
+base::Region Xwm::regionFromX(const base::Region &region) const
 {
     if (m_scale == 1)
         return region;
-    QRegion result;
-    for (const QRect &rect : region) {
-        const QPoint topLeft(int(std::floor(rect.x() / m_scale)),
-                             int(std::floor(rect.y() / m_scale)));
-        const QPoint bottomRight(int(std::ceil((rect.x() + rect.width()) / m_scale)),
-                                 int(std::ceil((rect.y() + rect.height()) / m_scale)));
-        result += QRect(topLeft, bottomRight - QPoint(1, 1));
+    base::Region result;
+    for (const base::Rect &rect : region) {
+        const base::Point topLeft(int(std::floor(rect.x() / m_scale)),
+                                  int(std::floor(rect.y() / m_scale)));
+        const base::Point bottomRight(int(std::ceil((rect.x() + rect.width()) / m_scale)),
+                                      int(std::ceil((rect.y() + rect.height()) / m_scale)));
+        result += base::Rect::fromEdges(topLeft.x(), topLeft.y(), bottomRight.x(), bottomRight.y());
     }
     return result;
 }
@@ -450,26 +490,27 @@ QRegion Xwm::regionFromX(const QRegion &region) const
 // any fraction as a larger font DPI.
 void Xwm::publishDpi()
 {
-    const int dpi = qRound(96 * m_scale);
+    const int dpi = base::roundToInt(96 * m_scale);
     reply(xcb_get_property(m_connection, 0, m_root, XCB_ATOM_RESOURCE_MANAGER, XCB_ATOM_STRING, 0,
                            65536)
                   .sequence,
           [this, dpi](void *p) {
               auto *r = static_cast<xcb_get_property_reply_t *>(p);
-              QByteArrayList lines;
+              std::vector<std::string> lines;
               if (r && r->type == XCB_ATOM_STRING && r->format == 8) {
-                  const QByteArray resources(static_cast<const char *>(xcb_get_property_value(r)),
-                                             xcb_get_property_value_length(r));
-                  for (const QByteArray &line : resources.split('\n')) {
-                      if (!line.isEmpty() && !line.startsWith("Xft.dpi:"))
-                          lines.append(line);
+                  const std::string_view resources(
+                          static_cast<const char *>(xcb_get_property_value(r)),
+                          size_t(xcb_get_property_value_length(r)));
+                  for (const std::string_view line : base::strings::splitViews(resources, '\n')) {
+                      if (!line.empty() && !line.starts_with("Xft.dpi:"))
+                          lines.emplace_back(line);
                   }
               }
-              lines.append("Xft.dpi:\t" + QByteArray::number(dpi));
-              const QByteArray value = lines.join('\n') + '\n';
+              lines.push_back("Xft.dpi:\t" + std::to_string(dpi));
+              const std::string value = base::strings::join(lines, "\n") + '\n';
               xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, m_root,
                                   XCB_ATOM_RESOURCE_MANAGER, XCB_ATOM_STRING, 8, value.size(),
-                                  value.constData());
+                                  value.data());
               xcb_flush(m_connection);
           });
     if (!m_xsettings)
@@ -479,18 +520,18 @@ void Xwm::publishDpi()
             {"Gdk/UnscaledDPI", dpi * 1024 / windowScale},
             {"Gdk/WindowScalingFactor", windowScale},
             {"Xft/DPI", dpi * 1024}};
-    QByteArray data;
+    std::string data;
     auto append = [&data](auto value) {
         data.append(reinterpret_cast<const char *>(&value), sizeof(value));
     };
-    append(uint8_t(QSysInfo::ByteOrder == QSysInfo::LittleEndian ? 0 : 1));
+    append(uint8_t(std::endian::native == std::endian::little ? 0 : 1));
     data.append(3, '\0');
     append(uint32_t(++m_xsettingsSerial));
     append(uint32_t(std::size(settings)));
     for (const auto &[name, value] : settings) {
-        const QByteArray key(name);
+        const std::string_view key(name);
         append(uint8_t(0));
-        data.append('\0');
+        data.append(1, '\0');
         append(uint16_t(key.size()));
         data.append(key);
         data.append((4 - key.size() % 4) % 4, '\0');
@@ -499,7 +540,7 @@ void Xwm::publishDpi()
     }
     xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, m_support,
                         atom("_XSETTINGS_SETTINGS"), atom("_XSETTINGS_SETTINGS"), 8, data.size(),
-                        data.constData());
+                        data.data());
     xcb_flush(m_connection);
 }
 
@@ -526,14 +567,14 @@ void Xwm::ping(uint32_t window)
     xcb_send_event(m_connection, 0, window, XCB_EVENT_MASK_NO_EVENT,
                    reinterpret_cast<const char *>(&e));
     xcb_flush(m_connection);
-    QTimer::singleShot(m_pingTimeoutMs, this,
-                       [this, window, generation = w.generation, serial = w.pingSerial] {
-                           auto it = m_windows.find(window);
-                           if (it == m_windows.end() || it->second->generation != generation
-                               || it->second->pingSerial != serial || !it->second->window)
-                               return;
-                           it->second->window->setResponsive(false);
-                       });
+    after(std::chrono::milliseconds(m_pingTimeoutMs),
+          [this, window, generation = w.generation, serial = w.pingSerial] {
+              auto it = m_windows.find(window);
+              if (it == m_windows.end() || it->second->generation != generation
+                  || it->second->pingSerial != serial || !it->second->window)
+                  return;
+              it->second->window->setResponsive(false);
+          });
 }
 
 // A hung client cannot act on WM_DELETE_WINDOW. As in KWin, a local client's
@@ -545,7 +586,7 @@ void Xwm::kill(uint32_t window)
         return;
     const auto &w = *it->second;
     if (const uint32_t pid = ownerPid(w)) {
-        qInfo() << "Killing unresponsive X11 client" << pid;
+        CF_INFO(logs()) << "Killing unresponsive X11 client" << pid;
         ::kill(pid_t(pid), SIGKILL);
     }
     xcb_kill_client(m_connection, window);
@@ -600,17 +641,17 @@ bool Xwm::requestSync(X11Window &w)
                    reinterpret_cast<const char *>(&e));
     w.syncPending = true;
     w.syncDeferred = false;
-    QTimer::singleShot(kSyncTimeoutMs, this,
-                       [this, id = w.id, generation = w.generation, requested = w.syncValue] {
-                           auto it = m_windows.find(id);
-                           if (it == m_windows.end() || it->second->generation != generation
-                               || !it->second->syncPending || it->second->syncValue != requested)
-                               return;
-                           auto &w = *it->second;
-                           w.syncPending = false;
-                           if (std::exchange(w.syncDeferred, false))
-                               synchronize(w);
-                       });
+    after(std::chrono::milliseconds(kSyncTimeoutMs),
+          [this, id = w.id, generation = w.generation, requested = w.syncValue] {
+              auto it = m_windows.find(id);
+              if (it == m_windows.end() || it->second->generation != generation
+                  || !it->second->syncPending || it->second->syncValue != requested)
+                  return;
+              auto &w = *it->second;
+              w.syncPending = false;
+              if (std::exchange(w.syncDeferred, false))
+                  synchronize(w);
+          });
     return true;
 }
 
@@ -665,8 +706,8 @@ void Xwm::setScale(double scale)
     for (auto &[id, w] : m_windows) {
         if (w->window) {
             synchronize(*w);
-        } else if (w->xGeometry.isValid()) {
-            w->geometry = QRect(fromX(w->xGeometry.topLeft()), sizeFromX(w->xGeometry.size()));
+        } else if (!w->xGeometry.isEmpty()) {
+            w->geometry = base::Rect(fromX(w->xGeometry.topLeft()), sizeFromX(w->xGeometry.size()));
             present(*w);
         }
     }
@@ -678,22 +719,29 @@ void Xwm::reply(unsigned sequence, std::function<void(void *)> callback)
     m_replies.push_back({sequence, std::move(callback)});
 }
 
+void Xwm::after(std::chrono::milliseconds delay, std::function<void()> task)
+{
+    auto timer = std::make_unique<base::Timer>(core::mainLoop());
+    base::Timer *raw = timer.get();
+    const auto position = m_delayed.insert(m_delayed.end(), std::move(timer));
+    raw->setSingleShot(true);
+    raw->onTimeout = [this, position, task = std::move(task)] {
+        // The timer goes first; the task may schedule another.
+        const std::function<void()> run = task;
+        m_delayed.erase(position);
+        run();
+    };
+    raw->start(delay);
+}
+
 void Xwm::setup()
 {
-    m_notifier = new QSocketNotifier(m_fd, QSocketNotifier::Read, this);
-    connect(m_notifier, &QSocketNotifier::activated, this, [this] {
-        drain();
-    });
-    connect(QAbstractEventDispatcher::instance(), &QAbstractEventDispatcher::aboutToBlock, this,
-            [this] {
-                drain();
-            });
-    // A flush outside drain(), here or in a bridge, can leave events in XCB's
-    // queue as well; an event loop that never blocks still wakes.
-    connect(QAbstractEventDispatcher::instance(), &QAbstractEventDispatcher::awake, this,
-            [this] {
-                drain();
-            });
+    m_notifier = std::make_unique<FdWatch>(m_fd, EPOLLIN, [this] { drain(); });
+    m_notifier->setEnabled(true);
+    // Other work queues X requests too, and a flush outside drain(), here or
+    // in a bridge, can leave events in XCB's queue; the loop runs this before
+    // every wait, whether or not it then blocks.
+    m_drainHook = core::mainLoop()->addPrepareHook([this] { drain(); });
     for (auto *name : atomNames) {
         reply(xcb_intern_atom(m_connection, 0, strlen(name), name).sequence, [this, name](void *p) {
             if (p)
@@ -803,10 +851,10 @@ void Xwm::setup()
                           }
                           return xcb_window_t(XCB_NONE);
                       };
-                      m_dnd->toRoot = [this](const QPoint &point) {
+                      m_dnd->toRoot = [this](const base::Point &point) {
                           return toX(point);
                       };
-                      m_dnd->fromRoot = [this](const QPoint &point) {
+                      m_dnd->fromRoot = [this](const base::Point &point) {
                           return fromX(point);
                       };
                       m_dnd->rootSize = [this] {
@@ -894,9 +942,7 @@ void Xwm::drain()
         if (failed)
             failed();
     } else if (budget < 0 || replyBudget < 0 || queuedBudget < 0) {
-        QTimer::singleShot(0, this, [this] {
-            drain();
-        });
+        after(std::chrono::milliseconds(0), [this] { drain(); });
     }
 }
 
@@ -958,9 +1004,9 @@ void Xwm::shape(X11Window &w)
                                 return;
                             auto *r = static_cast<xcb_shape_get_rectangles_reply_t *>(p);
                             auto *rects = xcb_shape_get_rectangles_rectangles(r);
-                            QRegion region;
+                            base::Region region;
                             for (int i = 0; i < xcb_shape_get_rectangles_rectangles_length(r); ++i)
-                                region += QRect(rects[i].x, rects[i].y, rects[i].width,
+                                region += base::Rect(rects[i].x, rects[i].y, rects[i].width,
                                                 rects[i].height);
                             auto &w = *it->second;
                             if (kind == XCB_SHAPE_SK_BOUNDING)
@@ -1033,8 +1079,8 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
                       }
                   } else if (a == atom("WM_CLIENT_MACHINE"))
                       w.clientMachine = r->type == XCB_ATOM_STRING && r->format == 8
-                              ? QByteArray(data, bytes)
-                              : QByteArray();
+                              ? std::string(data, size_t(bytes))
+                              : std::string();
                   else if (a == atom("_NET_WM_WINDOW_TYPE") && !w.roleLocked) {
                       w.dialog = w.popup = w.dragIcon = false;
                       if (r->type == XCB_ATOM_ATOM) {
@@ -1058,19 +1104,22 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
                       }
                   } else if (a == XCB_ATOM_WM_NAME)
                       w.legacyTitle = r->type == XCB_ATOM_STRING && r->format == 8
-                              ? QString::fromLatin1(data, bytes)
-                              : QString();
+                              ? base::strings::latin1ToUtf8(std::string_view(data, size_t(bytes)))
+                              : std::string();
                   else if (a == atom("_NET_WM_NAME")) {
                       w.hasTitle = r->type == atom("UTF8_STRING") && r->format == 8;
-                      w.title = w.hasTitle ? QString::fromUtf8(data, bytes) : QString();
+                      w.title = w.hasTitle
+                              ? base::strings::sanitizedUtf8(std::string_view(data, size_t(bytes)))
+                              : std::string();
                   } else if (a == XCB_ATOM_WM_CLASS) {
                       w.instance.clear();
                       w.clazz.clear();
                       if (r->type == XCB_ATOM_STRING && r->format == 8) {
-                          const auto parts = QByteArray(data, bytes).split('\0');
+                          const auto parts =
+                                  base::strings::split(std::string_view(data, size_t(bytes)), '\0');
                           if (parts.size() >= 2) {
-                              w.instance = QString::fromLatin1(parts[0]);
-                              w.clazz = QString::fromLatin1(parts[1]);
+                              w.instance = parts[0];
+                              w.clazz = parts[1];
                           }
                       }
                   } else if (a == XCB_ATOM_WM_TRANSIENT_FOR)
@@ -1093,15 +1142,13 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
                                     auto *r = static_cast<xcb_get_property_reply_t *>(p);
                                     if (r->type == XCB_ATOM_STRING && r->format == 8) {
                                         const auto parts =
-                                                QByteArray(static_cast<const char *>(
-                                                                   xcb_get_property_value(r)),
-                                                           xcb_get_property_value_length(r))
-                                                        .split('\0');
+                                                base::strings::split(propertyBytes(r), '\0');
                                         if (parts.size() >= 2)
-                                            w.leaderClass = QString::fromLatin1(parts[1]);
+                                            w.leaderClass = parts[1];
                                     }
-                                    if (w.window && w.clazz.isEmpty())
-                                        w.window->setApplicationId(w.leaderClass.toLower());
+                                    if (w.window && w.clazz.empty())
+                                        w.window->setApplicationId(
+                                                lowerLatin1ToUtf8(w.leaderClass));
                                 });
                           reply(xcb_get_property(m_connection, 0, leader, atom("_NET_STARTUP_ID"),
                                                  atom("UTF8_STRING"), 0, 2048)
@@ -1111,20 +1158,18 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
                                     if (!p || it == m_windows.end()
                                         || it->second->generation != generation
                                         || it->second->leader != leader
-                                        || !it->second->startupId.isEmpty())
+                                        || !it->second->startupId.empty())
                                         return;
                                     auto *r = static_cast<xcb_get_property_reply_t *>(p);
                                     if (r->type == atom("UTF8_STRING") && r->format == 8)
-                                        it->second->startupId = QString::fromUtf8(
-                                                static_cast<const char *>(
-                                                        xcb_get_property_value(r)),
-                                                xcb_get_property_value_length(r));
+                                        it->second->startupId =
+                                                base::strings::sanitizedUtf8(propertyBytes(r));
                                 });
                       }
                   } else if (a == atom("_NET_STARTUP_ID"))
                       w.startupId = r->format == 8 && r->type == atom("UTF8_STRING")
-                              ? QString::fromUtf8(data, bytes)
-                              : QString();
+                              ? base::strings::sanitizedUtf8(std::string_view(data, size_t(bytes)))
+                              : std::string();
                   else if (a == XCB_ATOM_WM_HINTS) {
                       w.urgent =
                               r->type == XCB_ATOM_WM_HINTS && count >= 1 && (words[0] & (1 << 8));
@@ -1152,20 +1197,20 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
                       if (r->type == a && count >= 3 && (words[0] & 2))
                           w.decorated = words[2] & 1 ? !(words[2] & (1 << 3)) : words[2] & (1 << 3);
                   } else if (a == XCB_ATOM_WM_NORMAL_HINTS) {
-                      w.minimum = QSize(1, 1);
-                      w.maximum = QSize();
-                      w.increment = QSize(1, 1);
-                      w.base = QSize(0, 0);
+                      w.minimum = base::Size(1, 1);
+                      w.maximum = base::Size();
+                      w.increment = base::Size(1, 1);
+                      w.base = base::Size(0, 0);
                       if (r->type == XCB_ATOM_WM_SIZE_HINTS && count >= 15) {
                           auto size = [words](int i) {
-                              return QSize(std::clamp<int32_t>(words[i], 1, 65535),
+                              return base::Size(std::clamp<int32_t>(words[i], 1, 65535),
                                            std::clamp<int32_t>(words[i + 1], 1, 65535));
                           };
-                          w.minimum = words[0] & (1 << 4) ? size(5) : QSize(1, 1);
-                          w.maximum = words[0] & (1 << 5) ? size(7).expandedTo(w.minimum) : QSize();
-                          w.increment = words[0] & (1 << 6) ? size(9) : QSize(1, 1);
+                          w.minimum = words[0] & (1 << 4) ? size(5) : base::Size(1, 1);
+                          w.maximum = words[0] & (1 << 5) ? size(7).expandedTo(w.minimum) : base::Size();
+                          w.increment = words[0] & (1 << 6) ? size(9) : base::Size(1, 1);
                           w.base = count >= 17 && (words[0] & (1 << 8))
-                                  ? QSize(std::clamp<int32_t>(words[15], 0, 65535),
+                                  ? base::Size(std::clamp<int32_t>(words[15], 0, 65535),
                                           std::clamp<int32_t>(words[16], 0, 65535))
                                   : w.minimum;
                       }
@@ -1196,7 +1241,7 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
             auto it = m_windows.find(id);
             if (!p || it == m_windows.end() || it->second->generation != generation)
                 return;
-            const qint64 pid = clientPidFromReply(p);
+            const int64_t pid = clientPidFromReply(p);
             if (pid > 0 && pid <= INT32_MAX && pid != getpid() && pid != m_serverPid)
                 it->second->pid = uint32_t(pid);
         });
@@ -1218,9 +1263,8 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
         }
         if (!std::exchange(w.applyPending, false) && w.metadataReady) {
             if (w.window) {
-                w.window->setTitle(w.hasTitle ? w.title : w.legacyTitle);
-                w.window->setApplicationId(
-                        (w.clazz.isEmpty() ? w.leaderClass : w.clazz).toLower());
+                w.window->setTitle(displayTitle(w));
+                w.window->setApplicationId(applicationId(w));
             }
             return;
         }
@@ -1235,10 +1279,10 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
             }
         }
         if (w.window) {
-            w.window->setTitle(w.hasTitle ? w.title : w.legacyTitle);
-            w.window->setApplicationId((w.clazz.isEmpty() ? w.leaderClass : w.clazz).toLower());
+            w.window->setTitle(displayTitle(w));
+            w.window->setApplicationId(applicationId(w));
             w.window->setMinimumSize(sizeFromX(w.minimum));
-            w.window->setMaximumSize(w.maximum.isEmpty() ? QSize() : sizeFromX(w.maximum));
+            w.window->setMaximumSize(w.maximum.isEmpty() ? base::Size() : sizeFromX(w.maximum));
             w.window->setDecorated(w.decorated);
             w.window->setOpacity(w.opacity);
             w.window->setFocusPolicy(w.input || w.takeFocus ? wm::FocusPolicy::Normal
@@ -1269,8 +1313,8 @@ void Xwm::present(X11Window &w)
             input = input ? *input & *bounding : bounding;
         // A drag icon follows the pointer; it must never be what is under it.
         if (w.dragIcon)
-            input = QRegion();
-        w.surface->setExternalInputRegion(input);
+            input = base::Region();
+        w.surface->setExternalInputRegion(input ? std::optional(*input) : std::nullopt);
     }
     if (!w.surface || !w.mapped || !w.metadataReady || !w.surface->hasContents())
         return;
@@ -1290,18 +1334,18 @@ void Xwm::present(X11Window &w)
                 ? m_manager->eventHandler()->draggedEdge()
                 : wm::ResizeEdge::None;
         const auto delta = w.window->contentBounds().size() - w.surface->contentSize();
-        w.window->setSurfaceOrigin(QPoint(wm::isLeftEdge(edge) ? delta.width() : 0,
+        w.window->setSurfaceOrigin(base::Point(wm::isLeftEdge(edge) ? delta.width() : 0,
                                           wm::isTopEdge(edge) ? delta.height() : 0));
         return;
     }
     wm::WindowInit init;
-    init.title = w.hasTitle ? w.title : w.legacyTitle;
-    init.applicationId = (w.clazz.isEmpty() ? w.leaderClass : w.clazz).toLower();
+    init.title = displayTitle(w);
+    init.applicationId = applicationId(w);
     init.processId = ownerPid(w);
     init.decorated = w.decorated;
     init.requestedSize = w.surface->contentSize();
     init.minimumSize = sizeFromX(w.minimum);
-    init.maximumSize = w.maximum.isEmpty() ? QSize() : sizeFromX(w.maximum);
+    init.maximumSize = w.maximum.isEmpty() ? base::Size() : sizeFromX(w.maximum);
     init.focusPolicy = w.input || w.takeFocus ? wm::FocusPolicy::Normal : wm::FocusPolicy::NoFocus;
     auto parent = m_windows.find(w.transient);
     init.transientParent = parent == m_windows.end() ? nullptr : parent->second->window;
@@ -1334,7 +1378,7 @@ void Xwm::present(X11Window &w)
     w.window->addObserver(&w);
     w.window->setOpacity(w.opacity);
     w.window->setMinimumSize(sizeFromX(w.minimum));
-    w.window->setMaximumSize(w.maximum.isEmpty() ? QSize() : sizeFromX(w.maximum));
+    w.window->setMaximumSize(w.maximum.isEmpty() ? base::Size() : sizeFromX(w.maximum));
     if (w.maximized)
         w.window->maximize();
     if (w.fullscreen)
@@ -1368,7 +1412,7 @@ void Xwm::detach(X11Window &w)
     }
 }
 
-Xwm::X11Window *Xwm::adopt(uint32_t window, const QRect &xGeometry, bool overrideRedirect)
+Xwm::X11Window *Xwm::adopt(uint32_t window, const base::Rect &xGeometry, bool overrideRedirect)
 {
     if (window == m_support || (m_dnd && m_dnd->owns(window)))
         return nullptr;
@@ -1396,8 +1440,9 @@ Xwm::X11Window *Xwm::adopt(uint32_t window, const QRect &xGeometry, bool overrid
         if (greediest == clients.end())
             return nullptr;
         if (greediest->first != m_disconnecting) {
-            qWarning() << "Xwayland window limit reached; disconnecting the X11 client with"
-                       << greediest->second.first << "windows";
+            CF_WARNING(logs())
+                    << "Xwayland window limit reached; disconnecting the X11 client with"
+                    << greediest->second.first << "windows";
             xcb_kill_client(m_connection, greediest->second.second);
             xcb_flush(m_connection);
             m_disconnecting = greediest->first;
@@ -1407,7 +1452,7 @@ Xwm::X11Window *Xwm::adopt(uint32_t window, const QRect &xGeometry, bool overrid
     }
     auto w = std::make_unique<X11Window>(this, window, ++m_generation);
     w->xGeometry = xGeometry;
-    w->geometry = QRect(fromX(w->xGeometry.topLeft()), sizeFromX(w->xGeometry.size()));
+    w->geometry = base::Rect(fromX(w->xGeometry.topLeft()), sizeFromX(w->xGeometry.size()));
     w->overrideRedirect = overrideRedirect;
     // Added to what is already selected: the selection bridge asks a requestor
     // for STRUCTURE_NOTIFY mid-transfer, and one adopted here keeps it.
@@ -1460,22 +1505,22 @@ void Xwm::synchronize(X11Window &w)
         if (child->transient == w.id && (child->overrideRedirect || child->popup))
             present(*child);
     }
-    auto rect = w.window->contentBounds();
+    base::Rect rect = w.window->contentBounds();
     // Size hints are in X11 pixels, so the increments are applied there; a
     // character cell is not a whole number of logical units at every scale.
-    QSize xSize = sizeToX(rect.size());
+    base::Size xSize = sizeToX(rect.size());
     if (w.window->stateType() == wm::WindowStateType::Normal) {
-        QSize constrained = xSize;
+        base::Size constrained = xSize;
         constrained.setWidth(constrainedExtent(xSize.width(), w.base.width(), w.increment.width(),
                                                w.minimum.width(), w.maximum.width()));
         constrained.setHeight(constrainedExtent(xSize.height(), w.base.height(),
                                                 w.increment.height(), w.minimum.height(),
                                                 w.maximum.height()));
         if (constrained != xSize) {
-            const QSize size = sizeFromX(constrained);
+            const base::Size size = sizeFromX(constrained);
             if (size != rect.size()) {
-                w.window->setBounds(
-                        QRect(w.window->bounds().topLeft(), w.window->frameInsets().outset(size)));
+                w.window->setBounds(base::Rect(w.window->bounds().topLeft(),
+                                               w.window->frameInsets().outset(size)));
                 rect = w.window->contentBounds();
             }
             xSize = rect.size() == size ? constrained : sizeToX(rect.size());
@@ -1483,7 +1528,7 @@ void Xwm::synchronize(X11Window &w)
     }
     present(w);
     w.geometry = rect;
-    const QPoint xPosition = toX(rect.topLeft());
+    const base::Point xPosition = toX(rect.topLeft());
     // A client that paints to a sync counter takes one size at a time; a newer
     // one waits for the counter, as in KWin, and only the latest is sent.
     bool deferred = false;
@@ -1495,7 +1540,7 @@ void Xwm::synchronize(X11Window &w)
     }
     if (!deferred) {
         w.sizeUnknown = false;
-        w.xGeometry = QRect(xPosition, xSize);
+        w.xGeometry = base::Rect(xPosition, xSize);
         uint32_t values[] = {uint32_t(xPosition.x()), uint32_t(xPosition.y()),
                              uint32_t(xSize.width()), uint32_t(xSize.height()), 0};
         xcb_configure_window(m_connection, w.id,
@@ -1514,7 +1559,7 @@ void Xwm::synchronize(X11Window &w)
     }
     auto insets = w.window->frameInsets();
     auto x = [this](int value) {
-        return uint32_t(qRound(value * m_scale));
+        return uint32_t(base::roundToInt(value * m_scale));
     };
     property(w.id, "_NET_FRAME_EXTENTS", XCB_ATOM_CARDINAL,
              {x(insets.left), x(insets.right), x(insets.top), x(insets.bottom)}, w.writtenExtents);
@@ -1573,11 +1618,11 @@ void Xwm::roots()
         return;
     m_lastOutput = m_manager->outputBounds();
     m_lastWorkArea = m_manager->workAreaFor(nullptr);
-    const QSize desktop = sizeToX(m_lastOutput.size());
+    const base::Size desktop = sizeToX(m_lastOutput.size());
     property(m_root, "_NET_DESKTOP_GEOMETRY", XCB_ATOM_CARDINAL,
              {uint32_t(desktop.width()), uint32_t(desktop.height())});
-    const QPoint workAreaOrigin = toX(m_lastWorkArea.topLeft());
-    const QSize workArea = sizeToX(m_lastWorkArea.size());
+    const base::Point workAreaOrigin = toX(m_lastWorkArea.topLeft());
+    const base::Size workArea = sizeToX(m_lastWorkArea.size());
     property(m_root, "_NET_WORKAREA", XCB_ATOM_CARDINAL,
              {uint32_t(workAreaOrigin.x()), uint32_t(workAreaOrigin.y()),
               uint32_t(workArea.width()), uint32_t(workArea.height())});
@@ -1656,7 +1701,8 @@ void Xwm::event(xcb_generic_event_t *generic)
     }
     if (!type) {
         auto *error = reinterpret_cast<xcb_generic_error_t *>(generic);
-        qWarning() << "XWM request error" << error->error_code << error->major_code;
+        CF_WARNING(logs()) << "XWM request error" << int(error->error_code)
+                           << int(error->major_code);
         if (!m_ready) {
             m_initializationFailed = true;
             if (initialized)
@@ -1667,14 +1713,14 @@ void Xwm::event(xcb_generic_event_t *generic)
     if (type == XCB_CREATE_NOTIFY) {
         auto *e = reinterpret_cast<xcb_create_notify_event_t *>(generic);
         if (e->parent == m_root)
-            adopt(e->window, QRect(e->x, e->y, e->width, e->height), e->override_redirect);
+            adopt(e->window, base::Rect(e->x, e->y, e->width, e->height), e->override_redirect);
         return;
     }
     if (type == XCB_REPARENT_NOTIFY) {
         auto *e = reinterpret_cast<xcb_reparent_notify_event_t *>(generic);
         if (e->parent == m_root && !m_windows.contains(e->window)) {
             // Moved onto the root from another window; the event has no size.
-            auto *w = adopt(e->window, QRect(e->x, e->y, 1, 1), e->override_redirect);
+            auto *w = adopt(e->window, base::Rect(e->x, e->y, 1, 1), e->override_redirect);
             if (!w)
                 return;
             w->sizeUnknown = true;
@@ -1689,8 +1735,8 @@ void Xwm::event(xcb_generic_event_t *generic)
                 if (!std::exchange(w.sizeUnknown, false) || w.window)
                     return;
                 auto *r = static_cast<xcb_get_geometry_reply_t *>(p);
-                w.xGeometry = QRect(r->x, r->y, r->width, r->height);
-                w.geometry = QRect(fromX(w.xGeometry.topLeft()), sizeFromX(w.xGeometry.size()));
+                w.xGeometry = base::Rect(r->x, r->y, r->width, r->height);
+                w.geometry = base::Rect(fromX(w.xGeometry.topLeft()), sizeFromX(w.xGeometry.size()));
                 present(w);
             });
             return;
@@ -1821,13 +1867,13 @@ void Xwm::event(xcb_generic_event_t *generic)
     } else if (type == XCB_CONFIGURE_REQUEST) {
         auto *e = reinterpret_cast<xcb_configure_request_event_t *>(generic);
         // The request in X11 pixels, then in logical units.
-        QRect xRect = w.window ? QRect(toX(w.window->contentBounds().topLeft()),
-                                       sizeToX(w.window->contentBounds().size()))
-                               : w.xGeometry;
+        base::Rect xRect = w.window ? base::Rect(toX(w.window->contentBounds().topLeft()),
+                                                 sizeToX(w.window->contentBounds().size()))
+                                    : w.xGeometry;
         // The event fills what the request leaves out from the server's geometry, which
         // can predate our answer to an earlier request; it only replaces an unknown size.
         if (!w.window && std::exchange(w.sizeUnknown, false))
-            xRect = QRect(e->x, e->y, e->width, e->height);
+            xRect = base::Rect(e->x, e->y, e->width, e->height);
         if (e->value_mask & XCB_CONFIG_WINDOW_X)
             xRect.moveLeft(e->x);
         if (e->value_mask & XCB_CONFIG_WINDOW_Y)
@@ -1836,11 +1882,11 @@ void Xwm::event(xcb_generic_event_t *generic)
             xRect.setWidth(std::max<int>(1, e->width));
         if (e->value_mask & XCB_CONFIG_WINDOW_HEIGHT)
             xRect.setHeight(std::max<int>(1, e->height));
-        const QRect rect(fromX(xRect.topLeft()), sizeFromX(xRect.size()));
+        const base::Rect rect(fromX(xRect.topLeft()), sizeFromX(xRect.size()));
         if (w.window) {
             auto insets = w.window->frameInsets();
-            w.window->requestBounds(QRect(rect.topLeft() - QPoint(insets.left, insets.top),
-                                          insets.outset(rect.size())));
+            w.window->requestBounds(base::Rect(rect.topLeft() - base::Point(insets.left, insets.top),
+                                               insets.outset(rect.size())));
             synchronize(w);
         } else {
             w.geometry = rect;
@@ -1854,8 +1900,8 @@ void Xwm::event(xcb_generic_event_t *generic)
         shape(w);
         if (!w.window) {
             w.sizeUnknown = false;
-            w.xGeometry = QRect(e->x, e->y, e->width, e->height);
-            w.geometry = QRect(fromX(w.xGeometry.topLeft()), sizeFromX(w.xGeometry.size()));
+            w.xGeometry = base::Rect(e->x, e->y, e->width, e->height);
+            w.geometry = base::Rect(fromX(w.xGeometry.topLeft()), sizeFromX(w.xGeometry.size()));
             present(w);
         }
     } else if (type == XCB_CLIENT_MESSAGE) {
@@ -1869,7 +1915,7 @@ void Xwm::event(xcb_generic_event_t *generic)
             if (generic->response_type & 0x80)
                 return;
             if (!m_association->addWindow(SurfaceAssociation::serial(d[0], d[1]), id))
-                qWarning() << "Xwayland rejected window serial" << id;
+                CF_WARNING(logs()) << "Xwayland rejected window serial" << id;
         } else if (e->type == atom("_NET_REQUEST_FRAME_EXTENTS")) {
             // A client asking waits for the property to be written, changed or not.
             w.writtenExtents.reset();
@@ -1901,7 +1947,7 @@ void Xwm::event(xcb_generic_event_t *generic)
                             wm::ResizeEdge::BottomLeft,  wm::ResizeEdge::Left};
                     // The request carries no serial; what is held on the window
                     // decides, the pointer's press first.
-                    std::optional<QPointF> location;
+                    std::optional<base::PointF> location;
                     std::optional<int32_t> touchId;
                     if (seat->pointerGrabSurface() == w.surface && seat->pressedButtons()) {
                         location = seat->pointerLocation();

@@ -18,10 +18,10 @@ TEST(MirrorTransform, MapsLogicalSourceIntoLetterboxedDestination)
 {
     display::MirrorTransform transform({-1280, 40, 1280, 720}, {0, 240, 3840, 2160},
                                        display::DisplayRotation::Normal);
-    EXPECT_EQ(transform.logicalToNative({-640, 400}), QPointF(1920, 1320));
+    EXPECT_EQ(transform.logicalToNative({-640, 400}), base::PointF(1920, 1320));
     const auto logical = transform.nativeToLogical({1920, 1320});
     ASSERT_TRUE(logical);
-    EXPECT_EQ(*logical, QPointF(-640, 400));
+    EXPECT_EQ(*logical, base::PointF(-640, 400));
     EXPECT_FALSE(transform.nativeToLogical({20, 100}));
 }
 
@@ -31,7 +31,7 @@ TEST(MirrorTransform, RoundTripsEveryRotation)
          {display::DisplayRotation::Normal, display::DisplayRotation::Rotate90,
           display::DisplayRotation::Rotate180, display::DisplayRotation::Rotate270}) {
         display::MirrorTransform transform({0, 0, 1600, 900}, {100, 50, 1800, 1000}, rotation);
-        const QPointF source(240.25, 600.75);
+        const base::PointF source(240.25, 600.75);
         const auto roundTrip = transform.nativeToLogical(transform.logicalToNative(source));
         ASSERT_TRUE(roundTrip);
         EXPECT_NEAR(roundTrip->x(), source.x(), 0.0001);
@@ -49,9 +49,9 @@ TEST(MirrorTransform, APixelAtAFractionalScaleComesBackToTheSamePixel)
                                        display::DisplayRotation::Normal);
     for (int x = 0; x < 2160; x += 7) {
         for (int y = 0; y < 1440; y += 11) {
-            const auto logical = transform.nativeToLogical(QPointF(x, y));
+            const auto logical = transform.nativeToLogical(base::PointF(x, y));
             ASSERT_TRUE(logical);
-            EXPECT_EQ(transform.logicalToNative(*logical).toPoint(), QPoint(x, y));
+            EXPECT_EQ(transform.logicalToNative(*logical).toPoint(), base::Point(x, y));
         }
     }
 }

@@ -17,9 +17,7 @@
 #ifndef CUTEFISH_WM_WINDOW_RESIZER_H_
 #define CUTEFISH_WM_WINDOW_RESIZER_H_
 
-#include <QPointF>
-#include <QRect>
-
+#include "base/geometry.h"
 #include "wm/types.h"
 
 namespace cutefish::wm {
@@ -35,9 +33,9 @@ public:
     // out of its state; empty for every other drag. It also arms the small
     // threshold a tiled window has to be dragged past before it moves at all.
     // `visibleArea` bounds how far off screen it may go; empty means `workArea`.
-    WindowResizer(Window *window, const QPointF &startLocation, ResizeEdge edge,
-                  const QRect &workArea, const QRect &restoreBounds = QRect(),
-                  const QRect &visibleArea = QRect());
+    WindowResizer(Window *window, const base::PointF &startLocation, ResizeEdge edge,
+                  const base::Rect &workArea, const base::Rect &restoreBounds = base::Rect(),
+                  const base::Rect &visibleArea = base::Rect());
 
     Window *window() const { return m_window; }
 
@@ -45,9 +43,9 @@ public:
 
     bool isResize() const { return m_edge != ResizeEdge::None; }
 
-    QRect initialBounds() const { return m_initialBounds; }
+    base::Rect initialBounds() const { return m_initialBounds; }
 
-    QRect restoreBounds() const { return m_restoreBounds; }
+    base::Rect restoreBounds() const { return m_restoreBounds; }
 
     // False until the drag has passed the threshold and actually changed the
     // window. Ash's did_move_or_resize_.
@@ -55,9 +53,9 @@ public:
 
     // Pure function of the drag start and `location`; does not touch the
     // window. Exposed so tests can check the math without a scene.
-    QRect calculateBoundsForDrag(const QPointF &location) const;
+    base::Rect calculateBoundsForDrag(const base::PointF &location) const;
 
-    void drag(const QPointF &location);
+    void drag(const base::PointF &location);
     void completeDrag();
     // Puts the window back where the drag started.
     void revertDrag();
@@ -68,11 +66,11 @@ private:
 
     Window *m_window = nullptr;
     ResizeEdge m_edge = ResizeEdge::None;
-    QPointF m_initialLocation;
-    QRect m_initialBounds;
-    QRect m_restoreBounds;
-    QRect m_workArea;
-    QRect m_visibleArea;
+    base::PointF m_initialLocation;
+    base::Rect m_initialBounds;
+    base::Rect m_restoreBounds;
+    base::Rect m_workArea;
+    base::Rect m_visibleArea;
     bool m_movedOrResized = false;
 };
 

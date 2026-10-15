@@ -10,15 +10,13 @@
 
 #include "display/display_configurator.h"
 
-#include <QPointer>
 
 namespace cutefish::display {
 
-DisplayConfigurator::DisplayConfigurator(NativeDisplayDelegate *delegate, QObject *parent)
-    : QObject(parent)
-    , m_delegate(delegate)
+DisplayConfigurator::DisplayConfigurator(NativeDisplayDelegate *delegate)
+    : m_delegate(delegate)
 {
-    connect(delegate, &NativeDisplayDelegate::hardwareInvalidated, this, [this](uint64_t) {
+    m_hardwareInvalidated = delegate->hardwareInvalidated.connect([this](uint64_t) {
         if (m_busy)
             m_invalidated = true;
     });
@@ -43,7 +41,7 @@ void DisplayConfigurator::run(const HardwareSnapshot &hardware, uint64_t revisio
     if (m_busy) {
         completion({false,
                     false,
-                    {DisplayErrorCode::Busy, QStringLiteral("A display operation is active"), {}},
+                    {DisplayErrorCode::Busy, "A display operation is active", {}},
                     std::nullopt});
         return;
     }
@@ -57,20 +55,19 @@ void DisplayConfigurator::run(const HardwareSnapshot &hardware, uint64_t revisio
 
     m_busy = true;
     m_invalidated = false;
-    QPointer<DisplayConfigurator> guard(this);
+    const std::weak_ptr<bool> guard = m_alive;
     m_delegate->configure(
             validated.normalized, NativeDisplayDelegate::ConfigureMode::TestOnly,
             [this, guard, hardware, revision, validated, commit,
              completion = std::move(completion)](ConfigurationResult tested) mutable {
-                if (!guard)
+                if (guard.expired())
                     return;
                 if (m_invalidated) {
                     m_busy = false;
                     completion({false,
                                 false,
                                 {DisplayErrorCode::StaleConfiguration,
-                                 QStringLiteral(
-                                         "Display hardware changed during configuration testing"),
+                                 "Display hardware changed during configuration testing",
                                  {}},
                                 std::nullopt});
                     return;
@@ -89,8 +86,8 @@ void DisplayConfigurator::run(const HardwareSnapshot &hardware, uint64_t revisio
                     completion({false,
                                 false,
                                 {DisplayErrorCode::TestFailed,
-                                 QStringLiteral("Native testing returned an invalid or "
-                                                "unauthorized fallback"),
+                                 "Native testing returned an invalid or "
+                                                "unauthorized fallback",
                                  {}},
                                 std::nullopt});
                     return;
@@ -101,7 +98,7 @@ void DisplayConfigurator::run(const HardwareSnapshot &hardware, uint64_t revisio
                         selected, NativeDisplayDelegate::ConfigureMode::Commit,
                         [this, guard, selected, tested,
                          completion = std::move(completion)](ConfigurationResult result) mutable {
-                            if (!guard)
+                            if (guard.expired())
                                 return;
                             m_busy = false;
                             if (result.succeeded && tested.selected) {
@@ -113,8 +110,8 @@ void DisplayConfigurator::run(const HardwareSnapshot &hardware, uint64_t revisio
                                 result = {false,
                                           false,
                                           {DisplayErrorCode::StaleConfiguration,
-                                           QStringLiteral("Display hardware changed during "
-                                                          "configuration commit"),
+                                           "Display hardware changed during "
+                                                          "configuration commit",
                                            {}},
                                           std::nullopt};
                             completion(std::move(result));

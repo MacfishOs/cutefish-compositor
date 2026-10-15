@@ -28,8 +28,8 @@ scene::OverviewWindowFrame overviewWindowFrame(const Theme *theme)
         // under the window rather than a gap beside it.
         const int left = int(std::ceil(body.bounds.left()));
         const int top = int(std::ceil(body.bounds.top()));
-        const QRect content(left, top, int(std::floor(body.bounds.right())) - left,
-                            int(std::floor(body.bounds.bottom())) - top);
+        const base::Rect content(left, top, int(std::floor(body.bounds.right())) - left,
+                                 int(std::floor(body.bounds.bottom())) - top);
         if (content.isEmpty())
             return;
         // Each shadow keeps the corners of its window at full size, not the
@@ -43,10 +43,10 @@ scene::OverviewWindowFrame overviewWindowFrame(const Theme *theme)
             const int rasterScale = int(std::ceil(renderer.rasterScale()));
             // Below the nine-patch's least size every size is a texture of its
             // own. In motion, a size a step of a shared ladder up stands in.
-            QSize size = content.size();
+            base::Size size = content.size();
             if (moving) {
-                const QSize least =
-                        ShadowGeometry(QSize(4096, 4096), radius, style, rasterScale)
+                const base::Size least =
+                        ShadowGeometry(base::Size(4096, 4096), radius, style, rasterScale)
                                 .canonicalSize();
                 const auto step = [](int value, int least) {
                     if (value >= least || value <= 0)
@@ -56,12 +56,12 @@ scene::OverviewWindowFrame overviewWindowFrame(const Theme *theme)
                                                  / std::log(kRatio)));
                     return std::max(value, int(std::ceil(least * std::pow(kRatio, k))));
                 };
-                size = QSize(step(size.width(), least.width()),
-                             step(size.height(), least.height()));
+                size = base::Size(step(size.width(), least.width()),
+                                  step(size.height(), least.height()));
             }
             const ShadowGeometry geometry(size, radius, style, rasterScale);
             if (size == content.size())
-                paintShadow(renderer, geometry, content.topLeft(), alpha);
+                paintShadow(renderer, geometry, content.origin(), alpha);
             else
                 paintStretchedShadow(renderer, geometry, content, alpha);
         };

@@ -2,169 +2,122 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "fake_logind.h"
+#include "loop_test_util.h"
 #include "scene/node.h"
 #include "session/power_button.h"
 #include "session/session_controller.h"
-#include <QDBusConnection>
-#include <QDBusMessage>
-#include <QDBusUnixFileDescriptor>
-#include <QTest>
-#include <fcntl.h>
+
+#include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
-#include <unistd.h>
 
 using namespace cutefish;
 
-class FakeLogind : public QObject
-{
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.login1.Manager")
-public:
-    QStringList lastInhibit;
-
-public slots:
-    QDBusUnixFileDescriptor Inhibit(const QString &what, const QString &who, const QString &why,
-                                    const QString &mode)
-    {
-        lastInhibit = {what, who, why, mode};
-        int ends[2];
-        if (pipe2(ends, O_CLOEXEC) != 0)
-            return {};
-        close(ends[0]);
-        const QDBusUnixFileDescriptor descriptor(ends[1]);
-        close(ends[1]);
-        return descriptor;
-    }
-};
+namespace {
 
 struct Keys : input::EventSink {
-    QList<uint32_t> keys;
-    QList<uint32_t> secureKeys;
+    std::vector<uint32_t> keys;
+    std::vector<uint32_t> secureKeys;
 
     bool onKey(input::Timestamp, uint32_t evdevCode, bool pressed) override
     {
         if (pressed)
-            keys.append(evdevCode);
+            keys.push_back(evdevCode);
         return false;
     }
 
     bool onSecureKey(input::Timestamp, uint32_t evdevCode, bool pressed) override
     {
         if (pressed)
-            secureKeys.append(evdevCode);
+            secureKeys.push_back(evdevCode);
         return true;
     }
 };
 
-class PowerButtonTest : public QObject
+class PowerButtonTest : public testing::Test
 {
-    Q_OBJECT
-private:
-    QDBusConnection logindBus = QDBusConnection::connectToBus(QDBusConnection::SessionBus,
-                                                              QStringLiteral("fake-logind"));
-    FakeLogind logind;
+protected:
+    test::FakeLogind logind;
+    scene::Node root;
+    session::SecureContainer secure {&root};
+    session::SessionController controller {&secure};
+    Keys next;
+    session::PowerButton button {&controller, &next, base::dbus::Connection::session(core::mainLoop())};
 
-    struct Fixture {
-        scene::Node root;
-        session::SecureContainer secure {&root};
-        session::SessionController controller {&secure};
-        Keys next;
-        session::PowerButton button {&controller, &next, QDBusConnection::sessionBus()};
+    PowerButtonTest() { controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}}); }
 
-        Fixture() { controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)}}); }
+    bool waitFor(const std::function<bool()> &done) { return test::runUntil(done); }
 
-        void unlock()
-        {
-            controller.notifyOutputPresented(QStringLiteral("one"));
-            QVERIFY(controller.requestUnlock());
-            controller.notifyOutputPresented(QStringLiteral("one"));
-            QCOMPARE(controller.state(), session::SessionState::Active);
-        }
-
-        void tap()
-        {
-            QVERIFY(button.onKey(input::Timestamp {}, KEY_POWER, true));
-            QVERIFY(button.onKey(input::Timestamp {}, KEY_POWER, false));
-        }
-    };
-
-    void prepareForSleep(bool sleeping)
+    void unlock()
     {
-        auto signal = QDBusMessage::createSignal(QStringLiteral("/org/freedesktop/login1"),
-                                                 QStringLiteral("org.freedesktop.login1.Manager"),
-                                                 QStringLiteral("PrepareForSleep"));
-        signal << sleeping;
-        QVERIFY(logindBus.send(signal));
+        controller.notifyOutputPresented("one");
+        EXPECT_TRUE(controller.requestUnlock());
+        controller.notifyOutputPresented("one");
+        EXPECT_EQ(controller.state(), session::SessionState::Active);
     }
 
-private slots:
-    void initTestCase()
+    void tap()
     {
-        QVERIFY(logindBus.isConnected());
-        QVERIFY(logindBus.registerObject(QStringLiteral("/org/freedesktop/login1"), &logind,
-                                         QDBusConnection::ExportAllSlots));
-        QVERIFY(logindBus.registerService(QStringLiteral("org.freedesktop.login1")));
-    }
-
-    void aTapLocks()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.button.start());
-        QTRY_VERIFY(fixture.button.holdsInhibitor());
-        QCOMPARE(logind.lastInhibit.value(0), QStringLiteral("handle-power-key"));
-        QCOMPARE(logind.lastInhibit.value(3), QStringLiteral("block"));
-
-        fixture.tap();
-        QCOMPARE(fixture.controller.state(), session::SessionState::Locking);
-        QVERIFY(fixture.next.keys.isEmpty());
-    }
-
-    void theKeyPassesOnUntilLogindLetsGo()
-    {
-        Fixture fixture;
-        fixture.button.onKey(input::Timestamp {}, KEY_POWER, true);
-        fixture.button.onKey(input::Timestamp {}, KEY_POWER, false);
-        fixture.button.onKey(input::Timestamp {}, KEY_A, true);
-        QCOMPARE(fixture.next.keys, (QList<uint32_t> {KEY_POWER, KEY_A}));
-        QCOMPARE(fixture.controller.state(), session::SessionState::Active);
-    }
-
-    void keysForTheLockScreenPassOn()
-    {
-        // The accelerators behind it take the volume and brightness keys there.
-        Fixture fixture;
-        QVERIFY(fixture.button.onSecureKey(input::Timestamp {}, KEY_VOLUMEUP, true));
-        QVERIFY(fixture.button.onSecureKey(input::Timestamp {}, KEY_VOLUMEUP, false));
-        QCOMPARE(fixture.next.secureKeys, (QList<uint32_t> {KEY_VOLUMEUP}));
-    }
-
-    void thePressThatWokeTheSystemDoesNotLock()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.button.start());
-        QTRY_VERIFY(fixture.button.holdsInhibitor());
-        prepareForSleep(true);
-        prepareForSleep(false);
-        QTest::qWait(100);
-        fixture.tap();
-        QCOMPARE(fixture.controller.state(), session::SessionState::Active);
-    }
-
-    void rapidTapsActOnce()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.button.start());
-        QTRY_VERIFY(fixture.button.holdsInhibitor());
-        fixture.tap();
-        fixture.unlock();
-        fixture.tap();
-        QCOMPARE(fixture.controller.state(), session::SessionState::Active);
-        QTest::qWait(600);
-        fixture.tap();
-        QCOMPARE(fixture.controller.state(), session::SessionState::Locking);
+        EXPECT_TRUE(button.onKey(input::Timestamp {}, KEY_POWER, true));
+        EXPECT_TRUE(button.onKey(input::Timestamp {}, KEY_POWER, false));
     }
 };
 
-QTEST_GUILESS_MAIN(PowerButtonTest)
+} // namespace
 
-#include "power_button_test.moc"
+TEST_F(PowerButtonTest, ATapLocks)
+{
+    ASSERT_TRUE(logind.isValid());
+    ASSERT_TRUE(button.start());
+    ASSERT_TRUE(waitFor([&] { return button.holdsInhibitor(); }));
+    ASSERT_EQ(logind.lastInhibit.size(), 4u);
+    EXPECT_EQ(logind.lastInhibit[0], "handle-power-key");
+    EXPECT_EQ(logind.lastInhibit[3], "block");
+
+    tap();
+    EXPECT_EQ(controller.state(), session::SessionState::Locking);
+    EXPECT_TRUE(next.keys.empty());
+}
+
+TEST_F(PowerButtonTest, TheKeyPassesOnUntilLogindLetsGo)
+{
+    button.onKey(input::Timestamp {}, KEY_POWER, true);
+    button.onKey(input::Timestamp {}, KEY_POWER, false);
+    button.onKey(input::Timestamp {}, KEY_A, true);
+    EXPECT_EQ(next.keys, (std::vector<uint32_t> {KEY_POWER, KEY_A}));
+    EXPECT_EQ(controller.state(), session::SessionState::Active);
+}
+
+TEST_F(PowerButtonTest, KeysForTheLockScreenPassOn)
+{
+    // The accelerators behind it take the volume and brightness keys there.
+    EXPECT_TRUE(button.onSecureKey(input::Timestamp {}, KEY_VOLUMEUP, true));
+    EXPECT_TRUE(button.onSecureKey(input::Timestamp {}, KEY_VOLUMEUP, false));
+    EXPECT_EQ(next.secureKeys, (std::vector<uint32_t> {KEY_VOLUMEUP}));
+}
+
+TEST_F(PowerButtonTest, ThePressThatWokeTheSystemDoesNotLock)
+{
+    ASSERT_TRUE(logind.isValid());
+    ASSERT_TRUE(button.start());
+    ASSERT_TRUE(waitFor([&] { return button.holdsInhibitor(); }));
+    logind.prepareForSleep(true);
+    logind.prepareForSleep(false);
+    test::runFor(std::chrono::milliseconds(100));
+    tap();
+    EXPECT_EQ(controller.state(), session::SessionState::Active);
+}
+
+TEST_F(PowerButtonTest, RapidTapsActOnce)
+{
+    ASSERT_TRUE(logind.isValid());
+    ASSERT_TRUE(button.start());
+    ASSERT_TRUE(waitFor([&] { return button.holdsInhibitor(); }));
+    tap();
+    unlock();
+    tap();
+    EXPECT_EQ(controller.state(), session::SessionState::Active);
+    test::runFor(std::chrono::milliseconds(600));
+    tap();
+    EXPECT_EQ(controller.state(), session::SessionState::Locking);
+}

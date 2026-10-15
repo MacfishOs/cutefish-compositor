@@ -16,20 +16,20 @@
 #include <functional>
 #include <utility>
 
-#include <QPainterPath>
-#include <QTransform>
 
 #include "scene/motion.h"
 #include "scene/surface_node.h"
+#include "base/region.h"
+#include "base/transform.h"
 
 namespace cutefish::scene {
 
 namespace {
 
-QRectF shrink(const QRectF &bounds, qreal scale)
+base::RectF shrink(const base::RectF &bounds, double scale)
 {
-    const QSizeF size = bounds.size() * scale;
-    return QRectF(bounds.center() - QPointF(size.width(), size.height()) / 2, size);
+    const base::SizeF size = bounds.size() * scale;
+    return base::RectF(bounds.center() - base::PointF(size.width(), size.height()) / 2, size);
 }
 
 double smoothStep(double t)
@@ -44,7 +44,7 @@ double easeOut(double t, double power)
 }
 
 // How much larger than the output a launcher is when fully transparent.
-constexpr qreal kLauncherZoom = 1.05;
+constexpr double kLauncherZoom = 1.05;
 
 // gfx::Tween::ACCEL_20_DECEL_60: moving from the first frame, with no dwell
 // at either end, so the motion fills the whole duration and lands softly.
@@ -80,9 +80,9 @@ double springStep(double response, double elapsed, double duration)
     return std::clamp(spring.value(elapsed / (1 - t * t)), 0.0, 1.0);
 }
 
-QRect subtreeBounds(const Node *node)
+base::Rect subtreeBounds(const Node *node)
 {
-    QRect bounds = node->absolutePaintBounds();
+    base::Rect bounds = node->absolutePaintBounds();
     for (const Node *child : node->children()) {
         if (child->isVisible())
             bounds = bounds.united(subtreeBounds(child));
@@ -123,16 +123,16 @@ const Node &sceneRoot(const Node &node)
 }
 
 // The viewport the scene's damage tracker is given for the output drawn now.
-QRect outputViewport(const render::Renderer &renderer, const Node &node)
+base::Rect outputViewport(const render::Renderer &renderer, const Node &node)
 {
-    const QRect viewport = renderer.outputContext().logicalViewport;
+    const base::Rect viewport = renderer.outputContext().logicalViewport;
     return viewport.isEmpty() ? sceneRoot(node).geometry() : viewport;
 }
 
 } // namespace
 
 WindowAnimation::WindowAnimation(std::function<double()> clock)
-    : Node(QStringLiteral("window"))
+    : Node("window")
     , m_now(clock ? std::move(clock) : [] {
         return std::chrono::duration<double, std::milli>(
                        std::chrono::steady_clock::now().time_since_epoch())
@@ -141,7 +141,7 @@ WindowAnimation::WindowAnimation(std::function<double()> clock)
 {
 }
 
-int WindowAnimation::duration(Type type, const QRectF &from, const QRectF &to, Style style)
+int WindowAnimation::duration(Type type, const base::RectF &from, const base::RectF &to, Style style)
 {
     if (style == Style::Launcher && type == Type::Open)
         return 360;
@@ -154,9 +154,9 @@ int WindowAnimation::duration(Type type, const QRectF &from, const QRectF &to, S
     if (style == Style::Popup && type == Type::Close)
         return 80;
     if (type == Type::Open)
-        return qRound(kOpenDurationMs * motion::durationScale());
+        return base::roundToInt(kOpenDurationMs * motion::durationScale());
     if (type == Type::Close)
-        return qRound(kCloseDurationMs * motion::durationScale());
+        return base::roundToInt(kCloseDurationMs * motion::durationScale());
     if (type == Type::Minimize)
         return 320;
     if (type == Type::Restore)
@@ -169,10 +169,10 @@ int WindowAnimation::duration(Type type, const QRectF &from, const QRectF &to, S
     const double a = from.width() * from.height();
     const double b = to.width() * to.height();
     const double largest = std::max(a, b);
-    return 200 + (largest > 0 ? qRound(200 * std::abs(a - b) / largest) : 0);
+    return 200 + (largest > 0 ? base::roundToInt(200 * std::abs(a - b) / largest) : 0);
 }
 
-WindowAnimation::Sample WindowAnimation::sample(Type type, const QRectF &from, const QRectF &to,
+WindowAnimation::Sample WindowAnimation::sample(Type type, const base::RectF &from, const base::RectF &to,
                                                 double progress, Style style)
 {
     const double t = std::clamp(progress, 0.0, 1.0);
@@ -184,7 +184,7 @@ WindowAnimation::Sample WindowAnimation::sample(Type type, const QRectF &from, c
         // a still image fading out.
         const double eased = type == Type::Open ? easeOut(t, 4) : t + .6 * t * (1 - t);
         const float opacity = type == Type::Open ? easeOut(t / .6, 3) : 1 - t;
-        return {QRectF(from.topLeft() + (to.topLeft() - from.topLeft()) * eased,
+        return {base::RectF(from.topLeft() + (to.topLeft() - from.topLeft()) * eased,
                        from.size() + (to.size() - from.size()) * eased),
                 opacity, t};
     }
@@ -215,7 +215,7 @@ WindowAnimation::Sample WindowAnimation::sample(Type type, const QRectF &from, c
         const double fade = springStep(open ? kOpenFade : kCloseFade, elapsed, length);
         opacity = open ? fade : 1 - fade;
     }
-    return {QRectF(from.topLeft() + (to.topLeft() - from.topLeft()) * eased,
+    return {base::RectF(from.topLeft() + (to.topLeft() - from.topLeft()) * eased,
                    from.size() + (to.size() - from.size()) * eased),
             opacity, t};
 }
@@ -288,7 +288,7 @@ void WindowAnimation::releaseRenderResources()
     Node::releaseRenderResources();
 }
 
-void WindowAnimation::start(Type type, const QRect &from, const QRect &to, bool requestFrame)
+void WindowAnimation::start(Type type, const base::Rect &from, const base::Rect &to, bool requestFrame)
 {
     if (m_style == Style::None) {
         skip(type);
@@ -296,7 +296,7 @@ void WindowAnimation::start(Type type, const QRect &from, const QRect &to, bool 
     }
     const bool interrupted = m_running;
     const Sample previous = interrupted ? m_presented : Sample {from, 1, 0};
-    m_from = interrupted ? previous.bounds : QRectF(from);
+    m_from = interrupted ? previous.bounds : base::RectF(from);
     m_to = to;
     m_startOpacity =
             !interrupted && type == Type::Open ? 0 : previous.opacity;
@@ -322,14 +322,14 @@ void WindowAnimation::start(Type type, const QRect &from, const QRect &to, bool 
     const bool launcher = m_style == Style::Launcher;
     const bool inPlace = m_style == Style::Popup || m_style == Style::Fade;
     if (type == Type::Open && !interrupted)
-        m_from = inPlace ? QRectF(to) : shrink(to, launcher ? kLauncherZoom : .94);
+        m_from = inPlace ? base::RectF(to) : shrink(to, launcher ? kLauncherZoom : .94);
     if (type == Type::Close)
         m_to = inPlace ? m_from : launcher ? shrink(from, kLauncherZoom) : shrink(m_from, .95);
     m_presented = {m_from, m_startOpacity, 0};
-    if (type == Type::DragBounds && !QRectF(to).isEmpty()) {
-        m_dragOffset = QRectF(from).topLeft() - QRectF(to).topLeft();
+    if (type == Type::DragBounds && !base::RectF(to).isEmpty()) {
+        m_dragOffset = base::RectF(from).topLeft() - base::RectF(to).topLeft();
         m_dragScale =
-                QSizeF(double(from.width()) / to.width(), double(from.height()) / to.height());
+                base::SizeF(double(from.width()) / to.width(), double(from.height()) / to.height());
     }
     // Whatever m_texture holds after this, it was not drawn from the subtree's
     // current state.
@@ -354,7 +354,7 @@ void WindowAnimation::start(Type type, const QRect &from, const QRect &to, bool 
         changed();
 }
 
-void WindowAnimation::requestSnapshot(std::function<void(const QImage &)> callback,
+void WindowAnimation::requestSnapshot(std::function<void(const ui::Bitmap &)> callback,
                                       int maximumPixels)
 {
     m_snapshot = std::move(callback);
@@ -371,15 +371,20 @@ void WindowAnimation::readSnapshot(render::Renderer &renderer, bool landing) con
     // A missing dock uses a one-pixel target; keep its useful preview for a later shell.
     if (landing && (m_to.width() <= 1 || m_to.height() <= 1))
         return;
-    QSizeF pixels = (landing ? m_to.size() : QSizeF(m_textureBounds.size())) * renderer.rasterScale();
-    if (pixels.width() > m_snapshotPixels || pixels.height() > m_snapshotPixels)
-        pixels.scale(m_snapshotPixels, m_snapshotPixels, Qt::KeepAspectRatio);
-    const QSize size(std::max(1, landing ? int(std::ceil(pixels.width())) : qRound(pixels.width())),
-                     std::max(1, landing ? int(std::ceil(pixels.height())) : qRound(pixels.height())));
+    base::SizeF pixels = (landing ? m_to.size() : base::SizeF(m_textureBounds.size())) * renderer.rasterScale();
+    if (pixels.width() > m_snapshotPixels || pixels.height() > m_snapshotPixels) {
+        // Fitted inside the square, keeping the aspect ratio.
+        const double width = m_snapshotPixels * pixels.width() / pixels.height();
+        pixels = width <= m_snapshotPixels
+                ? base::SizeF(width, m_snapshotPixels)
+                : base::SizeF(m_snapshotPixels, m_snapshotPixels * pixels.height() / pixels.width());
+    }
+    const base::Size size(std::max(1, landing ? int(std::ceil(pixels.width())) : base::roundToInt(pixels.width())),
+                     std::max(1, landing ? int(std::ceil(pixels.height())) : base::roundToInt(pixels.height())));
     const double sx = size.width() / double(m_textureBounds.width());
     const double sy = size.height() / double(m_textureBounds.height());
     // The shadow margins of the coverage land outside the image.
-    const QRectF target((m_coverage.x() - m_textureBounds.x()) * sx,
+    const base::RectF target((m_coverage.x() - m_textureBounds.x()) * sx,
                         (m_coverage.y() - m_textureBounds.y()) * sy, m_coverage.width() * sx,
                         m_coverage.height() * sy);
     // Trilinear filtering, which the flight needs, blends in the next smaller
@@ -388,35 +393,35 @@ void WindowAnimation::readSnapshot(render::Renderer &renderer, bool landing) con
                                           m_texture->size().height() / target.height());
     const int level = int(std::floor(std::log2(std::max(1.0, minification))));
     renderer.limitMipmapLevel(m_texture.get(), level);
-    const QImage image = renderer.renderToImage(size, [&] {
-        renderer.pushRoundedClip(bodyShape(m_textureBounds, QRectF(QPointF(), size)));
+    const ui::Bitmap image = renderer.renderToImage(size, [&] {
+        renderer.pushRoundedClip(bodyShape(m_textureBounds, base::RectF(base::PointF(), size)));
         renderer.drawTextureF(m_texture.get(), target);
         renderer.popRoundedClip();
     });
     renderer.limitMipmapLevel(m_texture.get(), -1);
     if (!image.isNull()) {
         if (landing) {
-            const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+            const ui::Bitmap rgba = image.converted(ui::Bitmap::Format::Rgba8888Premultiplied);
             m_landingTexture =
-                    renderer.createTexture(rgba.size(), rgba.constBits(), rgba.bytesPerLine(),
+                    renderer.createTexture(rgba.size(), rgba.constBits(), int(rgba.stride()),
                                            render::PixelFormat::Rgba8888);
         }
         callback(image);
     }
 }
 
-void WindowAnimation::setMinimizeTarget(const QRect &target)
+void WindowAnimation::setMinimizeTarget(const base::Rect &target)
 {
     if (m_type != Type::Minimize || (!m_running && !m_holding) || target.isEmpty()
-        || m_to == QRectF(target))
+        || base::fuzzyCompare(m_to, base::RectF(target)))
         return;
     if (m_running && m_started >= 0) {
         const double progress = current().progress;
         // Introduce each target change with zero velocity and acceleration,
         // preserving the flight already in progress and its landing deadline.
         if (progress < 1) {
-            m_minimizeAdjustments.push_back({QRectF(target).topLeft() - m_to.topLeft(),
-                                            QSizeF(target.size()) - m_to.size(), progress});
+            m_minimizeAdjustments.push_back({base::RectF(target).topLeft() - m_to.topLeft(),
+                                            base::SizeF(target.size()) - m_to.size(), progress});
         }
     }
     m_to = target;
@@ -443,13 +448,13 @@ float WindowAnimation::exteriorOpacity(const Sample &sample) const
 {
     if (!isDockTransition() || isPresentedHidden())
         return 1;
-    const qreal range = m_dockWindow.width() - m_dockSlot.width();
+    const double range = m_dockWindow.width() - m_dockSlot.width();
     if (range <= 0)
         return 1;
-    return std::clamp((sample.bounds.width() - m_dockSlot.width()) / range, qreal(0), qreal(1));
+    return std::clamp((sample.bounds.width() - m_dockSlot.width()) / range, double(0), double(1));
 }
 
-render::RoundedShape WindowAnimation::bodyShape(const QRect &original, const QRectF &bounds) const
+render::RoundedShape WindowAnimation::bodyShape(const base::Rect &original, const base::RectF &bounds) const
 {
     if (m_visual.shape.bounds.isEmpty())
         return render::RoundedShape {bounds};
@@ -466,9 +471,9 @@ bool WindowAnimation::morphsExterior() const
             && plain(m_oldVisual);
 }
 
-qreal WindowAnimation::morphedRadius(const Sample &sample) const
+double WindowAnimation::morphedRadius(const Sample &sample) const
 {
-    const qreal from = m_oldVisual.shape.radius;
+    const double from = m_oldVisual.shape.radius;
     return from + (m_visual.shape.radius - from) * accel20Decel60(sample.progress);
 }
 
@@ -481,7 +486,7 @@ void WindowAnimation::drawExteriorMorph(render::Renderer &renderer, const Sample
     const bool newExterior = m_visual.drawOutline;
     render::RoundedShape body = transformedShape(m_visual.shape, m_textureBounds, value);
     body.radius = morphedRadius(value);
-    body.radiusScale = QSizeF(1, 1);
+    body.radiusScale = base::SizeF(1, 1);
 
     // The old shadow fades out under the window growing out of it; its corners
     // are never tighter than the body's, so none of its content shows.
@@ -502,14 +507,15 @@ void WindowAnimation::drawExteriorMorph(render::Renderer &renderer, const Sample
                            outline * value.opacity);
 }
 
-void WindowAnimation::setDragTarget(const QRect &bounds)
+void WindowAnimation::setDragTarget(const base::Rect &bounds)
 {
-    if (m_type != Type::DragBounds || !m_running || bounds.isEmpty() || m_to == QRectF(bounds))
+    if (m_type != Type::DragBounds || !m_running || bounds.isEmpty()
+        || base::fuzzyCompare(m_to, base::RectF(bounds)))
         return;
     m_to = bounds;
-    m_from = QRectF(
+    m_from = base::RectF(
             m_to.topLeft() + m_dragOffset,
-            QSizeF(m_to.width() * m_dragScale.width(), m_to.height() * m_dragScale.height()));
+            base::SizeF(m_to.width() * m_dragScale.width(), m_to.height() * m_dragScale.height()));
     changed();
 }
 
@@ -531,9 +537,9 @@ void WindowAnimation::setStyle(Style style)
         if (!closing || closing == this || closing->m_style != Style::Launcher
             || !closing->m_closing || !closing->m_running || closing->m_textureBounds.isEmpty())
             continue;
-        const QRectF snapshot = closing->m_textureBounds;
-        const QRectF presented = closing->m_presented.bounds;
-        m_handoff = Sample {QRectF((presented.x() - snapshot.x()) / snapshot.width(),
+        const base::RectF snapshot = closing->m_textureBounds;
+        const base::RectF presented = closing->m_presented.bounds;
+        m_handoff = Sample {base::RectF((presented.x() - snapshot.x()) / snapshot.width(),
                                    (presented.y() - snapshot.y()) / snapshot.height(),
                                    presented.width() / snapshot.width(),
                                    presented.height() / snapshot.height()),
@@ -554,7 +560,7 @@ void WindowAnimation::setOpacity(float opacity)
     changed();
 }
 
-void WindowAnimation::setPresentationScale(double scale, const QPointF &anchor, bool animate)
+void WindowAnimation::setPresentationScale(double scale, const base::PointF &anchor, bool animate)
 {
     m_scaleFrom = animate ? presentationScale() : scale;
     m_scaleTo = scale;
@@ -584,67 +590,68 @@ void WindowAnimation::close()
     }
     // The snapshot is scaled relative to where it was captured; the live
     // geometry may have changed since the last paint.
-    QRect &bounds = m_texture ? m_textureBounds : m_oldBounds;
-    QRect &coverage = m_texture ? m_coverage : m_oldCoverage;
+    base::Rect &bounds = m_texture ? m_textureBounds : m_oldBounds;
+    base::Rect &coverage = m_texture ? m_coverage : m_oldCoverage;
     // Frames drawn directly leave the snapshot where it was captured, up to
     // kDirectRefresh frames back; a window dragged since closes where it was drawn.
-    const QRectF drawn = m_presented.bounds;
-    if (!m_running && drawn.size() == QSizeF(bounds.size())) {
-        const QPoint moved = drawn.topLeft().toPoint() - bounds.topLeft();
+    const base::RectF drawn = m_presented.bounds;
+    if (!m_running && base::fuzzyCompare(drawn.size(), base::SizeF(bounds.size()))) {
+        const base::Point moved = drawn.topLeft().toPoint() - bounds.topLeft();
         bounds.translate(moved);
         coverage.translate(moved);
     }
-    const QRect snapshot = bounds;
+    const base::Rect snapshot = bounds;
     start(Type::Close, snapshot, snapshot);
     m_closing = true;
 }
 
 void WindowAnimation::draw(render::Renderer &renderer, render::Texture *texture,
-                           const QRect &coverage, const QRect &original, const Sample &value,
+                           const base::Rect &coverage, const base::Rect &original, const Sample &value,
                            float alpha) const
 {
     if (!texture || original.isEmpty())
         return;
     const double sx = value.bounds.width() / original.width();
     const double sy = value.bounds.height() / original.height();
-    const QPoint offset = coverage.topLeft() - original.topLeft();
-    const QRectF target(value.bounds.topLeft() + QPointF(offset.x() * sx, offset.y() * sy),
-                        QSizeF(coverage.width() * sx, coverage.height() * sy));
-    if (!renderer.drawsInto(target.toAlignedRect()))
+    const base::Point offset = coverage.topLeft() - original.topLeft();
+    const base::RectF target(value.bounds.topLeft() + base::PointF(offset.x() * sx, offset.y() * sy),
+                        base::SizeF(coverage.width() * sx, coverage.height() * sy));
+    if (!renderer.drawsInto(target.toEnclosingRect()))
         return;
     renderer.drawTextureF(texture, target, value.opacity * alpha * renderer.opacityScale);
 }
 
 render::RoundedShape WindowAnimation::transformedShape(render::RoundedShape shape,
-                                                       const QRect &original, const Sample &sample)
+                                                       const base::Rect &original, const Sample &sample)
 {
     if (original.isEmpty())
         return shape;
-    const qreal sx = sample.bounds.width() / original.width();
-    const qreal sy = sample.bounds.height() / original.height();
+    const double sx = sample.bounds.width() / original.width();
+    const double sy = sample.bounds.height() / original.height();
     shape.bounds =
-            QRectF(sample.bounds.topLeft() + QPointF(shape.bounds.x() * sx, shape.bounds.y() * sy),
-                   QSizeF(shape.bounds.width() * sx, shape.bounds.height() * sy));
-    shape.radiusScale = QSizeF(sx, sy);
+            base::RectF(sample.bounds.topLeft() + base::PointF(shape.bounds.x() * sx, shape.bounds.y() * sy),
+                   base::SizeF(shape.bounds.width() * sx, shape.bounds.height() * sy));
+    shape.radiusScale = base::SizeF(sx, sy);
     return shape;
 }
 
 void WindowAnimation::outline(render::Renderer &renderer, const WindowVisualState &visual,
-                              const QRect &original, const Sample &sample) const
+                              const base::Rect &original, const Sample &sample) const
 {
     if (!visual.drawOutline || renderer.suppressWindowOutlines)
         return;
     // The snapshot holds the surface where it was snapped to physical pixels.
-    const QPointF snap = clientBodySnap(renderer, visual, original.topLeft());
+    const base::PointF snap = clientBodySnap(renderer, visual, original.topLeft());
     if (!visual.outlinePath.isEmpty() && !original.isEmpty()) {
-        if (sample.bounds.size() == QSizeF(original.size())) {
+        if (base::fuzzyCompare(sample.bounds.size(), base::SizeF(original.size()))) {
             // Rasterized where it lands, so it stays on physical pixels.
             auto placed = visual;
-            placed.outlinePath.translate(sample.bounds.topLeft() + snap);
-            paintShapeOutline(renderer, placed, QTransform(), sample.opacity);
+            const base::PointF origin = sample.bounds.topLeft() + snap;
+            placed.outlinePath.translate(origin.x(), origin.y());
+            paintShapeOutline(renderer, placed, base::AffineTransform(), sample.opacity);
             return;
         }
-        QTransform transform;
+        base::AffineTransform transform;
         transform.translate(sample.bounds.x(), sample.bounds.y());
         transform.scale(sample.bounds.width() / original.width(),
                         sample.bounds.height() / original.height());
@@ -658,9 +665,9 @@ void WindowAnimation::outline(render::Renderer &renderer, const WindowVisualStat
                        sample.opacity);
 }
 
-QRect WindowAnimation::absolutePaintBounds() const
+base::Rect WindowAnimation::absolutePaintBounds() const
 {
-    QRect bounds = absoluteGeometry();
+    base::Rect bounds = absoluteGeometry();
     if (!paintsSubtree())
         return bounds;
     for (const auto *child : children()) {
@@ -674,15 +681,15 @@ QRect WindowAnimation::absolutePaintBounds() const
     // Retired live nodes cannot describe the frozen shadow or its travel path.
     return bounds.united(m_coverage)
             .united(m_oldCoverage)
-            .united(m_presented.bounds.toAlignedRect())
-            .united(m_from.toAlignedRect())
-            .united(m_to.toAlignedRect());
+            .united(m_presented.bounds.toEnclosingRect())
+            .united(m_from.toEnclosingRect())
+            .united(m_to.toEnclosingRect());
 }
 
-QRect WindowAnimation::textureCoverage() const
+base::Rect WindowAnimation::textureCoverage() const
 {
     // Include outlying subsurfaces and the SSD shadow's paint overflow.
-    QRect coverage = absoluteGeometry();
+    base::Rect coverage = absoluteGeometry();
     for (const auto *child : children()) {
         if (child->isVisible())
             coverage = coverage.united(subtreeBounds(child));
@@ -690,7 +697,7 @@ QRect WindowAnimation::textureCoverage() const
     return coverage.adjusted(-64, -64, 64, 64);
 }
 
-bool WindowAnimation::textureReusable(const QRect &coverage, const QRect &viewport,
+bool WindowAnimation::textureReusable(const base::Rect &coverage, const base::Rect &viewport,
                                       double scale) const
 {
     if (!m_textureReusable || !m_texture || animating() || coverage.size() != m_coverage.size()
@@ -701,17 +708,17 @@ bool WindowAnimation::textureReusable(const QRect &coverage, const QRect &viewpo
     // whose content is unchanged (DirectRenderer::CanSkipRenderPass), when it
     // moved by whole device pixels: the content inside is rasterized at the
     // subpixel phase of the window's origin, and a fractional move changes it.
-    const QPointF moved = QPointF(coverage.topLeft() - m_coverage.topLeft()) * scale;
-    return qFuzzyIsNull(moved.x() - std::round(moved.x()))
-            && qFuzzyIsNull(moved.y() - std::round(moved.y()));
+    const base::PointF moved = base::PointF(coverage.topLeft() - m_coverage.topLeft()) * scale;
+    return base::fuzzyIsNull(moved.x() - std::round(moved.x()))
+            && base::fuzzyIsNull(moved.y() - std::round(moved.y()));
 }
 
-bool WindowAnimation::redrawsSubtree(const QRect &viewport, double scale) const
+bool WindowAnimation::redrawsSubtree(const base::Rect &viewport, double scale) const
 {
     // Hidden, or drawing a snapshot, render() makes no texture pass at all.
     if (!isVisible() || m_closing || m_type == Type::Minimize)
         return false;
-    const QRect coverage = textureCoverage();
+    const base::Rect coverage = textureCoverage();
     if (!animating() && !viewport.isEmpty() && !coverage.intersects(viewport))
         return false;
     if (textureReusable(coverage, viewport, scale))
@@ -748,7 +755,7 @@ bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t beg
         return false;
     }
     // Captures draw everything live, and the overview draws blurs elsewhere.
-    const QRect viewport = outputViewport(renderer, *this);
+    const base::Rect viewport = outputViewport(renderer, *this);
     if (renderer.capturing || renderer.suppressBackgroundBlur
         || !absolutePaintBounds().intersects(viewport))
         return false;
@@ -776,7 +783,7 @@ bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t beg
         renderer.drawTexture(below.texture.get(), viewport);
         return true;
     }
-    const QRegion damage = below.damage.update(*parent(), viewport, scale);
+    const base::Region damage = below.damage.update(*parent(), viewport, scale);
     if (reusable && damage.isEmpty()) {
         for (size_t i = begin; i < end; ++i)
             recordPresentation(renderer, *siblings[i]);
@@ -787,9 +794,9 @@ bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t beg
         const auto kept = [&](uint64_t owner) {
             return reusable && renderer.keepsBackdrop(scope, owner);
         };
-        const QRect repaint = reusable
+        const base::Rect repaint = reusable
                 ? render::coverSamples(damage.boundingRect(), below.damage.samples(kept))
-                : QRect();
+                : base::Rect();
         const std::vector<uint64_t> fresh = below.damage.freshBackdrops(kept);
         if (!renderer.renderToTexture(below.texture, viewport, repaint, [&] {
                 renderer.presentationSubmission = submission;
@@ -808,8 +815,8 @@ bool WindowAnimation::renderSiblingsBelow(render::Renderer &renderer, size_t beg
     return true;
 }
 
-bool WindowAnimation::textureIsCurrent(render::Renderer &renderer, const QRect &coverage,
-                                       QRect *repaint) const
+bool WindowAnimation::textureIsCurrent(render::Renderer &renderer, const base::Rect &coverage,
+                                       base::Rect *repaint) const
 {
     // A texture drawn without its blurs, or with them, is only kept for a draw
     // that wants the same.
@@ -819,15 +826,15 @@ bool WindowAnimation::textureIsCurrent(render::Renderer &renderer, const QRect &
     // have changed wherever this frame draws it again, and nowhere else. One
     // drawn without them reads nothing behind it: the overview's full repaints
     // would otherwise draw every blurred window's texture again each frame.
-    const QRegion damage = blurSuppressed
+    const base::Region damage = blurSuppressed
             ? m_textureDamage.update(*this, coverage, renderer.rasterScale())
             : m_textureDamage.update(*this, coverage, renderer.rasterScale(), 0,
-                                     [&](const QRect &sampled) {
+                                     [&](const base::Rect &sampled) {
                                          return renderer.repaints(sampled);
                                      });
     const bool valid =
             textureReusable(coverage, outputViewport(renderer, *this), renderer.rasterScale());
-    *repaint = !valid ? QRect()
+    *repaint = !valid ? base::Rect()
             : blurSuppressed
             ? damage.boundingRect()
             : render::coverSamples(damage.boundingRect(), m_textureDamage.samples());
@@ -887,15 +894,15 @@ render::RoundedShape WindowAnimation::presentedBody(const Presentation &presenta
 }
 
 render::RoundedShape WindowAnimation::presentedBody(const Presentation &presentation,
-                                                    const QRectF &bounds) const
+                                                    const base::RectF &bounds) const
 {
-    const QRect original = m_textureBounds.isEmpty() ? absoluteGeometry() : m_textureBounds;
+    const base::Rect original = m_textureBounds.isEmpty() ? absoluteGeometry() : m_textureBounds;
     render::RoundedShape body = bodyShape(original, bounds);
-    const qreal own = body.radius * std::min(body.radiusScale.width(), body.radiusScale.height());
-    const qreal uniform = std::clamp(presentation.radius, qreal(0),
+    const double own = body.radius * std::min(body.radiusScale.width(), body.radiusScale.height());
+    const double uniform = std::clamp(presentation.radius, double(0),
                                      std::min(body.bounds.width(), body.bounds.height()) / 2);
     body.radius = own + (uniform - own) * std::clamp(presentation.uniform, 0.0, 1.0);
-    body.radiusScale = QSizeF(1, 1);
+    body.radiusScale = base::SizeF(1, 1);
     return body;
 }
 
@@ -918,7 +925,7 @@ void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sampl
     const double sx = value.bounds.width() / m_textureBounds.width();
     const double sy = value.bounds.height() / m_textureBounds.height();
     const double scale = std::min(sx, sy);
-    QTransform transform;
+    base::AffineTransform transform;
     transform.translate(value.bounds.x(), value.bounds.y());
     transform.scale(sx, sy);
     transform.translate(-m_textureBounds.x(), -m_textureBounds.y());
@@ -929,7 +936,7 @@ void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sampl
             if (!child->isVisible() && !(reveal && surface && surface->isHiddenWithWindow()))
                 continue;
             if (surface && surface->hasBackgroundBlur() && surface->texture()) {
-                const QRect geometry = surface->absoluteGeometry();
+                const base::Rect geometry = surface->absoluteGeometry();
                 render::GlassParams glass = surface->glass();
                 // Its lengths shrink with the window, or the lip would swallow it.
                 glass.blurSigma *= float(scale);
@@ -939,15 +946,15 @@ void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sampl
                 glass.ambientOcclusionRadius *= float(scale);
                 glass.plainSigma *= float(scale);
                 glass.opacity *= value.opacity;
-                const QPainterPath &shape = surface->backgroundBlurShape();
+                const ui::Path &shape = surface->backgroundBlurShape();
                 renderer.drawBackgroundBlur(
-                        transform.mapRect(QRectF(surface->backgroundBlurRect().translated(
+                        transform.mapRect(base::RectF(surface->backgroundBlurRect().translated(
                                                   geometry.topLeft())))
-                                .toAlignedRect(),
-                        qRound(surface->backgroundBlurRadius() * scale),
-                        transform.mapRect(QRectF(geometry)).toAlignedRect(), glass,
-                        shape.isEmpty() ? QPainterPath()
-                                        : transform.map(shape.translated(geometry.topLeft())));
+                                .toEnclosingRect(),
+                        base::roundToInt(surface->backgroundBlurRadius() * scale),
+                        transform.mapRect(base::RectF(geometry)).toEnclosingRect(), glass,
+                        shape.isEmpty() ? ui::Path()
+                                        : shape.translated(geometry.x(), geometry.y()).transformed(transform));
             }
             visit(*child);
         }
@@ -966,11 +973,11 @@ void WindowAnimation::render(render::Renderer &renderer) const
     m_framePeriod = renderer.framePeriod;
     if (m_firstFrame) {
         auto *self = const_cast<WindowAnimation *>(this);
-        const QRect geometry = absoluteGeometry();
+        const base::Rect geometry = absoluteGeometry();
         self->start(Type::Open, geometry, geometry, false);
         if (m_handoff) {
-            const QRectF &relative = m_handoff->bounds;
-            self->m_from = QRectF(geometry.x() + relative.x() * geometry.width(),
+            const base::RectF &relative = m_handoff->bounds;
+            self->m_from = base::RectF(geometry.x() + relative.x() * geometry.width(),
                                   geometry.y() + relative.y() * geometry.height(),
                                   relative.width() * geometry.width(),
                                   relative.height() * geometry.height());
@@ -1021,21 +1028,21 @@ void WindowAnimation::render(render::Renderer &renderer) const
             if (const auto *visual = dynamic_cast<const WindowVisualNode *>(child))
                 m_visual = visual->state();
         }
-        const QRect coverage = textureCoverage();
+        const base::Rect coverage = textureCoverage();
         // An idle window on another output is not drawn here, so its snapshot
         // keeps the scale of an output that shows it.
-        const QRect viewport = renderer.outputContext().logicalViewport;
+        const base::Rect viewport = renderer.outputContext().logicalViewport;
         if (!animating() && !m_presentedAt && !viewport.isEmpty() && !coverage.intersects(viewport))
             return;
         // Corners in texture space that the draw below scales to morphedRadius().
         std::optional<render::Renderer::WindowCorners> corners;
         if (morphsExterior()) {
             const Sample sample = current();
-            const QRect geometry = absoluteGeometry();
+            const base::Rect geometry = absoluteGeometry();
             if (!sample.bounds.isEmpty()) {
                 corners = render::Renderer::WindowCorners {
                         morphedRadius(sample),
-                        QSizeF(geometry.width() / sample.bounds.width(),
+                        base::SizeF(geometry.width() / sample.bounds.width(),
                                geometry.height() / sample.bounds.height())};
             }
         }
@@ -1060,7 +1067,7 @@ void WindowAnimation::render(render::Renderer &renderer) const
             // A first texture, or an animation's own frames, start no run.
             m_contentChanged = contentChanged && settled() && m_texture;
         }
-        QRect repaint;
+        base::Rect repaint;
         if (textureIsCurrent(renderer, coverage, &repaint)) {
             recordPresentation(renderer, *this);
         } else if (direct) {
@@ -1070,7 +1077,7 @@ void WindowAnimation::render(render::Renderer &renderer) const
             // shadow on every frame, which cost more than the pass it saved.
             m_textureReusable = false;
             Node::render(renderer);
-            m_presented = {QRectF(absoluteGeometry()), 1, 1};
+            m_presented = {base::RectF(absoluteGeometry()), 1, 1};
             return;
         } else {
             // Mid-animation passes and plane promotions draw what only this
@@ -1106,11 +1113,11 @@ void WindowAnimation::render(render::Renderer &renderer) const
             // A blur drawn from what the last frame left behind the window is
             // not on screen now, but would be wrong later. The scene repaints
             // all a blur reads when the whole texture is drawn again next frame.
-            const QRect drawn = repaint.isEmpty() ? coverage : repaint;
-            const QRect output = outputViewport(renderer, *this);
+            const base::Rect drawn = repaint.isEmpty() ? coverage : repaint;
+            const base::Rect output = outputViewport(renderer, *this);
             const auto &samples = m_textureDamage.samples();
             const bool backdropCurrent = blurSuppressed
-                    || std::all_of(samples.begin(), samples.end(), [&](const QRect &sampled) {
+                    || std::all_of(samples.begin(), samples.end(), [&](const base::Rect &sampled) {
                         return !sampled.intersects(drawn) || !sampled.intersects(output)
                                 || renderer.repaints(sampled);
                     });
@@ -1126,7 +1133,7 @@ void WindowAnimation::render(render::Renderer &renderer) const
         // A popup repositioned by its client mid-fade is drawn where it now is.
         if (m_style == Style::Popup && m_running) {
             auto *self = const_cast<WindowAnimation *>(this);
-            self->m_from = self->m_to = QRectF(m_textureBounds);
+            self->m_from = self->m_to = base::RectF(m_textureBounds);
         }
     }
 
@@ -1148,21 +1155,21 @@ void WindowAnimation::render(render::Renderer &renderer) const
         m_scaleStarted = now();
     if (const double scale = presentationScale(); scale != 1) {
         // Kept inside, so a shrunk window never draws outside its own bounds.
-        const QRect geometry = absoluteGeometry();
-        const QPointF anchor(geometry.x() + std::clamp<qreal>(m_scaleAnchor.x(), 0, geometry.width()),
-                             geometry.y() + std::clamp<qreal>(m_scaleAnchor.y(), 0, geometry.height()));
-        value.bounds = QRectF(anchor + (value.bounds.topLeft() - anchor) * scale,
+        const base::Rect geometry = absoluteGeometry();
+        const base::PointF anchor(geometry.x() + std::clamp<double>(m_scaleAnchor.x(), 0, geometry.width()),
+                             geometry.y() + std::clamp<double>(m_scaleAnchor.y(), 0, geometry.height()));
+        value.bounds = base::RectF(anchor + (value.bounds.topLeft() - anchor) * scale,
                               value.bounds.size() * scale);
     }
     if (m_presentedAt) {
-        const QRect geometry = absoluteGeometry();
+        const base::Rect geometry = absoluteGeometry();
         if (!geometry.isEmpty()) {
-            const QRectF &to = m_presentedAt->bounds;
+            const base::RectF &to = m_presentedAt->bounds;
             const double sx = to.width() / geometry.width();
             const double sy = to.height() / geometry.height();
-            const QPointF from = value.bounds.topLeft() - QPointF(geometry.topLeft());
-            value.bounds = QRectF(to.topLeft() + QPointF(from.x() * sx, from.y() * sy),
-                                  QSizeF(value.bounds.width() * sx, value.bounds.height() * sy));
+            const base::PointF from = value.bounds.topLeft() - base::PointF(geometry.topLeft());
+            value.bounds = base::RectF(to.topLeft() + base::PointF(from.x() * sx, from.y() * sy),
+                                  base::SizeF(value.bounds.width() * sx, value.bounds.height() * sy));
             // Far below its size, a bilinear texture shimmers as it moves.
             if (m_texture && !m_textureMipmapped && std::min(sx, sy) < 0.75) {
                 renderer.enableTrilinearFiltering(m_texture.get());

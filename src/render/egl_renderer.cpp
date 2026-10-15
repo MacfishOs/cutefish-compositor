@@ -16,6 +16,9 @@
 
 #include "core/logging.h"
 #include "render_shaders.h"
+#include <cassert>
+#include "base/region.h"
+#include "base/transform.h"
 
 namespace cutefish::render {
 
@@ -37,7 +40,7 @@ EglRenderer::~EglRenderer()
         return;
     ScopedEglCurrent current(*m_context);
     if (!current.valid())
-        qFatal("Cannot make EGL context current for renderer retirement");
+        CF_FATAL(cfRender) << "Cannot make EGL context current for renderer retirement";
     m_backdrop.reset();
     m_dropShadow.reset();
     m_pass.releaseResources();
@@ -55,7 +58,7 @@ std::unique_ptr<EglRenderer> EglRenderer::create(gbm_device *device, uint32_t fo
     return std::unique_ptr<EglRenderer>(new EglRenderer(std::move(context), device));
 }
 
-std::unique_ptr<EglRenderTarget> EglRenderer::createTarget(gbm_surface *surface, const QSize &size)
+std::unique_ptr<EglRenderTarget> EglRenderer::createTarget(gbm_surface *surface, const base::Size &size)
 {
     auto target = EglRenderTarget::create(m_context->display(), m_context->config(), surface, size);
     if (!target || !m_context->makeCurrent(target->eglSurface()))
@@ -74,19 +77,21 @@ bool EglRenderer::initPrograms(const char *fragmentOverride, const char *externa
 {
     auto color =
             GlProgram::create(shaders::color_vertex_shader,
-                              fragmentOverride ? QByteArray(fragmentOverride)
-                                               : clippedFragment(shaders::color_fragment_shader));
+                              (fragmentOverride ? std::string(fragmentOverride)
+                                                : clippedFragment(shaders::color_fragment_shader))
+                                      .c_str());
     auto texture = GlProgram::create(shaders::texture_vertex_shader,
-                                     clippedFragment(shaders::texture_fragment_shader));
+                                     clippedFragment(shaders::texture_fragment_shader).c_str());
     if (!color || !texture)
         return false;
     auto external =
             GlProgram::create(shaders::texture_vertex_shader,
-                              externalOverride ? QByteArray(externalOverride)
-                                               : clippedFragment(shaders::external_fragment_shader,
-                                                                 shaders::external_extension));
+                              (externalOverride ? std::string(externalOverride)
+                                                : clippedFragment(shaders::external_fragment_shader,
+                                                                  shaders::external_extension))
+                                      .c_str());
     if (!external)
-        qCWarning(cfRender)
+        CF_WARNING(cfRender)
                 << "GL_OES_EGL_image_external is unavailable; DMA-BUF buffers cannot be composited";
     // Blur and glass are effects: a driver that cannot build them still gets a
     // desktop, drawn without them.
@@ -94,12 +99,12 @@ bool EglRenderer::initPrograms(const char *fragmentOverride, const char *externa
     if (backdrop->initialize(backdropOverride))
         m_backdrop = std::move(backdrop);
     else
-        qCWarning(cfRender) << "Blur and glass shaders are unavailable; drawing without them";
+        CF_WARNING(cfRender) << "Blur and glass shaders are unavailable; drawing without them";
     auto dropShadow = std::make_unique<DropShadow>();
     if (dropShadow->initialize())
         m_dropShadow = std::move(dropShadow);
     else
-        qCWarning(cfRender) << "The shadow shader is unavailable; drawing without shadows";
+        CF_WARNING(cfRender) << "The shadow shader is unavailable; drawing without shadows";
     m_colorProgram = std::move(color);
     m_textureProgram = std::move(texture);
     m_externalProgram = std::move(external);
@@ -169,7 +174,7 @@ void EglRenderer::releaseTarget(EglRenderTarget *target)
     if (!target || target != m_lastTarget)
         return;
     if (!makeCurrent(target))
-        qFatal("Cannot make EGL context current for output texture retirement");
+        CF_FATAL(cfRender) << "Cannot make EGL context current for output texture retirement";
     if (m_backdrop)
         m_backdrop->resetTextures();
     clearTextureCache();
@@ -202,7 +207,7 @@ std::optional<GpuTimer::Time> EglRenderer::drawnAt(const GpuTimer::Mark &mark)
     return m_timer.reached(mark);
 }
 
-std::unique_ptr<Texture> EglRenderer::createTexture(const QSize &size, const uint8_t *pixels,
+std::unique_ptr<Texture> EglRenderer::createTexture(const base::Size &size, const uint8_t *pixels,
                                                     int stride, PixelFormat format)
 {
     if (!makeContextCurrent())
@@ -219,7 +224,7 @@ bool EglRenderer::updateTexture(Texture *texture, const uint8_t *pixels, int str
 }
 
 bool EglRenderer::updateTexture(Texture *texture, const uint8_t *pixels, int stride,
-                                PixelFormat format, const QRegion &damage)
+                                PixelFormat format, const base::Region &damage)
 {
     if (!makeContextCurrent())
         return false;
@@ -233,15 +238,15 @@ std::shared_ptr<Texture> EglRenderer::importDmaBuf(const DmaBufAttributes &attri
     return m_importer.import(attributes);
 }
 
-QImage EglRenderer::captureFrame(const std::function<void()> &paint)
+ui::Bitmap EglRenderer::captureFrame(const std::function<void()> &paint)
 {
     if (!m_current || m_pass.viewport().isEmpty())
         return {};
     return m_pass.capture(*this, m_current->size(), paint);
 }
 
-QImage EglRenderer::captureImage(const OutputRenderContext &context, const QSize &size,
-                                 const std::function<void()> &paint)
+ui::Bitmap EglRenderer::captureImage(const OutputRenderContext &context, const base::Size &size,
+                                     const std::function<void()> &paint)
 {
     if (!m_current)
         return {};
@@ -258,7 +263,7 @@ std::shared_ptr<PendingImage> EglRenderer::captureFrameLater(const std::function
 }
 
 std::shared_ptr<PendingImage> EglRenderer::captureImageLater(const OutputRenderContext &context,
-                                                             const QSize &size,
+                                                             const base::Size &size,
                                                              const std::function<void()> &paint)
 {
     if (!m_current)
@@ -268,7 +273,7 @@ std::shared_ptr<PendingImage> EglRenderer::captureImageLater(const OutputRenderC
     return m_pass.readBack(*this, context, size, paint);
 }
 
-bool EglRenderer::captureToDmaBuf(const OutputRenderContext &context, const QSize &size,
+bool EglRenderer::captureToDmaBuf(const OutputRenderContext &context, const base::Size &size,
                                   const DmaBufAttributes &attributes,
                                   const std::function<void()> &paint)
 {
@@ -293,10 +298,10 @@ bool EglRenderer::captureToDmaBuf(const OutputRenderContext &context, const QSiz
     return ok;
 }
 
-bool EglRenderer::copyOutputFrame(const QSize &size)
+bool EglRenderer::copyOutputFrame(const base::Size &size)
 {
     if (!m_current || !capturing || size != m_current->size()
-        || !m_context->glVersion().startsWith("OpenGL ES 3"))
+        || !m_context->glVersion().starts_with("OpenGL ES 3"))
         return false;
     GLint destination = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &destination);
@@ -343,7 +348,7 @@ const DmaBufFormats &EglRenderer::captureDmaBufFormats() const
 
     const auto renderable = [&](gbm_bo *bo, uint32_t format, uint64_t modifier) {
         DmaBufAttributes attributes;
-        attributes.size = QSize(16, 16);
+        attributes.size = base::Size(16, 16);
         attributes.format = format;
         attributes.modifier = modifier;
         DmaBufPlane plane;
@@ -400,7 +405,7 @@ const DmaBufFormats &EglRenderer::captureDmaBufFormats() const
         if (!modifiers.empty())
             m_captureFormats->emplace(format, std::move(modifiers));
     }
-    qCInfo(cfRender, "Captures can render into %zu DMA-BUF formats",
+    CF_INFO(cfRender).printf("Captures can render into %zu DMA-BUF formats",
            m_captureFormats->size());
     return *m_captureFormats;
 }
@@ -411,7 +416,7 @@ dev_t EglRenderer::captureDmaBufDevice() const
     return m_captureDevice;
 }
 
-QImage EglRenderer::renderToImage(const QSize &size, const std::function<void()> &paint)
+ui::Bitmap EglRenderer::renderToImage(const base::Size &size, const std::function<void()> &paint)
 {
     if (!m_current)
         return {};
@@ -420,21 +425,21 @@ QImage EglRenderer::renderToImage(const QSize &size, const std::function<void()>
     return m_pass.renderToImage(*this, size, paint);
 }
 
-bool EglRenderer::renderToTexture(std::unique_ptr<Texture> &texture, const QRect &bounds,
+bool EglRenderer::renderToTexture(std::unique_ptr<Texture> &texture, const base::Rect &bounds,
                                   const std::function<void()> &paint)
 {
-    return renderToTexture(texture, bounds, QRect(), paint);
+    return renderToTexture(texture, bounds, base::Rect(), paint);
 }
 
-bool EglRenderer::renderToTexture(std::unique_ptr<Texture> &texture, const QRect &bounds,
-                                  const QRect &repaint, const std::function<void()> &paint)
+bool EglRenderer::renderToTexture(std::unique_ptr<Texture> &texture, const base::Rect &bounds,
+                                  const base::Rect &repaint, const std::function<void()> &paint)
 {
     if (!m_current)
         return false;
     return m_pass.render(*this, texture, bounds, paint, repaint);
 }
 
-std::unique_ptr<Texture> EglRenderer::renderShadow(const QSize &size,
+std::unique_ptr<Texture> EglRenderer::renderShadow(const base::Size &size,
                                                    const std::vector<ShadowLobe> &lobes,
                                                    const std::function<void()> &paintCaster)
 {
@@ -462,14 +467,14 @@ void EglRenderer::limitMipmapLevel(Texture *texture, int level)
         m_pass.limitMipmapLevel(texture, level);
 }
 
-void EglRenderer::prepareDamage(const QRegion &damage, const std::vector<QRect> &samples)
+void EglRenderer::prepareDamage(const base::Region &damage, const std::vector<base::Rect> &samples)
 {
     if (!m_current || capturing || m_current->damagePrepared())
         return;
     applyRepaint(m_current->prepareDamage(damage, samples, outputContext()));
 }
 
-bool EglRenderer::repaints(const QRect &logical) const
+bool EglRenderer::repaints(const base::Rect &logical) const
 {
     if (!m_current || capturing || !m_repaint)
         return true;
@@ -546,8 +551,8 @@ bool EglRenderer::beginFrame(RenderTarget *target)
         return false;
 
     m_current = eglTarget;
-    const QRect content = outputContext().nativeContentRect.isEmpty()
-            ? QRect(QPoint(), eglTarget->size())
+    const base::Rect content = outputContext().nativeContentRect.isEmpty()
+            ? base::Rect(base::Point(), eglTarget->size())
             : outputContext().nativeContentRect;
     m_current->beginFrame();
     GLint framebuffer = 0;
@@ -563,7 +568,7 @@ bool EglRenderer::beginFrame(RenderTarget *target)
     return true;
 }
 
-void EglRenderer::applyRepaint(const QRect &repaint)
+void EglRenderer::applyRepaint(const base::Rect &repaint)
 {
     m_repaint = repaint;
     paintClip = logicalRepaint(repaint, outputContext(), m_current->size());
@@ -578,12 +583,12 @@ void EglRenderer::clear(const Color &color)
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
-void EglRenderer::quadFor(const QRectF &rect, float *vertices) const
+void EglRenderer::quadFor(const base::RectF &rect, float *vertices) const
 {
     quadFor({rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight()}, vertices);
 }
 
-void EglRenderer::quadFor(const std::array<QPointF, 4> &corners, float *vertices) const
+void EglRenderer::quadFor(const std::array<base::PointF, 4> &corners, float *vertices) const
 {
     const bool quarterTurn = outputContext().transform == 1 || outputContext().transform == 3;
     const float width =
@@ -593,8 +598,8 @@ void EglRenderer::quadFor(const std::array<QPointF, 4> &corners, float *vertices
     if (width <= 0.0f || height <= 0.0f)
         return;
 
-    const auto map = [&](const QPointF &point) {
-        QPointF normalized(point.x() / width, point.y() / height);
+    const auto map = [&](const base::PointF &point) {
+        base::PointF normalized(point.x() / width, point.y() / height);
         switch (outputContext().transform) {
         case 1:
             normalized = {normalized.y(), 1.0 - normalized.x()};
@@ -608,10 +613,10 @@ void EglRenderer::quadFor(const std::array<QPointF, 4> &corners, float *vertices
         default:
             break;
         }
-        return QPointF(normalized.x() * 2.0 - 1.0, 1.0 - normalized.y() * 2.0);
+        return base::PointF(normalized.x() * 2.0 - 1.0, 1.0 - normalized.y() * 2.0);
     };
     for (int index = 0; index < 4; ++index) {
-        const QPointF point = map(corners[index]);
+        const base::PointF point = map(corners[index]);
         vertices[index * 2] = point.x();
         vertices[index * 2 + 1] = point.y();
     }
@@ -624,12 +629,12 @@ void EglRenderer::applyRoundedClip(const GlProgram &program)
     glGetIntegerv(GL_VIEWPORT, state.viewport);
     state.transform = outputContext().transform;
     const auto device = [&](const RoundedShape &shape) {
-        return QRectF((shape.bounds.topLeft() - m_pass.offset()) * rasterScale(),
+        return base::RectF((shape.bounds.topLeft() - m_pass.offset()) * rasterScale(),
                       shape.bounds.size() * rasterScale());
     };
     const size_t count = std::min(m_roundedClips.size(), size_t(16));
     for (size_t i = 0; i < count; ++i) {
-        const QRectF rect = device(m_roundedClips[i]);
+        const base::RectF rect = device(m_roundedClips[i]);
         state.bounds[i * 4] = rect.x();
         state.bounds[i * 4 + 1] = rect.y();
         state.bounds[i * 4 + 2] = rect.width();
@@ -639,7 +644,7 @@ void EglRenderer::applyRoundedClip(const GlProgram &program)
         state.radii[i * 2 + 1] =
                 m_roundedClips[i].radius * m_roundedClips[i].radiusScale.height() * rasterScale();
     }
-    const QRectF outline = device(m_outlineShape);
+    const base::RectF outline = device(m_outlineShape);
     state.outline[0] = outline.x();
     state.outline[1] = outline.y();
     state.outline[2] = outline.width();
@@ -675,19 +680,19 @@ void EglRenderer::applyRoundedClip(const GlProgram &program)
     uniforms.uploaded = state;
 }
 
-void EglRenderer::drawRoundedOutline(const RoundedShape &shape, const Color &color, qreal widthPx)
+void EglRenderer::drawRoundedOutline(const RoundedShape &shape, const Color &color, double widthPx)
 {
     if (widthPx <= 0)
         return;
     m_outlineShape = shape;
     m_outlineWidth = widthPx;
-    const qreal fringe = 0.5 / rasterScale();
-    const QRectF bounds = shape.bounds.adjusted(-fringe, -fringe, fringe, fringe);
-    const qreal bandX =
+    const double fringe = 0.5 / rasterScale();
+    const base::RectF bounds = shape.bounds.adjusted(-fringe, -fringe, fringe, fringe);
+    const double bandX =
             std::min(bounds.width() / 2,
                      std::max(shape.radius * shape.radiusScale.width(), widthPx / rasterScale())
                              + 2 * fringe);
-    const qreal bandY =
+    const double bandY =
             std::min(bounds.height() / 2,
                      std::max(shape.radius * shape.radiusScale.height(), widthPx / rasterScale())
                              + 2 * fringe);
@@ -701,21 +706,21 @@ void EglRenderer::drawRoundedOutline(const RoundedShape &shape, const Color &col
     m_outlineWidth = 0;
 }
 
-void EglRenderer::fillRect(const QRect &rect, const Color &color)
+void EglRenderer::fillRect(const base::Rect &rect, const Color &color)
 {
     fillRectF(rect, color);
 }
 
-void EglRenderer::fillRectF(const QRectF &rect, const Color &color)
+void EglRenderer::fillRectF(const base::RectF &rect, const Color &color)
 {
     fillColorRects({rect}, color);
 }
 
-void EglRenderer::fillColorRects(std::initializer_list<QRectF> rects, const Color &color)
+void EglRenderer::fillColorRects(std::initializer_list<base::RectF> rects, const Color &color)
 {
     if (!m_current)
         return;
-    Q_ASSERT(rects.size() <= 4);
+    assert(rects.size() <= 4);
     float vertices[48] = {};
     int count = 0;
     for (const auto &rect : rects) {
@@ -748,20 +753,20 @@ void EglRenderer::fillColorRects(std::initializer_list<QRectF> rects, const Colo
     glDisableVertexAttribArray(GlProgram::kPositionAttribute);
 }
 
-void EglRenderer::drawTexture(Texture *texture, const QRect &target, float alpha)
+void EglRenderer::drawTexture(Texture *texture, const base::Rect &target, float alpha)
 {
     drawTextureF(texture, target, alpha);
 }
 
-void EglRenderer::drawTextureF(Texture *texture, const QRectF &target, float alpha)
+void EglRenderer::drawTextureF(Texture *texture, const base::RectF &target, float alpha)
 {
-    drawTextureTransformed(texture, target, QTransform(), alpha);
+    drawTextureTransformed(texture, target, base::AffineTransform(), alpha);
 }
 
-void EglRenderer::drawTextureTransformed(Texture *texture, const QRectF &target,
-                                         const QTransform &transform, float alpha)
+void EglRenderer::drawTextureTransformed(Texture *texture, const base::RectF &target,
+                                         const base::AffineTransform &transform, float alpha)
 {
-    QTransform mapping;
+    base::AffineTransform mapping;
     if (auto *gl = dynamic_cast<GlTexture *>(texture); gl && !gl->contentPixels.isEmpty()) {
         mapping.translate(gl->contentPixels.x() / gl->size().width(),
                           gl->contentPixels.y() / gl->size().height());
@@ -771,11 +776,11 @@ void EglRenderer::drawTextureTransformed(Texture *texture, const QRectF &target,
     drawTextureMappedF(texture, target, alpha, mapping, transform);
 }
 
-void EglRenderer::drawTextureMapped(Texture *texture, const QRect &target, float alpha,
-                                    const QTransform &mapping)
+void EglRenderer::drawTextureMapped(Texture *texture, const base::Rect &target, float alpha,
+                                    const base::AffineTransform &mapping)
 {
-    QRectF aligned;
-    QTransform texelMapping;
+    base::RectF aligned;
+    base::AffineTransform texelMapping;
     alignTextureDraw(texture, target, mapping, aligned, texelMapping);
     drawTextureMappedF(texture, aligned, alpha, texelMapping);
 }
@@ -790,12 +795,12 @@ void EglRenderer::drawTextureMappedRects(Texture *texture, const std::vector<Map
     TextureQuad quads[kBatch];
     size_t count = 0;
     for (const MappedRect &rect : rects) {
-        QRectF aligned;
-        QTransform texelMapping;
+        base::RectF aligned;
+        base::AffineTransform texelMapping;
         alignTextureDraw(texture, rect.target, rect.mapping, aligned, texelMapping);
         if (aligned.isEmpty())
             continue;
-        textureQuad(*glTexture, aligned, texelMapping, QTransform(), quads[count++]);
+        textureQuad(*glTexture, aligned, texelMapping, base::AffineTransform(), quads[count++]);
         if (count == kBatch) {
             drawTextureQuads(glTexture, quads, count, alpha);
             count = 0;
@@ -805,33 +810,33 @@ void EglRenderer::drawTextureMappedRects(Texture *texture, const std::vector<Map
         drawTextureQuads(glTexture, quads, count, alpha);
 }
 
-void EglRenderer::alignTextureDraw(const Texture *texture, const QRectF &target,
-                                   const QTransform &mapping, QRectF &aligned,
-                                   QTransform &texelMapping) const
+void EglRenderer::alignTextureDraw(const Texture *texture, const base::RectF &target,
+                                   const base::AffineTransform &mapping, base::RectF &aligned,
+                                   base::AffineTransform &texelMapping) const
 {
     aligned = target;
     texelMapping = mapping;
     if (texture && rasterScale() > 0) {
-        const QSize pixels = texture->size();
-        const auto sourcePoint = [&](const QPointF &point) {
-            const QPointF uv = mapping.map(point);
-            return QPointF(uv.x() * pixels.width(), uv.y() * pixels.height());
+        const base::Size pixels = texture->size();
+        const auto sourcePoint = [&](const base::PointF &point) {
+            const base::PointF uv = mapping.map(point);
+            return base::PointF(uv.x() * pixels.width(), uv.y() * pixels.height());
         };
-        const QPointF source = sourcePoint({0, 0});
-        const QPointF horizontal = sourcePoint({1, 0}) - source;
-        const QPointF vertical = sourcePoint({0, 1}) - source;
-        const QSizeF sourceSize(std::hypot(horizontal.x(), horizontal.y()),
+        const base::PointF source = sourcePoint({0, 0});
+        const base::PointF horizontal = sourcePoint({1, 0}) - source;
+        const base::PointF vertical = sourcePoint({0, 1}) - source;
+        const base::SizeF sourceSize(std::hypot(horizontal.x(), horizontal.y()),
                                 std::hypot(vertical.x(), vertical.y()));
-        const QSize deviceSize(qRound(target.width() * rasterScale()),
-                               qRound(target.height() * rasterScale()));
-        const auto equalPixel = [](qreal a, qreal b) {
+        const base::Size deviceSize(base::roundToInt(target.width() * rasterScale()),
+                               base::roundToInt(target.height() * rasterScale()));
+        const auto equalPixel = [](double a, double b) {
             return std::abs(a - b) < 0.001;
         };
         // A size the client chose in device pixels, like an Xwayland popup,
         // need not be a whole number of logical units: the rounded logical size
         // is then a pixel off. Texels still land one per pixel; the last row or
         // column is repeated from the texture edge, or left out.
-        const auto nearPixel = [&](qreal a, qreal b) {
+        const auto nearPixel = [&](double a, double b) {
             return equalPixel(a, std::round(a)) && std::abs(a - b) < 1.001;
         };
         if (nearPixel(sourceSize.width(), deviceSize.width())
@@ -840,20 +845,20 @@ void EglRenderer::alignTextureDraw(const Texture *texture, const QRectF &target,
             && equalPixel(source.y(), std::round(source.y()))) {
             if (!equalPixel(sourceSize.width(), deviceSize.width())
                 || !equalPixel(sourceSize.height(), deviceSize.height()))
-                texelMapping = QTransform::fromScale(deviceSize.width() / sourceSize.width(),
+                texelMapping = base::AffineTransform::fromScale(deviceSize.width() / sourceSize.width(),
                                                      deviceSize.height() / sourceSize.height())
                         * mapping;
             // Like Exo's host origin adjustment, keep native-density texels on physical pixels.
-            aligned = QRectF(pixelAligned(target.topLeft()), QSizeF(deviceSize) / rasterScale());
+            aligned = base::RectF(pixelAligned(target.topLeft()), base::SizeF(deviceSize) / rasterScale());
         }
     }
 }
 
-void EglRenderer::textureQuad(const GlTexture &texture, const QRectF &target,
-                              const QTransform &mapping, const QTransform &geometry,
+void EglRenderer::textureQuad(const GlTexture &texture, const base::RectF &target,
+                              const base::AffineTransform &mapping, const base::AffineTransform &geometry,
                               TextureQuad &quad) const
 {
-    const auto corner = [&](const QPointF &point) {
+    const auto corner = [&](const base::PointF &point) {
         return geometry.map(point) - m_pass.offset();
     };
     quadFor({corner(target.topLeft()), corner(target.topRight()), corner(target.bottomLeft()),
@@ -861,14 +866,14 @@ void EglRenderer::textureQuad(const GlTexture &texture, const QRectF &target,
             quad.vertices);
     // Matches the vertex order in quadFor(); the image origin is top left.
     for (int i = 0; i < 4; ++i) {
-        const QPointF uv = mapping.map(QPointF(i % 2, i / 2));
+        const base::PointF uv = mapping.map(base::PointF(i % 2, i / 2));
         quad.texCoords[2 * i] = uv.x();
         quad.texCoords[2 * i + 1] = texture.inverted ? 1 - uv.y() : uv.y();
     }
 }
 
-void EglRenderer::drawTextureMappedF(Texture *texture, const QRectF &target, float alpha,
-                                     const QTransform &mapping, const QTransform &geometry)
+void EglRenderer::drawTextureMappedF(Texture *texture, const base::RectF &target, float alpha,
+                                     const base::AffineTransform &mapping, const base::AffineTransform &geometry)
 {
     auto *glTexture = dynamic_cast<GlTexture *>(texture);
     if (!m_current || !glTexture || target.isEmpty())
@@ -966,30 +971,30 @@ void EglRenderer::beginBackdropPass(uint64_t scope, const std::vector<uint64_t> 
         m_backdrop->beginPass(scope, fresh);
 }
 
-void EglRenderer::drawBackgroundBlur(const QRect &bounds, int radius, const QRect &clip,
-                                     const GlassParams &glass, const QPainterPath &shape,
+void EglRenderer::drawBackgroundBlur(const base::Rect &bounds, int radius, const base::Rect &clip,
+                                     const GlassParams &glass, const ui::Path &shape,
                                      uint64_t owner)
 {
     if (!m_current || !m_backdrop)
         return;
     const double scale = rasterScale();
-    const auto coverage = [scale](const QRect &rect) {
-        return QRectF(QPointF(rect.topLeft()) * scale, QSizeF(rect.size()) * scale).toAlignedRect();
+    const auto coverage = [scale](const base::Rect &rect) {
+        return base::RectF(base::PointF(rect.topLeft()) * scale, base::SizeF(rect.size()) * scale).toEnclosingRect();
     };
     ScopedValue clips(m_roundedClips);
     for (auto &shape : m_roundedClips) {
-        shape.bounds = QRectF(shape.bounds.topLeft() * scale, shape.bounds.size() * scale);
+        shape.bounds = base::RectF(shape.bounds.topLeft() * scale, shape.bounds.size() * scale);
         shape.radius *= scale;
     }
     const auto sources = m_pass.backdropSources(scale, outputContext().transform);
-    const QPointF offset = m_pass.offset();
+    const base::PointF offset = m_pass.offset();
     // `clip` is the surface; its texture lands on physical pixels, so the body does too.
-    const QPointF snap = pixelAligned(clip.topLeft()) - QPointF(clip.topLeft());
+    const base::PointF snap = pixelAligned(clip.topLeft()) - base::PointF(clip.topLeft());
 
     struct RestoreGeometry {
         EglRenderer &renderer;
         GlRenderPass &pass;
-        QPointF offset;
+        base::PointF offset;
         double scale;
 
         ~RestoreGeometry()
@@ -1002,10 +1007,10 @@ void EglRenderer::drawBackgroundBlur(const QRect &bounds, int radius, const QRec
     m_pass.setGeometry(m_pass.viewport(), offset * scale);
     setRasterScale(1);
     m_backdrop->draw(
-            *this, QRectF((bounds.topLeft() + snap) * scale, QSizeF(bounds.size()) * scale),
-            qRound(radius * scale), coverage(clip), glass, scale, shape.translated(snap),
+            *this, base::RectF((bounds.topLeft() + snap) * scale, base::SizeF(bounds.size()) * scale),
+            base::roundToInt(radius * scale), coverage(clip), glass, scale, shape.translated(snap.x(), snap.y()),
             sources, m_roundedClips,
-            [this](const QRectF &rect, float *vertices) {
+            [this](const base::RectF &rect, float *vertices) {
                 quadFor(rect.translated(-m_pass.offset()), vertices);
             },
             [this](const GlProgram &program) {

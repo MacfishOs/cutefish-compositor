@@ -17,18 +17,7 @@
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
-#include <QCoreApplication>
-#include <QDBusConnection>
-#include <QDBusInterface>
-#include <QDBusMessage>
-#include <QDBusReply>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QSignalSpy>
-#include <QTest>
-#include <QTemporaryDir>
-
+#include "base/geometry.h"
 #include "accelerators/accelerator.h"
 #include "accelerators/accelerator_configuration.h"
 #include "accelerators/accelerator_controller.h"
@@ -40,14 +29,20 @@
 #include "accelerators/accelerator_map.h"
 #include "accelerators/accelerator_service.h"
 #include "accelerators/accelerator_table.h"
+#include "base/event_loop.h"
+#include "base/json.h"
+#include "base/settings.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
 #include "input/keyboard.h"
 #include "input/keyboard_delegate.h"
 #include "input/seat.h"
 #include "input/xkb_tracker.h"
+#include "input_test_util.h"
+#include "loop_test_util.h"
 #include "scene/node.h"
 #include "scene/overview_node.h"
 #include "scene/scene.h"
@@ -68,6 +63,7 @@
 
 using namespace cutefish;
 using namespace cutefish::accelerators;
+using cutefish::base::Settings;
 
 namespace {
 
@@ -76,7 +72,7 @@ input::Timestamp at(int ms)
     return input::Timestamp(std::chrono::milliseconds(ms));
 }
 
-constexpr QRect kOutput(0, 0, 1000, 800);
+const base::Rect kOutput(0, 0, 1000, 800);
 
 class RecordingDelegate : public AcceleratorDelegate
 {
@@ -142,9 +138,9 @@ class AcceleratorTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node *secureNode =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("secure")));
+            scene.root()->addChild(std::make_unique<scene::Node>("secure"));
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     input::Seat seat {&compositor};
@@ -154,7 +150,7 @@ protected:
     session::SessionTeardown teardown {&seat, &manager};
     session::SessionController session {&secure, &teardown};
 
-    QTemporaryDir directory;
+    input_test::TemporaryDirectory directory;
     std::unique_ptr<AcceleratorConfiguration> configuration;
     RecordingDelegate delegate;
     std::unique_ptr<wm::MruWindowTracker> mru;
@@ -172,11 +168,11 @@ protected:
         input.setBounds(kOutput.size());
         seat.setSessionGate(&session);
         manager.setSessionGate(&session);
-        secure.setOutputs({{QStringLiteral("out"), kOutput}});
+        secure.setOutputs({{"out", kOutput}});
         ASSERT_TRUE(seat.xkbTracker()->updateKeyboardLayout("us"));
 
         configuration = std::make_unique<AcceleratorConfiguration>(
-                directory.filePath(QStringLiteral("compositor.conf")));
+                directory.filePath("compositor.conf"));
         configuration->initialize();
         mru = std::make_unique<wm::MruWindowTracker>(&manager);
         cycle = std::make_unique<wm::WindowCycleController>(&manager, mru.get());
@@ -207,20 +203,21 @@ protected:
         seat.shutdown();
     }
 
-    compositor::Surface *makeSurface(const QSize &size)
+    compositor::Surface *makeSurface(const base::Size &size)
     {
         surfaces.push_back(compositor.createSurface());
         compositor::Surface *surface = surfaces.back().get();
-        auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
+        auto buffer = pool->createBuffer(size, 0, size.width() * 4,
+                                         render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(base::Point(), size));
         surface->commit();
         compositor.updateTextures(renderer);
         return surface;
     }
 
-    wm::Window *makeWindow(const QRect &bounds)
+    wm::Window *makeWindow(const base::Rect &bounds)
     {
         wm::Window *window =
                 manager.createWindow(makeSurface(bounds.size()), {.requestedSize = bounds.size()});
@@ -250,9 +247,9 @@ protected:
     }
 };
 
-QJsonObject parse(const QString &json)
+base::json::Value parse(const std::string &json)
 {
-    return QJsonDocument::fromJson(json.toUtf8()).object();
+    return base::json::Value::parse(json).value_or(base::json::Value());
 }
 
 } // namespace
@@ -267,12 +264,15 @@ TEST(Accelerator, IdentityIgnoresTheEvdevCodeAndTextNamesTheKey)
     EXPECT_EQ(a, b);
     EXPECT_EQ(a.hash(), b.hash());
     EXPECT_NE(a, Accelerator(XKB_KEY_q, ControlDown | ShiftDown, Accelerator::KeyState::Released));
-    EXPECT_EQ(QStringLiteral("Ctrl+Shift+Q"), a.shortcutText());
-    EXPECT_EQ(QStringLiteral("Meta+Up"), Accelerator(XKB_KEY_Up, MetaDown).shortcutText());
-    EXPECT_EQ(QStringLiteral("Up"), keysymName(XKB_KEY_Up));
-    EXPECT_EQ(XKB_KEY_XF86AudioRaiseVolume, keysymFromName(QStringLiteral("XF86AudioRaiseVolume")));
-    EXPECT_TRUE(keysymText(XKB_KEY_Tab).isEmpty());
-    EXPECT_EQ(QStringLiteral("["), keysymText(XKB_KEY_bracketleft));
+    EXPECT_EQ("Ctrl+Shift+Q", a.shortcutText());
+    EXPECT_EQ("Meta+Up", Accelerator(XKB_KEY_Up, MetaDown).shortcutText());
+    EXPECT_EQ("Up", keysymName(XKB_KEY_Up));
+    EXPECT_EQ(XKB_KEY_XF86AudioRaiseVolume, keysymFromName("XF86AudioRaiseVolume"));
+    EXPECT_TRUE(keysymText(XKB_KEY_Tab).empty());
+    EXPECT_EQ("[", keysymText(XKB_KEY_bracketleft));
+    // Upper-cased as text is, beyond what keysyms have cases for.
+    EXPECT_EQ("\u00c9", keysymText(XKB_KEY_eacute));
+    EXPECT_EQ("SS", keysymText(XKB_KEY_ssharp));
 }
 
 TEST(AcceleratorMap, PositionalLookupPinsPunctuationToTheUsLayout)
@@ -352,10 +352,11 @@ TEST(AcceleratorManager, LaterTargetsWinAndPriorityHandlersGoFirst)
 
 TEST(AcceleratorConfiguration, AddRemoveReplaceAndRestore)
 {
-    QTemporaryDir directory;
-    AcceleratorConfiguration configuration(directory.filePath(QStringLiteral("compositor.conf")));
+    input_test::TemporaryDirectory directory;
+    AcceleratorConfiguration configuration(directory.filePath("compositor.conf"));
     configuration.initialize();
-    QSignalSpy updates(&configuration, &AcceleratorConfiguration::acceleratorsUpdated);
+    int updates = 0;
+    auto counted = configuration.acceleratorsUpdated.connect([&updates] { ++updates; });
 
     const auto maximize = toActionId(AcceleratorAction::ToggleMaximized);
     const auto minimize = toActionId(AcceleratorAction::WindowMinimize);
@@ -370,7 +371,7 @@ TEST(AcceleratorConfiguration, AddRemoveReplaceAndRestore)
     EXPECT_EQ(AcceleratorConfigResult::Success, configuration.addUserAccelerator(maximize, custom));
     EXPECT_EQ(AcceleratorAction::ToggleMaximized, *configuration.findAcceleratorAction(custom));
     EXPECT_TRUE(configuration.hasCustomAccelerators());
-    EXPECT_EQ(1, updates.count());
+    EXPECT_EQ(1, updates);
 
     // Giving another action's default to this one takes it away from there.
     EXPECT_EQ(AcceleratorConfigResult::Success,
@@ -424,8 +425,8 @@ TEST(AcceleratorConfiguration, AddRemoveReplaceAndRestore)
 
 TEST(AcceleratorConfiguration, OverridesPersistAcrossInstances)
 {
-    QTemporaryDir directory;
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    input_test::TemporaryDirectory directory;
+    const std::string file = directory.filePath("compositor.conf");
     const auto lock = toActionId(AcceleratorAction::LockScreen);
     const auto maximize = toActionId(AcceleratorAction::ToggleMaximized);
     const Accelerator metaL(XKB_KEY_l, MetaDown);
@@ -465,8 +466,8 @@ TEST(AcceleratorConfiguration, OverridesPersistAcrossInstances)
 
 TEST(AcceleratorConfiguration, EachConventionKeepsItsOwnOverrides)
 {
-    QTemporaryDir directory;
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    input_test::TemporaryDirectory directory;
+    const std::string file = directory.filePath("compositor.conf");
     const auto maximize = toActionId(AcceleratorAction::ToggleMaximized);
     const auto launcher = toActionId(AcceleratorAction::ToggleAppList);
     const Accelerator pcBinding(XKB_KEY_k, MetaDown | ControlDown);
@@ -501,26 +502,27 @@ TEST(AcceleratorConfiguration, EachConventionKeepsItsOwnOverrides)
 
 TEST(AcceleratorConfiguration, MalformedOverridesAreDropped)
 {
-    QTemporaryDir directory;
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    input_test::TemporaryDirectory directory;
+    const std::string file = directory.filePath("compositor.conf");
     {
-        QSettings settings(file, QSettings::IniFormat);
-        settings.beginGroup(QStringLiteral("Shortcuts"));
-        settings.setValue(QStringLiteral("no-such-action"), QStringLiteral("[]"));
-        settings.setValue(QStringLiteral("lock-screen"), QStringLiteral("not json"));
-        settings.setValue(QStringLiteral("toggle-maximized"),
-                          QStringLiteral("[{\"key\":\"NoSuchKey\",\"action\":\"add\"},"
-                                         "{\"key\":\"Home\",\"modifiers\":[\"Meta\"],"
-                                         "\"state\":\"pressed\",\"action\":\"add\"}]"));
+        Settings settings(file);
+        settings.setValue("Shortcuts/no-such-action", "[]");
+        settings.setValue("Shortcuts/lock-screen", "not json");
+        settings.setValue("Shortcuts/toggle-maximized",
+                          "[{\"key\":\"NoSuchKey\",\"action\":\"add\"},"
+                          "{\"key\":\"Home\",\"modifiers\":[\"Meta\"],"
+                          "\"state\":\"pressed\",\"action\":\"add\"}]");
     }
     AcceleratorConfiguration configuration(file);
     configuration.initialize();
     ASSERT_TRUE(configuration.findAcceleratorAction(Accelerator(XKB_KEY_Home, MetaDown)));
     EXPECT_EQ(AcceleratorAction::LockScreen,
               *configuration.findAcceleratorAction(Accelerator(XKB_KEY_l, MetaDown)));
-    QSettings settings(file, QSettings::IniFormat);
-    settings.beginGroup(QStringLiteral("Shortcuts"));
-    EXPECT_EQ(QStringList {QStringLiteral("toggle-maximized")}, settings.childKeys());
+    Settings settings(file);
+    EXPECT_EQ(std::vector<std::string> {"toggle-maximized"}, settings.childKeys("Shortcuts"));
+    // The file is written as it always was: members sorted, compact, quoted.
+    EXPECT_EQ(settings.rawValue("Shortcuts/toggle-maximized"),
+              R"("[{\"action\":\"add\",\"key\":\"Home\",\"modifiers\":[\"Meta\"],\"state\":\"pressed\"}]")");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -587,7 +589,7 @@ TEST(AcceleratorLauncherStateMachine, OnlyALoneMetaTapTriggers)
 
 TEST_F(AcceleratorTest, ALoneMetaOpensTheLauncherAndMetaChordsDoNot)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
     RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
@@ -615,7 +617,7 @@ TEST_F(AcceleratorTest, ALoneMetaOpensTheLauncherAndMetaChordsDoNot)
 
 TEST_F(AcceleratorTest, WindowActionsApplyToTheActiveWindow)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
 
     chord({KEY_LEFTMETA}, KEY_UP);
@@ -652,7 +654,7 @@ TEST_F(AcceleratorTest, WindowActionsApplyToTheActiveWindow)
 TEST_F(AcceleratorTest, ActionsRunWithoutAKeyUnderTheSameRestrictions)
 {
     // A hot corner runs an action with no key behind it.
-    makeWindow(QRect(100, 100, 300, 200));
+    makeWindow(base::Rect(100, 100, 300, 200));
     wm::ShowDesktopController *showDesktop = manager.showDesktop();
     EXPECT_TRUE(controller->performActionWithoutKey(AcceleratorAction::ToggleShowDesktop));
     EXPECT_TRUE(showDesktop->isActive());
@@ -669,9 +671,9 @@ TEST_F(AcceleratorTest, WindowActionsLeaveTheShellsOwnWindowsAlone)
 {
     // The desktop takes the keyboard once every application window is
     // minimized; minimizing or closing it would leave no wallpaper.
-    wm::Window *application = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *application = makeWindow(base::Rect(100, 100, 300, 200));
     application->minimize();
-    wm::Window *desktop = makeWindow(QRect(0, 0, 800, 600));
+    wm::Window *desktop = makeWindow(base::Rect(0, 0, 800, 600));
     desktop->setRole(wm::WindowRole::Desktop);
     int closes = 0;
     desktop->setCloseCallback([&closes] {
@@ -701,21 +703,21 @@ TEST_F(AcceleratorTest, WindowActionsLeaveTheShellsOwnWindowsAlone)
 
 TEST_F(AcceleratorTest, TouchReachesTheWindowManagerBehindTheFilter)
 {
-    const auto normalized = [](const QPointF &location) {
-        return QPointF(location.x() / kOutput.width(), location.y() / kOutput.height());
+    const auto normalized = [](const base::PointF &location) {
+        return base::PointF(location.x() / kOutput.width(), location.y() / kOutput.height());
     };
-    wm::Window *lower = makeWindow(QRect(100, 100, 300, 200));
-    wm::Window *upper = makeWindow(QRect(500, 100, 300, 200));
+    wm::Window *lower = makeWindow(base::Rect(100, 100, 300, 200));
+    wm::Window *upper = makeWindow(base::Rect(500, 100, 300, 200));
     manager.activation()->activate(upper);
 
-    input.onTouchDown(at(++time), 1, normalized(QPointF(150, 150)));
+    input.onTouchDown(at(++time), 1, normalized(base::PointF(150, 150)));
     input.onTouchFrame(at(time));
     EXPECT_TRUE(lower->isActive());
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(lower, QPointF(150, 150), 1));
-    input.onTouchMotion(at(++time), 1, normalized(QPointF(170, 160)));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(lower, base::PointF(150, 150), 1));
+    input.onTouchMotion(at(++time), 1, normalized(base::PointF(170, 160)));
     input.onTouchFrame(at(time));
-    EXPECT_EQ(QRect(120, 110, 300, 200), lower->bounds());
+    EXPECT_EQ(base::Rect(120, 110, 300, 200), lower->bounds());
     input.onTouchUp(at(++time), 1);
     input.onTouchFrame(at(time));
     EXPECT_FALSE(manager.eventHandler()->isDragging());
@@ -723,7 +725,7 @@ TEST_F(AcceleratorTest, TouchReachesTheWindowManagerBehindTheFilter)
 
 TEST_F(AcceleratorTest, ConsumedKeysNeverReachTheClientAndOthersDo)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
     RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
@@ -767,45 +769,45 @@ TEST_F(AcceleratorTest, HeldVolumeAndBrightnessKeysRepeatAtTheKeyboardRate)
 
     press(KEY_BRIGHTNESSUP);
     EXPECT_EQ(1u, delegate.levels.size());
-    QTest::qWait(100);
+    cutefish::test::runFor(std::chrono::milliseconds(100));
     release(KEY_BRIGHTNESSUP);
     const size_t held = delegate.levels.size();
     EXPECT_GE(held, 3u);
     EXPECT_EQ(std::vector<std::string>(held, "brightness-up"), delegate.levels);
-    QTest::qWait(50);
+    cutefish::test::runFor(std::chrono::milliseconds(50));
     EXPECT_EQ(held, delegate.levels.size());
 
     // Another key going down ends it, as it does for a client.
     delegate.levels.clear();
     press(KEY_VOLUMEDOWN);
     tap(KEY_A);
-    QTest::qWait(100);
+    cutefish::test::runFor(std::chrono::milliseconds(100));
     release(KEY_VOLUMEDOWN);
     EXPECT_EQ(1u, delegate.levels.size());
 
     // Mute toggles once however long it is held.
     delegate.levels.clear();
     press(KEY_MUTE);
-    QTest::qWait(100);
+    cutefish::test::runFor(std::chrono::milliseconds(100));
     release(KEY_MUTE);
     EXPECT_EQ(1u, delegate.levels.size());
 
     delegate.levels.clear();
     press(KEY_MICMUTE);
-    QTest::qWait(100);
+    cutefish::test::runFor(std::chrono::milliseconds(100));
     release(KEY_MICMUTE);
     EXPECT_EQ(1u, delegate.levels.size());
 
     delegate.levels.clear();
     press(KEY_KBDILLUMDOWN);
-    QTest::qWait(100);
+    cutefish::test::runFor(std::chrono::milliseconds(100));
     release(KEY_KBDILLUMDOWN);
     EXPECT_GE(delegate.levels.size(), 3u);
 
     filter->setKeyRepeatSettings({.enabled = false});
     delegate.levels.clear();
     press(KEY_VOLUMEUP);
-    QTest::qWait(100);
+    cutefish::test::runFor(std::chrono::milliseconds(100));
     release(KEY_VOLUMEUP);
     EXPECT_EQ(1u, delegate.levels.size());
 }
@@ -814,9 +816,9 @@ TEST_F(AcceleratorTest, AltTabSwitchesApplicationsInMruOrderOnReleaseAndEscapeCa
 {
     // Windows without an application id or a process are applications of
     // their own.
-    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *second = makeWindow(QRect(50, 50, 300, 200));
-    wm::Window *third = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(base::Rect(50, 50, 300, 200));
+    wm::Window *third = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(first);
     manager.activation()->activate(second);
     manager.activation()->activate(third);
@@ -873,7 +875,7 @@ TEST_F(AcceleratorTest, AltTabSwitchesApplicationsInMruOrderOnReleaseAndEscapeCa
 
 TEST_F(AcceleratorTest, ThePcConventionTakesEveryKeyboardAsItIs)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
     RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
@@ -898,8 +900,8 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionTheKeyNextToTheSpaceBarSwitches
 {
     seat.setShortcutConvention(input::ShortcutConvention::Command);
     configuration->setConvention(input::ShortcutConvention::Command);
-    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *second = makeWindow(QRect(50, 50, 300, 200));
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(base::Rect(50, 50, 300, 200));
     manager.activation()->activate(first);
     manager.activation()->activate(second);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
@@ -929,8 +931,8 @@ TEST_F(AcceleratorTest, ACycleTheLockInterruptedIsOverAfterUnlock)
 {
     seat.setShortcutConvention(input::ShortcutConvention::Command);
     configuration->setConvention(input::ShortcutConvention::Command);
-    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *second = makeWindow(QRect(50, 50, 300, 200));
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(base::Rect(50, 50, 300, 200));
     manager.activation()->activate(first);
     manager.activation()->activate(second);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
@@ -957,7 +959,7 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionApplicationsGetCommandAsCtrl)
 {
     seat.setShortcutConvention(input::ShortcutConvention::Command);
     configuration->setConvention(input::ShortcutConvention::Command);
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
     RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
@@ -984,14 +986,14 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionApplicationsGetCommandAsCtrl)
     window->setCloseCallback([&closes] {
         ++closes;
     });
-    wm::Window *other = makeWindow(QRect(0, 0, 200, 100));
+    wm::Window *other = makeWindow(base::Rect(0, 0, 200, 100));
     manager.activation()->activate(window);
     keyboardDelegate->keys.clear();
     chord({KEY_LEFTALT}, KEY_Q);
     // Quit waits a moment after the keys.
     EXPECT_EQ(0, closes);
     for (int waited = 0; closes == 0 && waited < 1000; waited += 10)
-        QTest::qWait(10);
+        cutefish::test::runFor(std::chrono::milliseconds(10));
     EXPECT_EQ(1, closes);
     chord({KEY_LEFTMETA, KEY_LEFTALT}, KEY_H);
     EXPECT_TRUE(other->isHidden());
@@ -1013,7 +1015,7 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionApplicationsGetCommandAsCtrl)
 
     // Control+Up shows all windows, and Command+Up stays the window's Ctrl+Up.
     scene::OverviewNode node([] {
-        return qint64(0);
+        return int64_t(0);
     });
     wm::OverviewController *overview = manager.overview();
     overview->setNodes(&node, nullptr);
@@ -1073,7 +1075,7 @@ TEST_F(AcceleratorTest, ScreenCaptureKeysGoToTheShellUnderBothConventions)
 
 TEST_F(AcceleratorTest, TheClipboardHistoryKeyGoesToTheShellUnderBothConventions)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
     RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
@@ -1104,7 +1106,7 @@ TEST_F(AcceleratorTest, SendPasteTypesTheApplicationsPasteShortcut)
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
     RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
     input::Keyboard keyboard(std::move(delegateOwner), &seat);
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
 
     // Under the Command convention too: the keys go out as clients see them.
@@ -1118,7 +1120,7 @@ TEST_F(AcceleratorTest, SendPasteTypesTheApplicationsPasteShortcut)
     keyboardDelegate->keys.clear();
     wm::Window *terminal = manager.createWindow(
             makeSurface({300, 200}),
-            {.requestedSize = {300, 200}, .applicationId = QStringLiteral("cutefish-terminal")});
+            {.requestedSize = {300, 200}, .applicationId = "cutefish-terminal"});
     manager.activation()->activate(terminal);
     manager.sendPaste();
     const std::vector<std::pair<uint32_t, bool>> terminalPaste = {
@@ -1133,12 +1135,12 @@ TEST_F(AcceleratorTest, SendPasteTypesTheApplicationsPasteShortcut)
     EXPECT_TRUE(keyboardDelegate->keys.empty());
     release(KEY_ENTER);
     keyboardDelegate->keys.clear();
-    QTest::qWait(100);
+    cutefish::test::runFor(std::chrono::milliseconds(100));
     EXPECT_EQ(terminalPaste, keyboardDelegate->keys);
 
     // Nothing to the desktop, or while locked.
 
-    wm::Window *desktop = makeWindow(QRect(0, 0, 800, 600));
+    wm::Window *desktop = makeWindow(base::Rect(0, 0, 800, 600));
     desktop->setRole(wm::WindowRole::Desktop);
     manager.activation()->activate(desktop);
     ASSERT_EQ(desktop, manager.activation()->activeWindow());
@@ -1157,9 +1159,9 @@ TEST_F(AcceleratorTest, SendPasteTypesTheApplicationsPasteShortcut)
 
 TEST_F(AcceleratorTest, APickerBorrowsTheKeyboardUntilAnotherWindowIsActivated)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
-    wm::Window *picker = makeWindow(QRect(200, 150, 400, 300));
+    wm::Window *picker = makeWindow(base::Rect(200, 150, 400, 300));
     picker->setRole(wm::WindowRole::Picker);
     EXPECT_FALSE(manager.activation()->canActivate(picker));
 
@@ -1167,7 +1169,7 @@ TEST_F(AcceleratorTest, APickerBorrowsTheKeyboardUntilAnotherWindowIsActivated)
     EXPECT_EQ(picker->rootSurface(), seat.focusedSurface());
     EXPECT_EQ(window, manager.activation()->activeWindow());
 
-    wm::Window *other = makeWindow(QRect(0, 0, 200, 100));
+    wm::Window *other = makeWindow(base::Rect(0, 0, 200, 100));
     manager.activation()->activate(other);
     EXPECT_EQ(nullptr, manager.keyboardGrab());
     EXPECT_EQ(other->rootSurface(), seat.focusedSurface());
@@ -1176,7 +1178,7 @@ TEST_F(AcceleratorTest, APickerBorrowsTheKeyboardUntilAnotherWindowIsActivated)
 TEST_F(AcceleratorTest, DeskKeysAddSwitchSendAndRemoveDesksUnderBothConventions)
 {
     wm::DesksController *desks = manager.desks();
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
 
     // Meta+Shift+= adds a desk and goes there; Meta+[ comes back.
@@ -1230,16 +1232,16 @@ TEST_F(AcceleratorTest, DeskKeysAddSwitchSendAndRemoveDesksUnderBothConventions)
 
 TEST_F(AcceleratorTest, SwitchingToAHiddenApplicationBringsItAllBack)
 {
-    const auto make = [this](const QString &applicationId) {
+    const auto make = [this](const std::string &applicationId) {
         wm::Window *window = manager.createWindow(
                 makeSurface({300, 200}),
                 {.requestedSize = {300, 200}, .applicationId = applicationId});
-        window->setBounds(QRect(0, 0, 300, 200));
+        window->setBounds(base::Rect(0, 0, 300, 200));
         return window;
     };
-    wm::Window *editor = make(QStringLiteral("editor"));
-    wm::Window *editor2 = make(QStringLiteral("editor"));
-    wm::Window *viewer = make(QStringLiteral("viewer"));
+    wm::Window *editor = make("editor");
+    wm::Window *editor2 = make("editor");
+    wm::Window *viewer = make("viewer");
     for (wm::Window *window : {editor2, editor, viewer})
         manager.activation()->activate(window);
     manager.hideApplication(editor);
@@ -1262,8 +1264,8 @@ TEST_F(AcceleratorTest, SwitchingToAHiddenApplicationBringsItAllBack)
 
 TEST_F(AcceleratorTest, CycleSurvivesAWindowClosingUnderIt)
 {
-    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *second = makeWindow(QRect(50, 50, 300, 200));
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(base::Rect(50, 50, 300, 200));
     manager.activation()->activate(first);
     manager.activation()->activate(second);
     press(KEY_LEFTALT);
@@ -1288,7 +1290,7 @@ struct RecordingCycleView : wm::WindowCycleView {
     bool shown = false;
 
     void showWindowCycle(const std::vector<wm::Window *> &list, int selected,
-                         const QString &) override
+                         const std::string &) override
     {
         entries = list;
         shown = true;
@@ -1303,11 +1305,11 @@ struct RecordingCycleView : wm::WindowCycleView {
         shown = false;
         calls.push_back("hide");
     }
-    bool windowCycleViewContains(const QPointF &location) const override
+    bool windowCycleViewContains(const base::PointF &location) const override
     {
-        return shown && QRectF(0, 600, 100 * entries.size(), 100).contains(location);
+        return shown && base::RectF(0, 600, 100 * entries.size(), 100).contains(location);
     }
-    int windowCycleEntryAt(const QPointF &location) const override
+    int windowCycleEntryAt(const base::PointF &location) const override
     {
         return windowCycleViewContains(location) ? int(location.x() / 100) : -1;
     }
@@ -1319,8 +1321,8 @@ TEST_F(AcceleratorTest, TheApplicationListShowsOnlyOnceTheKeysAreHeld)
 {
     RecordingCycleView view;
     cycle->setView(&view);
-    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *second = makeWindow(QRect(50, 50, 300, 200));
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(base::Rect(50, 50, 300, 200));
     manager.activation()->activate(first);
     manager.activation()->activate(second);
 
@@ -1343,31 +1345,31 @@ TEST_F(AcceleratorTest, TheApplicationListTakesThePointer)
 {
     RecordingCycleView view;
     cycle->setView(&view);
-    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *second = makeWindow(QRect(400, 0, 300, 200));
-    wm::Window *third = makeWindow(QRect(0, 300, 300, 200));
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(base::Rect(400, 0, 300, 200));
+    wm::Window *third = makeWindow(base::Rect(0, 300, 300, 200));
     for (wm::Window *window : {first, second, third})
         manager.activation()->activate(window);
-    input.onPointerMotionAbsolute(at(++time), QPointF(52, 652));
+    input.onPointerMotionAbsolute(at(++time), base::PointF(52, 652));
 
     press(KEY_LEFTALT);
     tap(KEY_TAB);
     cycle->showViewNowForTesting();
     // The list appeared under a resting pointer; a nudge does not select.
-    input.onPointerMotionAbsolute(at(++time), QPointF(55, 654));
+    input.onPointerMotionAbsolute(at(++time), base::PointF(55, 654));
     EXPECT_EQ(1, cycle->selectedIndex());
     // Moving on to an entry does.
-    input.onPointerMotionAbsolute(at(++time), QPointF(250, 650));
+    input.onPointerMotionAbsolute(at(++time), base::PointF(250, 650));
     EXPECT_EQ(2, cycle->selectedIndex());
     // A click beside the list does nothing at all.
-    input.onPointerMotionAbsolute(at(++time), QPointF(450, 50));
+    input.onPointerMotionAbsolute(at(++time), base::PointF(450, 50));
     input.onPointerButton(at(++time), BTN_LEFT, true);
     input.onPointerButton(at(++time), BTN_LEFT, false);
     EXPECT_TRUE(cycle->isCycling());
     EXPECT_EQ(third, manager.activation()->activeWindow());
 
     // A click on an entry switches to it.
-    input.onPointerMotionAbsolute(at(++time), QPointF(150, 650));
+    input.onPointerMotionAbsolute(at(++time), base::PointF(150, 650));
     input.onPointerButton(at(++time), BTN_LEFT, true);
     input.onPointerButton(at(++time), BTN_LEFT, false);
     EXPECT_FALSE(cycle->isCycling());
@@ -1379,8 +1381,8 @@ TEST_F(AcceleratorTest, TheApplicationListTakesThePointer)
 
 TEST_F(AcceleratorTest, AltTabSwitchesOverAFullscreenWindowButNotPastAnInhibitor)
 {
-    wm::Window *first = makeWindow(QRect(0, 0, 300, 200));
-    wm::Window *game = makeWindow(QRect(50, 50, 300, 200));
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *game = makeWindow(base::Rect(50, 50, 300, 200));
     manager.activation()->activate(first);
     manager.activation()->activate(game);
     game->setFullscreen(true);
@@ -1407,16 +1409,16 @@ TEST_F(AcceleratorTest, AltTabSwitchesOverAFullscreenWindowButNotPastAnInhibitor
 
 TEST_F(AcceleratorTest, SwitchingBringsTheApplicationsWindowsForwardTogether)
 {
-    const auto make = [this](const QString &applicationId, const QRect &bounds) {
+    const auto make = [this](const std::string &applicationId, const base::Rect &bounds) {
         wm::Window *window = manager.createWindow(
                 makeSurface(bounds.size()),
                 {.requestedSize = bounds.size(), .applicationId = applicationId});
         window->setBounds(bounds);
         return window;
     };
-    wm::Window *editor = make(QStringLiteral("editor"), QRect(0, 0, 300, 200));
-    wm::Window *editor2 = make(QStringLiteral("editor"), QRect(50, 50, 300, 200));
-    wm::Window *viewer = make(QStringLiteral("viewer"), QRect(100, 100, 300, 200));
+    wm::Window *editor = make("editor", base::Rect(0, 0, 300, 200));
+    wm::Window *editor2 = make("editor", base::Rect(50, 50, 300, 200));
+    wm::Window *viewer = make("viewer", base::Rect(100, 100, 300, 200));
     for (wm::Window *window : {editor, editor2, viewer})
         manager.activation()->activate(window);
 
@@ -1433,16 +1435,16 @@ TEST_F(AcceleratorTest, SwitchingBringsTheApplicationsWindowsForwardTogether)
 TEST_F(AcceleratorTest, QAndHQuitAndHideTheSelectedApplication)
 {
     int closes = 0;
-    const auto make = [this, &closes](const QString &applicationId) {
+    const auto make = [this, &closes](const std::string &applicationId) {
         wm::Window *window = manager.createWindow(
                 makeSurface({300, 200}), {.requestedSize = {300, 200},
                                           .applicationId = applicationId,
                                           .closeCallback = [&closes] { ++closes; }});
-        window->setBounds(QRect(0, 0, 300, 200));
+        window->setBounds(base::Rect(0, 0, 300, 200));
         return window;
     };
-    wm::Window *editor = make(QStringLiteral("editor"));
-    wm::Window *viewer = make(QStringLiteral("viewer"));
+    wm::Window *editor = make("editor");
+    wm::Window *viewer = make("viewer");
     manager.activation()->activate(editor);
     manager.activation()->activate(viewer);
 
@@ -1467,7 +1469,7 @@ TEST_F(AcceleratorTest, QAndHQuitAndHideTheSelectedApplication)
 
 TEST_F(AcceleratorTest, ABlockedSessionPerformsNothing)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     ASSERT_TRUE(session.requestLock());
     session.notifyFramePresented();
@@ -1508,11 +1510,11 @@ TEST_F(AcceleratorTest, WindowActionsAreSwallowedWithoutAWindowAndWhilePrevented
 TEST_F(AcceleratorTest, WindowActionsDoNothingInTheOverview)
 {
     scene::OverviewNode node([] {
-        return qint64(0);
+        return int64_t(0);
     });
     wm::OverviewController *overview = manager.overview();
     overview->setNodes(&node, nullptr);
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     int closes = 0;
     window->setCloseCallback([&closes] {
@@ -1537,7 +1539,7 @@ TEST_F(AcceleratorTest, WindowActionsDoNothingInTheOverview)
 
 TEST_F(AcceleratorTest, FullscreenWindowsKeepNonReservedKeysExceptMetaOnes)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     window->setFullscreen(true);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
@@ -1576,7 +1578,7 @@ TEST_F(AcceleratorTest, AShortcutsInhibitorTakesEveryKeyButTheReservedOnesAndMet
         void onInhibitorDeactivated() override { active = false; }
     };
 
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
     auto delegateOwner = std::make_unique<RecordingKeyboardDelegate>();
     RecordingKeyboardDelegate *keyboardDelegate = delegateOwner.get();
@@ -1606,7 +1608,7 @@ TEST_F(AcceleratorTest, AShortcutsInhibitorTakesEveryKeyButTheReservedOnesAndMet
     EXPECT_EQ(expected, keyboardDelegate->keys);
     chord({KEY_LEFTMETA}, KEY_UP);
     EXPECT_EQ(wm::WindowStateType::Maximized, window->stateType());
-    input.onPointerMotionAbsolute(at(++time), window->contentBounds().topLeft() + QPoint(10, 10));
+    input.onPointerMotionAbsolute(at(++time), base::PointF(window->contentBounds().topLeft() + base::Point(10, 10)));
     input.onPointerButton(at(++time), BTN_LEFT, true);
     input.onPointerButton(at(++time), BTN_LEFT, false);
     EXPECT_TRUE(inhibitor.active);
@@ -1630,100 +1632,100 @@ TEST_F(AcceleratorTest, AShortcutsInhibitorTakesEveryKeyButTheReservedOnesAndMet
 TEST_F(AcceleratorTest, ServiceValidatesConfirmsAndReportsConflicts)
 {
     AcceleratorService service(configuration.get(), controller.get(), seat.xkbTracker());
-    const QString maximize = QStringLiteral("toggle-maximized");
+    const std::string maximize = "toggle-maximized";
 
-    EXPECT_EQ(QStringLiteral("missing-modifier"),
+    EXPECT_EQ("missing-modifier",
               parse(service.addAccelerator(maximize, KEY_K, 0, NoModifier))
-                      .value(QStringLiteral("result")));
-    EXPECT_EQ(QStringLiteral("shift-only-not-allowed"),
+                      ["result"].toString());
+    EXPECT_EQ("shift-only-not-allowed",
               parse(service.addAccelerator(maximize, KEY_K, 0, ShiftDown))
-                      .value(QStringLiteral("result")));
-    EXPECT_EQ(QStringLiteral("key-not-allowed"),
+                      ["result"].toString());
+    EXPECT_EQ("key-not-allowed",
               parse(service.addAccelerator(maximize, KEY_LEFTSHIFT, 0, MetaDown))
-                      .value(QStringLiteral("result")));
-    EXPECT_EQ(QStringLiteral("reserved-key-not-allowed"),
+                      ["result"].toString());
+    EXPECT_EQ("reserved-key-not-allowed",
               parse(service.addAccelerator(maximize, 0, XKB_KEY_Caps_Lock, MetaDown))
-                      .value(QStringLiteral("result")));
-    EXPECT_EQ(QStringLiteral("not-found"),
-              parse(service.addAccelerator(QStringLiteral("no-such"), KEY_K, 0, MetaDown))
-                      .value(QStringLiteral("result")));
+                      ["result"].toString());
+    EXPECT_EQ("not-found",
+              parse(service.addAccelerator("no-such", KEY_K, 0, MetaDown))
+                      ["result"].toString());
 
     // Meta+Down belongs to minimize: the first request asks, the second takes.
-    QJsonObject answer = parse(service.addAccelerator(maximize, KEY_DOWN, 0, MetaDown));
-    EXPECT_EQ(QStringLiteral("conflict-can-override"), answer.value(QStringLiteral("result")));
-    EXPECT_EQ(QStringLiteral("window-minimize"), answer.value(QStringLiteral("conflictAction")));
+    base::json::Value answer = parse(service.addAccelerator(maximize, KEY_DOWN, 0, MetaDown));
+    EXPECT_EQ("conflict-can-override", answer["result"].toString());
+    EXPECT_EQ("window-minimize", answer["conflictAction"].toString());
     answer = parse(service.addAccelerator(maximize, KEY_DOWN, 0, MetaDown));
-    EXPECT_EQ(QStringLiteral("success"), answer.value(QStringLiteral("result")));
+    EXPECT_EQ("success", answer["result"].toString());
     EXPECT_EQ(AcceleratorAction::ToggleMaximized,
               *configuration->findAcceleratorAction(Accelerator(XKB_KEY_Down, MetaDown)));
 
     // Already this action's own: a plain conflict.
     answer = parse(service.addAccelerator(maximize, KEY_UP, 0, MetaDown));
-    EXPECT_EQ(QStringLiteral("conflict"), answer.value(QStringLiteral("result")));
+    EXPECT_EQ("conflict", answer["result"].toString());
 
     // Without Meta the first request only warns; the second goes through.
     answer = parse(service.addAccelerator(maximize, KEY_K, 0, ControlDown | AltDown));
-    EXPECT_EQ(QStringLiteral("non-meta-accelerator-warning"),
-              answer.value(QStringLiteral("result")));
+    EXPECT_EQ("non-meta-accelerator-warning",
+              answer["result"].toString());
     answer = parse(service.addAccelerator(maximize, KEY_K, 0, ControlDown | AltDown));
-    EXPECT_EQ(QStringLiteral("success"), answer.value(QStringLiteral("result")));
+    EXPECT_EQ("success", answer["result"].toString());
 
     // Starting the recorder again forgets any pending confirmation.
     answer = parse(service.addAccelerator(maximize, KEY_J, 0, ControlDown | AltDown));
-    EXPECT_EQ(QStringLiteral("non-meta-accelerator-warning"),
-              answer.value(QStringLiteral("result")));
+    EXPECT_EQ("non-meta-accelerator-warning",
+              answer["result"].toString());
     service.preventProcessingAccelerators(true);
     EXPECT_TRUE(controller->shouldPreventProcessingAccelerators());
     service.preventProcessingAccelerators(false);
     answer = parse(service.addAccelerator(maximize, KEY_J, 0, ControlDown | AltDown));
-    EXPECT_EQ(QStringLiteral("non-meta-accelerator-warning"),
-              answer.value(QStringLiteral("result")));
+    EXPECT_EQ("non-meta-accelerator-warning",
+              answer["result"].toString());
     answer = parse(service.addAccelerator(maximize, KEY_J, 0, ControlDown | AltDown));
-    EXPECT_EQ(QStringLiteral("success"), answer.value(QStringLiteral("result")));
+    EXPECT_EQ("success", answer["result"].toString());
 
     // Under Command, Command+key is the application's Ctrl+key; only
     // Control+Command is clear of it.
     seat.setShortcutConvention(input::ShortcutConvention::Command);
     configuration->setConvention(input::ShortcutConvention::Command);
-    const QString launcher = QStringLiteral("toggle-app-list");
+    const std::string launcher = "toggle-app-list";
     answer = parse(service.addAccelerator(launcher, KEY_K, 0, MetaDown));
-    EXPECT_EQ(QStringLiteral("non-meta-accelerator-warning"),
-              answer.value(QStringLiteral("result")));
+    EXPECT_EQ("non-meta-accelerator-warning",
+              answer["result"].toString());
     answer = parse(service.addAccelerator(launcher, KEY_K, 0, ControlDown | MetaDown));
-    EXPECT_EQ(QStringLiteral("success"), answer.value(QStringLiteral("result")));
+    EXPECT_EQ("success", answer["result"].toString());
     seat.setShortcutConvention(input::ShortcutConvention::Pc);
     configuration->setConvention(input::ShortcutConvention::Pc);
 
     // Five accelerators per action at most.
     EXPECT_EQ(5u, configuration->acceleratorsForAction(
                           toActionId(AcceleratorAction::ToggleMaximized))->size());
-    EXPECT_EQ(QStringLiteral("maximum-accelerators-reached"),
+    EXPECT_EQ("maximum-accelerators-reached",
               parse(service.addAccelerator(maximize, KEY_Z, 0, MetaDown))
-                      .value(QStringLiteral("result")));
-    EXPECT_EQ(QStringLiteral("success"),
+                      ["result"].toString());
+    EXPECT_EQ("success",
               parse(service.removeAccelerator(maximize, XKB_KEY_j, ControlDown | AltDown))
-                      .value(QStringLiteral("result")));
+                      ["result"].toString());
 
     // The keysym the toolkit saw is the fallback when no keycode is known; a
     // known keycode wins because the compositor's keymap decides.
-    EXPECT_EQ(QStringLiteral("success"),
+    EXPECT_EQ("success",
               parse(service.addAccelerator(maximize, 0, XKB_KEY_X, MetaDown))
-                      .value(QStringLiteral("result")));
+                      ["result"].toString());
     EXPECT_TRUE(configuration->findAcceleratorAction(Accelerator(XKB_KEY_x, MetaDown)));
     answer = parse(service.describeKey(KEY_1, XKB_KEY_exclam));
-    EXPECT_EQ(QStringLiteral("1"), answer.value(QStringLiteral("keyText")));
+    EXPECT_EQ("1", answer["keyText"].toString());
 
     // An action without a default starts empty and takes a binding like any
     // other.
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.addAccelerator(QStringLiteral("toggle-app-list"), KEY_SPACE, 0,
+    EXPECT_EQ("success",
+              parse(service.addAccelerator("toggle-app-list", KEY_SPACE, 0,
                                            MetaDown))
-                      .value(QStringLiteral("result")));
+                      ["result"].toString());
     chord({KEY_LEFTMETA}, KEY_SPACE);
     EXPECT_EQ(1, delegate.appListToggles);
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.restoreDefault(QStringLiteral("toggle-app-list")))
-                      .value(QStringLiteral("result")));
+    EXPECT_EQ("success",
+              parse(service.restoreDefault("toggle-app-list"))
+                      ["result"].toString());
     chord({KEY_LEFTMETA}, KEY_SPACE);
     EXPECT_EQ(1, delegate.appListToggles);
 
@@ -1736,36 +1738,36 @@ TEST_F(AcceleratorTest, ServiceValidatesConfirmsAndReportsConflicts)
     EXPECT_EQ(2, delegate.appListToggles);
     chord({KEY_LEFTMETA}, KEY_A);
     EXPECT_EQ(2, delegate.appListToggles);
-    EXPECT_EQ(QStringLiteral("missing-modifier"),
-              parse(service.addAccelerator(QStringLiteral("toggle-app-list"), KEY_LEFTSHIFT, 0,
+    EXPECT_EQ("missing-modifier",
+              parse(service.addAccelerator("toggle-app-list", KEY_LEFTSHIFT, 0,
                                            NoModifier))
-                      .value(QStringLiteral("result")));
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.removeAccelerator(QStringLiteral("toggle-app-list"), XKB_KEY_Super_L,
+                      ["result"].toString());
+    EXPECT_EQ("success",
+              parse(service.removeAccelerator("toggle-app-list", XKB_KEY_Super_L,
                                               NoModifier))
-                      .value(QStringLiteral("result")));
+                      ["result"].toString());
     tap(KEY_LEFTMETA);
     EXPECT_EQ(2, delegate.appListToggles);
     // Recording a lone Meta binds the same tap again.
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.addAccelerator(QStringLiteral("toggle-app-list"), KEY_LEFTMETA, 0,
+    EXPECT_EQ("success",
+              parse(service.addAccelerator("toggle-app-list", KEY_LEFTMETA, 0,
                                            NoModifier))
-                      .value(QStringLiteral("result")));
+                      ["result"].toString());
     EXPECT_TRUE(configuration->findAcceleratorAction(metaTap));
     tap(KEY_LEFTMETA);
     EXPECT_EQ(3, delegate.appListToggles);
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.restoreDefault(QStringLiteral("toggle-app-list")))
-                      .value(QStringLiteral("result")));
+    EXPECT_EQ("success",
+              parse(service.restoreDefault("toggle-app-list"))
+                      ["result"].toString());
 
     EXPECT_TRUE(service.hasCustomAccelerators());
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.restoreDefault(maximize)).value(QStringLiteral("result")));
+    EXPECT_EQ("success",
+              parse(service.restoreDefault(maximize))["result"].toString());
     // Meta+Down went back to minimize with maximize's defaults: nothing is
     // custom any more.
     EXPECT_FALSE(service.hasCustomAccelerators());
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.restoreAllDefaults()).value(QStringLiteral("result")));
+    EXPECT_EQ("success",
+              parse(service.restoreAllDefaults())["result"].toString());
     EXPECT_FALSE(service.hasCustomAccelerators());
 }
 
@@ -1774,7 +1776,7 @@ TEST_F(AcceleratorTest, PositionalLayoutsPinPunctuationAndStoreTheUsKey)
     if (!seat.xkbTracker()->updateKeyboardLayout("de"))
         GTEST_SKIP() << "no German keymap installed";
     controller->setUsePositionalLookup(true);
-    wm::Window *window = makeWindow(QRect(100, 100, 300, 200));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(window);
 
     // Alt+] is Alt+"+" on a German keyboard, at the same position.
@@ -1786,10 +1788,10 @@ TEST_F(AcceleratorTest, PositionalLayoutsPinPunctuationAndStoreTheUsKey)
     EXPECT_EQ(wm::WindowStateType::Maximized, window->stateType());
 
     AcceleratorService service(configuration.get(), controller.get(), seat.xkbTracker());
-    EXPECT_EQ(QStringLiteral("success"),
-              parse(service.addAccelerator(QStringLiteral("window-minimize"), KEY_SLASH, 0,
+    EXPECT_EQ("success",
+              parse(service.addAccelerator("window-minimize", KEY_SLASH, 0,
                                            MetaDown))
-                      .value(QStringLiteral("result")));
+                      ["result"].toString());
     // Stored as the US key at that position, so the physical key finds it.
     EXPECT_TRUE(configuration->findAcceleratorAction(Accelerator(XKB_KEY_slash, MetaDown)));
     chord({KEY_LEFTMETA}, KEY_SLASH);
@@ -1798,94 +1800,80 @@ TEST_F(AcceleratorTest, PositionalLayoutsPinPunctuationAndStoreTheUsKey)
 
 TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
 {
-    ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
+    base::EventLoop loop;
     AcceleratorService service(configuration.get(), controller.get(), seat.xkbTracker());
     ASSERT_TRUE(service.registerService());
-    QDBusInterface proxy(QStringLiteral("com.cutefish.Shortcuts1"),
-                         QStringLiteral("/com/cutefish/Shortcuts1"),
-                         QStringLiteral("com.cutefish.Shortcuts1"));
+    input_test::RemoteObject proxy(loop, "com.cutefish.Shortcuts1", "/com/cutefish/Shortcuts1",
+                                   "com.cutefish.Shortcuts1");
     ASSERT_TRUE(proxy.isValid());
-    QSignalSpy changes(&service, &AcceleratorService::acceleratorsChanged);
+    int changes = 0;
+    auto counted = service.acceleratorsChanged.connect([&changes] { ++changes; });
 
-    const QDBusReply<QString> reply = proxy.call(QStringLiteral("accelerators"));
-    ASSERT_TRUE(reply.isValid());
-    const QJsonArray actions = parse(reply.value()).value(QStringLiteral("actions")).toArray();
-    EXPECT_EQ(46, actions.size());
+    const auto reply = proxy.call("accelerators");
+    ASSERT_FALSE(reply.isError()) << reply.error().message;
+    const base::json::Value actions = parse(reply.value<std::string>().value_or(""))["actions"];
+    EXPECT_EQ(46u, actions.size());
     bool sawMaximize = false;
     bool sawOverview = false;
-    for (const QJsonValue &value : actions) {
-        const QJsonObject action = value.toObject();
-        if (action.value(QStringLiteral("name")) == QStringLiteral("toggle-overview")) {
+    for (const base::json::Value &action : actions.toArray()) {
+        if (action["name"].toString() == "toggle-overview") {
             // Meta+Tab and the dedicated key.
             sawOverview = true;
-            const QJsonArray defaults = action.value(QStringLiteral("defaults")).toArray();
-            ASSERT_EQ(2, defaults.size());
-            EXPECT_EQ(QStringLiteral("Tab"), defaults.at(0).toObject().value(QStringLiteral("keyName")));
-            EXPECT_EQ(static_cast<int>(MetaDown),
-                      defaults.at(0).toObject().value(QStringLiteral("modifiers")).toInt());
-            EXPECT_EQ(XKB_KEY_XF86LaunchA,
-                      defaults.at(1).toObject().value(QStringLiteral("keysym")).toInt());
+            const base::json::Value &defaults = action["defaults"];
+            ASSERT_EQ(2u, defaults.size());
+            EXPECT_EQ("Tab", defaults[0]["keyName"].toString());
+            EXPECT_EQ(static_cast<int>(MetaDown), defaults[0]["modifiers"].toInt());
+            EXPECT_EQ(XKB_KEY_XF86LaunchA, defaults[1]["keysym"].toInt());
             continue;
         }
-        if (action.value(QStringLiteral("name")) == QStringLiteral("toggle-app-list")) {
+        if (action["name"].toString() == "toggle-app-list") {
             // The lone Meta tap, which triggers on release.
-            const QJsonArray defaults = action.value(QStringLiteral("defaults")).toArray();
-            ASSERT_EQ(1, defaults.size());
-            const QJsonObject tap = defaults.at(0).toObject();
-            EXPECT_EQ(XKB_KEY_Super_L, tap.value(QStringLiteral("keysym")).toInt());
-            EXPECT_EQ(QStringLiteral("released"), tap.value(QStringLiteral("keyState")).toString());
+            const base::json::Value &defaults = action["defaults"];
+            ASSERT_EQ(1u, defaults.size());
+            const base::json::Value &tap = defaults[0];
+            EXPECT_EQ(XKB_KEY_Super_L, tap["keysym"].toInt());
+            EXPECT_EQ("released", tap["keyState"].toString());
             continue;
         }
-        if (action.value(QStringLiteral("name")) != QStringLiteral("toggle-maximized"))
+        if (action["name"].toString() != "toggle-maximized")
             continue;
         sawMaximize = true;
-        const QJsonArray accelerators = action.value(QStringLiteral("accelerators")).toArray();
-        ASSERT_EQ(2, accelerators.size());
-        const QJsonObject metaUp = accelerators.at(1).toObject();
-        EXPECT_EQ(QStringLiteral("Up"), metaUp.value(QStringLiteral("keyName")));
-        EXPECT_EQ(static_cast<int>(MetaDown), metaUp.value(QStringLiteral("modifiers")).toInt());
-        EXPECT_EQ(QStringLiteral("default"), metaUp.value(QStringLiteral("type")));
-        EXPECT_EQ(accelerators, action.value(QStringLiteral("defaults")).toArray());
+        const base::json::Value &accelerators = action["accelerators"];
+        ASSERT_EQ(2u, accelerators.size());
+        const base::json::Value &metaUp = accelerators[1];
+        EXPECT_EQ("Up", metaUp["keyName"].toString());
+        EXPECT_EQ(static_cast<int>(MetaDown), metaUp["modifiers"].toInt());
+        EXPECT_EQ("default", metaUp["type"].toString());
+        EXPECT_EQ(accelerators, action["defaults"]);
+        // What Settings has always read: the members in sorted order.
+        EXPECT_EQ(R"({"keyName":"Up","keyState":"pressed","keyText":"","keysym":65362,)"
+                  R"("locked":false,"modifiers":8,"type":"default"})",
+                  metaUp.serialize());
     }
     EXPECT_TRUE(sawMaximize);
     EXPECT_TRUE(sawOverview);
 
-    const QDBusReply<QString> added =
-            proxy.call(QStringLiteral("addAccelerator"), QStringLiteral("lock-screen"),
-                       static_cast<uint>(KEY_ESC), 0u, static_cast<uint>(MetaDown));
-    ASSERT_TRUE(added.isValid());
-    EXPECT_EQ(QStringLiteral("success"), parse(added.value()).value(QStringLiteral("result")));
-    EXPECT_EQ(1, changes.count());
+    const auto added = proxy.call("addAccelerator", std::string("lock-screen"),
+                                  uint32_t(KEY_ESC), uint32_t(0), uint32_t(MetaDown));
+    ASSERT_FALSE(added.isError()) << added.error().message;
+    EXPECT_EQ(R"({"result":"success"})", added.value<std::string>());
+    EXPECT_EQ(1, changes);
 }
 
 TEST_F(AcceleratorTest, ARecorderThatLeavesTheBusLiftsTheAcceleratorBlock)
 {
-    ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
+    base::EventLoop loop;
     AcceleratorService service(configuration.get(), controller.get(), seat.xkbTracker());
     ASSERT_TRUE(service.registerService());
 
     // A second connection stands in for Settings, which dies while recording.
-    const QString name = QStringLiteral("recorder");
     {
-        QDBusConnection recorder = QDBusConnection::connectToBus(QDBusConnection::SessionBus, name);
-        ASSERT_TRUE(recorder.isConnected());
-        // Not a QDBusInterface: it introspects synchronously, and the service
-        // answers on this thread.
-        QDBusMessage call = QDBusMessage::createMethodCall(
-                QStringLiteral("com.cutefish.Shortcuts1"), QStringLiteral("/com/cutefish/Shortcuts1"),
-                QStringLiteral("com.cutefish.Shortcuts1"),
-                QStringLiteral("preventProcessingAccelerators"));
-        call << true;
-        recorder.asyncCall(call);
-        EXPECT_TRUE(QTest::qWaitFor([&] { return controller->shouldPreventProcessingAccelerators(); }));
+        input_test::RemoteObject recorder(loop, "com.cutefish.Shortcuts1",
+                                          "/com/cutefish/Shortcuts1", "com.cutefish.Shortcuts1");
+        ASSERT_TRUE(recorder.isValid());
+        EXPECT_FALSE(recorder.call("preventProcessingAccelerators", true).isError());
+        EXPECT_TRUE(controller->shouldPreventProcessingAccelerators());
     }
-    QDBusConnection::disconnectFromBus(name);
-    EXPECT_TRUE(QTest::qWaitFor([&] { return !controller->shouldPreventProcessingAccelerators(); }));
-}
-
-int main(int argc, char **argv)
-{
-    QCoreApplication application(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    EXPECT_TRUE(input_test::runUntil(
+            loop, [&] { return !controller->shouldPreventProcessingAccelerators(); }));
 }

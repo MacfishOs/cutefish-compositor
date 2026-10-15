@@ -11,14 +11,13 @@
 
 #include "server.h"
 
-#include <QAbstractEventDispatcher>
-#include <QSocketNotifier>
-#include <QThread>
+#include <sys/epoll.h>
 
 #include <cstdarg>
 #include <cstdio>
 #include <map>
 
+#include "base/event_loop.h"
 #include "core/logging.h"
 
 namespace cutefish::wayland {
@@ -35,19 +34,31 @@ void waylandLog(const char* fmt, va_list argp)
 {
     char buffer[1024];
     std::vsnprintf(buffer, sizeof(buffer), fmt, argp);
-    qCWarning(cfWayland, "libwayland: %s", buffer);
+    CF_WARNING(cfWayland).printf("libwayland: %s", buffer);
 }
 
 } // namespace
 
-Server::Server(QObject* parent)
-    : QObject(parent)
+// The display's descriptor and the flush on the thread's loop.
+struct Server::LoopHook {
+    ~LoopHook()
+    {
+        loop->removePrepareHook(flush);
+        loop->unwatch(watch);
+    }
+
+    base::EventLoop* loop = nullptr;
+    int watch = 0;
+    int flush = 0;
+};
+
+Server::Server()
 {
     wl_log_set_handler_server(waylandLog);
 
     m_display.reset(wl_display_create());
     if (!m_display) {
-        qCCritical(cfWayland) << "Failed to create the Wayland display";
+        CF_CRITICAL(cfWayland) << "Failed to create the Wayland display";
         return;
     }
 
@@ -77,60 +88,61 @@ Server* Server::serverForDisplay(wl_display* display)
     return it == map.end() ? nullptr : it->second;
 }
 
-bool Server::addSocket(const QString& name)
+bool Server::addSocket(const std::string& name)
 {
     if (!m_display)
         return false;
 
-    if (name.isEmpty()) {
+    if (name.empty()) {
         const char* socket = wl_display_add_socket_auto(m_display.get());
         if (!socket) {
-            qCCritical(cfWayland) << "Failed to create a Wayland socket";
+            CF_CRITICAL(cfWayland) << "Failed to create a Wayland socket";
             return false;
         }
-        m_socketName = QString::fromUtf8(socket);
+        m_socketName = socket;
     } else {
-        if (wl_display_add_socket(m_display.get(), name.toUtf8().constData()) != 0) {
-            qCCritical(cfWayland) << "Failed to create the Wayland socket" << name;
+        if (wl_display_add_socket(m_display.get(), name.c_str()) != 0) {
+            CF_CRITICAL(cfWayland) << "Failed to create the Wayland socket" << name.c_str();
             return false;
         }
         m_socketName = name;
     }
 
-    qCInfo(cfWayland) << "Listening on Wayland socket" << m_socketName;
+    CF_INFO(cfWayland) << "Listening on Wayland socket" << m_socketName.c_str();
     return true;
 }
 
 bool Server::start()
 {
-    if (m_notifier)
+    if (m_loopHook)
         return true;
 
     const int fd = fileDescriptor();
     if (fd < 0)
         return false;
 
-    m_notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
-    connect(m_notifier, &QSocketNotifier::activated, this, &Server::onSocketActivated);
+    base::EventLoop* loop = base::EventLoop::current();
+    if (!loop)
+        return false;
 
-    // Nothing wakes the Qt event loop when the server itself queues events, so
-    // flush whatever is pending just before Qt blocks on the fd.
-    if (QAbstractEventDispatcher* dispatcher = QThread::currentThread()->eventDispatcher())
-        connect(dispatcher, &QAbstractEventDispatcher::aboutToBlock, this, &Server::flush);
-
+    auto hook = std::make_unique<LoopHook>();
+    hook->loop = loop;
+    hook->watch = loop->watch(fd, EPOLLIN, [this](uint32_t) { onSocketActivated(); });
+    if (!hook->watch)
+        return false;
+    // Nothing wakes the event loop when the server itself queues events, so
+    // flush whatever is pending just before the loop waits.
+    hook->flush = loop->addPrepareHook([this] { flush(); });
+    m_loopHook = std::move(hook);
     return true;
 }
 
 void Server::stop()
 {
-    if (!m_notifier)
+    if (!m_loopHook)
         return;
 
-    if (QAbstractEventDispatcher* dispatcher = QThread::currentThread()->eventDispatcher())
-        disconnect(dispatcher, &QAbstractEventDispatcher::aboutToBlock, this, &Server::flush);
-
-    delete m_notifier;
-    m_notifier = nullptr;
+    m_loopHook.reset();
 }
 
 int Server::fileDescriptor() const
@@ -148,7 +160,7 @@ bool Server::dispatch(std::chrono::milliseconds timeout)
 
     wl_event_loop* eventLoop = wl_display_get_event_loop(m_display.get());
     if (wl_event_loop_dispatch(eventLoop, static_cast<int>(timeout.count())) < 0) {
-        qCWarning(cfWayland) << "Wayland event loop dispatch failed";
+        CF_WARNING(cfWayland) << "Wayland event loop dispatch failed";
         return false;
     }
     return true;

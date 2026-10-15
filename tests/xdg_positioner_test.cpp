@@ -15,8 +15,12 @@
 #include <gtest/gtest.h>
 #include <xdg-shell-server-protocol.h>
 
+#include "base/geometry.h"
 #include "wayland/protocols/xdg_positioner.h"
 
+using cutefish::base::Point;
+using cutefish::base::Rect;
+using cutefish::base::Size;
 using cutefish::wayland::WaylandPositioner;
 
 namespace {
@@ -24,7 +28,7 @@ namespace {
 // By default the cases happen on a 5x5 grid with an anchor rect at (2,2,1x1).
 struct TestCaseBuilder {
     WaylandPositioner positioner;
-    QRect workArea {0, 0, 5, 5};
+    Rect workArea {0, 0, 5, 5};
 
     TestCaseBuilder() { positioner.setAnchorRect({2, 2, 1, 1}); }
 
@@ -52,7 +56,7 @@ struct TestCaseBuilder {
         return *this;
     }
 
-    TestCaseBuilder& setWorkArea(const QRect& rect)
+    TestCaseBuilder& setWorkArea(const Rect& rect)
     {
         workArea = rect;
         return *this;
@@ -66,19 +70,19 @@ struct TestCaseBuilder {
 
     WaylandPositioner::Result solve() const { return positioner.calculateBounds(workArea); }
 
-    QRect solveToRect() const { return solve().toRect(); }
+    Rect solveToRect() const { return solve().toRect(); }
 };
 
 TEST(WaylandPositionerTest, UnconstrainedCases)
 {
     // No gravity or anchor.
-    EXPECT_EQ(TestCaseBuilder().setSize(1, 1).solveToRect(), QRect(2, 2, 1, 1));
+    EXPECT_EQ(TestCaseBuilder().setSize(1, 1).solveToRect(), Rect(2, 2, 1, 1));
 
     // Anchor without gravity.
     EXPECT_EQ(TestCaseBuilder().setSize(2, 1).setAnchor(XDG_POSITIONER_ANCHOR_RIGHT).solveToRect(),
-              QRect(2, 2, 2, 1));
+              Rect(2, 2, 2, 1));
     EXPECT_EQ(TestCaseBuilder().setSize(2, 1).setAnchor(XDG_POSITIONER_ANCHOR_LEFT).solveToRect(),
-              QRect(1, 2, 2, 1));
+              Rect(1, 2, 2, 1));
 
     // Gravity without anchor.
     EXPECT_EQ(TestCaseBuilder()
@@ -86,13 +90,13 @@ TEST(WaylandPositionerTest, UnconstrainedCases)
                   .setAnchorRect(2, 2, 0, 0)
                   .setGravity(XDG_POSITIONER_GRAVITY_TOP)
                   .solveToRect(),
-              QRect(2, 0, 1, 2));
+              Rect(2, 0, 1, 2));
     EXPECT_EQ(TestCaseBuilder()
                   .setSize(1, 2)
                   .setAnchorRect(2, 2, 0, 0)
                   .setGravity(XDG_POSITIONER_GRAVITY_BOTTOM)
                   .solveToRect(),
-              QRect(2, 2, 1, 2));
+              Rect(2, 2, 1, 2));
 
     // Gravity and anchor in the same direction.
     EXPECT_EQ(TestCaseBuilder()
@@ -100,7 +104,7 @@ TEST(WaylandPositionerTest, UnconstrainedCases)
                   .setGravity(XDG_POSITIONER_GRAVITY_BOTTOM_LEFT)
                   .setAnchor(XDG_POSITIONER_ANCHOR_BOTTOM_LEFT)
                   .solveToRect(),
-              QRect(0, 3, 2, 2));
+              Rect(0, 3, 2, 2));
 
     // Gravity and anchor in opposing directions.
     EXPECT_EQ(TestCaseBuilder()
@@ -108,7 +112,7 @@ TEST(WaylandPositionerTest, UnconstrainedCases)
                   .setGravity(XDG_POSITIONER_GRAVITY_BOTTOM_LEFT)
                   .setAnchor(XDG_POSITIONER_ANCHOR_TOP_RIGHT)
                   .solveToRect(),
-              QRect(1, 2, 2, 2));
+              Rect(1, 2, 2, 2));
 }
 
 TEST(WaylandPositionerTest, FlipSlideResizePriority)
@@ -121,18 +125,18 @@ TEST(WaylandPositionerTest, FlipSlideResizePriority)
     // Flip is enabled, so the result is at 2,2: a 2-wide square flipped around
     // 4,4.
     EXPECT_EQ(builder.setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE).solveToRect(),
-              QRect(2, 2, 2, 2));
+              Rect(2, 2, 2, 2));
     // Without a flip on an axis, that axis slides to 3 instead.
     EXPECT_EQ(builder.setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X).solveToRect(),
-              QRect(3, 2, 2, 2));
+              Rect(3, 2, 2, 2));
     EXPECT_EQ(builder.setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y).solveToRect(),
-              QRect(2, 3, 2, 2));
+              Rect(2, 3, 2, 2));
     // With neither flip nor slide, it resizes.
     EXPECT_EQ(builder
                   .setAdjustment(XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_RESIZE_X
                                  | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_RESIZE_Y)
                   .solveToRect(),
-              QRect(4, 4, 1, 1));
+              Rect(4, 4, 1, 1));
 }
 
 TEST(WaylandPositionerTest, TriesToMaximizeArea)
@@ -147,9 +151,9 @@ TEST(WaylandPositionerTest, TriesToMaximizeArea)
             .setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE)
             .solve();
     // x can slide to 1, but y must resize after sliding to 0.
-    EXPECT_EQ(result.origin, QPoint(1, 0));
+    EXPECT_EQ(result.origin, Point(1, 0));
     // The x size is preserved; y shrinks to the work area.
-    EXPECT_EQ(result.size, QSize(4, 5));
+    EXPECT_EQ(result.size, Size(4, 5));
 }
 
 TEST(WaylandPositionerTest, PropagatesAnInitialFlip)
@@ -162,8 +166,8 @@ TEST(WaylandPositionerTest, PropagatesAnInitialFlip)
             .setAnchor(XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT)
             .setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE)
             .solve();
-    EXPECT_EQ(result.origin, QPoint(3, 1));
-    EXPECT_EQ(result.size, QSize(2, 2));
+    EXPECT_EQ(result.origin, Point(3, 1));
+    EXPECT_EQ(result.size, Size(2, 2));
 }
 
 // The common dropdown-menu case: a popup is not allowed to slide if that would
@@ -176,7 +180,7 @@ TEST(WaylandPositionerTest, PreventsSlidingThatOccludesAnchorRect)
                   .setAnchor(XDG_POSITIONER_ANCHOR_BOTTOM_LEFT)
                   .setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE)
                   .solveToRect(),
-              QRect(2, 3, 3, 2));
+              Rect(2, 3, 3, 2));
 
     // The 4x4 popup may slide, because the anchor rect is occluded already.
     EXPECT_EQ(TestCaseBuilder()
@@ -185,7 +189,7 @@ TEST(WaylandPositionerTest, PreventsSlidingThatOccludesAnchorRect)
                   .setAnchor(XDG_POSITIONER_ANCHOR_TOP_LEFT)
                   .setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE)
                   .solveToRect(),
-              QRect(1, 1, 4, 4));
+              Rect(1, 1, 4, 4));
 }
 
 // Sliding that occludes the anchor is allowed when nothing else leaves the
@@ -200,7 +204,7 @@ TEST(WaylandPositionerTest, AllowsSlidingThatOccludesWhenThereAreNoOtherOptions)
                   .setAdjustment(~(XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_RESIZE_X
                                    | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_RESIZE_Y))
                   .solveToRect(),
-              QRect(1, 1, 4, 4));
+              Rect(1, 1, 4, 4));
 }
 
 // The size must never come out empty, even when the constraints would make it
@@ -214,7 +218,7 @@ TEST(WaylandPositionerTest, ResizableShouldNotBeEmpty)
                   .setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE)
                   .setAnchorRect(1, -10, 4, 4)
                   .solveToRect(),
-              QRect(2, 0, 3, 1));
+              Rect(2, 0, 3, 1));
     EXPECT_EQ(TestCaseBuilder()
                   .setSize(3, 3)
                   .setGravity(XDG_POSITIONER_GRAVITY_RIGHT)
@@ -222,13 +226,13 @@ TEST(WaylandPositionerTest, ResizableShouldNotBeEmpty)
                   .setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE)
                   .setAnchorRect(-10, 2, 4, 4)
                   .solveToRect(),
-              QRect(0, 2, 1, 3));
+              Rect(0, 2, 1, 3));
 }
 
 TEST(WaylandPositionerTest, AllowsAdditionalAdjustmentsIfNoSolutionCanBeFound)
 {
     EXPECT_EQ(TestCaseBuilder()
-                  .setWorkArea(QRect(0, 0, 5, 5))
+                  .setWorkArea(Rect(0, 0, 5, 5))
                   .setSize(10, 10)
                   .setAnchorRect(0, 0, 0, 0)
                   .setGravity(XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT)
@@ -236,7 +240,7 @@ TEST(WaylandPositionerTest, AllowsAdditionalAdjustmentsIfNoSolutionCanBeFound)
                   .setAdjustment(XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
                                  | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y)
                   .solveToRect(),
-              QRect(0, 0, 5, 5));
+              Rect(0, 0, 5, 5));
 }
 
 // A work area that does not start at the origin is solved by shifting it, so
@@ -244,25 +248,25 @@ TEST(WaylandPositionerTest, AllowsAdditionalAdjustmentsIfNoSolutionCanBeFound)
 TEST(WaylandPositionerTest, WorkAreaWithANonZeroOrigin)
 {
     EXPECT_EQ(TestCaseBuilder()
-                  .setWorkArea(QRect(100, 200, 5, 5))
+                  .setWorkArea(Rect(100, 200, 5, 5))
                   .setAnchorRect(104, 204, 0, 0)
                   .setSize(2, 2)
                   .setGravity(XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT)
                   .setAnchor(XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT)
                   .setAdjustment(~XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE)
                   .solveToRect(),
-              QRect(102, 202, 2, 2));
+              Rect(102, 202, 2, 2));
 }
 
 TEST(WaylandPositionerTest, OffsetIsAppliedBeforeTheConstraintsAre)
 {
-    EXPECT_EQ(TestCaseBuilder().setSize(1, 1).solveToRect(), QRect(2, 2, 1, 1));
+    EXPECT_EQ(TestCaseBuilder().setSize(1, 1).solveToRect(), Rect(2, 2, 1, 1));
 
     WaylandPositioner positioner;
     positioner.setAnchorRect({2, 2, 1, 1});
     positioner.setSize({1, 1});
     positioner.setOffset({1, -1});
-    EXPECT_EQ(positioner.calculateBounds(QRect(0, 0, 5, 5)).toRect(), QRect(3, 1, 1, 1));
+    EXPECT_EQ(positioner.calculateBounds(Rect(0, 0, 5, 5)).toRect(), Rect(3, 1, 1, 1));
 }
 
 } // namespace

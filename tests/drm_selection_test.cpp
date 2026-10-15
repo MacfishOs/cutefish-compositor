@@ -27,7 +27,7 @@ drmModeModeInfo makeMode(int width, int height, uint32_t type = 0, int clock = 0
 
 TEST(DrmSelection, SelectsFirstConnectedConnectorWithModes)
 {
-    const QList<ConnectorInfo> connectors = {
+    const std::vector<ConnectorInfo> connectors = {
         {10, 0, 1, DRM_MODE_DISCONNECTED, 3},
         {11, 0, 2, DRM_MODE_CONNECTED, 0},
         {12, 0, 3, DRM_MODE_CONNECTED, 2},
@@ -43,7 +43,7 @@ TEST(DrmSelection, AHeadMountedDisplayIsNoDesktopOutput)
 {
     ConnectorInfo headset {10, 0, 1, DRM_MODE_CONNECTED, 3};
     headset.nonDesktop = true;
-    const QList<ConnectorInfo> connectors = {headset, {11, 0, 2, DRM_MODE_CONNECTED, 2}};
+    const std::vector<ConnectorInfo> connectors = {headset, {11, 0, 2, DRM_MODE_CONNECTED, 2}};
     EXPECT_FALSE(isDesktopOutput(headset));
     const auto index = selectConnector(connectors);
     ASSERT_TRUE(index.has_value());
@@ -56,18 +56,18 @@ TEST(DrmSelection, TheBootDisplayThenOzonesDriversComeFirst)
                                    {"/dev/dri/card1", "amdgpu", false},
                                    {"/dev/dri/card2", "i915", false},
                                    {"/dev/dri/card3", "rockchip", false}}),
-              QStringList({"/dev/dri/card2", "/dev/dri/card1", "/dev/dri/card0",
+              std::vector<std::string>({"/dev/dri/card2", "/dev/dri/card1", "/dev/dri/card0",
                            "/dev/dri/card3"}));
     // The card the firmware booted on wins over any driver preference.
     EXPECT_EQ(orderDisplayDevices({{"/dev/dri/card0", "i915", false},
                                    {"/dev/dri/card1", "nvidia-drm", true}}),
-              QStringList({"/dev/dri/card1", "/dev/dri/card0"}));
-    EXPECT_TRUE(orderDisplayDevices({}).isEmpty());
+              std::vector<std::string>({"/dev/dri/card1", "/dev/dri/card0"}));
+    EXPECT_TRUE(orderDisplayDevices({}).empty());
 }
 
 TEST(DrmSelection, NoConnectorWhenNothingIsConnected)
 {
-    const QList<ConnectorInfo> connectors = {
+    const std::vector<ConnectorInfo> connectors = {
         {10, 0, 1, DRM_MODE_DISCONNECTED, 3},
         {11, 0, 2, DRM_MODE_UNKNOWNCONNECTION, 3},
     };
@@ -136,20 +136,20 @@ TEST(DrmSelection, NoModeWhenTheConnectorReportsNone)
 
 TEST(DrmSelection, PicksACompatibleCrtc)
 {
-    const QList<uint32_t> crtcs = {40, 41, 42};
+    const std::vector<uint32_t> crtcs = {40, 41, 42};
     // Only index 1 and 2 are compatible.
     EXPECT_EQ(selectCrtc(0b110, crtcs, 0, 0), 41u);
 }
 
 TEST(DrmSelection, KeepsTheCurrentlyAttachedCrtc)
 {
-    const QList<uint32_t> crtcs = {40, 41, 42};
+    const std::vector<uint32_t> crtcs = {40, 41, 42};
     EXPECT_EQ(selectCrtc(0b111, crtcs, 0, 42), 42u);
 }
 
 TEST(DrmSelection, SkipsCrtcsAlreadyInUse)
 {
-    const QList<uint32_t> crtcs = {40, 41, 42};
+    const std::vector<uint32_t> crtcs = {40, 41, 42};
     EXPECT_EQ(selectCrtc(0b111, crtcs, 0b011, 0), 42u);
     // The attached CRTC does not win when it is taken.
     EXPECT_EQ(selectCrtc(0b111, crtcs, 0b100, 42), 40u);
@@ -157,7 +157,7 @@ TEST(DrmSelection, SkipsCrtcsAlreadyInUse)
 
 TEST(DrmSelection, NoCrtcWhenNoneIsCompatibleOrFree)
 {
-    const QList<uint32_t> crtcs = {40, 41};
+    const std::vector<uint32_t> crtcs = {40, 41};
     EXPECT_EQ(selectCrtc(0, crtcs, 0, 0), 0u);
     EXPECT_EQ(selectCrtc(0b11, crtcs, 0b11, 0), 0u);
 }
@@ -183,6 +183,6 @@ TEST(DrmSelection, RefreshRateOfADegenerateModeIsZero)
 
 TEST(DrmSelection, NamesConnectors)
 {
-    EXPECT_EQ(connectorName(DRM_MODE_CONNECTOR_VIRTUAL, 1), QStringLiteral("Virtual-1"));
-    EXPECT_EQ(connectorName(DRM_MODE_CONNECTOR_HDMIA, 2), QStringLiteral("HDMI-A-2"));
+    EXPECT_EQ(connectorName(DRM_MODE_CONNECTOR_VIRTUAL, 1), std::string("Virtual-1"));
+    EXPECT_EQ(connectorName(DRM_MODE_CONNECTOR_HDMIA, 2), std::string("HDMI-A-2"));
 }

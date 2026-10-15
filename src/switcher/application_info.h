@@ -5,22 +5,25 @@
 #ifndef CUTEFISH_SWITCHER_APPLICATION_INFO_H_
 #define CUTEFISH_SWITCHER_APPLICATION_INFO_H_
 
+#include <cstdint>
 #include <optional>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
-#include <QCache>
-#include <QHash>
-#include <QString>
+#include "base/lru_cache.h"
 
 namespace cutefish::switcher {
 
 // What the dock shows for an application it cannot find either.
-inline const QString kFallbackIcon = QStringLiteral("application-x-desktop");
+inline const std::string kFallbackIcon = "application-x-desktop";
 
 // What the application switcher shows for an application.
 struct ApplicationInfo {
-    QString name;
+    std::string name;
     // An icon theme name, or an absolute path.
-    QString icon;
+    std::string icon;
 };
 
 // Finds an application's desktop entry from its window's application id, as
@@ -30,22 +33,28 @@ struct ApplicationInfo {
 class ApplicationInfoCache
 {
 public:
+    // The applications directories, the user's first; the toolkit's by default.
+    ApplicationInfoCache();
+    explicit ApplicationInfoCache(std::vector<std::string> directories);
+
     // Forgets every answer once an application directory changed. Checked once
     // per list rather than once per entry: it reads each directory's time.
     void refresh();
 
     // `fallbackName` names an application with no desktop entry.
-    ApplicationInfo lookup(const QString &applicationId, const QString &fallbackName);
+    ApplicationInfo lookup(const std::string &applicationId, const std::string &fallbackName);
 
 private:
     // Lower-cased StartupWMClass to desktop file, read once per stamp.
-    const QHash<QString, QString> &wmClasses();
+    const std::unordered_map<std::string, std::string> &wmClasses();
+    int64_t applicationsStamp() const;
 
-    qint64 m_stamp = -1;
-    // Bounded: a lookup that found nothing is cached like one that did, and
-    // application ids come from clients.
-    QCache<QString, ApplicationInfo> m_cache {256};
-    std::optional<QHash<QString, QString>> m_wmClasses;
+    std::vector<std::string> m_directories;
+    int64_t m_stamp = -1;
+    // Bounded, least recently used out first: a lookup that found nothing is
+    // cached like one that did, and application ids come from clients.
+    base::LruCache<std::string, ApplicationInfo> m_cache {256};
+    std::optional<std::unordered_map<std::string, std::string>> m_wmClasses;
 };
 
 } // namespace cutefish::switcher

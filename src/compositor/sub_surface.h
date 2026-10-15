@@ -12,7 +12,7 @@
 
 #include <memory>
 
-#include <QPoint>
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 
@@ -31,7 +31,7 @@ public:
 
     Surface* parent() const { return m_parent; }
 
-    void setPosition(const QPoint& position);
+    void setPosition(const base::Point& position);
     bool placeAbove(Surface* reference);
     bool placeBelow(Surface* reference);
     void setCommitBehavior(bool synchronized);

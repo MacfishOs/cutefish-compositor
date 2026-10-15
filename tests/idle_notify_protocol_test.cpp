@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/geometry.h"
 #include "input/event_sink.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
@@ -201,7 +202,7 @@ TEST_F(IdleNotifyProtocolTest, ZeroAndLargeTimeoutsSurviveManagerAndSeatProxyDes
     advance(10);
     EXPECT_EQ(zeroEvents.idled, 1);
     EXPECT_EQ(largeEvents.idled, 0);
-    input.onPointerMotion(input::Timestamp {}, QPointF(1, 1));
+    input.onPointerMotion(input::Timestamp {}, base::PointF(1, 1));
     advance(10);
     EXPECT_EQ(zeroEvents.resumed, 1);
     EXPECT_EQ(zeroEvents.idled, 2);
@@ -287,7 +288,7 @@ TEST_F(IdleNotifyProtocolTest, SurfaceVisibilityAndResourceLifetimes)
     class Buffer : public compositor::Buffer
     {
     public:
-        QSize size() const override { return QSize(10, 10); }
+        cutefish::base::Size size() const override { return {10, 10}; }
 
         render::PixelFormat format() const override { return render::PixelFormat::Bgra8888; }
 
@@ -308,10 +309,10 @@ TEST_F(IdleNotifyProtocolTest, SurfaceVisibilityAndResourceLifetimes)
     model->commit();
     EXPECT_TRUE(inhibition.inhibited());
     model->setHidden(true);
-    Q_EMIT inhibition.sceneChanged();
+    inhibition.sceneChanged();
     EXPECT_FALSE(inhibition.inhibited());
     model->setHidden(false);
-    Q_EMIT inhibition.sceneChanged();
+    inhibition.sceneChanged();
     EXPECT_TRUE(inhibition.inhibited());
     model->attach(nullptr, {});
     model->commit();

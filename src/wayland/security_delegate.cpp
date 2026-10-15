@@ -4,37 +4,52 @@
 
 #include "wayland/security_delegate.h"
 
+#include <algorithm>
+#include <climits>
+#include <cstdlib>
+#include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <wayland-server-core.h>
-
-#include <QFileInfo>
 
 namespace cutefish::wayland {
 
 namespace {
 
-QStringList canonicalPaths(const QStringList &paths)
+// Empty when `path` does not resolve.
+std::string canonicalPath(const std::string &path)
 {
-    QStringList result;
+    char resolved[PATH_MAX];
+    return realpath(path.c_str(), resolved) ? std::string(resolved) : std::string();
+}
+
+std::vector<std::string> canonicalPaths(const std::vector<std::string> &paths)
+{
+    std::vector<std::string> result;
     for (const auto &path : paths) {
-        const QString canonical = QFileInfo(path).canonicalFilePath();
-        if (!canonical.isEmpty())
-            result.append(canonical);
+        std::string canonical = canonicalPath(path);
+        if (!canonical.empty())
+            result.push_back(std::move(canonical));
     }
     return result;
 }
 
 // /proc/<pid> itself belongs to the process owner; its exe link would resolve
 // to a root-owned file under /usr.
-bool runsOneOf(pid_t pid, const QStringList &executables)
+bool runsOneOf(pid_t pid, const std::vector<std::string> &executables)
 {
-    return pid > 0 && QFileInfo(QStringLiteral("/proc/%1").arg(pid)).ownerId() == getuid()
-            && executables.contains(
-                    QFileInfo(QStringLiteral("/proc/%1/exe").arg(pid)).canonicalFilePath());
+    if (pid <= 0)
+        return false;
+    const std::string process = "/proc/" + std::to_string(pid);
+    struct stat info {};
+    if (stat(process.c_str(), &info) != 0 || info.st_uid != getuid())
+        return false;
+    const std::string executable = canonicalPath(process + "/exe");
+    return std::find(executables.begin(), executables.end(), executable) != executables.end();
 }
 
-bool runsOneOf(const wl_client *client, const QStringList &executables)
+bool runsOneOf(const wl_client *client, const std::vector<std::string> &executables)
 {
     pid_t pid = 0;
     uid_t uid = 0;
@@ -45,11 +60,11 @@ bool runsOneOf(const wl_client *client, const QStringList &executables)
 
 } // namespace
 
-ExecutableSecurityDelegate::ExecutableSecurityDelegate(const QStringList &clipboardClients,
-                                                       const QStringList &captureClients,
-                                                       const QStringList &systemDialogClients,
-                                                       bool captureEnabled,
-                                                       const QStringList &computerControlClients)
+ExecutableSecurityDelegate::ExecutableSecurityDelegate(
+        const std::vector<std::string> &clipboardClients,
+        const std::vector<std::string> &captureClients,
+        const std::vector<std::string> &systemDialogClients, bool captureEnabled,
+        const std::vector<std::string> &computerControlClients)
     : m_clipboardClients(canonicalPaths(clipboardClients))
     , m_captureClients(canonicalPaths(captureClients))
     , m_systemDialogClients(canonicalPaths(systemDialogClients))
@@ -68,7 +83,7 @@ bool ExecutableSecurityDelegate::canCaptureOutputs(const wl_client *client) cons
     return m_captureEnabled && runsOneOf(client, m_captureClients);
 }
 
-bool ExecutableSecurityDelegate::showsSystemDialogs(qint64 pid) const
+bool ExecutableSecurityDelegate::showsSystemDialogs(int64_t pid) const
 {
     return runsOneOf(static_cast<pid_t>(pid), m_systemDialogClients);
 }

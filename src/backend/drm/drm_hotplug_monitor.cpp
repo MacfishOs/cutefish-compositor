@@ -11,23 +11,27 @@
 #include "backend/drm/drm_hotplug_monitor.h"
 
 #include <libudev.h>
+#include <sys/epoll.h>
 
-#include <QSocketNotifier>
+#include "base/event_loop.h"
+#include "core/main_loop.h"
 
 namespace cutefish::backend {
 
-DrmHotplugMonitor::DrmHotplugMonitor(QObject *parent)
-    : QObject(parent)
+DrmHotplugMonitor::DrmHotplugMonitor()
+    : m_quiet(core::mainLoop())
+    , m_deadline(core::mainLoop())
 {
     m_quiet.setSingleShot(true);
     m_deadline.setSingleShot(true);
-    connect(&m_quiet, &QTimer::timeout, this, &DrmHotplugMonitor::fire);
-    connect(&m_deadline, &QTimer::timeout, this, &DrmHotplugMonitor::fire);
+    m_quiet.onTimeout = [this] { fire(); };
+    m_deadline.onTimeout = [this] { fire(); };
 }
 
 DrmHotplugMonitor::~DrmHotplugMonitor()
 {
-    delete m_notifier;
+    if (m_watch)
+        core::mainLoop()->unwatch(m_watch);
     if (m_monitor)
         udev_monitor_unref(m_monitor);
     if (m_udev)
@@ -46,9 +50,9 @@ bool DrmHotplugMonitor::start()
         || udev_monitor_enable_receiving(m_monitor) < 0) {
         return false;
     }
-    m_notifier = new QSocketNotifier(udev_monitor_get_fd(m_monitor), QSocketNotifier::Read, this);
-    connect(m_notifier, &QSocketNotifier::activated, this, &DrmHotplugMonitor::onReadable);
-    return true;
+    m_watch = core::mainLoop()->watch(udev_monitor_get_fd(m_monitor), EPOLLIN,
+                                      [this](uint32_t) { onReadable(); });
+    return m_watch != 0;
 }
 
 void DrmHotplugMonitor::notifyForTest()
@@ -66,10 +70,10 @@ void DrmHotplugMonitor::onReadable()
 
 void DrmHotplugMonitor::schedule()
 {
-    emit snapshotsInvalidated();
-    m_quiet.start(100);
+    snapshotsInvalidated();
+    m_quiet.start(std::chrono::milliseconds(100));
     if (!m_deadline.isActive())
-        m_deadline.start(750);
+        m_deadline.start(std::chrono::milliseconds(750));
 }
 
 void DrmHotplugMonitor::fire()
@@ -78,7 +82,7 @@ void DrmHotplugMonitor::fire()
         return;
     m_quiet.stop();
     m_deadline.stop();
-    emit reprobeRequested();
+    reprobeRequested();
 }
 
 } // namespace cutefish::backend

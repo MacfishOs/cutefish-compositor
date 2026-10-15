@@ -29,7 +29,7 @@ constexpr render::PixelFormat kFormat = render::PixelFormat::Bgra8888;
 class ShmPoolTest : public testing::Test
 {
 protected:
-    std::shared_ptr<ShmBuffer> create(const QSize& size, int32_t offset, int32_t stride,
+    std::shared_ptr<ShmBuffer> create(const base::Size& size, int32_t offset, int32_t stride,
                                       ShmBufferError* error = nullptr)
     {
         ShmBufferError local = ShmBufferError::None;
@@ -51,10 +51,10 @@ TEST_F(ShmPoolTest, CreatesAValidBuffer)
 {
     ASSERT_TRUE(m_pool);
     ShmBufferError error = ShmBufferError::None;
-    std::shared_ptr<ShmBuffer> buffer = create(QSize(256, 256), 0, 256 * 4, &error);
+    std::shared_ptr<ShmBuffer> buffer = create(base::Size(256, 256), 0, 256 * 4, &error);
     ASSERT_TRUE(buffer);
     EXPECT_EQ(ShmBufferError::None, error);
-    EXPECT_EQ(QSize(256, 256), buffer->size());
+    EXPECT_EQ(base::Size(256, 256), buffer->size());
     EXPECT_EQ(256 * 4, buffer->stride());
     EXPECT_EQ(kFormat, buffer->format());
     EXPECT_EQ(m_pool->data(), buffer->pixels());
@@ -62,7 +62,7 @@ TEST_F(ShmPoolTest, CreatesAValidBuffer)
 
 TEST_F(ShmPoolTest, AcceptsAnOffsetAndAPaddedStride)
 {
-    std::shared_ptr<ShmBuffer> buffer = create(QSize(16, 16), 1024, 16 * 4 + 32);
+    std::shared_ptr<ShmBuffer> buffer = create(base::Size(16, 16), 1024, 16 * 4 + 32);
     ASSERT_TRUE(buffer);
     EXPECT_EQ(m_pool->data() + 1024, buffer->pixels());
 }
@@ -70,32 +70,32 @@ TEST_F(ShmPoolTest, AcceptsAnOffsetAndAPaddedStride)
 TEST_F(ShmPoolTest, RejectsANegativeOffset)
 {
     ShmBufferError error = ShmBufferError::None;
-    EXPECT_EQ(nullptr, create(QSize(16, 16), -4, 16 * 4, &error));
+    EXPECT_EQ(nullptr, create(base::Size(16, 16), -4, 16 * 4, &error));
     EXPECT_EQ(ShmBufferError::InvalidStride, error);
 }
 
 TEST_F(ShmPoolTest, RejectsInvalidDimensions)
 {
-    EXPECT_EQ(nullptr, create(QSize(0, 16), 0, 64));
-    EXPECT_EQ(nullptr, create(QSize(16, 0), 0, 64));
-    EXPECT_EQ(nullptr, create(QSize(-1, 16), 0, 64));
-    EXPECT_EQ(nullptr, create(QSize(16, -1), 0, 64));
+    EXPECT_EQ(nullptr, create(base::Size(0, 16), 0, 64));
+    EXPECT_EQ(nullptr, create(base::Size(16, 0), 0, 64));
+    EXPECT_EQ(nullptr, create(base::Size(-1, 16), 0, 64));
+    EXPECT_EQ(nullptr, create(base::Size(16, -1), 0, 64));
 }
 
 TEST_F(ShmPoolTest, RejectsAStrideNarrowerThanTheRow)
 {
     ShmBufferError error = ShmBufferError::None;
-    EXPECT_EQ(nullptr, create(QSize(16, 16), 0, 16 * 4 - 1, &error));
+    EXPECT_EQ(nullptr, create(base::Size(16, 16), 0, 16 * 4 - 1, &error));
     EXPECT_EQ(ShmBufferError::InvalidStride, error);
-    EXPECT_EQ(nullptr, create(QSize(16, 16), 0, 0));
-    EXPECT_EQ(nullptr, create(QSize(16, 16), 0, -4));
+    EXPECT_EQ(nullptr, create(base::Size(16, 16), 0, 0));
+    EXPECT_EQ(nullptr, create(base::Size(16, 16), 0, -4));
 }
 
 TEST_F(ShmPoolTest, RejectsABufferThatLeavesThePool)
 {
     // One pixel past the end of the last row.
-    EXPECT_EQ(nullptr, create(QSize(256, 256), 4, 256 * 4));
-    EXPECT_EQ(nullptr, create(QSize(256, 257), 0, 256 * 4));
+    EXPECT_EQ(nullptr, create(base::Size(256, 256), 4, 256 * 4));
+    EXPECT_EQ(nullptr, create(base::Size(256, 257), 0, 256 * 4));
 }
 
 TEST_F(ShmPoolTest, TheLastRowNeedsOnlyItsOwnPixels)
@@ -104,17 +104,17 @@ TEST_F(ShmPoolTest, TheLastRowNeedsOnlyItsOwnPixels)
     // enough; the padding of the final row need not be mapped.
     std::shared_ptr<ShmPool> pool = makePool(3 * 40 + 32);
     ASSERT_TRUE(pool);
-    EXPECT_TRUE(pool->createBuffer(QSize(8, 4), 0, 40, kFormat, nullptr));
-    EXPECT_EQ(nullptr, pool->createBuffer(QSize(9, 4), 0, 40, kFormat, nullptr));
+    EXPECT_TRUE(pool->createBuffer(base::Size(8, 4), 0, 40, kFormat, nullptr));
+    EXPECT_EQ(nullptr, pool->createBuffer(base::Size(9, 4), 0, 40, kFormat, nullptr));
 }
 
 TEST_F(ShmPoolTest, RejectsGeometryThatWouldOverflow)
 {
     constexpr int32_t kMax = std::numeric_limits<int32_t>::max();
-    EXPECT_EQ(nullptr, create(QSize(kMax, kMax), 0, kMax));
-    EXPECT_EQ(nullptr, create(QSize(kMax / 4 + 1, 2), 0, kMax));
-    EXPECT_EQ(nullptr, create(QSize(16, 16), kMax, 64));
-    EXPECT_EQ(nullptr, create(QSize(1, kMax), 0, 4));
+    EXPECT_EQ(nullptr, create(base::Size(kMax, kMax), 0, kMax));
+    EXPECT_EQ(nullptr, create(base::Size(kMax / 4 + 1, 2), 0, kMax));
+    EXPECT_EQ(nullptr, create(base::Size(16, 16), kMax, 64));
+    EXPECT_EQ(nullptr, create(base::Size(1, kMax), 0, 4));
 }
 
 TEST_F(ShmPoolTest, GrowsButNeverShrinks)
@@ -126,13 +126,13 @@ TEST_F(ShmPoolTest, GrowsButNeverShrinks)
     ASSERT_TRUE(pool);
     EXPECT_EQ(4096u, pool->size());
 
-    EXPECT_FALSE(pool->createBuffer(QSize(64, 32), 0, 64 * 4, kFormat, nullptr));
+    EXPECT_FALSE(pool->createBuffer(base::Size(64, 32), 0, 64 * 4, kFormat, nullptr));
     // The client grows the file before asking the pool to follow.
     ASSERT_EQ(0, ftruncate(spare, 8192));
     close(spare);
     ASSERT_TRUE(pool->resize(8192));
     EXPECT_EQ(8192u, pool->size());
-    EXPECT_TRUE(pool->createBuffer(QSize(64, 32), 0, 64 * 4, kFormat, nullptr));
+    EXPECT_TRUE(pool->createBuffer(base::Size(64, 32), 0, 64 * 4, kFormat, nullptr));
 
     EXPECT_FALSE(pool->resize(4096));
     EXPECT_FALSE(pool->resize(0));
@@ -222,7 +222,7 @@ TEST_F(ShmPoolTest, AFaultedBufferReportsOnce)
     const int spare = dup(fd);
     std::shared_ptr<ShmPool> pool = ShmPool::create(fd, 8192);
     ASSERT_TRUE(pool);
-    std::shared_ptr<ShmBuffer> buffer = pool->createBuffer(QSize(32, 64), 0, 128, kFormat,
+    std::shared_ptr<ShmBuffer> buffer = pool->createBuffer(base::Size(32, 64), 0, 128, kFormat,
                                                            nullptr);
     ASSERT_TRUE(buffer);
 
@@ -337,7 +337,7 @@ TEST_F(ShmPoolTest, BuffersKeepThePoolAlive)
 {
     std::shared_ptr<ShmPool> pool = makePool(4096);
     ASSERT_TRUE(pool);
-    std::shared_ptr<ShmBuffer> buffer = pool->createBuffer(QSize(16, 16), 0, 64, kFormat,
+    std::shared_ptr<ShmBuffer> buffer = pool->createBuffer(base::Size(16, 16), 0, 64, kFormat,
                                                            nullptr);
     ASSERT_TRUE(buffer);
 

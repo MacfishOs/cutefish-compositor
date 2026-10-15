@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <cstdlib>
 #include <GLES3/gl3.h>
 #include <GLES2/gl2ext.h>
 #include <EGL/egl.h>
@@ -13,14 +14,14 @@
 #include <gbm.h>
 #include <unistd.h>
 
-#include <QByteArray>
-
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <string>
 
 #include "render/egl_render_target.h"
 #include "render/egl_renderer.h"
+#include "base/geometry.h"
 
 using namespace cutefish;
 
@@ -31,10 +32,10 @@ class CaptureDmaBuf : public testing::Test
 protected:
     void SetUp() override
     {
-        const auto devicePath = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-        if (devicePath.isEmpty())
+        const char *devicePath = std::getenv("CUTEFISH_TEST_DRM_DEVICE");
+        if (!devicePath || !*devicePath)
             GTEST_SKIP() << "Set CUTEFISH_TEST_DRM_DEVICE to an accessible DRM device";
-        m_fd = open(devicePath.constData(), O_RDWR | O_CLOEXEC);
+        m_fd = open(devicePath, O_RDWR | O_CLOEXEC);
         ASSERT_GE(m_fd, 0);
         m_device.reset(gbm_create_device(m_fd));
         ASSERT_TRUE(m_device);
@@ -56,7 +57,7 @@ protected:
         m_bo.reset(gbm_bo_create(m_device.get(), 64, 48, DRM_FORMAT_ARGB8888,
                                  GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR));
         ASSERT_TRUE(m_bo);
-        m_attributes.size = QSize(64, 48);
+        m_attributes.size = base::Size(64, 48);
         m_attributes.format = DRM_FORMAT_ARGB8888;
         m_attributes.modifier = gbm_bo_get_modifier(m_bo.get());
         render::DmaBufPlane plane;
@@ -79,13 +80,13 @@ protected:
 
     bool capture(const std::function<void()> &paint)
     {
-        const render::OutputRenderContext context {"test", QRect(0, 0, 64, 48), {64, 48}, 1, 0,
-                                                   1, QRect(0, 0, 64, 48)};
+        const render::OutputRenderContext context {"test", base::Rect(0, 0, 64, 48), {64, 48}, 1, 0,
+                                                   1, base::Rect(0, 0, 64, 48)};
         m_renderer->setOutputContext(context);
         if (!m_renderer->beginFrame(m_target.get()))
             return false;
         const bool rendered =
-                m_renderer->captureToDmaBuf(context, QSize(64, 48), m_attributes, paint);
+                m_renderer->captureToDmaBuf(context, base::Size(64, 48), m_attributes, paint);
         // The compositor hands a frame over only after its presentation, by
         // which time the GPU has finished; here nothing waits for it but this.
         glFinish();
@@ -98,7 +99,7 @@ protected:
     // not refreshed for another context's rendering; a consumer samples the
     // host copy directly. Texture row 0 is the first row in memory, so
     // glReadPixels y counts memory rows from the top of the image.
-    std::function<QByteArray(int, int)> readback()
+    std::function<std::string(int, int)> readback()
     {
         auto createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(
                 eglGetProcAddress("eglCreateImageKHR"));
@@ -132,7 +133,7 @@ protected:
         return [](int x, int row) {
             uint8_t rgba[4] = {0, 0, 0, 0};
             glReadPixels(x, row, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-            return QByteArray(reinterpret_cast<const char *>(rgba), 4);
+            return std::string(reinterpret_cast<const char *>(rgba), 4);
         };
     }
 
@@ -169,14 +170,14 @@ TEST_F(CaptureDmaBuf, RendersTopDownIntoALinearBuffer)
     ASSERT_TRUE(capture([&] {
         m_renderer->clear({0, 0, 1, 1});
         // Red at the top-left corner, green at the bottom-right corner.
-        m_renderer->fillRect(QRect(0, 0, 8, 8), {1, 0, 0, 1});
-        m_renderer->fillRect(QRect(56, 40, 8, 8), {0, 1, 0, 1});
+        m_renderer->fillRect(base::Rect(0, 0, 8, 8), {1, 0, 0, 1});
+        m_renderer->fillRect(base::Rect(56, 40, 8, 8), {0, 1, 0, 1});
     }));
 
     const auto at = readback();
-    EXPECT_EQ(at(2, 2), QByteArray("\xff\x00\x00\xff", 4));
-    EXPECT_EQ(at(61, 45), QByteArray("\x00\xff\x00\xff", 4));
-    EXPECT_EQ(at(32, 24), QByteArray("\x00\x00\xff\xff", 4));
+    EXPECT_EQ(at(2, 2), std::string("\xff\x00\x00\xff", 4));
+    EXPECT_EQ(at(61, 45), std::string("\x00\xff\x00\xff", 4));
+    EXPECT_EQ(at(32, 24), std::string("\x00\x00\xff\xff", 4));
     releaseReadback();
 }
 
@@ -190,15 +191,15 @@ TEST_F(CaptureDmaBuf, TransparentPixelsReplaceTheOldContents)
 
     ASSERT_TRUE(capture([&] {
         m_renderer->clear({0, 0, 0, 0});
-        m_renderer->fillRect(QRect(0, 0, 8, 8), {1, 0, 0, 1});
-        m_renderer->fillRect(QRect(56, 40, 8, 8), {0, 1, 0, 0.5f});
+        m_renderer->fillRect(base::Rect(0, 0, 8, 8), {1, 0, 0, 1});
+        m_renderer->fillRect(base::Rect(56, 40, 8, 8), {0, 1, 0, 0.5f});
     }));
 
     const auto at = readback();
-    EXPECT_EQ(at(2, 2), QByteArray("\xff\x00\x00\xff", 4));
-    EXPECT_EQ(at(32, 24), QByteArray("\x00\x00\x00\x00", 4));
+    EXPECT_EQ(at(2, 2), std::string("\xff\x00\x00\xff", 4));
+    EXPECT_EQ(at(32, 24), std::string("\x00\x00\x00\x00", 4));
     // Premultiplied half green, with no magenta underneath.
-    const QByteArray translucent = at(61, 45);
+    const std::string translucent = at(61, 45);
     EXPECT_EQ(uint8_t(translucent[0]), 0);
     EXPECT_NEAR(uint8_t(translucent[1]), 128, 1);
     EXPECT_EQ(uint8_t(translucent[2]), 0);
@@ -226,11 +227,11 @@ TEST_F(CaptureDmaBuf, AcceptsAnExplicitLinearModifier)
 
     ASSERT_TRUE(capture([&] {
         m_renderer->clear({0, 0, 1, 1});
-        m_renderer->fillRect(QRect(0, 0, 8, 8), {1, 0, 0, 1});
+        m_renderer->fillRect(base::Rect(0, 0, 8, 8), {1, 0, 0, 1});
     }));
 
     const auto at = readback();
-    EXPECT_EQ(at(2, 2), QByteArray("\xff\x00\x00\xff", 4));
-    EXPECT_EQ(at(32, 24), QByteArray("\x00\x00\xff\xff", 4));
+    EXPECT_EQ(at(2, 2), std::string("\xff\x00\x00\xff", 4));
+    EXPECT_EQ(at(32, 24), std::string("\x00\x00\xff\xff", 4));
     releaseReadback();
 }

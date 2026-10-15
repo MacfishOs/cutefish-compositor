@@ -18,10 +18,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <filesystem>
+#include <iterator>
 #include <memory>
 #include <vector>
-
-#include <QDir>
 
 #include "compositor/buffer.h"
 #include "compositor/shm_pool.h"
@@ -56,7 +56,7 @@ public:
 class RetainingBuffer final : public compositor::Buffer
 {
 public:
-    QSize size() const override { return QSize(64, 64); }
+    cutefish::base::Size size() const override { return {64, 64}; }
     render::PixelFormat format() const override { return render::PixelFormat::Bgrx8888; }
     const uint8_t* pixels() const override { return nullptr; }
     int stride() const override { return 256; }
@@ -64,7 +64,8 @@ public:
 
 int openFdCount()
 {
-    return QDir("/proc/self/fd").entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size();
+    return int(std::distance(std::filesystem::directory_iterator("/proc/self/fd"),
+                             std::filesystem::directory_iterator()));
 }
 
 } // namespace

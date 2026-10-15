@@ -18,7 +18,7 @@ DrmPropertyMap makePlaneProperties()
     uint32_t id = 100;
     for (const char* name : {"type", "FB_ID", "CRTC_ID", "SRC_X", "SRC_Y", "SRC_W", "SRC_H",
                              "CRTC_X", "CRTC_Y", "CRTC_W", "CRTC_H"}) {
-        map.insert(QByteArray(name), id, 0);
+        map.insert(name, id, 0);
         ++id;
     }
     return map;
@@ -84,20 +84,19 @@ TEST(DrmPropertyMap, ReportsMissingRequiredProperties)
     DrmPropertyMap map;
     map.insert("MODE_ID", 31, 0);
 
-    EXPECT_TRUE(map.missing({"MODE_ID"}).isEmpty());
-    EXPECT_EQ(map.missing(DrmOutput::requiredCrtcProperties()),
-              QList<QByteArray>{QByteArrayLiteral("ACTIVE")});
+    EXPECT_TRUE(map.missing({"MODE_ID"}).empty());
+    EXPECT_EQ(map.missing(DrmOutput::requiredCrtcProperties()), std::vector<std::string> {"ACTIVE"});
 }
 
 TEST(DrmPropertyMap, AtomicPlaneRequirementsAreSatisfied)
 {
     const DrmPropertyMap plane = makePlaneProperties();
-    EXPECT_TRUE(plane.missing(DrmOutput::requiredPlaneProperties()).isEmpty());
+    EXPECT_TRUE(plane.missing(DrmOutput::requiredPlaneProperties()).empty());
     EXPECT_EQ(plane.value("type"), 0u);
 
     DrmPropertyMap connector;
     connector.insert("CRTC_ID", 20, 0);
-    EXPECT_TRUE(connector.missing(DrmOutput::requiredConnectorProperties()).isEmpty());
+    EXPECT_TRUE(connector.missing(DrmOutput::requiredConnectorProperties()).empty());
 }
 
 TEST(DrmPropertyMap, MissingListsEveryAbsentName)

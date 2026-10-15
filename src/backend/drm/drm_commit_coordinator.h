@@ -11,10 +11,10 @@
 
 #pragma once
 
-#include <QString>
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 
 #include "backend/drm/drm_device_api.h"
 
@@ -31,7 +31,7 @@ enum class DrmCommitStatus {
     RollbackFailed
 };
 
-QString drmCommitMessage(DrmCommitStatus status);
+std::string drmCommitMessage(DrmCommitStatus status);
 
 class DrmCommitCoordinator
 {

@@ -5,7 +5,7 @@
 // Upstream: chromium/src/components/exo/touch_delegate.h
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: gfx::PointF becomes QPointF. libinput reports no
+// Adapted for Cutefish: gfx::PointF becomes base::PointF. libinput reports no
 // contact size, so the shape callback is not carried over.
 
 #ifndef CUTEFISH_INPUT_TOUCH_DELEGATE_H_
@@ -13,9 +13,9 @@
 
 #include <cstdint>
 
-#include <QPointF>
 
 #include "input/types.h"
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 class Surface;
@@ -40,14 +40,14 @@ public:
     // A new touch point appeared on `surface`, at `location` relative to its
     // origin. Every later event of this point carries the same `id`.
     virtual void onTouchDown(compositor::Surface* surface, Timestamp timestamp, int32_t id,
-                             const QPointF& location) = 0;
+                             const base::PointF& location) = 0;
 
     // The touch point is gone; nothing more is sent for `id`.
     virtual void onTouchUp(Timestamp timestamp, int32_t id) = 0;
 
     // The touch point moved, to `location` relative to the surface it went
     // down on.
-    virtual void onTouchMotion(Timestamp timestamp, int32_t id, const QPointF& location) = 0;
+    virtual void onTouchMotion(Timestamp timestamp, int32_t id, const base::PointF& location) = 0;
 
     // The client should apply every touch update since the last frame.
     virtual void onTouchFrame() = 0;

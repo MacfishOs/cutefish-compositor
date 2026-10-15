@@ -4,27 +4,33 @@
 
 #include "xwayland_server.h"
 
+#include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
 #include <linux/close_range.h>
+#include <poll.h>
+#include <sys/epoll.h>
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
-#include <QDataStream>
-#include <QDateTime>
-#include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QSaveFile>
-#include <QSocketNotifier>
-
+#include "base/event_loop.h"
+#include "base/json.h"
+#include "base/logging.h"
+#include "base/paths.h"
+#include "base/strings.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "core/process_environment.h"
 #include "wayland/server.h"
 #include "wayland/server_util.h"
@@ -35,27 +41,56 @@
 
 namespace cutefish::xwayland {
 
+namespace {
+
+const base::LogCategory& logs()
+{
+    return base::LogCategory::defaultCategory();
+}
+
+bool writeAll(int fd, const void* data, size_t size)
+{
+    const char* bytes = static_cast<const char*>(data);
+    while (size > 0) {
+        const ssize_t written = write(fd, bytes, size);
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            return false;
+        bytes += written;
+        size -= size_t(written);
+    }
+    return true;
+}
+
+void appendBigEndian(std::string& data, uint16_t value)
+{
+    data += char(value >> 8);
+    data += char(value & 0xff);
+}
+
+} // namespace
+
 XwaylandServer::XwaylandServer(wl_display* display, wayland::PrivilegedClients* privileged,
                                wm::WindowManager* manager)
     : m_display(display)
     , m_privileged(privileged)
     , m_manager(manager)
+    , m_loop(*core::mainLoop())
+    , m_timeout(&m_loop)
+    , m_deferredFailure(&m_loop)
 {
     m_timeout.setSingleShot(true);
-    connect(&m_timeout, &QTimer::timeout, this, [this] {
-        fail(QStringLiteral("startup timeout"));
-    });
-    // One crash reports errorOccurred and finished, and closes both connections:
-    // deferred failures of one epoch count as one, and QProcess is not
-    // restarted from inside its own signal.
-    connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
-        if (!m_stopping)
-            deferFailure(m_process.errorString());
-    });
-    connect(&m_process, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
-        if (!m_stopping)
-            deferFailure(QStringLiteral("Xwayland exited"));
-    });
+    m_timeout.onTimeout = [this] {
+        fail("startup timeout");
+    };
+    // One crash reports through the process, the Wayland connection and the
+    // XWM connection: deferred failures of one epoch count as one, and the
+    // server is not restarted from inside its own callbacks.
+    m_deferredFailure.setSingleShot(true);
+    m_deferredFailure.onTimeout = [this] {
+        fail(std::exchange(m_deferredError, {}));
+    };
 }
 
 XwaylandServer::~XwaylandServer()
@@ -70,47 +105,51 @@ bool XwaylandServer::start(const Options& options)
     m_options = options;
     m_restarts.clear();
     m_readinessFile = options.readinessFile;
-    m_runtime = std::make_unique<QTemporaryDir>(qEnvironmentVariable("XDG_RUNTIME_DIR", "/tmp") +
-                                                "/cutefish-xwayland-XXXXXX");
-    if (!m_runtime->isValid()) {
-        fail(QStringLiteral("cannot create private runtime directory"));
+    const char* runtime = getenv("XDG_RUNTIME_DIR");
+    std::string pattern = std::string(runtime && *runtime ? runtime : "/tmp")
+            + "/cutefish-xwayland-XXXXXX";
+    if (!mkdtemp(pattern.data())) {
+        fail("cannot create private runtime directory");
         return false;
     }
-    m_authority = m_runtime->path() + "/Xauthority";
-    QFile auth(m_authority);
-    if (!auth.open(QIODevice::WriteOnly | QIODevice::NewOnly) ||
-        !auth.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
-        fail(QStringLiteral("cannot create Xauthority"));
+    m_runtime = pattern;
+    m_authority = m_runtime + "/Xauthority";
+    const int auth = open(m_authority.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (auth < 0) {
+        fail("cannot create Xauthority");
         return false;
     }
     char cookie[16];
     if (getrandom(cookie, sizeof(cookie), 0) != sizeof(cookie)) {
-        fail(QStringLiteral("cannot generate authentication cookie"));
+        close(auth);
+        fail("cannot generate authentication cookie");
         return false;
     }
     // FamilyWild permits displayfd allocation before the display number is known.
-    QDataStream stream(&auth);
-    stream.setByteOrder(QDataStream::BigEndian);
-    stream << quint16(65535) << quint16(0) << quint16(0) << quint16(18);
-    stream.writeRawData("MIT-MAGIC-COOKIE-1", 18);
-    stream << quint16(sizeof(cookie));
-    stream.writeRawData(cookie, sizeof(cookie));
-    if (stream.status() != QDataStream::Ok || !auth.flush()) {
-        fail(QStringLiteral("cannot write Xauthority"));
+    std::string entry;
+    for (uint16_t value : {uint16_t(65535), uint16_t(0), uint16_t(0), uint16_t(18)})
+        appendBigEndian(entry, value);
+    entry += "MIT-MAGIC-COOKIE-1";
+    appendBigEndian(entry, uint16_t(sizeof(cookie)));
+    entry.append(cookie, sizeof(cookie));
+    const bool written = writeAll(auth, entry.data(), entry.size());
+    explicit_bzero(entry.data(), entry.size());
+    explicit_bzero(cookie, sizeof(cookie));
+    if (close(auth) != 0 || !written) {
+        fail("cannot write Xauthority");
         return false;
     }
-    auth.close();
     if (!m_options.lazy)
         return launch();
     if (!openSockets()) {
-        fail(QStringLiteral("cannot open X11 display sockets"));
+        fail("cannot open X11 display sockets");
         return false;
     }
     if (!writeReadiness())
         return false;
     m_published = true;
-    qInfo().noquote() << "Xwayland on demand: DISPLAY=" + m_displayName
-                      << "XAUTHORITY=" + m_authority;
+    CF_INFO(logs()) << "Xwayland on demand: DISPLAY=" + m_displayName
+                    << "XAUTHORITY=" + m_authority;
     arm();
     if (ready)
         ready();
@@ -127,12 +166,12 @@ bool XwaylandServer::openSockets()
         || (directory.st_uid != 0 && directory.st_uid != getuid())
         || !(directory.st_mode & S_ISVTX))
         return false;
-    auto listenOn = [](const QByteArray& path, bool abstract) {
+    auto listenOn = [](const std::string& path, bool abstract) {
         sockaddr_un address {};
         address.sun_family = AF_UNIX;
-        if (size_t(path.size()) + 1 > sizeof(address.sun_path))
+        if (path.size() + 1 > sizeof(address.sun_path))
             return -1;
-        std::memcpy(address.sun_path + (abstract ? 1 : 0), path.constData(), path.size());
+        std::memcpy(address.sun_path + (abstract ? 1 : 0), path.data(), path.size());
         const socklen_t length = offsetof(sockaddr_un, sun_path) + path.size() + 1;
         const int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (fd < 0)
@@ -144,19 +183,26 @@ bool XwaylandServer::openSockets()
         return fd;
     };
     for (int display = 0; display < 100; ++display) {
-        const QByteArray lock = "/tmp/.X" + QByteArray::number(display) + "-lock";
+        const std::string lock = "/tmp/.X" + std::to_string(display) + "-lock";
         int fd = -1;
         for (int attempt = 0; attempt < 2 && fd < 0; ++attempt) {
-            fd = open(lock.constData(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0444);
+            fd = open(lock.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0444);
             if (fd >= 0 || errno != EEXIST)
                 break;
             // A lock left by a server that died is taken over, as X servers do.
-            QFile stale(QString::fromLocal8Bit(lock));
-            const qint64 owner = stale.open(QIODevice::ReadOnly) ? stale.readLine().trimmed().toLongLong()
-                                                                 : 0;
+            int64_t owner = 0;
+            if (FILE* stale = fopen(lock.c_str(), "re")) {
+                char line[32] = {};
+                if (fgets(line, sizeof(line), stale)) {
+                    std::string_view text(line);
+                    text = text.substr(0, text.find('\n'));
+                    owner = base::strings::toNumber<int64_t>(text).value_or(0);
+                }
+                fclose(stale);
+            }
             if (owner <= 0 || ::kill(pid_t(owner), 0) == 0 || errno != ESRCH)
                 break;
-            unlink(lock.constData());
+            unlink(lock.c_str());
         }
         if (fd < 0)
             continue;
@@ -164,55 +210,56 @@ bool XwaylandServer::openSockets()
         std::snprintf(pid, sizeof(pid), "%10d\n", int(getpid()));
         const bool written = write(fd, pid, 11) == 11;
         close(fd);
-        const QByteArray path = "/tmp/.X11-unix/X" + QByteArray::number(display);
-        unlink(path.constData());
+        const std::string path = "/tmp/.X11-unix/X" + std::to_string(display);
+        unlink(path.c_str());
         const int filesystem = written ? listenOn(path, false) : -1;
         const int abstract = filesystem >= 0 ? listenOn(path, true) : -1;
         if (abstract < 0) {
             if (filesystem >= 0) {
                 close(filesystem);
-                unlink(path.constData());
+                unlink(path.c_str());
             }
-            unlink(lock.constData());
+            unlink(lock.c_str());
             continue;
         }
         m_listenFds = {filesystem, abstract};
-        m_lockFile = QString::fromLocal8Bit(lock);
-        m_socketFile = QString::fromLocal8Bit(path);
-        m_displayName = ':' + QString::number(display);
+        m_lockFile = lock;
+        m_socketFile = path;
+        m_displayName = ':' + std::to_string(display);
         return true;
     }
     return false;
 }
 
+void XwaylandServer::closeListenWatches()
+{
+    for (int watch : std::exchange(m_listenWatches, {}))
+        m_loop.unwatch(watch);
+}
+
 void XwaylandServer::closeSockets()
 {
-    m_listenNotifiers.clear();
+    closeListenWatches();
     for (int fd : std::exchange(m_listenFds, {}))
         close(fd);
-    if (!m_socketFile.isEmpty())
-        unlink(QFile::encodeName(std::exchange(m_socketFile, {})).constData());
-    if (!m_lockFile.isEmpty())
-        unlink(QFile::encodeName(std::exchange(m_lockFile, {})).constData());
+    if (!m_socketFile.empty())
+        unlink(std::exchange(m_socketFile, {}).c_str());
+    if (!m_lockFile.empty())
+        unlink(std::exchange(m_lockFile, {}).c_str());
 }
 
 void XwaylandServer::arm()
 {
-    if (m_listenNotifiers.empty()) {
-        for (int fd : m_listenFds) {
-            auto notifier = std::make_unique<QSocketNotifier>(fd, QSocketNotifier::Read);
-            connect(notifier.get(), &QSocketNotifier::activated, this, [this] {
-                // Xwayland accepts on the same sockets from here on.
-                for (auto& listener : m_listenNotifiers)
-                    listener->setEnabled(false);
-                if (!m_client)
-                    launch();
-            });
-            m_listenNotifiers.push_back(std::move(notifier));
-        }
+    if (!m_listenWatches.empty())
+        return;
+    for (int fd : m_listenFds) {
+        m_listenWatches.push_back(m_loop.watch(fd, EPOLLIN, [this](uint32_t) {
+            // Xwayland accepts on the same sockets from here on.
+            closeListenWatches();
+            if (!m_client)
+                launch();
+        }));
     }
-    for (auto& listener : m_listenNotifiers)
-        listener->setEnabled(true);
 }
 
 bool XwaylandServer::launch()
@@ -223,14 +270,14 @@ bool XwaylandServer::launch()
         for (int fd : {wayland[0], wayland[1], wm[0], wm[1], notify[0], notify[1]})
             if (fd >= 0)
                 close(fd);
-        fail(QStringLiteral("cannot create Xwayland channels"));
+        fail("cannot create Xwayland channels");
         return false;
     }
     m_client = wl_client_create(m_display, wayland[0]);
     if (!m_client) {
         for (int fd : {wayland[0], wayland[1], wm[0], wm[1], notify[0], notify[1]})
             close(fd);
-        fail(QStringLiteral("cannot adopt Wayland channel"));
+        fail("cannot adopt Wayland channel");
         return false;
     }
     // Before Xwayland binds anything: its outputs are sized in its own units.
@@ -246,7 +293,7 @@ bool XwaylandServer::launch()
         if (self->m_shell)
             self->m_shell->revokeClient();
         if (!self->m_stopping)
-            self->deferFailure(QStringLiteral("Wayland connection lost"));
+            self->deferFailure("Wayland connection lost");
     };
     wl_client_add_destroy_listener(m_client, &m_destroy.listener);
     m_association = std::make_unique<SurfaceAssociation>();
@@ -263,24 +310,82 @@ bool XwaylandServer::launch()
     m_xwm->setWindowLimit(m_options.windowLimit);
     m_xwm->initialized = [this](bool ok) {
         if (!ok) {
-            deferFailure(QStringLiteral("XWM initialization failed"));
+            deferFailure("XWM initialization failed");
             return;
         }
         m_xwmReady = true;
         publish();
     };
     m_xwm->failed = [this] {
-        deferFailure(QStringLiteral("XWM connection lost"));
+        deferFailure("XWM connection lost");
     };
     m_readFd = notify[0];
     fcntl(m_readFd, F_SETFL, O_NONBLOCK);
-    m_readNotifier = new QSocketNotifier(m_readFd, QSocketNotifier::Read, this);
-    connect(m_readNotifier, &QSocketNotifier::activated, this, [this] {
+    m_readWatch = m_loop.watch(m_readFd, EPOLLIN, [this](uint32_t) {
         readDisplay();
     });
     const int waylandChild = wayland[1], wmChild = wm[1], notifyChild = notify[1];
-    const std::vector<int> listenFds = m_listenFds;
-    m_process.setChildProcessModifier([waylandChild, wmChild, notifyChild, listenFds] {
+    std::vector<std::string> arguments {"-rootless", "-terminate",
+                                        "-nolisten", "tcp",
+                                        "-auth",     m_authority,
+                                        "-displayfd", std::to_string(notifyChild),
+                                        "-wm",       std::to_string(wmChild)};
+    // A restart takes the display the session already exported.
+    if (!m_displayName.empty())
+        arguments.push_back(m_displayName);
+    // The lock and the sockets are already ours.
+    if (!m_listenFds.empty())
+        arguments.push_back("-nolock");
+    for (int fd : m_listenFds) {
+        arguments.push_back("-listenfd");
+        arguments.push_back(std::to_string(fd));
+    }
+    if (m_options.software)
+        arguments.push_back("-shm");
+    std::vector<int> inherited {waylandChild, wmChild, notifyChild};
+    inherited.insert(inherited.end(), m_listenFds.begin(), m_listenFds.end());
+    spawn(arguments, inherited, waylandChild);
+    m_xwm->setServerProcess(processId());
+    close(waylandChild);
+    close(wmChild);
+    close(notifyChild);
+    m_xwm->start(wm[0]);
+    m_timeout.start(std::chrono::milliseconds(m_options.timeoutMs));
+    return true;
+}
+
+// The descriptors Xwayland needs, and nothing else, are inherited; stdout and
+// stderr are the compositor's.
+bool XwaylandServer::spawn(const std::vector<std::string>& arguments,
+                           const std::vector<int>& inherited, int waylandSocket)
+{
+    std::string program = m_options.executable;
+    if (program.find('/') == std::string::npos)
+        program = base::paths::findExecutable(program);
+    // Built before the fork: the child may only make async-signal-safe calls.
+    std::vector<std::string> environment;
+    for (const std::string& variable : childEnvironment()) {
+        if (!variable.starts_with("WAYLAND_SOCKET="))
+            environment.push_back(variable);
+    }
+    environment.push_back("WAYLAND_SOCKET=" + std::to_string(waylandSocket));
+    std::vector<char*> argv {const_cast<char*>(program.c_str())};
+    for (const std::string& argument : arguments)
+        argv.push_back(const_cast<char*>(argument.c_str()));
+    argv.push_back(nullptr);
+    std::vector<char*> envp;
+    for (const std::string& variable : environment)
+        envp.push_back(const_cast<char*>(variable.c_str()));
+    envp.push_back(nullptr);
+
+    // The child reports a failed exec through this; a successful one closes it.
+    int status[2];
+    if (pipe2(status, O_CLOEXEC) != 0) {
+        deferFailure("cannot create a pipe");
+        return false;
+    }
+    const pid_t pid = fork();
+    if (pid == 0) {
         if (close_range(3, ~0u, CLOSE_RANGE_CLOEXEC) < 0)
             _exit(127);
         sigset_t empty;
@@ -288,39 +393,69 @@ bool XwaylandServer::launch()
         sigprocmask(SIG_SETMASK, &empty, nullptr);
         for (int signal : {SIGINT, SIGTERM, SIGPIPE, SIGHUP, SIGCHLD})
             ::signal(signal, SIG_DFL);
-        fcntl(waylandChild, F_SETFD, 0);
-        fcntl(wmChild, F_SETFD, 0);
-        fcntl(notifyChild, F_SETFD, 0);
-        for (int fd : listenFds)
+        for (int fd : inherited)
             fcntl(fd, F_SETFD, 0);
-    });
-    auto env = childEnvironment();
-    env.insert("WAYLAND_SOCKET", QString::number(waylandChild));
-    m_process.setProcessEnvironment(env);
-    m_process.setProcessChannelMode(QProcess::ForwardedChannels);
-    QStringList args {"-rootless",  "-terminate",
-                      "-nolisten",  "tcp",
-                      "-auth",      m_authority,
-                      "-displayfd", QString::number(notifyChild),
-                      "-wm",        QString::number(wmChild)};
-    // A restart takes the display the session already exported.
-    if (!m_displayName.isEmpty())
-        args << m_displayName;
-    // The lock and the sockets are already ours.
-    if (!m_listenFds.empty())
-        args << "-nolock";
-    for (int fd : m_listenFds)
-        args << "-listenfd" << QString::number(fd);
-    if (m_options.software)
-        args << "-shm";
-    m_process.start(m_options.executable, args);
-    m_xwm->setServerProcess(m_process.processId());
-    close(waylandChild);
-    close(wmChild);
-    close(notifyChild);
-    m_xwm->start(wm[0]);
-    m_timeout.start(m_options.timeoutMs);
+        execve(argv[0], argv.data(), envp.data());
+        const int error = errno;
+        (void)!write(status[1], &error, sizeof(error));
+        _exit(127);
+    }
+    close(status[1]);
+    if (pid < 0) {
+        close(status[0]);
+        deferFailure(std::string("fork: ") + strerror(errno));
+        return false;
+    }
+    int error = 0;
+    ssize_t received;
+    do {
+        received = read(status[0], &error, sizeof(error));
+    } while (received < 0 && errno == EINTR);
+    close(status[0]);
+    if (received == sizeof(error)) {
+        waitpid(pid, nullptr, 0);
+        deferFailure(std::string("execve: ") + strerror(error));
+        return false;
+    }
+    m_pid = pid;
+    m_pidfd = int(syscall(SYS_pidfd_open, pid, 0));
+    if (m_pidfd >= 0)
+        m_pidWatch = m_loop.watch(m_pidfd, EPOLLIN, [this](uint32_t) { reap(); });
     return true;
+}
+
+void XwaylandServer::reap()
+{
+    if (m_pid <= 0 || waitpid(m_pid, nullptr, WNOHANG) != m_pid)
+        return;
+    m_pid = -1;
+    if (m_pidWatch)
+        m_loop.unwatch(std::exchange(m_pidWatch, 0));
+    if (m_pidfd >= 0)
+        close(std::exchange(m_pidfd, -1));
+    if (!m_stopping)
+        deferFailure("Xwayland exited");
+}
+
+// SIGTERM, 100 ms for it to work, then SIGKILL and a wait for the end.
+void XwaylandServer::stopProcess()
+{
+    if (m_pidWatch)
+        m_loop.unwatch(std::exchange(m_pidWatch, 0));
+    if (m_pid > 0) {
+        ::kill(m_pid, SIGTERM);
+        bool gone = false;
+        if (m_pidfd >= 0) {
+            pollfd descriptor {m_pidfd, POLLIN, 0};
+            gone = poll(&descriptor, 1, 100) > 0;
+        }
+        if (!gone)
+            ::kill(m_pid, SIGKILL);
+        waitpid(m_pid, nullptr, 0);
+        m_pid = -1;
+    }
+    if (m_pidfd >= 0)
+        close(std::exchange(m_pidfd, -1));
 }
 
 void XwaylandServer::readDisplay()
@@ -329,9 +464,9 @@ void XwaylandServer::readDisplay()
     while (true) {
         const auto n = read(m_readFd, buffer, sizeof(buffer));
         if (n > 0) {
-            m_readiness.append(buffer, n);
+            m_readiness.append(buffer, size_t(n));
             if (m_readiness.size() > 12) {
-                fail(QStringLiteral("oversized displayfd response"));
+                fail("oversized displayfd response");
                 return;
             }
         } else if (n < 0 && errno == EINTR) {
@@ -339,61 +474,69 @@ void XwaylandServer::readDisplay()
         } else if (n < 0 && errno == EAGAIN) {
             break;
         } else {
-            if (!m_readiness.endsWith('\n')) {
-                fail(QStringLiteral("displayfd closed before readiness"));
+            if (!m_readiness.ends_with('\n')) {
+                fail("displayfd closed before readiness");
                 return;
             }
             break;
         }
     }
-    if (!m_readiness.contains('\n'))
+    if (m_readiness.find('\n') == std::string::npos)
         return;
-    auto value = m_readiness;
-    value.chop(1);
-    bool valid = !value.isEmpty() && m_readiness.endsWith('\n');
+    const std::string value = m_readiness.substr(0, m_readiness.size() - 1);
+    bool valid = !value.empty() && m_readiness.ends_with('\n');
     for (char c : value)
         valid &= c >= '0' && c <= '9';
-    bool converted = false;
-    const auto number = value.toUInt(&converted);
-    if (!valid || !converted || number > 65535) {
-        fail(QStringLiteral("malformed displayfd response"));
+    const std::optional<uint32_t> number = base::strings::toNumber<uint32_t>(value);
+    if (!valid || !number || *number > 65535) {
+        fail("malformed displayfd response");
         return;
     }
-    const QString name = ':' + QString::number(number);
-    if (!m_displayName.isEmpty() && name != m_displayName) {
-        fail(QStringLiteral("restarted on another display"));
+    const std::string name = ':' + std::to_string(*number);
+    if (!m_displayName.empty() && name != m_displayName) {
+        fail("restarted on another display");
         return;
     }
     m_displayName = name;
-    m_readNotifier->setEnabled(false);
+    m_loop.unwatch(std::exchange(m_readWatch, 0));
     close(std::exchange(m_readFd, -1));
     publish();
 }
 
+// Written to a file of its own and renamed over the target, readable by the
+// user alone.
 bool XwaylandServer::writeReadiness()
 {
-    if (!m_readinessFile.isEmpty()) {
-        QSaveFile file(m_readinessFile);
-        if (!file.open(QIODevice::WriteOnly) ||
-            !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
-            fail(QStringLiteral("cannot create readiness file"));
-            return false;
+    if (m_readinessFile.empty())
+        return true;
+    const std::filesystem::path target(m_readinessFile);
+    std::string temporary =
+            (target.parent_path() / (target.filename().string() + ".XXXXXX")).string();
+    const int fd = mkostemp(temporary.data(), O_CLOEXEC);
+    if (fd < 0 || fchmod(fd, 0600) != 0) {
+        if (fd >= 0) {
+            close(fd);
+            unlink(temporary.c_str());
         }
-        const auto json =
-            QJsonDocument(QJsonObject {{"DISPLAY", m_displayName}, {"XAUTHORITY", m_authority}})
-                .toJson(QJsonDocument::Compact);
-        if (file.write(json) != json.size() || !file.commit()) {
-            fail(QStringLiteral("cannot publish readiness file"));
-            return false;
-        }
+        fail("cannot create readiness file");
+        return false;
+    }
+    const std::string json =
+            base::json::Value::object({{"DISPLAY", m_displayName}, {"XAUTHORITY", m_authority}})
+                    .serialize();
+    const bool written = writeAll(fd, json.data(), json.size()) && fsync(fd) == 0;
+    if (close(fd) != 0 || !written || rename(temporary.c_str(), m_readinessFile.c_str()) != 0) {
+        unlink(temporary.c_str());
+        fail("cannot publish readiness file");
+        return false;
     }
     return true;
 }
 
 void XwaylandServer::publish()
 {
-    if (m_ready || !m_xwmReady || !m_shell || !m_shell->isBound() || m_displayName.isEmpty() ||
-        !m_error.isEmpty())
+    if (m_ready || !m_xwmReady || !m_shell || !m_shell->isBound() || m_displayName.empty() ||
+        !m_error.empty())
         return;
     // A lazy server published its display before Xwayland ran.
     if (!m_options.lazy && !writeReadiness())
@@ -401,30 +544,29 @@ void XwaylandServer::publish()
     m_timeout.stop();
     m_ready = true;
     m_published = true;
-    qInfo().noquote() << "Xwayland ready: DISPLAY=" + m_displayName << "XAUTHORITY=" + m_authority;
+    CF_INFO(logs()) << "Xwayland ready: DISPLAY=" + m_displayName << "XAUTHORITY=" + m_authority;
     if (!m_options.lazy && ready)
         ready();
     if (started)
         started();
 }
 
-void XwaylandServer::deferFailure(const QString& error)
+void XwaylandServer::deferFailure(const std::string& error)
 {
-    const auto epoch = m_epoch;
-    QTimer::singleShot(0, this, [this, epoch, error] {
-        if (epoch == m_epoch)
-            fail(error);
-    });
+    if (m_deferredFailure.isActive())
+        return;
+    m_deferredError = error;
+    m_deferredFailure.start(std::chrono::nanoseconds(0));
 }
 
-void XwaylandServer::fail(const QString& error)
+void XwaylandServer::fail(const std::string& error)
 {
-    if (m_stopping || !m_error.isEmpty())
+    if (m_stopping || !m_error.empty())
         return;
     // X11 clients die with the server, but new ones keep working: the session
     // exported DISPLAY and XAUTHORITY once, and a restart keeps both.
     if (m_published && mayRestart()) {
-        qWarning() << "Xwayland lost:" << error << "- restarting";
+        CF_WARNING(logs()) << "Xwayland lost:" << error << "- restarting";
         teardown(true);
         // A lazy server waits for the next client again.
         if (m_options.lazy)
@@ -434,7 +576,7 @@ void XwaylandServer::fail(const QString& error)
         return;
     }
     m_error = error;
-    qWarning() << "Xwayland unavailable:" << error;
+    CF_WARNING(logs()) << "Xwayland unavailable:" << error;
     stop();
     if (failure)
         failure(error);
@@ -472,7 +614,9 @@ void XwaylandServer::applyScale()
 
 bool XwaylandServer::mayRestart()
 {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
     while (!m_restarts.empty() && now - m_restarts.front() > 60000)
         m_restarts.pop_front();
     if (int(m_restarts.size()) >= m_options.restartLimit)
@@ -492,10 +636,12 @@ void XwaylandServer::teardown(bool keepSession)
     if (m_stopping)
         return;
     m_stopping = true;
-    ++m_epoch;
     m_timeout.stop();
+    m_deferredFailure.stop();
+    m_deferredError.clear();
     m_ready = m_xwmReady = false;
-    delete std::exchange(m_readNotifier, nullptr);
+    if (m_readWatch)
+        m_loop.unwatch(std::exchange(m_readWatch, 0));
     if (m_readFd >= 0)
         close(std::exchange(m_readFd, -1));
     m_xwm.reset();
@@ -504,19 +650,16 @@ void XwaylandServer::teardown(bool keepSession)
     m_shell.reset();
     m_keyboardGrab.reset();
     m_association.reset();
-    if (m_process.state() != QProcess::NotRunning) {
-        m_process.terminate();
-        if (!m_process.waitForFinished(100)) {
-            m_process.kill();
-            m_process.waitForFinished(1000);
-        }
-    }
+    stopProcess();
     m_readiness.clear();
     if (!keepSession) {
         closeSockets();
-        if (!m_readinessFile.isEmpty())
-            QFile::remove(m_readinessFile);
-        m_runtime.reset();
+        if (!m_readinessFile.empty())
+            unlink(m_readinessFile.c_str());
+        if (!m_runtime.empty()) {
+            std::error_code error;
+            std::filesystem::remove_all(std::exchange(m_runtime, {}), error);
+        }
         m_displayName.clear();
         m_authority.clear();
     }

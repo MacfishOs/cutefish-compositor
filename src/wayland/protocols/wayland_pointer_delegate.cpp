@@ -42,7 +42,7 @@ WaylandPointerDelegate::WaylandPointerDelegate(wl_resource *pointerResource,
     : m_seat(seat)
     , m_pointerResource(pointerResource)
     , m_serialTracker(serialTracker)
-    , m_selection(selection)
+    , m_selection(selection ? selection->weakPtr() : nullptr)
 {
 }
 
@@ -64,7 +64,8 @@ bool WaylandPointerDelegate::canAcceptPointerEventsForSurface(compositor::Surfac
     return surfaceResource && wl_resource_get_client(surfaceResource) == client();
 }
 
-void WaylandPointerDelegate::onPointerEnter(compositor::Surface *surface, const QPointF &location,
+void WaylandPointerDelegate::onPointerEnter(compositor::Surface *surface,
+                                            const base::PointF &location,
                                             input::ButtonFlags)
 {
     wl_resource *surfaceResource = getSurfaceResource(surface);
@@ -77,12 +78,12 @@ void WaylandPointerDelegate::onPointerEnter(compositor::Surface *surface, const 
     // toolkits do not expect it, so the flags are only used to seed our own
     // state.
     const auto serial = m_serialTracker->nextSerial(SerialTracker::POINTER_ENTER);
-    qCDebug(cfCursorTransitions) << "enter pointer" << wl_resource_get_id(m_pointerResource)
-                                 << "client" << client() << "serial" << serial << "surface"
-                                 << surface;
+    CF_DEBUG(cfCursorTransitions) << "enter pointer" << wl_resource_get_id(m_pointerResource)
+                                  << "client" << client() << "serial" << serial << "surface"
+                                  << surface;
     m_enterSerial = serial;
     m_serialTracker->recordActivationSerial(serial, m_pointerResource);
-    const QPointF local = logicalToClient(location, clientScale(client()));
+    const base::PointF local = logicalToClient(location, clientScale(client()));
     wl_pointer_send_enter(m_pointerResource, serial, surfaceResource,
                           wl_fixed_from_double(local.x()), wl_fixed_from_double(local.y()));
 }
@@ -99,9 +100,10 @@ void WaylandPointerDelegate::onPointerLeave(compositor::Surface *surface)
                           surfaceResource);
 }
 
-void WaylandPointerDelegate::onPointerMotion(input::Timestamp timestamp, const QPointF &location)
+void WaylandPointerDelegate::onPointerMotion(input::Timestamp timestamp,
+                                             const base::PointF &location)
 {
-    const QPointF local = logicalToClient(location, clientScale(client()));
+    const base::PointF local = logicalToClient(location, clientScale(client()));
     wl_pointer_send_motion(m_pointerResource, timePointToMilliseconds(timestamp),
                            wl_fixed_from_double(local.x()), wl_fixed_from_double(local.y()));
 }
@@ -144,7 +146,8 @@ void WaylandPointerDelegate::onPointerButton(input::Timestamp timestamp,
     }
 }
 
-void WaylandPointerDelegate::onPointerScroll(input::Timestamp timestamp, const QPointF &offset,
+void WaylandPointerDelegate::onPointerScroll(input::Timestamp timestamp,
+                                             const base::PointF &offset,
                                              bool discrete)
 {
     if (wl_resource_get_version(m_pointerResource) >= WL_POINTER_AXIS_SOURCE_SINCE_VERSION) {

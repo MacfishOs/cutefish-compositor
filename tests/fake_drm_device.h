@@ -135,8 +135,8 @@ public:
 
     // --- Cursor. ---
 
-    bool setCursor(uint32_t crtcId, uint32_t handle, const QSize &size,
-                   const QPoint &hotspot) override
+    bool setCursor(uint32_t crtcId, uint32_t handle, const base::Size &size,
+                   const base::Point &hotspot) override
     {
         if (setCursorFails)
             return false;
@@ -148,16 +148,16 @@ public:
         return true;
     }
 
-    bool moveCursor(uint32_t, const QPoint &position) override
+    bool moveCursor(uint32_t, const base::Point &position) override
     {
         cursorPosition = position;
         ++moveCursorCalls;
         return true;
     }
 
-    QSize maxCursorSize() const override { return maxCursor; }
+    base::Size maxCursorSize() const override { return maxCursor; }
 
-    bool createDumbBuffer(const QSize &size, backend::DumbBufferInfo *info) override
+    bool createDumbBuffer(const base::Size &size, backend::DumbBufferInfo *info) override
     {
         if (dumbBufferFails)
             return false;
@@ -204,7 +204,7 @@ public:
     bool primeFails = false;
     bool setCursorFails = false;
     bool dumbBufferFails = false;
-    QSize maxCursor {64, 64};
+    base::Size maxCursor {64, 64};
     // A real GBM device standing in for the renderer that shares this file.
     gbm_device *gbm = nullptr;
 
@@ -217,9 +217,9 @@ public:
     std::vector<uint32_t> closedHandles;
     uint32_t cursorCrtc = 0;
     uint32_t cursorHandle = 0;
-    QSize cursorSize;
-    QPoint cursorHotspot;
-    QPoint cursorPosition;
+    base::Size cursorSize;
+    base::Point cursorHotspot;
+    base::Point cursorPosition;
     int setCursorCalls = 0;
     int moveCursorCalls = 0;
     int liveDumbBuffers = 0;

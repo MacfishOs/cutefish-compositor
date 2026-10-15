@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
-
-#include <QSet>
+#include <cctype>
+#include <set>
+#include <string>
+#include <utility>
 
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
@@ -56,58 +58,61 @@ uint32_t defaultCode(ModifierKind kind)
 
 } // namespace
 
-bool isTerminal(const QString &applicationId)
+bool isTerminal(std::string_view applicationId)
 {
     // Lower-cased application ids and X11 classes, after Toshy's lists.
-    static const QSet<QString> terminals = {
-            QStringLiteral("cutefish-terminal"),
-            QStringLiteral("alacritty"),
-            QStringLiteral("kitty"),
-            QStringLiteral("foot"),
-            QStringLiteral("footclient"),
-            QStringLiteral("org.gnome.terminal"),
-            QStringLiteral("gnome-terminal"),
-            QStringLiteral("gnome-terminal-server"),
-            QStringLiteral("org.gnome.console"),
-            QStringLiteral("kgx"),
-            QStringLiteral("org.gnome.ptyxis"),
-            QStringLiteral("org.kde.konsole"),
-            QStringLiteral("konsole"),
-            QStringLiteral("org.kde.yakuake"),
-            QStringLiteral("yakuake"),
-            QStringLiteral("xfce4-terminal"),
-            QStringLiteral("terminator"),
-            QStringLiteral("tilix"),
-            QStringLiteral("com.gexperts.tilix"),
-            QStringLiteral("org.wezfurlong.wezterm"),
-            QStringLiteral("wezterm"),
-            QStringLiteral("wezterm-gui"),
-            QStringLiteral("com.mitchellh.ghostty"),
-            QStringLiteral("ghostty"),
-            QStringLiteral("io.elementary.terminal"),
-            QStringLiteral("com.system76.cosmicterm"),
-            QStringLiteral("com.raggesilver.blackbox"),
-            QStringLiteral("deepin-terminal"),
-            QStringLiteral("dev.warp.warp"),
-            QStringLiteral("contour"),
-            QStringLiteral("qterminal"),
-            QStringLiteral("lxterminal"),
-            QStringLiteral("mate-terminal"),
-            QStringLiteral("terminology"),
-            QStringLiteral("guake"),
-            QStringLiteral("tilda"),
-            QStringLiteral("sakura"),
-            QStringLiteral("roxterm"),
-            QStringLiteral("tabby"),
-            QStringLiteral("hyper"),
-            QStringLiteral("xterm"),
-            QStringLiteral("uxterm"),
-            QStringLiteral("urxvt"),
-            QStringLiteral("st"),
-            QStringLiteral("st-256color"),
+    static const std::set<std::string, std::less<>> terminals = {
+            "cutefish-terminal",
+            "alacritty",
+            "kitty",
+            "foot",
+            "footclient",
+            "org.gnome.terminal",
+            "gnome-terminal",
+            "gnome-terminal-server",
+            "org.gnome.console",
+            "kgx",
+            "org.gnome.ptyxis",
+            "org.kde.konsole",
+            "konsole",
+            "org.kde.yakuake",
+            "yakuake",
+            "xfce4-terminal",
+            "terminator",
+            "tilix",
+            "com.gexperts.tilix",
+            "org.wezfurlong.wezterm",
+            "wezterm",
+            "wezterm-gui",
+            "com.mitchellh.ghostty",
+            "ghostty",
+            "io.elementary.terminal",
+            "com.system76.cosmicterm",
+            "com.raggesilver.blackbox",
+            "deepin-terminal",
+            "dev.warp.warp",
+            "contour",
+            "qterminal",
+            "lxterminal",
+            "mate-terminal",
+            "terminology",
+            "guake",
+            "tilda",
+            "sakura",
+            "roxterm",
+            "tabby",
+            "hyper",
+            "xterm",
+            "uxterm",
+            "urxvt",
+            "st",
+            "st-256color",
     };
 
-    return terminals.contains(applicationId.toLower());
+    std::string lower(applicationId);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return terminals.contains(lower);
 }
 
 KeyTranslator::KeyTranslator(const XkbTracker *keymap, DeliverKey deliver)

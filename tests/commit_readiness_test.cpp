@@ -15,15 +15,13 @@
 #include <optional>
 #include <vector>
 
-#include <QCoreApplication>
-#include <QDeadlineTimer>
-
 #include "compositor/buffer.h"
 #include "compositor/compositor.h"
 #include "compositor/sub_surface.h"
 #include "compositor/surface.h"
 #include "compositor/surface_observer.h"
 #include "fake_fence.h"
+#include "loop_test_util.h"
 #include "render/drm_syncobj.h"
 #include "scene/scene.h"
 
@@ -37,7 +35,7 @@ namespace {
 class FencedBuffer final : public Buffer
 {
 public:
-    QSize size() const override { return QSize(64, 64); }
+    cutefish::base::Size size() const override { return {64, 64}; }
     render::PixelFormat format() const override { return render::PixelFormat::Bgrx8888; }
     const uint8_t *pixels() const override { return nullptr; }
     int stride() const override { return 256; }
@@ -103,10 +101,7 @@ private:
 
 bool waitFor(const std::function<bool()> &condition)
 {
-    QDeadlineTimer deadline(2000);
-    while (!condition() && !deadline.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    return condition();
+    return cutefish::test::runUntil(condition, std::chrono::seconds(2));
 }
 
 class CommitReadinessTest : public testing::Test
@@ -118,7 +113,7 @@ protected:
     std::shared_ptr<FencedBuffer> commitFenced(Surface *surface, FakeFence &fence)
     {
         auto buffer = std::make_shared<FencedBuffer>();
-        surface->attach(buffer, QPoint());
+        surface->attach(buffer, base::Point());
         surface->setAcquireFence(fence.take());
         surface->commit();
         return buffer;
@@ -165,7 +160,7 @@ TEST_F(CommitReadinessTest, ImplicitFencesHoldTheCommit)
     FakeFence fence;
     auto buffer = std::make_shared<FencedBuffer>();
     buffer->fences.push_back(fence.take());
-    m_surface->attach(buffer, QPoint());
+    m_surface->attach(buffer, base::Point());
     m_surface->commit();
     EXPECT_EQ(nullptr, m_surface->buffer());
 
@@ -182,7 +177,7 @@ TEST_F(CommitReadinessTest, ExplicitSyncIgnoresImplicitFences)
     acquire.signal();
     auto buffer = std::make_shared<FencedBuffer>();
     buffer->fences.push_back(implicit.take());
-    m_surface->attach(buffer, QPoint());
+    m_surface->attach(buffer, base::Point());
     m_surface->setAcquireFence(acquire.take());
     m_surface->commit();
 
@@ -199,7 +194,7 @@ TEST_F(CommitReadinessTest, LaterCommitsWaitBehindAHeldOne)
     auto buffer = commitFenced(m_surface.get(), fence);
 
     // Nothing to wait for, but it must not overtake the first.
-    m_surface->damage(QRect(0, 0, 8, 8));
+    m_surface->damage(base::Rect(0, 0, 8, 8));
     m_surface->requestFrameCallback([this](std::optional<uint32_t> time) {
         m_fired.push_back(time);
     });
@@ -254,7 +249,7 @@ TEST_F(CommitReadinessTest, OtherSurfacesDoNotWait)
 
     std::unique_ptr<Surface> other = m_compositor.createSurface();
     auto buffer = std::make_shared<FencedBuffer>();
-    other->attach(buffer, QPoint());
+    other->attach(buffer, base::Point());
     other->commit();
     EXPECT_EQ(buffer, other->buffer());
     EXPECT_EQ(1u, m_surface->heldCommitCount());
@@ -269,7 +264,7 @@ TEST_F(CommitReadinessTest, ADesynchronizedChildWaitsBehindItsParent)
     FakeFence fence;
     auto parentBuffer = commitFenced(m_surface.get(), fence);
     auto childBuffer = std::make_shared<FencedBuffer>();
-    child->attach(childBuffer, QPoint());
+    child->attach(childBuffer, base::Point());
     child->commit();
     EXPECT_EQ(nullptr, child->buffer());
     EXPECT_EQ(1u, child->heldCommitCount());
@@ -289,7 +284,7 @@ TEST_F(CommitReadinessTest, ASynchronizedChildCommitWaitsForTheParentsHeldCommit
     // The child's state is cached before the parent's commit, which applies it.
     FakeFence fence;
     auto childBuffer = std::make_shared<FencedBuffer>();
-    child->attach(childBuffer, QPoint());
+    child->attach(childBuffer, base::Point());
     child->commit();
     auto parentBuffer = commitFenced(m_surface.get(), fence);
     EXPECT_EQ(nullptr, child->buffer());
@@ -310,7 +305,7 @@ TEST_F(CommitReadinessTest, SetDesyncAppliesTheCacheInOrder)
     FakeFence fence;
     commitFenced(m_surface.get(), fence);
     auto childBuffer = std::make_shared<FencedBuffer>();
-    child->attach(childBuffer, QPoint());
+    child->attach(childBuffer, base::Point());
     child->commit();
     sub->setCommitBehavior(false);
     EXPECT_EQ(nullptr, child->buffer());
@@ -331,7 +326,7 @@ TEST_F(CommitReadinessTest, AChildLeavingTheTreeStopsWaiting)
     FakeFence fence;
     commitFenced(m_surface.get(), fence);
     auto childBuffer = std::make_shared<FencedBuffer>();
-    child->attach(childBuffer, QPoint());
+    child->attach(childBuffer, base::Point());
     child->commit();
     EXPECT_EQ(nullptr, child->buffer());
 
@@ -387,7 +382,7 @@ TEST_F(CommitReadinessTest, AnAcquirePointIsWaitedForUntilItSignals)
 
     // Not even submitted yet: a fence for it only comes later.
     auto buffer = std::make_shared<FencedBuffer>();
-    m_surface->attach(buffer, QPoint());
+    m_surface->attach(buffer, base::Point());
     m_surface->setAcquirePoint(timeline, 1);
     m_surface->commit();
     EXPECT_EQ(nullptr, m_surface->buffer());

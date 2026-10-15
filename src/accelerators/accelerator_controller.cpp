@@ -39,16 +39,14 @@ bool canHandleToggleAppList(const Accelerator &accelerator,
 
 AcceleratorController::AcceleratorController(AcceleratorConfiguration *configuration,
                                              const CommandContext &context,
-                                             std::function<bool()> anyKeysPressed,
-                                             QObject *parent)
-    : QObject(parent)
-    , m_launcherStateMachine(std::move(anyKeysPressed))
+                                             std::function<bool()> anyKeysPressed)
+    : m_launcherStateMachine(std::move(anyKeysPressed))
     , m_configuration(configuration)
     , m_context(context)
 {
     init();
-    connect(m_configuration, &AcceleratorConfiguration::acceleratorsUpdated, this,
-            &AcceleratorController::onAcceleratorsUpdated);
+    m_configurationUpdates =
+            m_configuration->acceleratorsUpdated.connect([this] { onAcceleratorsUpdated(); });
 }
 
 AcceleratorController::~AcceleratorController() = default;
@@ -233,7 +231,7 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
     if (acceleratorProcessingRestriction(action) != Restriction::None)
         return;
 
-    qCDebug(cfInput) << "Accelerator" << accelerator.shortcutText() << "->"
+    CF_DEBUG(cfInput) << "Accelerator" << accelerator.shortcutText() << "->"
                      << acceleratorActionName(action);
 
     switch (action) {

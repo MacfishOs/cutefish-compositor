@@ -5,22 +5,18 @@
 #ifndef CUTEFISH_AUTH_SECRET_H
 #define CUTEFISH_AUTH_SECRET_H
 
-#include <QString>
-
 #include <cstring>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace cutefish::auth {
 
-inline void wipeString(QString &secret)
+inline void wipeString(std::string &secret)
 {
-    if (!secret.isEmpty()) {
-        QChar *data = secret.data();
-        const qsizetype size = secret.size();
-        for (qsizetype i = 0; i < size; ++i)
-            data[i] = QChar(u'\0');
-    }
+    if (!secret.empty())
+        explicit_bzero(secret.data(), secret.size());
     secret.clear();
 }
 
@@ -29,12 +25,12 @@ class Secret
 public:
     Secret() = default;
 
-    explicit Secret(const QString &text)
+    explicit Secret(std::string_view text)
     {
-        QByteArray utf8 = text.toUtf8();
-        m_data.assign(utf8.constData(), utf8.constData() + utf8.size());
+        // Reserved first: growing for the terminator would leave a copy behind.
+        m_data.reserve(text.size() + 1);
+        m_data.assign(text.begin(), text.end());
         m_data.push_back('\0');
-        explicit_bzero(utf8.data(), size_t(utf8.size()));
     }
 
     Secret(const Secret &) = delete;
@@ -64,7 +60,7 @@ public:
     // clear() and never copied into anything that outlives this object.
     const char *constData() const { return m_data.empty() ? "" : m_data.data(); }
 
-    qsizetype size() const { return m_data.empty() ? 0 : qsizetype(m_data.size() - 1); }
+    size_t size() const { return m_data.empty() ? 0 : m_data.size() - 1; }
 
     void clear()
     {

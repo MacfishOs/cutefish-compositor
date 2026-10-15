@@ -19,7 +19,7 @@ TEST(DrmMultiDevicePlanner, RollsBackEarlierDeviceAfterPartialCommitFailure)
     int firstCommits = 0;
     int firstRollbacks = 0;
     uint64_t generation = 4;
-    const auto result = backend::DrmMultiDeviceCommitCoordinator::run({{QStringLiteral("card0"),
+    const auto result = backend::DrmMultiDeviceCommitCoordinator::run({{std::string("card0"),
                                                                         [] {
                                                                             return true;
                                                                         },
@@ -31,7 +31,7 @@ TEST(DrmMultiDevicePlanner, RollsBackEarlierDeviceAfterPartialCommitFailure)
                                                                             ++firstRollbacks;
                                                                             return true;
                                                                         }},
-                                                                       {QStringLiteral("card1"),
+                                                                       {std::string("card1"),
                                                                         [] {
                                                                             return true;
                                                                         },
@@ -46,7 +46,7 @@ TEST(DrmMultiDevicePlanner, RollsBackEarlierDeviceAfterPartialCommitFailure)
                                                                       });
     EXPECT_FALSE(result.succeeded);
     EXPECT_TRUE(result.rolledBack);
-    EXPECT_EQ(result.failedDevice, QStringLiteral("card1"));
+    EXPECT_EQ(result.failedDevice, std::string("card1"));
     EXPECT_EQ(firstCommits, 1);
     EXPECT_EQ(firstRollbacks, 1);
 }
@@ -54,7 +54,7 @@ TEST(DrmMultiDevicePlanner, RollsBackEarlierDeviceAfterPartialCommitFailure)
 TEST(DrmMultiDevicePlanner, CancelsWhenADeviceDisappearsBetweenTestAndCommit)
 {
     uint64_t generation = 8;
-    const auto result = backend::DrmMultiDeviceCommitCoordinator::run({{QStringLiteral("card0"),
+    const auto result = backend::DrmMultiDeviceCommitCoordinator::run({{std::string("card0"),
                                                                         [&] {
                                                                             ++generation;
                                                                             return true;
@@ -69,7 +69,7 @@ TEST(DrmMultiDevicePlanner, CancelsWhenADeviceDisappearsBetweenTestAndCommit)
                                                                           return generation;
                                                                       });
     EXPECT_FALSE(result.succeeded);
-    EXPECT_EQ(result.failedDevice, QStringLiteral("card0"));
+    EXPECT_EQ(result.failedDevice, std::string("card0"));
 }
 
 TEST(DrmMultiDevicePlanner, ChoosesBoundedCrossGpuFallbacks)
@@ -88,15 +88,15 @@ TEST(DrmMultiDevicePlanner, ChoosesBoundedCrossGpuFallbacks)
 TEST(DrmMultiDevicePlanner, GroupsOnlyCompleteTiledMonitors)
 {
     const auto grouped =
-            backend::groupDrmTiles({{10, QStringLiteral("wall"), 0, 0, 2, 1, {1920, 2160}},
-                                    {11, QStringLiteral("wall"), 1, 0, 2, 1, {1920, 2160}}});
+            backend::groupDrmTiles({{10, std::string("wall"), 0, 0, 2, 1, {1920, 2160}},
+                                    {11, std::string("wall"), 1, 0, 2, 1, {1920, 2160}}});
     ASSERT_TRUE(grouped);
     ASSERT_EQ(grouped->size(), 1);
-    EXPECT_EQ(grouped->first().combinedSize, QSize(3840, 2160));
-    EXPECT_EQ(grouped->first().connectors, QList<uint32_t>({10, 11}));
-    EXPECT_FALSE(backend::groupDrmTiles({{10, QStringLiteral("wall"), 0, 0, 2, 1, {1920, 2160}}}));
-    EXPECT_TRUE(backend::hardwareCloneEligible(QStringLiteral("card0"), QStringLiteral("card0"),
-                                               QStringLiteral("1080p60"), QStringLiteral("1080p60"),
+    EXPECT_EQ(grouped->front().combinedSize, base::Size(3840, 2160));
+    EXPECT_EQ(grouped->front().connectors, std::vector<uint32_t>({10, 11}));
+    EXPECT_FALSE(backend::groupDrmTiles({{10, std::string("wall"), 0, 0, 2, 1, {1920, 2160}}}));
+    EXPECT_TRUE(backend::hardwareCloneEligible(std::string("card0"), std::string("card0"),
+                                               std::string("1080p60"), std::string("1080p60"),
                                                0b11, 0b10));
 }
 
@@ -130,19 +130,19 @@ TEST(DrmMultiDevicePlanner, DeviceTestFailurePreventsEveryCommit)
 
 TEST(DrmMultiDevicePlanner, RollbackFailureStillAttemptsAllEarlierDevicesInReverseOrder)
 {
-    QStringList rollbacks;
+    std::vector<std::string> rollbacks;
     const auto yes = [] {
         return true;
     };
     const auto result =
             backend::DrmMultiDeviceCommitCoordinator::run({{"card0", yes, yes,
                                                             [&] {
-                                                                rollbacks.append("card0");
+                                                                rollbacks.push_back("card0");
                                                                 return true;
                                                             }},
                                                            {"card1", yes, yes,
                                                             [&] {
-                                                                rollbacks.append("card1");
+                                                                rollbacks.push_back("card1");
                                                                 return false;
                                                             }},
                                                            {"card2",
@@ -156,8 +156,8 @@ TEST(DrmMultiDevicePlanner, RollbackFailureStillAttemptsAllEarlierDevicesInRever
                                                           });
     EXPECT_FALSE(result.succeeded);
     EXPECT_FALSE(result.rolledBack);
-    EXPECT_EQ(rollbacks, QStringList({"card1", "card0"}));
-    EXPECT_TRUE(result.message.contains("incomplete"));
+    EXPECT_EQ(rollbacks, std::vector<std::string>({"card1", "card0"}));
+    EXPECT_NE(result.message.find("incomplete"), std::string::npos);
 }
 
 TEST(DrmMultiDevicePlanner, InvalidationDuringFinalCommitCannotReportSuccess)

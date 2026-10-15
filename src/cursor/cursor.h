@@ -4,9 +4,9 @@
 
 #pragma once
 
-#include <QObject>
-#include <QTimer>
+#include <string>
 
+#include "base/geometry.h"
 #include "cursor/theme.h"
 #include "input/seat_observer.h"
 #include "render/cursor_sink.h"
@@ -19,9 +19,9 @@ class Seat;
 namespace cutefish::cursor {
 
 // Composited in the existing scene, or handed to a hardware cursor plane when
-// one is available. No Aura window, QML process or private Wayland connection
+// one is available. No Aura window, helper process or private Wayland connection
 // is needed either way.
-class Cursor final : public QObject, public input::SeatObserver
+class Cursor final : public input::SeatObserver
 {
 public:
     Cursor(input::Seat &seat, scene::Node &container, int size = defaultSize());
@@ -36,13 +36,13 @@ public:
     // back in the scene. A sink that refuses an image does the same, per image.
     void setSink(render::CursorSink *sink);
     void setScale(double scale);
-    void setTheme(const QString &theme, int size);
+    void setTheme(const std::string &theme, int size);
     void paintForCapture(render::Renderer &renderer) const;
 
     // Where paintForCapture() would draw, in global logical coordinates; empty
     // while the cursor is hidden. Capture damage tracking needs it because a
     // hardware cursor moves without touching the scene.
-    QRectF captureBounds() const;
+    base::RectF captureBounds() const;
 
     // Re-derives the image from the seat and reprograms the sink even when
     // nothing the cursor tracks changed. Locking uses it: the KMS cursor plane
@@ -54,7 +54,7 @@ public:
     bool isHardware() const { return m_hardware; }
 
     // The current image's hotspot in the image the plane gets, in device pixels.
-    QPoint deviceHotspot() const;
+    base::Point deviceHotspot() const;
 
     // While held, neither the sink nor the scene shows the cursor: a compositor
     // starting up leaves the previous one's on the plane until its displays settle.

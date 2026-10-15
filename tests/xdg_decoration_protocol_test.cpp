@@ -49,7 +49,7 @@ using namespace cutefish;
 
 namespace {
 
-constexpr QRect kOutput(0, 0, 800, 600);
+const base::Rect kOutput(0, 0, 800, 600);
 
 struct Client;
 
@@ -61,7 +61,7 @@ struct XdgWindow {
     wl_buffer* buffer = nullptr;
 
     std::vector<uint32_t> surfaceConfigures;
-    std::vector<QSize> toplevelConfigures;
+    std::vector<base::Size> toplevelConfigures;
     std::vector<uint32_t> decorationConfigures;
 
     uint32_t lastSerial() const { return surfaceConfigures.back(); }
@@ -79,7 +79,7 @@ const xdg_surface_listener surfaceListener = {
 
 const xdg_toplevel_listener toplevelListener = {
     [](void* data, xdg_toplevel*, int32_t width, int32_t height, wl_array*) {
-        static_cast<XdgWindow*>(data)->toplevelConfigures.push_back(QSize(width, height));
+        static_cast<XdgWindow*>(data)->toplevelConfigures.push_back(base::Size(width, height));
     },
     [](void*, xdg_toplevel*) {},
     [](void*, xdg_toplevel*, int32_t, int32_t) {},
@@ -144,7 +144,7 @@ struct Client {
         wl_display_disconnect(display);
     }
 
-    wl_buffer* makeBuffer(const QSize& size)
+    wl_buffer* makeBuffer(const base::Size& size)
     {
         const int stride = size.width() * 4;
         const size_t bytes = static_cast<size_t>(stride) * size.height();
@@ -179,7 +179,7 @@ struct Client {
 
     // The whole handshake, with the decoration negotiated before the first
     // buffer as the protocol requires.
-    XdgWindow* makeDecoratedToplevel(const QSize& size, bool serverSide = true)
+    XdgWindow* makeDecoratedToplevel(const base::Size& size, bool serverSide = true)
     {
         XdgWindow* window = makeToplevel();
         addDecoration(window);
@@ -192,7 +192,7 @@ struct Client {
         return window;
     }
 
-    void ackAndAttach(XdgWindow* window, const QSize& size)
+    void ackAndAttach(XdgWindow* window, const base::Size& size)
     {
         xdg_surface_ack_configure(window->xdgSurface, window->lastSerial());
         if (!window->buffer)
@@ -250,7 +250,7 @@ class XdgDecorationProtocolTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node* surfaceContainer =
-        scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+        scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     input::Seat seat {&compositor};
     input::InputManager manager {&seat};
@@ -369,13 +369,13 @@ TEST_F(XdgDecorationProtocolTest, TheCompositorConfiguresServerSideByDefault)
 TEST_F(XdgDecorationProtocolTest, AServerSideToplevelIsDecoratedAndKeepsItsOwnGeometry)
 {
     run([&](Client& c) {
-        c.makeDecoratedToplevel(QSize(400, 300));
+        c.makeDecoratedToplevel(base::Size(400, 300));
         check([&] {
             wm::Window* window = onlyWindow();
             ASSERT_NE(nullptr, window);
             EXPECT_NE(nullptr, window->frame());
-            EXPECT_EQ(QSize(400, 300), window->contentBounds().size());
-            EXPECT_EQ(insets().outset(QSize(400, 300)), window->bounds().size());
+            EXPECT_EQ(base::Size(400, 300), window->contentBounds().size());
+            EXPECT_EQ(insets().outset(base::Size(400, 300)), window->bounds().size());
         });
     });
 }
@@ -383,13 +383,13 @@ TEST_F(XdgDecorationProtocolTest, AServerSideToplevelIsDecoratedAndKeepsItsOwnGe
 TEST_F(XdgDecorationProtocolTest, AClientSideToplevelIsNotDecorated)
 {
     run([&](Client& c) {
-        XdgWindow* window = c.makeDecoratedToplevel(QSize(400, 300), /*serverSide=*/false);
+        XdgWindow* window = c.makeDecoratedToplevel(base::Size(400, 300), /*serverSide=*/false);
         EXPECT_EQ(uint32_t(ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE), window->lastMode());
         check([&] {
             wm::Window* managed = onlyWindow();
             ASSERT_NE(nullptr, managed);
             EXPECT_EQ(nullptr, managed->frame());
-            EXPECT_EQ(QSize(400, 300), managed->bounds().size());
+            EXPECT_EQ(base::Size(400, 300), managed->bounds().size());
         });
     });
 }
@@ -400,12 +400,12 @@ TEST_F(XdgDecorationProtocolTest, ATopLevelWithNoDecorationObjectIsLeftAlone)
         XdgWindow* window = c.makeToplevel();
         wl_surface_commit(window->surface);
         c.sync();
-        c.ackAndAttach(window, QSize(400, 300));
+        c.ackAndAttach(window, base::Size(400, 300));
         check([&] {
             wm::Window* managed = onlyWindow();
             ASSERT_NE(nullptr, managed);
             EXPECT_EQ(nullptr, managed->frame());
-            EXPECT_EQ(QSize(400, 300), managed->bounds().size());
+            EXPECT_EQ(base::Size(400, 300), managed->bounds().size());
         });
     });
 }
@@ -413,7 +413,7 @@ TEST_F(XdgDecorationProtocolTest, ATopLevelWithNoDecorationObjectIsLeftAlone)
 TEST_F(XdgDecorationProtocolTest, SwitchingModeConfiguresTheDecorationAndThenTheSurface)
 {
     run([&](Client& c) {
-        XdgWindow* window = c.makeDecoratedToplevel(QSize(400, 300));
+        XdgWindow* window = c.makeDecoratedToplevel(base::Size(400, 300));
         const size_t configures = window->surfaceConfigures.size();
 
         zxdg_toplevel_decoration_v1_set_mode(window->decoration,
@@ -424,11 +424,11 @@ TEST_F(XdgDecorationProtocolTest, SwitchingModeConfiguresTheDecorationAndThenThe
         // Exactly one xdg_surface.configure follows the mode change.
         EXPECT_EQ(configures + 1, window->surfaceConfigures.size());
         // The client area did not move, so the size it is asked for is the same.
-        EXPECT_EQ(QSize(400, 300), window->toplevelConfigures.back());
+        EXPECT_EQ(base::Size(400, 300), window->toplevelConfigures.back());
 
         check([&] {
             EXPECT_EQ(nullptr, onlyWindow()->frame());
-            EXPECT_EQ(QSize(400, 300), onlyWindow()->bounds().size());
+            EXPECT_EQ(base::Size(400, 300), onlyWindow()->bounds().size());
         });
     });
 }
@@ -436,7 +436,7 @@ TEST_F(XdgDecorationProtocolTest, SwitchingModeConfiguresTheDecorationAndThenThe
 TEST_F(XdgDecorationProtocolTest, UnsettingTheModeFallsBackToTheCompositorsPreference)
 {
     run([&](Client& c) {
-        XdgWindow* window = c.makeDecoratedToplevel(QSize(400, 300), /*serverSide=*/false);
+        XdgWindow* window = c.makeDecoratedToplevel(base::Size(400, 300), /*serverSide=*/false);
         ASSERT_EQ(uint32_t(ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE), window->lastMode());
 
         zxdg_toplevel_decoration_v1_unset_mode(window->decoration);
@@ -452,7 +452,7 @@ TEST_F(XdgDecorationProtocolTest, UnsettingTheModeFallsBackToTheCompositorsPrefe
 TEST_F(XdgDecorationProtocolTest, DestroyingTheDecorationObjectGivesTheFrameUp)
 {
     run([&](Client& c) {
-        XdgWindow* window = c.makeDecoratedToplevel(QSize(400, 300));
+        XdgWindow* window = c.makeDecoratedToplevel(base::Size(400, 300));
         check([&] {
             EXPECT_NE(nullptr, onlyWindow()->frame());
         });
@@ -469,7 +469,7 @@ TEST_F(XdgDecorationProtocolTest, DestroyingTheDecorationObjectGivesTheFrameUp)
         c.sync();
         check([&] {
             EXPECT_EQ(nullptr, onlyWindow()->frame());
-            EXPECT_EQ(QSize(400, 300), onlyWindow()->bounds().size());
+            EXPECT_EQ(base::Size(400, 300), onlyWindow()->bounds().size());
         });
     });
 }
@@ -477,7 +477,7 @@ TEST_F(XdgDecorationProtocolTest, DestroyingTheDecorationObjectGivesTheFrameUp)
 TEST_F(XdgDecorationProtocolTest, AMaximizedServerSideToplevelIsAskedForTheWorkAreaLessTheFrame)
 {
     run([&](Client& c) {
-        XdgWindow* window = c.makeDecoratedToplevel(QSize(400, 300));
+        XdgWindow* window = c.makeDecoratedToplevel(base::Size(400, 300));
         xdg_toplevel_set_maximized(window->toplevel);
         c.sync();
         const wm::Insets maximizedInsets {0, insets().top, 0, 0};
@@ -518,7 +518,7 @@ TEST_F(XdgDecorationProtocolTest, ADecorationCannotBeCreatedAfterTheFirstBuffer)
         XdgWindow* window = c.makeToplevel();
         wl_surface_commit(window->surface);
         c.sync();
-        c.ackAndAttach(window, QSize(400, 300));
+        c.ackAndAttach(window, base::Size(400, 300));
 
         c.addDecoration(window);
         EXPECT_EQ(uint32_t(ZXDG_TOPLEVEL_DECORATION_V1_ERROR_UNCONFIGURED_BUFFER),
@@ -542,7 +542,7 @@ TEST_F(XdgDecorationProtocolTest, AnInvalidModeIsAnError)
 TEST_F(XdgDecorationProtocolTest, DestroyingTheToplevelBeforeItsDecorationIsAnError)
 {
     run([&](Client& c) {
-        XdgWindow* window = c.makeDecoratedToplevel(QSize(400, 300));
+        XdgWindow* window = c.makeDecoratedToplevel(base::Size(400, 300));
 
         xdg_toplevel_destroy(window->toplevel);
         window->toplevel = nullptr;
@@ -556,7 +556,7 @@ TEST_F(XdgDecorationProtocolTest, DestroyingTheToplevelBeforeItsDecorationIsAnEr
 TEST_F(XdgDecorationProtocolTest, ADecoratedClientCanBeTornDownInAnyOrder)
 {
     run([&](Client& c) {
-        XdgWindow* window = c.makeDecoratedToplevel(QSize(400, 300));
+        XdgWindow* window = c.makeDecoratedToplevel(base::Size(400, 300));
         check([&] {
             EXPECT_NE(nullptr, onlyWindow()->frame());
         });
@@ -569,14 +569,14 @@ TEST_F(XdgDecorationProtocolTest, ADecoratedClientCanBeTornDownInAnyOrder)
 TEST_F(XdgDecorationProtocolTest, ANewWindowMappedWhileAnotherIsTornDownIsFine)
 {
     run([&](Client& c) {
-        XdgWindow* first = c.makeDecoratedToplevel(QSize(400, 300));
+        XdgWindow* first = c.makeDecoratedToplevel(base::Size(400, 300));
         c.destroyWindowObjects(first);
-        XdgWindow* second = c.makeDecoratedToplevel(QSize(200, 100));
+        XdgWindow* second = c.makeDecoratedToplevel(base::Size(200, 100));
         c.sync();
 
         check([&] {
             ASSERT_EQ(1u, windowManager.windows().size());
-            EXPECT_EQ(insets().outset(QSize(200, 100)), onlyWindow()->bounds().size());
+            EXPECT_EQ(insets().outset(base::Size(200, 100)), onlyWindow()->bounds().size());
         });
         (void)second;
     });

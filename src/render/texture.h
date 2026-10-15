@@ -6,9 +6,8 @@
 #define CUTEFISH_RENDER_TEXTURE_H_
 
 #include <cstdint>
+#include "base/geometry.h"
 
-#include <QRectF>
-#include <QSize>
 
 namespace cutefish::render {
 
@@ -39,7 +38,7 @@ class Texture
 {
 public:
     virtual ~Texture() = default;
-    virtual QSize size() const = 0;
+    virtual base::Size size() const = 0;
 
     virtual PixelFormat format() const { return PixelFormat::Rgba8888; }
 

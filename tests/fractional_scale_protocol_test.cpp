@@ -42,6 +42,7 @@ class FractionalScaleProtocolTest : public testing::Test
 protected:
     scene::Scene scene;
     compositor::Compositor compositor {scene.root()};
+    base::Subscription scaleChanged;
     wl_display *server = nullptr;
     wl_display *client = nullptr;
     wl_registry *registry = nullptr;
@@ -71,18 +72,17 @@ protected:
         ASSERT_TRUE(wayland::createViewporterGlobal(server));
         ASSERT_TRUE(wayland::createFractionalScaleGlobal(server));
         ASSERT_TRUE(wayland::createXdgOutputManagerGlobal(server));
-        output.pixelSize = QSize(1920, 1080);
-        output.physicalSizeMm = QSize(509, 286);
+        output.pixelSize = base::Size(1920, 1080);
+        output.physicalSizeMm = base::Size(509, 286);
         output.refreshMilliHz = 60000;
         outputGlobal = wayland::createOutputGlobal(server, &output);
         ASSERT_TRUE(outputGlobal);
         scene.setSize(output.logicalSize());
-        QObject::connect(&compositor, &compositor::Compositor::outputScaleChanged, &compositor,
-                         [&] {
-                             output.scale = compositor.outputScale();
-                             scene.setSize(output.logicalSize());
-                             wayland::updateOutputGlobal(outputGlobal, &output);
-                         });
+        scaleChanged = compositor.outputScaleChanged.connect([&] {
+            output.scale = compositor.outputScale();
+            scene.setSize(output.logicalSize());
+            wayland::updateOutputGlobal(outputGlobal, &output);
+        });
         ASSERT_TRUE(wayland::createShmGlobal(server, &compositor));
         ASSERT_TRUE(wayland::createSubcompositorGlobal(server));
         int sockets[2];
@@ -242,13 +242,13 @@ TEST_F(FractionalScaleProtocolTest, InitialUnmappedAndTransitionsPreserveClientS
         compositor.setOutputScale(*compositor::OutputScale::fromNumerator(value));
         ASSERT_GE(roundtrip(), 0);
         EXPECT_EQ(scales.back(), value);
-        EXPECT_EQ(model->contentSize(), QSize(801, 601));
+        EXPECT_EQ(model->contentSize(), base::Size(801, 601));
         EXPECT_EQ(model->textureMapping(), mapping);
         const size_t count = scales.size();
         compositor.setOutputScale(*compositor::OutputScale::fromNumerator(value));
         ASSERT_GE(roundtrip(), 0);
         EXPECT_EQ(scales.size(), count);
-        EXPECT_EQ(output.pixelSize, QSize(1920, 1080));
+        EXPECT_EQ(output.pixelSize, base::Size(1920, 1080));
     }
 }
 
@@ -314,8 +314,8 @@ TEST_F(FractionalScaleProtocolTest, DuplicateErrorOnManager)
 }
 
 struct Metrics {
-    QSize native;
-    QSize logical;
+    base::Size native;
+    base::Size logical;
     int scale = 0;
     int outputDone = 0;
     int xdgDone = 0;
@@ -327,7 +327,7 @@ const wl_output_listener outputListener = {
         [](void *, wl_output *, int32_t, int32_t, int32_t, int32_t, int32_t, const char *,
            const char *, int32_t) {},
         [](void *data, wl_output *, uint32_t, int32_t w, int32_t h, int32_t) {
-            static_cast<Metrics *>(data)->native = QSize(w, h);
+            static_cast<Metrics *>(data)->native = base::Size(w, h);
         },
         [](void *data, wl_output *) {
             ++static_cast<Metrics *>(data)->outputDone;
@@ -344,7 +344,7 @@ const zxdg_output_v1_listener xdgListener = {
             EXPECT_EQ(y, 0);
         },
         [](void *data, zxdg_output_v1 *, int32_t w, int32_t h) {
-            static_cast<Metrics *>(data)->logical = QSize(w, h);
+            static_cast<Metrics *>(data)->logical = base::Size(w, h);
         },
         [](void *data, zxdg_output_v1 *) {
             ++static_cast<Metrics *>(data)->xdgDone;
@@ -371,13 +371,13 @@ TEST_F(FractionalScaleProtocolTest, OutputMetricsVersionsAndMultipleExtensions)
         zxdg_output_v1_add_listener(second, &xdgListener, &b);
         zxdg_output_manager_v1_destroy(manager);
         ASSERT_GE(roundtrip(), 0);
-        EXPECT_EQ(a.native, QSize(1920, 1080));
+        EXPECT_EQ(a.native, base::Size(1920, 1080));
         EXPECT_EQ(a.names, version >= 2 ? 1 : 0);
         EXPECT_EQ(a.descriptions, version >= 2 ? 1 : 0);
         EXPECT_EQ(a.xdgDone, version < 3 ? 1 : 0);
         compositor.setOutputScale(*compositor::OutputScale::parse("1.5"));
         ASSERT_GE(roundtrip(), 0);
-        EXPECT_EQ(a.logical, QSize(1280, 720));
+        EXPECT_EQ(a.logical, base::Size(1280, 720));
         EXPECT_EQ(b.logical, a.logical);
         EXPECT_EQ(a.scale, 2);
         EXPECT_EQ(a.names, version >= 2 ? 1 : 0);
@@ -563,7 +563,7 @@ TEST_F(FractionalScaleProtocolTest, LegacyDensitiesRemainValid)
         wl_surface_set_buffer_scale(surface, bufferScale);
         wl_surface_commit(surface);
         ASSERT_GE(roundtrip(), 0);
-        EXPECT_EQ(model->contentSize(), QSize(400, 300));
+        EXPECT_EQ(model->contentSize(), base::Size(400, 300));
         EXPECT_FALSE(model->viewport());
         EXPECT_EQ(model->preferredScale(), 180u);
     }
@@ -576,7 +576,7 @@ TEST_F(FractionalScaleProtocolTest, CoreOutputVersionOneNeverReceivesScaleOrDone
             wl_registry_bind(registry, outputName, &wl_output_interface, 1));
     wl_output_add_listener(out, &outputListener, &metrics);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(metrics.native, QSize(1920, 1080));
+    EXPECT_EQ(metrics.native, base::Size(1920, 1080));
     compositor.setOutputScale(*compositor::OutputScale::parse("1.75"));
     ASSERT_GE(roundtrip(), 0);
     EXPECT_EQ(metrics.scale, 0);
@@ -601,7 +601,7 @@ TEST_F(FractionalScaleProtocolTest, SecondClientReceivesIndependentBoundResource
     compositor.setOutputScale(*compositor::OutputScale::parse("1.5"));
     ASSERT_GE(roundtrip(), 0);
     EXPECT_EQ(metrics.scale, 2);
-    EXPECT_EQ(metrics.native, QSize(1920, 1080));
+    EXPECT_EQ(metrics.native, base::Size(1920, 1080));
     wl_output_release(out);
     wl_registry_destroy(secondRegistry);
     ASSERT_GE(roundtrip(), 0);

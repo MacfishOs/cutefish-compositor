@@ -20,14 +20,13 @@
 #include <span>
 #include <vector>
 
-#include <QJsonArray>
-#include <QObject>
-#include <QSettings>
-
 #include "accelerators/accelerator.h"
 #include "accelerators/accelerator_actions.h"
 #include "accelerators/accelerator_map.h"
 #include "accelerators/accelerator_table.h"
+#include "base/json.h"
+#include "base/settings.h"
+#include "base/signal.h"
 #include "input/types.h"
 
 namespace cutefish::accelerators {
@@ -55,15 +54,12 @@ using ActionIdToAcceleratorsMap = std::map<AcceleratorActionId, std::vector<Acce
 
 // Owns the current action <-> accelerator mappings, the system defaults they
 // started from and the user's overrides on top of them.
-class AcceleratorConfiguration : public QObject
+class AcceleratorConfiguration
 {
-    Q_OBJECT
-
 public:
     // `settingsFile` overrides the compositor's settings file, for tests.
-    explicit AcceleratorConfiguration(const QString &settingsFile = {},
-                                      QObject *parent = nullptr);
-    ~AcceleratorConfiguration() override;
+    explicit AcceleratorConfiguration(const std::string &settingsFile = {});
+    ~AcceleratorConfiguration();
 
     // Loads the convention's defaults and applies the persisted overrides.
     void initialize();
@@ -113,15 +109,14 @@ public:
         Remove,
     };
 
-Q_SIGNALS:
-    void acceleratorsUpdated();
+    base::Signal<> acceleratorsUpdated;
 
 private:
     using AcceleratorActionMap = AcceleratorMap<AcceleratorAction>;
 
     void addAccelerators(std::span<const AcceleratorData> accelerators);
 
-    QString overridesGroup() const;
+    std::string overridesGroup() const;
     void loadOverrides();
     void saveOverrides();
     void applyOverrides();
@@ -145,12 +140,12 @@ private:
     void resetAllAccelerators();
     int totalNumberOfModifications() const;
 
-    QSettings m_settings;
+    base::Settings m_settings;
     input::ShortcutConvention m_convention = input::ShortcutConvention::Pc;
 
     // A local copy of the persisted overrides: action name -> list of
     // {key, modifiers, state, action} objects.
-    std::map<QString, QJsonArray> m_overrides;
+    std::map<std::string, base::json::Value::Array> m_overrides;
 
     std::vector<Accelerator> m_accelerators;
 

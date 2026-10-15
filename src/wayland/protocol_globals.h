@@ -6,8 +6,11 @@
 #define CUTEFISH_WAYLAND_PROTOCOL_GLOBALS_H_
 
 #include <memory>
+#include <string>
 
-#include <QString>
+#include "base/signal.h"
+
+#include "base/signal.h"
 
 struct wl_global;
 
@@ -85,7 +88,7 @@ public:
         // input method.
         bool launchInputMethod = false;
         // Development override; empty means use the saved selection.
-        QString inputMethodOverride;
+        std::string inputMethodOverride;
     };
 
     explicit ProtocolGlobals(const Dependencies &dependencies);
@@ -105,10 +108,11 @@ public:
 
     // Spawns the input method once, with `x11Display` set when Xwayland is up so
     // it can serve X11 clients too. Later calls are ignored.
-    void startInputMethod(const QString &x11Display, const QString &x11Authority);
+    void startInputMethod(const std::string &x11Display, const std::string &x11Authority);
     // Restarts a started input method with this X11 display: Xwayland started
     // on demand after it, or restarted after a crash.
-    void setInputMethodX11Display(const QString &x11Display, const QString &x11Authority);
+    void setInputMethodX11Display(const std::string &x11Display,
+                                  const std::string &x11Authority);
 
     // Keeps input-method popups on the text cursor when windows move.
     void sceneChanged();
@@ -145,6 +149,8 @@ private:
     std::unique_ptr<InputMethodManager> m_inputMethod;
     std::unique_ptr<InputMethodLauncher> m_inputMethodLauncher;
     std::unique_ptr<input::InputMethodSettings> m_inputMethodSettings;
+    base::Subscription m_launcherRunning;
+    base::Subscription m_inputMethodCommand;
     std::unique_ptr<DataControlManager> m_dataControl;
     std::unique_ptr<ImageCaptureManager> m_imageCapture;
     std::unique_ptr<ForeignToplevelList> m_toplevelList;

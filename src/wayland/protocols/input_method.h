@@ -4,9 +4,7 @@
 
 #pragma once
 
-#include <QPoint>
-#include <QRect>
-#include <QSize>
+#include "base/geometry.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -23,7 +21,8 @@ struct WaylandSeat;
 // output coordinates: below the caret, above it when only there it fits, and
 // kept inside `area`. Upstream: views::BubbleFrameView's
 // adjust_if_offscreen, mirroring the arrow and then clamping to the work area.
-QPoint inputPopupPosition(const QRect &caret, const QSize &size, const QRect &area);
+base::Point inputPopupPosition(const base::Rect &caret, const base::Size &size,
+                               const base::Rect &area);
 
 // Owns the application/IME relay; resources must die before the seat and display.
 class InputMethodManager
@@ -44,7 +43,7 @@ public:
 
     // The work area a candidate popup stays inside, for a text cursor in output
     // coordinates. Unset, popups only follow the cursor.
-    void setPlacementArea(std::function<QRect(const QRect &caret)> area);
+    void setPlacementArea(std::function<base::Rect(const base::Rect &caret)> area);
 
     // Restricts input-method and virtual-keyboard binds; unset allows every client.
     void setAuthorizer(std::function<bool(const wl_client *)> authorizer);

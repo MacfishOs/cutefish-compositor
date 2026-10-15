@@ -76,7 +76,7 @@ TEST(Selection, NotificationMayDestroyController)
 {
     auto c = std::make_unique<SelectionController>();
     auto a = std::make_shared<Source>();
-    QObject::connect(c.get(), &SelectionController::selectionChanged, [&] {
+    const auto changed = c->selectionChanged.connect([&] {
         c.reset();
     });
     EXPECT_FALSE(c->setSource(a));

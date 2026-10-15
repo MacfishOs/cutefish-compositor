@@ -17,7 +17,7 @@
 #ifndef CUTEFISH_INPUT_HIT_TEST_H_
 #define CUTEFISH_INPUT_HIT_TEST_H_
 
-#include <QPointF>
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 class Compositor;
@@ -36,26 +36,26 @@ class SessionGate;
 // `location` (given in `root`-local coordinates), searched top of the stacking
 // order first. `surfaceLocation` receives the point in the returned surface's
 // coordinates.
-compositor::Surface *findTargetSurface(compositor::Surface *root, const QPointF &location,
-                                       QPointF *surfaceLocation);
+compositor::Surface *findTargetSurface(compositor::Surface *root, const base::PointF &location,
+                                       base::PointF *surfaceLocation);
 
 // The same search across every root surface in the scene, topmost first.
 // `location` is in output coordinates.
-compositor::Surface *findTargetSurface(compositor::Compositor *compositor, const QPointF &location,
-                                       QPointF *surfaceLocation);
+compositor::Surface *findTargetSurface(compositor::Compositor *compositor, const base::PointF &location,
+                                       base::PointF *surfaceLocation);
 
 // The same search confined to `container`'s subtree. A blocked session searches
 // only the secure container, which is how a locked screen can be clicked while
 // nothing behind it can. The session's surface container comes after the input
 // method's candidate popups. Null `container` finds nothing.
 compositor::Surface *findTargetSurfaceIn(compositor::Compositor *compositor, scene::Node *container,
-                                         const QPointF &location, QPointF *surfaceLocation);
+                                         const base::PointF &location, base::PointF *surfaceLocation);
 
 // The same search looking through what captures leave out, so the screen
 // capture interface can pick what is under it. Upstream: ash's
 // capture_mode_util::GetTopMostCapturableWindowAtPoint.
 compositor::Surface *findCapturedSurfaceIn(compositor::Compositor *compositor,
-                                           scene::Node *container, const QPointF &location);
+                                           scene::Node *container, const base::PointF &location);
 
 // Whether `surface` is, or is part of, an input method candidate popup.
 bool isInputMethodSurface(const compositor::Compositor *compositor,
@@ -69,7 +69,7 @@ scene::Node *inputRootFor(compositor::Compositor *compositor, const SessionGate 
 // Unlike the hit test this ignores the input region and the stacking order: it
 // is how an implicit grab keeps reporting locations outside the grabbed
 // surface. Counterpart of aura::Window::ConvertPointToTarget.
-QPointF locationInSurface(const compositor::Surface *surface, const QPointF &location);
+base::PointF locationInSurface(const compositor::Surface *surface, const base::PointF &location);
 
 } // namespace cutefish::input
 

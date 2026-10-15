@@ -6,16 +6,14 @@
 #define CUTEFISH_BACKEND_DRM_DRM_BACKEND_H_
 
 #include "backend/drm/drm_output.h"
-#include <QObject>
-#include <QString>
-#include <QTimer>
+#include "base/signal.h"
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 struct gbm_device;
-class QSocketNotifier;
 
 namespace cutefish::render {
 class EglRenderer;
@@ -31,17 +29,18 @@ class Session;
 
 // Owns the DRM device: discovery, KMS resources and the page-flip event source.
 // The rendering card also owns secondary scanout devices and their lifetimes.
-class DrmBackend : public QObject
+class DrmBackend
 {
-    Q_OBJECT
-
 public:
-    explicit DrmBackend(Session *session, QObject *parent = nullptr);
-    ~DrmBackend() override;
+    explicit DrmBackend(Session *session);
+    ~DrmBackend();
+
+    DrmBackend(const DrmBackend &) = delete;
+    DrmBackend &operator=(const DrmBackend &) = delete;
 
     // Opens `devicePath`, or the first card supporting atomic modesetting when it
     // is empty. Enables universal planes and atomic modesetting.
-    bool open(const QString &devicePath = QString());
+    bool open(const std::string &devicePath = {});
 
     // Builds every connected output after solving shared CRTC and plane use.
     bool createOutputs();
@@ -53,17 +52,17 @@ public:
     // every output with it.
     bool initRenderer();
     bool refreshDevices();
-    QList<DrmOutput *> allOutputs(bool retiring = false) const;
+    std::vector<DrmOutput *> allOutputs(bool retiring = false) const;
 
     bool hasMonotonicPresentationClock() const { return m_monotonicPresentationClock; }
 
     int fd() const { return m_fd; }
 
-    QString devicePath() const { return m_devicePath; }
+    const std::string &devicePath() const { return m_devicePath; }
 
-    QString deviceKey() const;
+    std::string deviceKey() const;
 
-    QString driverName() const { return m_driverName; }
+    const std::string &driverName() const { return m_driverName; }
 
     uint64_t topologyEpoch() const { return m_topologyEpoch; }
 
@@ -87,7 +86,7 @@ public:
     DrmOutput *primaryOutput() const
     {
         const auto outputs = allOutputs();
-        return outputs.isEmpty() ? nullptr : outputs.first();
+        return outputs.empty() ? nullptr : outputs.front();
     }
 
     const std::vector<std::unique_ptr<DrmOutput>> &outputs() const { return m_outputs; }
@@ -97,10 +96,14 @@ public:
         return m_retiringOutputs;
     }
 
-signals:
-    void outputsInvalidated();
+    // The outputs no longer match the hardware and need a reprobe.
+    base::Signal<> outputsInvalidated;
+    // Emits outputsInvalidated from the loop, unless this is gone by then.
+    void invalidateOutputsLater();
 
 private:
+    void invalidateOutputs();
+    void stopWatching();
     void onDrmEvent();
     void onSessionActiveChanged(bool active);
     void closeDevice();
@@ -120,14 +123,19 @@ private:
     bool m_monotonicPresentationClock = false;
     int m_fd = -1;
     int m_deviceId = -1;
-    QString m_devicePath;
-    QString m_driverName;
+    std::string m_devicePath;
+    std::string m_driverName;
 
     std::unique_ptr<DrmDevice> m_device;
     gbm_device *m_gbm = nullptr;
     uint32_t m_format = 0;
 
-    QSocketNotifier *m_notifier = nullptr;
+    int m_watch = 0;
+    base::Subscription m_sessionActive;
+    // A secondary device's outputsInvalidated, forwarded to the rendering card.
+    base::Subscription m_forwardInvalidation;
+    std::vector<base::Subscription> m_hotplugSubscriptions;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
     std::unique_ptr<render::EglRenderer> m_renderer;
     std::vector<std::unique_ptr<DrmOutput>> m_outputs;
     std::vector<std::unique_ptr<DrmOutput>> m_retiringOutputs;

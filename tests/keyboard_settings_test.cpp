@@ -4,62 +4,64 @@
 
 #include "input/keyboard_settings.h"
 
-#include <QCoreApplication>
-#include <QDBusInterface>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QEventLoop>
-#include <QSignalSpy>
-#include <QTemporaryDir>
-#include <QTimer>
 #include <gtest/gtest.h>
 
+#include "base/event_loop.h"
+#include "base/settings.h"
+#include "input_test_util.h"
+
+using cutefish::base::EventLoop;
+using cutefish::base::Settings;
 using cutefish::input::KeyboardSettings;
 using cutefish::input::ShortcutConvention;
+using input_test::RemoteObject;
+using input_test::TemporaryDirectory;
 
 TEST(KeyboardSettings, DefaultsAndClampedStoredValues)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     {
-        KeyboardSettings settings(nullptr, file);
+        KeyboardSettings settings(file);
         EXPECT_TRUE(settings.repeatEnabled());
         EXPECT_EQ(settings.repeatDelay(), 500);
         EXPECT_EQ(settings.repeatInterval(), 40);
-        EXPECT_FALSE(settings.layout().isEmpty());
+        EXPECT_FALSE(settings.layout().empty());
     }
     {
-        QSettings stored(file, QSettings::IniFormat);
-        stored.beginGroup(QStringLiteral("Keyboard"));
-        stored.setValue(QStringLiteral("repeatDelay"), 1);
-        stored.setValue(QStringLiteral("repeatInterval"), QStringLiteral("fast"));
+        Settings stored(file);
+        stored.setValue("Keyboard/repeatDelay", 1);
+        stored.setValue("Keyboard/repeatInterval", "fast");
     }
-    KeyboardSettings settings(nullptr, file);
+    KeyboardSettings settings(file);
     EXPECT_EQ(settings.repeatDelay(), KeyboardSettings::kMinRepeatDelayMs);
     EXPECT_EQ(settings.repeatInterval(), 40);
 }
 
 TEST(KeyboardSettings, RepeatPersistsAndNotifiesOnlyOnChanges)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     {
-        KeyboardSettings settings(nullptr, file);
-        QSignalSpy delay(&settings, &KeyboardSettings::repeatDelayChanged);
-        QSignalSpy interval(&settings, &KeyboardSettings::repeatIntervalChanged);
-        QSignalSpy enabled(&settings, &KeyboardSettings::repeatEnabledChanged);
+        KeyboardSettings settings(file);
+        int delay = 0;
+        auto delayCounter = settings.repeatDelayChanged.connect([&delay] { ++delay; });
+        int interval = 0;
+        auto intervalCounter = settings.repeatIntervalChanged.connect([&interval] { ++interval; });
+        int enabled = 0;
+        auto enabledCounter = settings.repeatEnabledChanged.connect([&enabled] { ++enabled; });
         settings.setRepeatDelay(300);
         settings.setRepeatDelay(300);
         settings.setRepeatInterval(100000);
         settings.setRepeatEnabled(false);
-        EXPECT_EQ(delay.count(), 1);
-        EXPECT_EQ(interval.count(), 1);
-        EXPECT_EQ(enabled.count(), 1);
+        EXPECT_EQ(delay, 1);
+        EXPECT_EQ(interval, 1);
+        EXPECT_EQ(enabled, 1);
         EXPECT_EQ(settings.repeatInterval(), KeyboardSettings::kMaxRepeatIntervalMs);
     }
-    KeyboardSettings restored(nullptr, file);
+    KeyboardSettings restored(file);
     EXPECT_FALSE(restored.repeatEnabled());
     EXPECT_EQ(restored.repeatDelay(), 300);
     EXPECT_EQ(restored.repeatInterval(), KeyboardSettings::kMaxRepeatIntervalMs);
@@ -67,133 +69,144 @@ TEST(KeyboardSettings, RepeatPersistsAndNotifiesOnlyOnChanges)
 
 TEST(KeyboardSettings, LayoutIsSavedOnlyWhenItApplies)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
-    QStringList applied;
-    const auto applier = [&applied](const QString &name) {
-        if (name == QLatin1String("broken"))
+    const std::string file = directory.filePath("compositor.conf");
+    std::vector<std::string> applied;
+    const auto applier = [&applied](const std::string &name) {
+        if (name == "broken")
             return false;
-        applied << name;
+        applied.push_back(name);
         return true;
     };
     {
-        KeyboardSettings settings(nullptr, file);
-        const QString fallback = settings.layout();
-        EXPECT_FALSE(settings.setLayout(QStringLiteral("de")));
+        KeyboardSettings settings(file);
+        const std::string fallback = settings.layout();
+        EXPECT_FALSE(settings.setLayout("de"));
         settings.setLayoutApplier(applier);
         // Nothing saved, so nothing is installed up front.
-        EXPECT_TRUE(applied.isEmpty());
+        EXPECT_TRUE(applied.empty());
 
-        QSignalSpy changes(&settings, &KeyboardSettings::layoutChanged);
-        EXPECT_FALSE(settings.setLayout(QStringLiteral("broken")));
+        int changes = 0;
+        auto changesCounter = settings.layoutChanged.connect([&changes] { ++changes; });
+        EXPECT_FALSE(settings.setLayout("broken"));
         EXPECT_EQ(settings.layout(), fallback);
-        EXPECT_TRUE(settings.setLayout(QStringLiteral("de-neo")));
-        EXPECT_TRUE(settings.setLayout(QStringLiteral("de-neo")));
-        EXPECT_EQ(changes.count(), 1);
-        EXPECT_EQ(settings.layout(), QStringLiteral("de-neo"));
+        EXPECT_TRUE(settings.setLayout("de-neo"));
+        EXPECT_TRUE(settings.setLayout("de-neo"));
+        EXPECT_EQ(changes, 1);
+        EXPECT_EQ(settings.layout(), "de-neo");
     }
     applied.clear();
     {
-        KeyboardSettings restored(nullptr, file);
+        KeyboardSettings restored(file);
         restored.setLayoutApplier(applier);
-        EXPECT_EQ(applied, QStringList {QStringLiteral("de-neo")});
-        EXPECT_TRUE(restored.setLayout(QString()));
-        EXPECT_NE(restored.layout(), QStringLiteral("de-neo"));
+        EXPECT_EQ(applied, std::vector<std::string> {"de-neo"});
+        EXPECT_TRUE(restored.setLayout({}));
+        EXPECT_NE(restored.layout(), "de-neo");
     }
-    QSettings stored(file, QSettings::IniFormat);
-    stored.beginGroup(QStringLiteral("Keyboard"));
-    EXPECT_FALSE(stored.contains(QStringLiteral("layout")));
+    Settings stored(file);
+    EXPECT_FALSE(stored.contains("Keyboard/layout"));
 }
 
 TEST(KeyboardSettings, ASavedLayoutThatNoLongerAppliesFallsBack)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     {
-        QSettings stored(file, QSettings::IniFormat);
-        stored.beginGroup(QStringLiteral("Keyboard"));
-        stored.setValue(QStringLiteral("layout"), QStringLiteral("broken"));
+        Settings stored(file);
+        stored.setValue("Keyboard/layout", "broken");
     }
-    KeyboardSettings settings(nullptr, file);
-    EXPECT_EQ(settings.layout(), QStringLiteral("broken"));
-    QSignalSpy changes(&settings, &KeyboardSettings::layoutChanged);
-    settings.setLayoutApplier([](const QString &) {
+    KeyboardSettings settings(file);
+    EXPECT_EQ(settings.layout(), "broken");
+    int changes = 0;
+        auto changesCounter = settings.layoutChanged.connect([&changes] { ++changes; });
+    settings.setLayoutApplier([](const std::string &) {
         return false;
     });
-    EXPECT_EQ(changes.count(), 1);
-    EXPECT_NE(settings.layout(), QStringLiteral("broken"));
+    EXPECT_EQ(changes, 1);
+    EXPECT_NE(settings.layout(), "broken");
 }
 
 TEST(KeyboardSettings, TheShortcutConventionIsSavedAndStartsAsPc)
 {
-    QTemporaryDir directory;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    const QString file = directory.filePath(QStringLiteral("compositor.conf"));
+    const std::string file = directory.filePath("compositor.conf");
     {
-        KeyboardSettings settings(nullptr, file);
+        KeyboardSettings settings(file);
         EXPECT_EQ(settings.shortcutConvention(), ShortcutConvention::Pc);
-        QSignalSpy changes(&settings, &KeyboardSettings::shortcutConventionChanged);
-        EXPECT_FALSE(settings.setShortcutConvention(QStringLiteral("mac")));
-        EXPECT_TRUE(settings.setShortcutConvention(QStringLiteral("command")));
-        EXPECT_TRUE(settings.setShortcutConvention(QStringLiteral("command")));
-        EXPECT_EQ(changes.count(), 1);
+        int changes = 0;
+        auto changesCounter = settings.shortcutConventionChanged.connect([&changes] { ++changes; });
+        EXPECT_FALSE(settings.setShortcutConvention("mac"));
+        EXPECT_TRUE(settings.setShortcutConvention("command"));
+        EXPECT_TRUE(settings.setShortcutConvention("command"));
+        EXPECT_EQ(changes, 1);
     }
     {
-        KeyboardSettings restored(nullptr, file);
+        KeyboardSettings restored(file);
         EXPECT_EQ(restored.shortcutConvention(), ShortcutConvention::Command);
-        EXPECT_EQ(restored.shortcutConventionName(), QStringLiteral("command"));
-        EXPECT_TRUE(restored.setShortcutConvention(QStringLiteral("pc")));
+        EXPECT_EQ(restored.shortcutConventionName(), "command");
+        EXPECT_TRUE(restored.setShortcutConvention("pc"));
     }
-    QSettings stored(file, QSettings::IniFormat);
-    stored.beginGroup(QStringLiteral("Keyboard"));
-    EXPECT_FALSE(stored.contains(QStringLiteral("shortcutConvention")));
+    Settings stored(file);
+    EXPECT_FALSE(stored.contains("Keyboard/shortcutConvention"));
 }
 
 TEST(KeyboardSettings, DBusPropertiesAndMethods)
 {
-    ASSERT_TRUE(QDBusConnection::sessionBus().isConnected());
-    QTemporaryDir directory;
+    EventLoop loop;
+    TemporaryDirectory directory;
     ASSERT_TRUE(directory.isValid());
-    KeyboardSettings settings(nullptr, directory.filePath(QStringLiteral("compositor.conf")));
-    settings.setLayoutApplier([](const QString &name) {
-        return name != QLatin1String("broken");
+    KeyboardSettings settings(directory.filePath("compositor.conf"));
+    settings.setLayoutApplier([](const std::string &name) {
+        return name != "broken";
     });
     ASSERT_TRUE(settings.registerService());
-    QDBusInterface proxy(QStringLiteral("com.cutefish.Keyboard1"),
-                         QStringLiteral("/com/cutefish/Keyboard1"),
-                         QStringLiteral("com.cutefish.Keyboard1"));
+    RemoteObject proxy(loop, "com.cutefish.Keyboard1", "/com/cutefish/Keyboard1",
+                       "com.cutefish.Keyboard1");
     ASSERT_TRUE(proxy.isValid());
-    const auto invoke = [&proxy](const QString &method, const QVariant &value) {
-        QDBusPendingCallWatcher watcher(proxy.asyncCall(method, value));
-        QEventLoop loop;
-        QObject::connect(&watcher, &QDBusPendingCallWatcher::finished, &loop, &QEventLoop::quit);
-        QTimer::singleShot(2000, &loop, &QEventLoop::quit);
-        if (!watcher.isFinished())
-            loop.exec();
-        EXPECT_TRUE(watcher.isFinished());
-        const QDBusPendingReply<> reply = watcher;
-        EXPECT_FALSE(reply.isError()) << reply.error().message().toStdString();
-        return watcher.reply().arguments().value(0);
+    const auto invoke = [&proxy](const std::string &method, auto value) {
+        const auto reply = proxy.call(method, value);
+        EXPECT_FALSE(reply.isError()) << method << ": " << reply.error().message;
+        return reply;
     };
-    invoke(QStringLiteral("setRepeatEnabled"), false);
-    invoke(QStringLiteral("setRepeatDelay"), 250);
-    invoke(QStringLiteral("setRepeatInterval"), 25);
-    EXPECT_FALSE(invoke(QStringLiteral("setLayout"), QStringLiteral("broken")).toBool());
-    EXPECT_TRUE(invoke(QStringLiteral("setLayout"), QStringLiteral("fr")).toBool());
-    EXPECT_TRUE(
-            invoke(QStringLiteral("setShortcutConvention"), QStringLiteral("command")).toBool());
-    EXPECT_FALSE(proxy.property("repeatEnabled").toBool());
-    EXPECT_EQ(proxy.property("repeatDelay").toInt(), 250);
-    EXPECT_EQ(proxy.property("repeatInterval").toInt(), 25);
-    EXPECT_EQ(proxy.property("layout").toString(), QStringLiteral("fr"));
-    EXPECT_EQ(proxy.property("shortcutConvention").toString(), QStringLiteral("command"));
+    invoke("setRepeatEnabled", false);
+    invoke("setRepeatDelay", int32_t(250));
+    invoke("setRepeatInterval", int32_t(25));
+    EXPECT_EQ(invoke("setLayout", std::string("broken")).value<bool>(), false);
+    EXPECT_EQ(invoke("setLayout", std::string("fr")).value<bool>(), true);
+    EXPECT_EQ(invoke("setShortcutConvention", std::string("command")).value<bool>(), true);
+    EXPECT_EQ(proxy.property<bool>("repeatEnabled"), false);
+    EXPECT_EQ(proxy.property<int32_t>("repeatDelay"), 250);
+    EXPECT_EQ(proxy.property<int32_t>("repeatInterval"), 25);
+    EXPECT_EQ(proxy.property<std::string>("layout"), "fr");
+    EXPECT_EQ(proxy.property<std::string>("shortcutConvention"), "command");
 }
 
-int main(int argc, char **argv)
+// The argument names are those QtDBus took from the slots' parameters. QtDBus
+// left return values unnamed; sd-bus names all arguments or none, so they are
+// "result".
+TEST(KeyboardSettings, IntrospectionNamesTheArguments)
 {
-    QCoreApplication application(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    EventLoop loop;
+    TemporaryDirectory directory;
+    ASSERT_TRUE(directory.isValid());
+    KeyboardSettings settings(directory.filePath("compositor.conf"));
+    ASSERT_TRUE(settings.registerService());
+    RemoteObject proxy(loop, "com.cutefish.Keyboard1", "/com/cutefish/Keyboard1",
+                       "com.cutefish.Keyboard1");
+    ASSERT_TRUE(proxy.isValid());
+    const std::string xml = proxy.introspect();
+    EXPECT_NE(xml.find("<method name=\"setRepeatDelay\">\n"
+                       "   <arg type=\"i\" name=\"milliseconds\" direction=\"in\"/>\n"
+                       "  </method>"),
+              std::string::npos)
+            << xml;
+    EXPECT_NE(xml.find("<method name=\"setLayout\">\n"
+                       "   <arg type=\"s\" name=\"name\" direction=\"in\"/>\n"
+                       "   <arg type=\"b\" name=\"result\" direction=\"out\"/>\n"
+                       "  </method>"),
+              std::string::npos)
+            << xml;
 }

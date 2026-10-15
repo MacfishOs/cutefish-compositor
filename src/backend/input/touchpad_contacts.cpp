@@ -51,7 +51,7 @@ std::unique_ptr<TouchpadContacts> TouchpadContacts::create(int fd)
     contacts->m_resolutionX = x.resolution;
     contacts->m_resolutionY = y.resolution;
     contacts->m_hasToolType = testBit(absBits.data(), ABS_MT_TOOL_TYPE);
-    contacts->m_size = QSizeF((x.maximum - x.minimum) / double(x.resolution),
+    contacts->m_size = base::SizeF((x.maximum - x.minimum) / double(x.resolution),
                               (y.maximum - y.minimum) / double(y.resolution));
     contacts->m_slots.resize(contacts->m_slotCount);
     return contacts;
@@ -65,9 +65,9 @@ bool TouchpadContacts::readSlots(uint32_t code, std::vector<int32_t> *values) co
     return ioctl(m_fd, EVIOCGMTSLOTS(values->size() * sizeof(int32_t)), values->data()) == 0;
 }
 
-QPointF TouchpadContacts::millimetres(int32_t x, int32_t y) const
+base::PointF TouchpadContacts::millimetres(int32_t x, int32_t y) const
 {
-    return QPointF((x - m_minX) / m_resolutionX, (y - m_minY) / m_resolutionY);
+    return base::PointF((x - m_minX) / m_resolutionX, (y - m_minY) / m_resolutionY);
 }
 
 void TouchpadContacts::update(input::Timestamp now)

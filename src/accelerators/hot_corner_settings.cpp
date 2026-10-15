@@ -3,15 +3,15 @@
 // found in the LICENSE file.
 
 #include "accelerators/hot_corner_settings.h"
+#include "core/logging.h"
 
 #include <algorithm>
 
-#include <QDBusConnection>
-#include <QDBusError>
-#include <QDebug>
+#include <limits>
 
 #include "accelerators/accelerator.h"
 #include "core/preferences.h"
+#include "input/dbus_export.h"
 
 namespace cutefish::accelerators {
 namespace {
@@ -39,49 +39,52 @@ size_t indexOf(HotCorner corner)
 
 } // namespace
 
-HotCornerSettings::HotCornerSettings(QObject *parent, const QString &settingsFile)
-    : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
-                                       : settingsFile,
-                 QSettings::IniFormat)
+HotCornerSettings::HotCornerSettings(const std::string &settingsFile)
+    : m_settings(settingsFile.empty() ? preferencesFile("compositor") : settingsFile)
 {
-    m_settings.beginGroup(QStringLiteral("HotCorners"));
     for (size_t i = 0; i < kKeys.size(); ++i) {
-        const QString key = QLatin1String(kKeys[i]);
+        const std::string key = std::string("HotCorners/") + kKeys[i];
         HotCornerBinding &binding = m_bindings[i];
-        binding.action = acceleratorActionFromName(m_settings.value(key).toString());
-        if (binding.action)
-            binding.modifiers = m_settings.value(key + QLatin1String("Modifiers"), 0).toUInt()
-                    & kCornerModifiers;
+        binding.action = acceleratorActionFromName(m_settings.stringValue(key));
+        if (binding.action) {
+            // A value that is not an unsigned 32-bit number holds none.
+            const int64_t modifiers = m_settings.intValue(key + "Modifiers", 0);
+            if (modifiers >= 0 && modifiers <= std::numeric_limits<uint32_t>::max())
+                binding.modifiers = uint32_t(modifiers) & kCornerModifiers;
+        }
     }
 }
 
-HotCornerSettings::~HotCornerSettings()
-{
-    if (m_registered) {
-        auto bus = QDBusConnection::sessionBus();
-        bus.unregisterObject(QLatin1String(path));
-        bus.unregisterService(QLatin1String(service));
-    }
-}
+HotCornerSettings::~HotCornerSettings() = default;
 
 bool HotCornerSettings::registerService()
 {
-    if (m_registered)
+    if (m_object)
         return true;
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.registerObject(QLatin1String(path), this,
-                            QDBusConnection::ExportAllProperties | QDBusConnection::ExportAllSlots
-                                    | QDBusConnection::ExportAllSignals)) {
-        qWarning() << "Cannot export hot corner settings:" << bus.lastError().message();
+    auto exported = input::DBusExport::create(service, path, service);
+    if (!exported) {
+        CF_WARNING(cfInput) << "Cannot export hot corner settings: no session bus";
         return false;
     }
-    if (!bus.registerService(QLatin1String(service))) {
-        qWarning() << "Cannot register hot corner settings:" << bus.lastError().message();
-        bus.unregisterObject(QLatin1String(path));
+    base::dbus::Object &object = exported->object();
+    object.addProperty("topLeft", [this] { return topLeft(); });
+    object.addProperty("topLeftModifiers", [this] { return int32_t(topLeftModifiers()); });
+    object.addProperty("topRight", [this] { return topRight(); });
+    object.addProperty("topRightModifiers", [this] { return int32_t(topRightModifiers()); });
+    object.addProperty("bottomLeft", [this] { return bottomLeft(); });
+    object.addProperty("bottomLeftModifiers", [this] { return int32_t(bottomLeftModifiers()); });
+    object.addProperty("bottomRight", [this] { return bottomRight(); });
+    object.addProperty("bottomRightModifiers",
+                       [this] { return int32_t(bottomRightModifiers()); });
+    object.addMethod("setCorner",
+                     [this](const std::string &corner, const std::string &action,
+                            int32_t modifiers) { setCorner(corner, action, modifiers); },
+                     base::dbus::ArgumentNames{{"corner", "action", "modifiers"}, {}});
+    object.addMethod("heldModifiers", [this] { return int32_t(heldModifiers()); });
+    object.addSignal("changed", "");
+    if (!exported->publish("hot corner settings"))
         return false;
-    }
-    m_registered = true;
+    m_object = std::move(exported);
     return true;
 }
 
@@ -90,10 +93,11 @@ const HotCornerBinding &HotCornerSettings::binding(HotCorner corner) const
     return m_bindings[indexOf(corner)];
 }
 
-void HotCornerSettings::setCorner(const QString &corner, const QString &action, int modifiers)
+void HotCornerSettings::setCorner(const std::string &corner, const std::string &action,
+                                  int modifiers)
 {
     const auto it = std::find_if(kCorners.begin(), kCorners.end(), [&corner](const auto &entry) {
-        return corner == QLatin1String(entry.second);
+        return corner == entry.second;
     });
     if (it == kCorners.end())
         return;
@@ -106,18 +110,19 @@ void HotCornerSettings::setCorner(const QString &corner, const QString &action, 
         return;
     m_bindings[index] = binding;
 
-    const QString key = QLatin1String(kKeys[index]);
+    const std::string key = std::string("HotCorners/") + kKeys[index];
     if (binding.action) {
         m_settings.setValue(key, acceleratorActionName(*binding.action));
-        m_settings.setValue(key + QLatin1String("Modifiers"), binding.modifiers);
+        m_settings.setValue(key + "Modifiers", binding.modifiers);
     } else {
         m_settings.remove(key);
-        m_settings.remove(key + QLatin1String("Modifiers"));
+        m_settings.remove(key + "Modifiers");
     }
-    m_settings.sync();
-    if (m_settings.status() != QSettings::NoError)
-        qWarning() << "Cannot persist hot corner settings to" << m_settings.fileName();
-    emit changed();
+    if (!m_settings.sync())
+        CF_WARNING(cfInput) << "Cannot persist hot corner settings to" << m_settings.path();
+    changed();
+    if (m_object)
+        m_object->emitSignal("changed");
 }
 
 int HotCornerSettings::heldModifiers() const
@@ -125,10 +130,10 @@ int HotCornerSettings::heldModifiers() const
     return m_modifierSource ? int(m_modifierSource() & kCornerModifiers) : 0;
 }
 
-QString HotCornerSettings::actionName(HotCorner corner) const
+std::string HotCornerSettings::actionName(HotCorner corner) const
 {
     const HotCornerBinding &binding = m_bindings[indexOf(corner)];
-    return binding.action ? acceleratorActionName(*binding.action) : QString();
+    return binding.action ? acceleratorActionName(*binding.action) : std::string();
 }
 
 int HotCornerSettings::modifiers(HotCorner corner) const

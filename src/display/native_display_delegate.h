@@ -6,22 +6,19 @@
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
 // Adapted for Cutefish: callbacks use standard C++ values and expose the
-// backend boundary needed by a single-process Qt compositor.
+// backend boundary needed by a single-process compositor.
 
 #pragma once
 
 #include <functional>
 
-#include <QObject>
-
+#include "base/signal.h"
 #include "display/display_types.h"
 
 namespace cutefish::display {
 
-class NativeDisplayDelegate : public QObject
+class NativeDisplayDelegate
 {
-    Q_OBJECT
-
 public:
     enum class ConfigureMode {
         TestOnly,
@@ -38,19 +35,22 @@ public:
     using QueryCallback = std::function<void(std::optional<HardwareSnapshot>, DisplayError)>;
     using ConfigureCallback = std::function<void(ConfigurationResult)>;
 
-    using QObject::QObject;
-    ~NativeDisplayDelegate() override = default;
+    NativeDisplayDelegate() = default;
+    virtual ~NativeDisplayDelegate() = default;
+
+    NativeDisplayDelegate(const NativeDisplayDelegate&) = delete;
+    NativeDisplayDelegate& operator=(const NativeDisplayDelegate&) = delete;
 
     virtual void takeDisplayControl(ControlCallback callback) = 0;
     virtual void relinquishDisplayControl(ControlCallback callback) = 0;
     virtual void queryHardware(QueryCallback callback) = 0;
     virtual void configure(const DisplayConfiguration& configuration, ConfigureMode mode,
                            ConfigureCallback callback) = 0;
-    virtual void setDisplayPower(const QList<DisplayId>& displays, PowerState state,
+    virtual void setDisplayPower(const std::vector<DisplayId> & displays, PowerState state,
                                  ConfigureCallback callback) = 0;
 
-signals:
-    void hardwareInvalidated(uint64_t topologyGeneration);
+    // The topology generation the next snapshot will carry.
+    base::Signal<uint64_t> hardwareInvalidated;
 };
 
 } // namespace cutefish::display

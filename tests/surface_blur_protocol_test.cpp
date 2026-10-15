@@ -109,7 +109,7 @@ TEST_F(SurfaceBlurProtocolTest, SetUnsetAndBindingDestructionFollowSurfaceCommit
     EXPECT_TRUE(model->backgroundBlurRect().isEmpty());
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->backgroundBlurRect(), QRect(3, 4, 120, 80));
+    EXPECT_EQ(model->backgroundBlurRect(), base::Rect(3, 4, 120, 80));
     EXPECT_EQ(model->backgroundBlurRadius(), 40);
     cutefish_surface_blur_v1_unset(blur, surface);
     ASSERT_GE(roundtrip(), 0);
@@ -122,7 +122,7 @@ TEST_F(SurfaceBlurProtocolTest, SetUnsetAndBindingDestructionFollowSurfaceCommit
     blur = nullptr;
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->backgroundBlurRect(), QRect(0, 0, 30, 20));
+    EXPECT_EQ(model->backgroundBlurRect(), base::Rect(0, 0, 30, 20));
     wl_surface_destroy(surface);
     ASSERT_GE(roundtrip(), 0);
     EXPECT_TRUE(compositor.surfaces().empty());
@@ -165,10 +165,10 @@ TEST_F(SurfaceBlurProtocolTest, ShapeIsPendingStateClippedToTheRectangle)
     EXPECT_TRUE(model->backgroundBlurShape().isEmpty());
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    const QPainterPath shape = model->backgroundBlurShape();
+    const ui::Path shape = model->backgroundBlurShape();
     ASSERT_FALSE(shape.isEmpty());
-    EXPECT_TRUE(shape.contains(QPointF(90, 10)));
-    EXPECT_FALSE(shape.contains(QPointF(98, 55)));
+    EXPECT_TRUE(shape.contains(ui::PointF {90, 10}));
+    EXPECT_FALSE(shape.contains(ui::PointF {98, 55}));
     // The part below the rectangle is cut off.
     EXPECT_LE(shape.boundingRect().bottom(), 60.0001);
 
@@ -182,6 +182,50 @@ TEST_F(SurfaceBlurProtocolTest, ShapeIsPendingStateClippedToTheRectangle)
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
     EXPECT_TRUE(model->backgroundBlurShape().isEmpty());
+    wl_surface_destroy(surface);
+    ASSERT_GE(roundtrip(), 0);
+}
+
+// The element rules the shape has always had: it starts at the origin, a
+// move replaces a move, and closing an empty shape does nothing.
+TEST_F(SurfaceBlurProtocolTest, ShapeKeepsItsElementRules)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    cutefish_surface_blur_v1_set(blur, surface, 0, 0, 100, 60, 8);
+    cutefish_surface_blur_v1_set_glass(blur, surface);
+    const auto shapeOf = [&](std::initializer_list<int32_t> values) {
+        wl_array path;
+        wl_array_init(&path);
+        append(&path, values);
+        cutefish_surface_blur_v1_set_shape(blur, surface, &path);
+        wl_array_release(&path);
+        wl_surface_commit(surface);
+        EXPECT_GE(roundtrip(), 0);
+        return compositor.surfaces().front()->backgroundBlurShape();
+    };
+
+    ui::Path shape = shapeOf({CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO, wl_fixed_from_int(10),
+                              wl_fixed_from_int(10), CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO,
+                              wl_fixed_from_int(10), wl_fixed_from_int(0)});
+    EXPECT_FALSE(shape.isEmpty());
+    EXPECT_EQ(shape.controlPointRect(), (ui::RectF {0, 0, 10, 10}));
+
+    shape = shapeOf({CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO, wl_fixed_from_int(90),
+                     wl_fixed_from_int(50), CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO,
+                     wl_fixed_from_int(5), wl_fixed_from_int(5),
+                     CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO, wl_fixed_from_int(10),
+                     wl_fixed_from_int(10)});
+    EXPECT_EQ(shape.controlPointRect(), (ui::RectF {5, 5, 5, 5}));
+
+    shape = shapeOf({CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO, wl_fixed_from_int(1),
+                     wl_fixed_from_int(1), CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CLOSE});
+    EXPECT_TRUE(shape.isEmpty());
+
+    // An empty segment is dropped, so the shape stays a lone move.
+    shape = shapeOf({CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO, wl_fixed_from_int(1),
+                     wl_fixed_from_int(1), CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO,
+                     wl_fixed_from_int(1), wl_fixed_from_int(1)});
+    EXPECT_TRUE(shape.isEmpty());
     wl_surface_destroy(surface);
     ASSERT_GE(roundtrip(), 0);
 }

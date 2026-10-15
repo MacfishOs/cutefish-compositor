@@ -6,7 +6,6 @@
 // chromium/src/remoting/host/remote_input_filter_unittest.cc.
 // Revision: 8abbac30b9cf2fe976422c58c000c94685648b65
 
-#include <QString>
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
@@ -17,6 +16,7 @@
 #include <vector>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
+#include "base/strings.h"
 #include "compositor/compositor.h"
 #include "computer_control/controller.h"
 #include "input/event_sink.h"
@@ -37,23 +37,25 @@ class RecordingSink : public input::EventSink
 public:
     std::vector<std::string> events;
 
-    bool onPointerMotion(input::Timestamp, const QPointF &location) override
+    bool onPointerMotion(input::Timestamp, const base::PointF &location) override
     {
-        events.push_back("motion " + QString::number(location.x()).toStdString() + ","
-                         + QString::number(location.y()).toStdString());
+        events.push_back("motion " + base::strings::number(location.x()) + ","
+                         + base::strings::number(location.y()));
         return false;
     }
 
-    bool onPointerButton(input::Timestamp, const QPointF &, uint32_t button, bool pressed) override
+    bool onPointerButton(input::Timestamp, const base::PointF &, uint32_t button,
+                         bool pressed) override
     {
         events.push_back("button " + std::to_string(button) + (pressed ? " down" : " up"));
         return false;
     }
 
-    bool onPointerAxis(input::Timestamp, const QPointF &, const QPointF &offset, bool) override
+    bool onPointerAxis(input::Timestamp, const base::PointF &, const base::PointF &offset,
+                       bool) override
     {
-        events.push_back("axis " + QString::number(offset.x()).toStdString() + ","
-                         + QString::number(offset.y()).toStdString());
+        events.push_back("axis " + base::strings::number(offset.x()) + ","
+                         + base::strings::number(offset.y()));
         return false;
     }
 
@@ -71,9 +73,9 @@ public:
     std::vector<RevokeReason> revokes;
     std::vector<Rejection> rejections;
     // Handle and title of each window event since the last windows_done.
-    std::vector<std::pair<uint32_t, QString>> windows;
+    std::vector<std::pair<uint32_t, std::string>> windows;
     int windowsDones = 0;
-    std::vector<QPointF> pointers;
+    std::vector<base::PointF> pointers;
 
     void granted() override { ++granteds; }
     void revoked(RevokeReason reason) override { revokes.push_back(reason); }
@@ -85,7 +87,7 @@ public:
     }
 
     void windowsDone() override { ++windowsDones; }
-    void pointer(const QPointF &position) override { pointers.push_back(position); }
+    void pointer(const base::PointF &position) override { pointers.push_back(position); }
 };
 
 std::string key(uint32_t code, bool pressed)
@@ -98,7 +100,7 @@ class ComputerControlTest : public ::testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaces =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaces};
     input::Seat seat {&compositor};
     input::InputManager input {&seat};
@@ -117,29 +119,30 @@ protected:
     bool inputRead = true;
     std::vector<std::string> commits;
     std::vector<WindowInfo> windows;
-    std::vector<quint64> activations;
-    std::optional<quint64> protectedWindow;
-    std::vector<quint64> closes;
-    std::vector<std::pair<quint64, QRect>> frames;
+    std::vector<uint64_t> activations;
+    std::optional<uint64_t> protectedWindow;
+    std::vector<uint64_t> closes;
+    std::vector<std::pair<uint64_t, base::Rect>> frames;
     std::vector<std::string> clipboards;
     std::vector<bool> activeChanges;
     std::unique_ptr<Controller> controller;
+    base::Subscription activeSubscription;
 
     void SetUp() override
     {
-        scene.setSize(QSize(800, 600));
-        input.setBounds(QSize(800, 600));
+        scene.setSize(base::Size(800, 600));
+        input.setBounds(base::Size(800, 600));
         input.setEventSink(&sink);
 
         Environment environment;
-        environment.askConsent = [this](const QString &, std::function<void(ConsentResult)> reply) {
+        environment.askConsent = [this](const std::string &, std::function<void(ConsentResult)> reply) {
             ++questions;
             answer = std::move(reply);
             return [this] {
                 ++withdrawals;
             };
         };
-        environment.protectedAt = [this](const QPointF &) {
+        environment.protectedAt = [this](const base::PointF &) {
             return protectedPoint;
         };
         environment.protectedFocus = [this] {
@@ -169,7 +172,7 @@ protected:
         environment.windows = [this] {
             return windows;
         };
-        environment.activateWindow = [this](quint64 id) {
+        environment.activateWindow = [this](uint64_t id) {
             for (const WindowInfo &window : windows) {
                 if (window.id == id) {
                     activations.push_back(id);
@@ -178,21 +181,21 @@ protected:
             }
             return false;
         };
-        const auto listed = [this](quint64 id) {
+        const auto listed = [this](uint64_t id) {
             return std::any_of(windows.begin(), windows.end(), [id](const WindowInfo &window) {
                 return window.id == id;
             });
         };
-        environment.protectedWindow = [this](quint64 id) {
+        environment.protectedWindow = [this](uint64_t id) {
             return protectedWindow == id;
         };
-        environment.closeWindow = [this, listed](quint64 id) {
+        environment.closeWindow = [this, listed](uint64_t id) {
             if (!listed(id))
                 return false;
             closes.push_back(id);
             return true;
         };
-        environment.setWindowFrame = [this, listed](quint64 id, const QRect &frame) {
+        environment.setWindowFrame = [this, listed](uint64_t id, const base::Rect &frame) {
             if (!listed(id))
                 return false;
             frames.emplace_back(id, frame);
@@ -202,14 +205,14 @@ protected:
             clipboards.push_back(text);
         };
         controller = std::make_unique<Controller>(&input, std::move(environment));
-        QObject::connect(controller.get(), &Controller::activeChanged, [this](bool active) {
+        activeSubscription = controller->activeChanged.connect([this](bool active) {
             activeChanges.push_back(active);
         });
     }
 
     std::unique_ptr<Control> grant(FakeClient &client)
     {
-        auto control = controller->request(&client, &client, QStringLiteral("Agent"));
+        auto control = controller->request(&client, &client, "Agent");
         EXPECT_TRUE(answer);
         std::exchange(answer, {})(ConsentResult::Allowed);
         EXPECT_EQ(1, client.granteds);
@@ -223,11 +226,11 @@ protected:
 TEST_F(ComputerControlTest, NothingIsInjectedBeforeTheUserAgrees)
 {
     FakeClient client;
-    auto control = controller->request(&client, &client, QStringLiteral("Agent"));
+    auto control = controller->request(&client, &client, "Agent");
     EXPECT_EQ(1, questions);
     EXPECT_FALSE(controller->isActive());
 
-    control->motion(QPointF(10, 10));
+    control->motion(base::PointF(10, 10));
     control->key(KEY_A, true);
     EXPECT_EQ((std::vector<Rejection> {Rejection::NotGranted, Rejection::NotGranted}),
               client.rejections);
@@ -236,25 +239,25 @@ TEST_F(ComputerControlTest, NothingIsInjectedBeforeTheUserAgrees)
     answer(ConsentResult::Allowed);
     EXPECT_EQ(1, client.granteds);
     EXPECT_TRUE(controller->isActive());
-    EXPECT_EQ(QStringLiteral("Agent"), controller->agentName());
+    EXPECT_EQ("Agent", controller->agentName());
     EXPECT_EQ(std::vector<bool> {true}, activeChanges);
 
-    control->motion(QPointF(10, 20));
+    control->motion(base::PointF(10, 20));
     EXPECT_EQ(std::vector<std::string> {"motion 10,20"}, sink.events);
-    EXPECT_EQ(QPointF(10, 20), input.pointerPosition());
+    EXPECT_EQ(base::PointF(10, 20), input.pointerPosition());
 }
 
 TEST_F(ComputerControlTest, ARefusalRevokes)
 {
     FakeClient denied;
-    auto control = controller->request(&denied, &denied, QStringLiteral("Agent"));
+    auto control = controller->request(&denied, &denied, "Agent");
     answer(ConsentResult::Denied);
     EXPECT_EQ(std::vector<RevokeReason> {RevokeReason::Denied}, denied.revokes);
     EXPECT_FALSE(controller->isActive());
     EXPECT_TRUE(activeChanges.empty());
 
     FakeClient unavailable;
-    auto other = controller->request(&unavailable, &unavailable, QStringLiteral("Agent"));
+    auto other = controller->request(&unavailable, &unavailable, "Agent");
     answer(ConsentResult::Unavailable);
     EXPECT_EQ(std::vector<RevokeReason> {RevokeReason::Unavailable}, unavailable.revokes);
 }
@@ -262,9 +265,9 @@ TEST_F(ComputerControlTest, ARefusalRevokes)
 TEST_F(ComputerControlTest, OneControlAtATime)
 {
     FakeClient first;
-    auto control = controller->request(&first, &first, QStringLiteral("Agent"));
+    auto control = controller->request(&first, &first, "Agent");
     FakeClient second;
-    auto other = controller->request(&second, &second, QStringLiteral("Other"));
+    auto other = controller->request(&second, &second, "Other");
     EXPECT_EQ(std::vector<RevokeReason> {RevokeReason::Busy}, second.revokes);
     EXPECT_EQ(1, questions);
 
@@ -272,7 +275,7 @@ TEST_F(ComputerControlTest, OneControlAtATime)
     control.reset();
     EXPECT_EQ(1, withdrawals);
     FakeClient third;
-    auto last = controller->request(&third, &third, QStringLiteral("Agent"));
+    auto last = controller->request(&third, &third, "Agent");
     EXPECT_TRUE(third.revokes.empty());
     EXPECT_EQ(2, questions);
 }
@@ -281,13 +284,13 @@ TEST_F(ComputerControlTest, ABlockedSessionEndsControl)
 {
     blocked = true;
     FakeClient refused;
-    auto control = controller->request(&refused, &refused, QStringLiteral("Agent"));
+    auto control = controller->request(&refused, &refused, "Agent");
     EXPECT_EQ(std::vector<RevokeReason> {RevokeReason::Locked}, refused.revokes);
     EXPECT_EQ(0, questions);
 
     blocked = false;
     FakeClient pending;
-    auto asking = controller->request(&pending, &pending, QStringLiteral("Agent"));
+    auto asking = controller->request(&pending, &pending, "Agent");
     controller->sessionBlocked();
     EXPECT_EQ(std::vector<RevokeReason> {RevokeReason::Locked}, pending.revokes);
     EXPECT_EQ(1, withdrawals);
@@ -335,14 +338,14 @@ TEST_F(ComputerControlTest, RealInputPausesTheAgentAndReleasesWhatItHolds)
     control->button(BTN_LEFT, true);
     sink.events.clear();
 
-    input.onPointerMotion(clock, QPointF(1, 0));
+    input.onPointerMotion(clock, base::PointF(1, 0));
     ASSERT_EQ(3u, sink.events.size());
     EXPECT_EQ("button " + std::to_string(BTN_LEFT) + " up", sink.events[0]);
     EXPECT_EQ(key(KEY_LEFTSHIFT, false), sink.events[1]);
     EXPECT_TRUE(seat.pressedKeys().empty());
 
     sink.events.clear();
-    control->motion(QPointF(50, 50));
+    control->motion(base::PointF(50, 50));
     control->key(KEY_A, true);
     EXPECT_EQ((std::vector<Rejection> {Rejection::Paused, Rejection::Paused}), client.rejections);
     EXPECT_TRUE(sink.events.empty());
@@ -387,7 +390,7 @@ TEST_F(ComputerControlTest, SystemDialogsAreTheUsersToAnswer)
 
     protectedPoint = true;
     protectedFocus = true;
-    control->motion(QPointF(30, 30));
+    control->motion(base::PointF(30, 30));
     control->button(BTN_LEFT, true);
     control->axis(0, 1);
     control->key(KEY_ENTER, true);
@@ -538,7 +541,7 @@ TEST_F(ComputerControlTest, OnlyTheGrantedClientMayCapture)
 {
     FakeClient client;
     int other = 0;
-    auto control = controller->request(&client, &client, QStringLiteral("Agent"));
+    auto control = controller->request(&client, &client, "Agent");
     EXPECT_FALSE(controller->allowsCapture(&client));
     answer(ConsentResult::Allowed);
     EXPECT_TRUE(controller->allowsCapture(&client));
@@ -558,7 +561,7 @@ TEST_F(ComputerControlTest, AControlOutlivingTheControllerRefusesEverything)
     sink.events.clear();
 
     control->key(KEY_A, false);
-    control->motion(QPointF(1, 1));
+    control->motion(base::PointF(1, 1));
     EXPECT_TRUE(sink.events.empty());
     EXPECT_EQ(std::vector<Rejection> {Rejection::NotGranted}, client.rejections);
     control.reset();
@@ -566,11 +569,11 @@ TEST_F(ComputerControlTest, AControlOutlivingTheControllerRefusesEverything)
 
 TEST_F(ComputerControlTest, WindowsAreListedWhileGranted)
 {
-    windows = {{7, QStringLiteral("gedit"), QStringLiteral("Notes"), QRect(10, 20, 300, 200),
+    windows = {{7, "gedit", "Notes", base::Rect(10, 20, 300, 200),
                 WindowInfo::Active},
-               {3, QStringLiteral("firefox"), QStringLiteral("Mail"), QRect(), 0}};
+               {3, "firefox", "Mail", base::Rect(), 0}};
     FakeClient client;
-    auto control = controller->request(&client, &client, QStringLiteral("Agent"));
+    auto control = controller->request(&client, &client, "Agent");
     control->listWindows();
     control->queryPointer();
     EXPECT_EQ((std::vector<Rejection> {Rejection::NotGranted, Rejection::NotGranted}),
@@ -581,29 +584,28 @@ TEST_F(ComputerControlTest, WindowsAreListedWhileGranted)
 
     answer(ConsentResult::Allowed);
     control->listWindows();
-    using Listed = std::vector<std::pair<uint32_t, QString>>;
-    EXPECT_EQ((Listed {{1, QStringLiteral("Notes")}, {2, QStringLiteral("Mail")}}),
+    using Listed = std::vector<std::pair<uint32_t, std::string>>;
+    EXPECT_EQ((Listed {{1, "Notes"}, {2, "Mail"}}),
               client.windows);
     EXPECT_EQ(1, client.windowsDones);
 
     // A window keeps its handle in a later list, in whatever order.
-    windows = {windows[1], {9, QString(), QStringLiteral("New"), QRect(), 0}, windows[0]};
+    windows = {windows[1], {9, std::string(), "New", base::Rect(), 0}, windows[0]};
     client.windows.clear();
     control->listWindows();
-    EXPECT_EQ((Listed {{2, QStringLiteral("Mail")}, {3, QStringLiteral("New")},
-                       {1, QStringLiteral("Notes")}}),
+    EXPECT_EQ((Listed {{2, "Mail"}, {3, "New"}, {1, "Notes"}}),
               client.windows);
 
-    control->motion(QPointF(40, 30));
+    control->motion(base::PointF(40, 30));
     control->queryPointer();
-    EXPECT_EQ(std::vector<QPointF> {QPointF(40, 30)}, client.pointers);
+    EXPECT_EQ(std::vector<base::PointF> {base::PointF(40, 30)}, client.pointers);
     EXPECT_EQ(2u, client.rejections.size());
 }
 
 TEST_F(ComputerControlTest, AWindowIsActivatedByItsHandle)
 {
-    windows = {{7, QStringLiteral("gedit"), QStringLiteral("Notes"), QRect(), 0},
-               {3, QStringLiteral("firefox"), QStringLiteral("Mail"), QRect(), 0}};
+    windows = {{7, "gedit", "Notes", base::Rect(), 0},
+               {3, "firefox", "Mail", base::Rect(), 0}};
     FakeClient client;
     auto control = grant(client);
 
@@ -613,7 +615,7 @@ TEST_F(ComputerControlTest, AWindowIsActivatedByItsHandle)
 
     control->listWindows();
     control->activateWindow(2);
-    EXPECT_EQ(std::vector<quint64> {3}, activations);
+    EXPECT_EQ(std::vector<uint64_t> {3}, activations);
 
     windows.pop_back();
     control->activateWindow(2);
@@ -623,16 +625,16 @@ TEST_F(ComputerControlTest, AWindowIsActivatedByItsHandle)
               client.rejections);
 
     // Activation changes what the user's keys reach, so it waits for them too.
-    input.onPointerMotion(clock, QPointF(1, 0));
+    input.onPointerMotion(clock, base::PointF(1, 0));
     control->activateWindow(1);
     EXPECT_EQ(Rejection::Paused, client.rejections.back());
-    EXPECT_EQ(std::vector<quint64> {3}, activations);
+    EXPECT_EQ(std::vector<uint64_t> {3}, activations);
 }
 
 TEST_F(ComputerControlTest, TheClipboardIsSetOnlyWhileGrantedAndNotPaused)
 {
     FakeClient client;
-    auto control = controller->request(&client, &client, QStringLiteral("Agent"));
+    auto control = controller->request(&client, &client, "Agent");
     control->setClipboard("pending");
     EXPECT_EQ(std::vector<Rejection> {Rejection::NotGranted}, client.rejections);
 
@@ -641,7 +643,7 @@ TEST_F(ComputerControlTest, TheClipboardIsSetOnlyWhileGrantedAndNotPaused)
     EXPECT_EQ(std::vector<std::string> {"line one\nline two"}, clipboards);
 
     // It replaces what the user copied, so it waits for the user too.
-    input.onPointerMotion(clock, QPointF(1, 0));
+    input.onPointerMotion(clock, base::PointF(1, 0));
     control->setClipboard("while typing");
     EXPECT_EQ(Rejection::Paused, client.rejections.back());
     EXPECT_EQ(1u, clipboards.size());
@@ -649,8 +651,8 @@ TEST_F(ComputerControlTest, TheClipboardIsSetOnlyWhileGrantedAndNotPaused)
 
 TEST_F(ComputerControlTest, AWindowIsClosedAndPlacedByItsHandle)
 {
-    windows = {{7, QStringLiteral("gedit"), QStringLiteral("Notes"), QRect(), 0},
-               {3, QStringLiteral("polkit"), QStringLiteral("Authenticate"), QRect(), 0}};
+    windows = {{7, "gedit", "Notes", base::Rect(), 0},
+               {3, "polkit", "Authenticate", base::Rect(), 0}};
     protectedWindow = 3;
     FakeClient client;
     auto control = grant(client);
@@ -660,32 +662,32 @@ TEST_F(ComputerControlTest, AWindowIsClosedAndPlacedByItsHandle)
 
     control->listWindows();
     control->closeWindow(1);
-    control->setWindowFrame(1, QRect(10, 20, 300, 200));
-    EXPECT_EQ(std::vector<quint64> {7}, closes);
-    using Frames = std::vector<std::pair<quint64, QRect>>;
-    EXPECT_EQ((Frames {{7, QRect(10, 20, 300, 200)}}), frames);
+    control->setWindowFrame(1, base::Rect(10, 20, 300, 200));
+    EXPECT_EQ(std::vector<uint64_t> {7}, closes);
+    using Frames = std::vector<std::pair<uint64_t, base::Rect>>;
+    EXPECT_EQ((Frames {{7, base::Rect(10, 20, 300, 200)}}), frames);
 
     // The dialogs that answer for the user are left alone, though bringing
     // one forward is harmless.
     control->closeWindow(2);
-    control->setWindowFrame(2, QRect(0, 0, 100, 100));
+    control->setWindowFrame(2, base::Rect(0, 0, 100, 100));
     EXPECT_EQ((std::vector<Rejection> {Rejection::NoWindow, Rejection::Protected,
                                        Rejection::Protected}),
               client.rejections);
     control->activateWindow(2);
-    EXPECT_EQ(std::vector<quint64> {3}, activations);
+    EXPECT_EQ(std::vector<uint64_t> {3}, activations);
     EXPECT_EQ(3u, client.rejections.size());
 
     windows.erase(windows.begin());
     control->closeWindow(1);
-    control->setWindowFrame(1, QRect(0, 0, 100, 100));
+    control->setWindowFrame(1, base::Rect(0, 0, 100, 100));
     EXPECT_EQ(Rejection::NoWindow, client.rejections[3]);
     EXPECT_EQ(Rejection::NoWindow, client.rejections[4]);
 
-    input.onPointerMotion(clock, QPointF(1, 0));
+    input.onPointerMotion(clock, base::PointF(1, 0));
     control->closeWindow(2);
     EXPECT_EQ(Rejection::Paused, client.rejections.back());
-    EXPECT_EQ(std::vector<quint64> {7}, closes);
+    EXPECT_EQ(std::vector<uint64_t> {7}, closes);
 }
 
 TEST_F(ComputerControlTest, ASettleWaitsUntilNothingHasDrawnForAWhile)

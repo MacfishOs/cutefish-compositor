@@ -4,16 +4,18 @@
 
 #pragma once
 
+#include "base/signal.h"
 #include "display/display_identity.h"
+#include "base/timer.h"
+#include "core/main_loop.h"
 #include "display/native_display_delegate.h"
 #include "render/color_transform.h"
-#include <QHash>
-#include <QMetaObject>
-#include <QSet>
-#include <QTimer>
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 struct wl_display;
@@ -60,7 +62,7 @@ class DisplayRuntime
 {
 public:
     DisplayRuntime(DisplayManager &manager, backend::DrmBackend *backend,
-                   QList<compositor::Output *> models, std::vector<wl_global *> &globals,
+                   std::vector<compositor::Output *> models, std::vector<wl_global *> &globals,
                    wl_global *&primaryGlobal, wl_display *display,
                    compositor::Compositor &compositor, input::InputManager &input,
                    wm::WindowManager &wm, scene::Scene &scene, cursor::Cursor &cursor,
@@ -69,25 +71,26 @@ public:
     DisplayRuntime(const DisplayRuntime &) = delete;
     DisplayRuntime &operator=(const DisplayRuntime &) = delete;
     static void initialize(DisplayManager &displayManager, backend::DrmBackend *backend,
-                           const QList<compositor::Output *> &outputModels,
-                           const QString &compositorInstanceId, compositor::Compositor &compositor,
+                           const std::vector<compositor::Output *> &outputModels,
+                           const std::string &compositorInstanceId,
+                           compositor::Compositor &compositor,
                            input::InputManager &inputManager);
     std::optional<HardwareSnapshot> reprobe();
     bool secureScanout = false;
-    void replaceOutputs(QList<compositor::Output *> models);
+    void replaceOutputs(std::vector<compositor::Output *> models);
     ConfigurationResult configure(const DisplayConfiguration &configuration,
                                   NativeDisplayDelegate::ConfigureMode mode);
-    ConfigurationResult setPower(const QList<DisplayId> &displays,
+    ConfigurationResult setPower(const std::vector<DisplayId> &displays,
                                  NativeDisplayDelegate::PowerState state);
 
     bool isPoweredOff(const DisplayId &id) const
     {
-        return powerStates.value(id, NativeDisplayDelegate::PowerState::On)
-                != NativeDisplayDelegate::PowerState::On;
+        const auto state = powerStates.find(id);
+        return state != powerStates.end() && state->second != NativeDisplayDelegate::PowerState::On;
     }
 
     std::function<void()> lockRequested;
-    std::function<bool(const QString &)> capturePending;
+    std::function<bool(const std::string &)> capturePending;
     // The largest scale of the applied displays, reported before the outputs
     // are re-sent. Xwayland renders at it, and sizes its screen from them.
     std::function<void(double)> maximumScaleChanged;
@@ -95,7 +98,7 @@ public:
     // compositor's own framebuffer. The session controller needs it per output:
     // a lock is not complete until every screen has shown the shield with no
     // application plane left beside it.
-    std::function<void(const QString &)> securelyPresented;
+    std::function<void(const std::string &)> securelyPresented;
     // Whether a frame drawn at the given frame time shows the lock transition over.
     std::function<bool(double)> secureContentSettled;
 
@@ -112,10 +115,11 @@ public:
     bool isSecureScanout() const { return secureScanout; }
 
     // `layers` are what `transition` covers, painted in order.
-    void setScreenTransition(scene::ScreenTransitionNode *transition, QList<scene::Node *> layers);
+    void setScreenTransition(scene::ScreenTransitionNode *transition,
+                             std::vector<scene::Node *> layers);
     // Each lit output's frame of what `paint` draws, keyed by output name, as
     // the desk switch animation starts from.
-    std::map<QString, std::unique_ptr<render::Texture>>
+    std::map<std::string, std::unique_ptr<render::Texture>>
     captureOutputs(const std::function<void(render::Renderer &)> &paint);
 
     // Called before the first layout is published: the frame each output shows
@@ -124,7 +128,7 @@ public:
     // output, then fades out. Upstream keeps its BootingAnimationController
     // widget on top for the same reason: no other UI blinks before the screen
     // it leads to is ready.
-    void setStartupCover(scene::ScreenTransitionNode *cover, QList<scene::Node *> layers,
+    void setStartupCover(scene::ScreenTransitionNode *cover, std::vector<scene::Node *> layers,
                          std::function<bool()> ready = {});
 
     // Whether the startup cover still hides the session, or is yet to. It
@@ -153,20 +157,24 @@ private:
     void startStartupCover();
     void bindFrames();
     static HardwareSnapshot discover(backend::DrmBackend *backend,
-                                     const QList<compositor::Output *> &models,
-                                     const QString &instance, uint64_t generation,
+                                     const std::vector<compositor::Output *> &models,
+                                     const std::string &instance, uint64_t generation,
                                      DisplayIdentity &identity);
-    QMetaObject::Connection activityConnection;
-    QSet<DisplayId> wakeOnInput;
+    base::Subscription activityConnection;
+    std::set<DisplayId> wakeOnInput;
     DisplayIdentity identity;
     std::vector<std::unique_ptr<compositor::Output>> ownedModels;
     uint64_t nextFrameToken = 0;
-    QSet<backend::DrmOutput *> boundOutputs;
+    struct OutputBinding {
+        std::vector<base::Subscription> subscriptions;
+        base::Subscription repaint;
+    };
+    std::map<backend::DrmOutput *, OutputBinding> boundOutputs;
     render::ColorTransform colorTransform;
 
     DisplayManager &displayManager;
     backend::DrmBackend *backend;
-    QList<compositor::Output *> outputModels;
+    std::vector<compositor::Output *> outputModels;
     std::vector<wl_global *> &outputGlobals;
     wl_global *&outputGlobal;
     wl_display *waylandDisplay;
@@ -177,15 +185,15 @@ private:
     cursor::Cursor &cursor;
     cursor::OutputCursorRouter *cursorRouter;
     bool &updatingOutput;
-    QHash<DisplayId, NativeDisplayDelegate::PowerState> powerStates;
+    std::unordered_map<DisplayId, NativeDisplayDelegate::PowerState> powerStates;
     scene::ScreenTransitionNode *screenTransition = nullptr;
-    QList<scene::Node *> transitionLayers;
-    QTimer transitionDeadline;
+    std::vector<scene::Node *> transitionLayers;
+    base::Timer transitionDeadline {core::mainLoop()};
     scene::ScreenTransitionNode *startupCover = nullptr;
-    QList<scene::Node *> startupCoverLayers;
+    std::vector<scene::Node *> startupCoverLayers;
     std::function<bool()> startupCoverReady;
     bool startupCoverPending = false;
-    QTimer startupCoverDeadline;
+    base::Timer startupCoverDeadline {core::mainLoop()};
 };
 } // namespace display
 } // namespace cutefish

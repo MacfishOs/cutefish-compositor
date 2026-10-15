@@ -16,9 +16,8 @@
 
 #include <optional>
 
-#include <QPointF>
-#include <QTimer>
-
+#include "base/geometry.h"
+#include "base/timer.h"
 #include "wm/window_snap.h"
 
 namespace cutefish::scene {
@@ -39,11 +38,11 @@ public:
     ~SnapDragController();
 
     // `start` is the pointer position the move began at, in output coordinates.
-    void begin(Window *window, const QPointF &start);
+    void begin(Window *window, const base::PointF &start);
 
     // Only call while the window is actually being moved: a drag that has not
     // passed its threshold yet, and a resize, never snap.
-    void update(const QPointF &location);
+    void update(const base::PointF &location);
 
     // Hides the preview and forgets the drag. Returns what the drag had
     // settled on, which is what the caller then applies.
@@ -63,7 +62,7 @@ private:
     void updatePreview();
     void clearPreview();
     SnapType constrained(SnapType type) const;
-    bool isBelowTopEdge(const QPointF &location) const;
+    bool isBelowTopEdge(const base::PointF &location) const;
 
     WindowManager *m_manager = nullptr;
     Window *m_window = nullptr;
@@ -72,11 +71,11 @@ private:
     // rather than on 64px of vertical travel, which a window already sitting
     // under the status bar can never make.
     bool m_canSnapToMaximize = false;
-    std::optional<QPointF> m_dwellLocation;
+    std::optional<base::PointF> m_dwellLocation;
     // The countdown's state, not the timer's: a test with no event loop to run
     // the timer in still has to see the same state machine.
     bool m_dwellPending = false;
-    QTimer m_dwellTimer;
+    base::Timer m_dwellTimer;
     scene::SnapPreviewNode *m_preview = nullptr;
 };
 

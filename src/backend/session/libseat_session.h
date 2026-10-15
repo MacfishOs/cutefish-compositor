@@ -5,37 +5,35 @@
 #ifndef CUTEFISH_BACKEND_SESSION_LIBSEAT_SESSION_H_
 #define CUTEFISH_BACKEND_SESSION_LIBSEAT_SESSION_H_
 
-#include <QHash>
 
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 #include "backend/session/session.h"
 
 struct libseat;
-class QSocketNotifier;
 
 namespace cutefish::backend {
 
 // Session backed by libseat (seatd or logind).
 class LibseatSession : public Session
 {
-    Q_OBJECT
-
 public:
     ~LibseatSession() override;
 
     // Opens the seat and pumps libseat until the initial enable event arrives.
     // Returns nullptr if no seat could be acquired.
-    static std::unique_ptr<LibseatSession> create(QObject* parent = nullptr);
+    static std::unique_ptr<LibseatSession> create();
 
-    QString seatName() const override { return m_seatName; }
+    std::string seatName() const override { return m_seatName; }
     bool isActive() const override { return m_active; }
 
-    int openDevice(const QString& path, int* deviceId) override;
+    int openDevice(const std::string& path, int* deviceId) override;
     void closeDevice(int deviceId) override;
 
 private:
-    explicit LibseatSession(QObject* parent);
+    LibseatSession() = default;
 
     void dispatch();
 
@@ -43,11 +41,11 @@ private:
     static void onDisableSeat(libseat* seat, void* userData);
 
     libseat* m_seat = nullptr;
-    QSocketNotifier* m_notifier = nullptr;
-    QString m_seatName;
+    int m_watch = 0;
+    std::string m_seatName;
     bool m_active = false;
     // Device id -> the descriptor libseat handed out, which libseat never closes.
-    QHash<int, int> m_deviceFds;
+    std::unordered_map<int, int> m_deviceFds;
 };
 
 } // namespace cutefish::backend

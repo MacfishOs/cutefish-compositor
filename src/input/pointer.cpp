@@ -30,9 +30,9 @@ namespace {
 // this are the same location as far as the client is concerned.
 constexpr double kLocatedEventEpsilonSquared = 1.0 / (2000.0 * 2000.0);
 
-bool sameLocation(const QPointF &a, const QPointF &b)
+bool sameLocation(const base::PointF &a, const base::PointF &b)
 {
-    const QPointF offset = a - b;
+    const base::PointF offset = a - b;
     const double lengthSquared = offset.x() * offset.x() + offset.y() * offset.y();
     return lengthSquared < (2 * kLocatedEventEpsilonSquared);
 }
@@ -88,10 +88,11 @@ void Pointer::removeGestureDelegate(PointerGestureDelegate *delegate)
     std::erase(m_gestureDelegates, delegate);
 }
 
-void Pointer::setCursor(compositor::Surface *surface, const QPoint &hotspot)
+void Pointer::setCursor(compositor::Surface *surface, const base::Point &hotspot)
 {
-    qCDebug(cfCursorTransitions) << "set-cursor" << this << "requested" << surface
-                                 << "explicit-hide" << (surface == nullptr) << "hotspot" << hotspot
+    CF_DEBUG(cfCursorTransitions) << "set-cursor" << this << "requested" << surface
+                                 << "explicit-hide" << (surface == nullptr) << "hotspot"
+                                 << hotspot
                                  << "focus" << m_focusSurface;
     // The protocol only defines set_cursor while the pointer has focus.
     if (!m_focusSurface)
@@ -101,7 +102,7 @@ void Pointer::setCursor(compositor::Surface *surface, const QPoint &hotspot)
 
     if (surface != m_cursorSurface) {
         if (surface && surface->hasRole()) {
-            qCWarning(cfInput) << "wl_pointer.set_cursor: surface already has a role";
+            CF_WARNING(cfInput) << "wl_pointer.set_cursor: surface already has a role";
             return;
         }
         updatePointerSurface(surface);
@@ -161,8 +162,8 @@ void Pointer::updateCursor()
         return;
 
     // The hotspot is the point of the cursor image that sits under the pointer.
-    const QPointF topLeft = m_cursorPosition - QPointF(m_hotspot);
-    const QPoint position(static_cast<int>(std::lround(topLeft.x())),
+    const base::PointF topLeft = m_cursorPosition - base::PointF(m_hotspot);
+    const base::Point position(static_cast<int>(std::lround(topLeft.x())),
                           static_cast<int>(std::lround(topLeft.y())));
     if (m_cursorSurface->position() == position)
         return;
@@ -171,7 +172,7 @@ void Pointer::updateCursor()
         compositor->scheduleRepaint();
 }
 
-void Pointer::setCursorPosition(const QPointF &position)
+void Pointer::setCursorPosition(const base::PointF &position)
 {
     m_cursorPosition = position;
     updateCursor();
@@ -188,8 +189,8 @@ void Pointer::maybeRemoveSurfaceObserver(compositor::Surface *surface)
         surface->removeSurfaceObserver(this);
 }
 
-compositor::Surface *Pointer::effectiveTargetForLocation(const QPointF &rootLocation,
-                                                         QPointF *locationInTarget) const
+compositor::Surface *Pointer::effectiveTargetForLocation(const base::PointF &rootLocation,
+                                                         base::PointF *locationInTarget) const
 {
     // A press holds the pointer for the surface it was delivered to, so motion
     // that leaves the surface still reports locations in that surface - which
@@ -214,10 +215,10 @@ compositor::Surface *Pointer::effectiveTargetForLocation(const QPointF &rootLoca
     return target;
 }
 
-void Pointer::setFocus(compositor::Surface *surface, const QPointF &rootLocation,
-                       const QPointF &surfaceLocation)
+void Pointer::setFocus(compositor::Surface *surface, const base::PointF &rootLocation,
+                       const base::PointF &surfaceLocation)
 {
-    qCDebug(cfCursorTransitions) << "focus" << this << "old" << m_focusSurface << "new" << surface;
+    CF_DEBUG(cfCursorTransitions) << "focus" << this << "old" << m_focusSurface << "new" << surface;
     cancelGesture();
     const bool cursorOwned = m_hasCursorRequest;
     m_deliveredButtons = NoButton;
@@ -258,20 +259,21 @@ void Pointer::setFocus(compositor::Surface *surface, const QPointF &rootLocation
 void Pointer::clearFocus()
 {
     if (m_focusSurface)
-        setFocus(nullptr, m_locationInRoot, QPointF());
+        setFocus(nullptr, m_locationInRoot, base::PointF());
 }
 
-compositor::Surface *Pointer::updateFocus(const QPointF &rootLocation, QPointF *locationInTarget)
+compositor::Surface *Pointer::updateFocus(const base::PointF &rootLocation,
+                                          base::PointF *locationInTarget)
 {
-    *locationInTarget = QPointF();
+    *locationInTarget = base::PointF();
     compositor::Surface *target = effectiveTargetForLocation(rootLocation, locationInTarget);
     if (target != m_focusSurface)
         setFocus(target, rootLocation, *locationInTarget);
     return m_focusSurface;
 }
 
-bool Pointer::checkIfSameLocation(const QPointF &locationInRoot,
-                                  const QPointF &locationInTarget) const
+bool Pointer::checkIfSameLocation(const base::PointF &locationInRoot,
+                                  const base::PointF &locationInTarget) const
 {
     // A surface can move under a stationary pointer, so the surface-local
     // location has to be compared as well as the root one.
@@ -281,13 +283,13 @@ bool Pointer::checkIfSameLocation(const QPointF &locationInRoot,
             && sameLocation(locationInTarget, m_locationInSurface);
 }
 
-void Pointer::onPointerMotion(Timestamp timestamp, const QPointF &rootLocation,
+void Pointer::onPointerMotion(Timestamp timestamp, const base::PointF &rootLocation,
                               const RelativeMotion *relative)
 {
     if (m_seat->wasShutdown())
         return;
 
-    QPointF locationInTarget;
+    base::PointF locationInTarget;
     compositor::Surface *focus = updateFocus(rootLocation, &locationInTarget);
 
     // The enter event already carried this location, so an immediately
@@ -306,7 +308,7 @@ void Pointer::onPointerMotion(Timestamp timestamp, const QPointF &rootLocation,
     // Relative motion goes on at the edge of the screen and under a lock,
     // where the location does not change.
     bool needsFrame = false;
-    if (relative && !(relative->delta.isNull() && relative->unaccelerated.isNull())) {
+    if (relative && !(relative->delta.isOrigin() && relative->unaccelerated.isOrigin())) {
         for (RelativePointerDelegate *delegate : m_relativeDelegates) {
             delegate->onPointerRelativeMotion(timestamp, *relative);
             needsFrame = true;
@@ -322,13 +324,13 @@ void Pointer::onPointerMotion(Timestamp timestamp, const QPointF &rootLocation,
         m_delegate->onPointerFrame();
 }
 
-void Pointer::onPointerButton(Timestamp timestamp, const QPointF &rootLocation,
+void Pointer::onPointerButton(Timestamp timestamp, const base::PointF &rootLocation,
                               ButtonFlags changedButtonFlags, bool pressed)
 {
     if (m_seat->wasShutdown())
         return;
 
-    QPointF locationInTarget;
+    base::PointF locationInTarget;
     compositor::Surface *focus = updateFocus(rootLocation, &locationInTarget);
     if (!focus || !m_delegate)
         return;
@@ -354,13 +356,13 @@ void Pointer::releasePressedButtons(Timestamp timestamp, ButtonFlags buttons)
         delegate->onPointerFrame();
 }
 
-void Pointer::onPointerAxis(Timestamp timestamp, const QPointF &rootLocation, const QPointF &offset,
+void Pointer::onPointerAxis(Timestamp timestamp, const base::PointF &rootLocation, const base::PointF &offset,
                             bool discrete)
 {
     if (m_seat->wasShutdown())
         return;
 
-    QPointF locationInTarget;
+    base::PointF locationInTarget;
     compositor::Surface *focus = updateFocus(rootLocation, &locationInTarget);
     if (!focus || !m_delegate)
         return;
@@ -369,12 +371,12 @@ void Pointer::onPointerAxis(Timestamp timestamp, const QPointF &rootLocation, co
     m_delegate->onPointerFrame();
 }
 
-void Pointer::onPointerAxisStop(Timestamp timestamp, const QPointF &rootLocation)
+void Pointer::onPointerAxisStop(Timestamp timestamp, const base::PointF &rootLocation)
 {
     if (m_seat->wasShutdown())
         return;
 
-    QPointF locationInTarget;
+    base::PointF locationInTarget;
     compositor::Surface *focus = updateFocus(rootLocation, &locationInTarget);
     if (!focus || !m_delegate)
         return;
@@ -383,14 +385,14 @@ void Pointer::onPointerAxisStop(Timestamp timestamp, const QPointF &rootLocation
     m_delegate->onPointerFrame();
 }
 
-void Pointer::onPointerGestureBegin(Timestamp timestamp, const QPointF &rootLocation,
+void Pointer::onPointerGestureBegin(Timestamp timestamp, const base::PointF &rootLocation,
                                     GestureType type, uint32_t fingers)
 {
     if (m_seat->wasShutdown())
         return;
 
     cancelGesture();
-    QPointF locationInTarget;
+    base::PointF locationInTarget;
     compositor::Surface *focus = updateFocus(rootLocation, &locationInTarget);
     if (!focus || !m_delegate)
         return;
@@ -466,10 +468,10 @@ void Pointer::onSurfaceDestroying(compositor::Surface *surface)
 
 void Pointer::traceCursor(const char *transition) const
 {
-    if (!cfCursorTransitions().isDebugEnabled())
+    if (!cfCursorTransitions.isEnabled(base::LogLevel::Debug))
         return;
     auto *node = m_cursorSurface ? m_cursorSurface->node() : nullptr;
-    qCDebug(cfCursorTransitions) << transition << this << "focus" << m_focusSurface << "cursor"
+    CF_DEBUG(cfCursorTransitions) << transition << this << "focus" << m_focusSurface << "cursor"
                                  << m_cursorSurface << "request-owned" << m_hasCursorRequest
                                  << "contents"
                                  << (m_cursorSurface && m_cursorSurface->hasContents()) << "buffer"
@@ -480,7 +482,7 @@ void Pointer::traceCursor(const char *transition) const
                                  << (node ? node->parent() : nullptr) << "cursor-layer"
                                  << m_seat->cursorContainer() << "texture"
                                  << (node ? node->texture() : nullptr) << "geometry"
-                                 << (node ? node->absoluteGeometry() : QRect()) << "hotspot"
+                                 << (node ? node->absoluteGeometry() : base::Rect()) << "hotspot"
                                  << m_hotspot;
 }
 

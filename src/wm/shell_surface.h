@@ -28,13 +28,10 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
-#include <QPoint>
-#include <QRect>
-#include <QSize>
-#include <QString>
-
+#include "base/geometry.h"
 #include "compositor/surface_observer.h"
 #include "wm/types.h"
 #include "wm/window_observer.h"
@@ -71,14 +68,14 @@ public:
     // would land in, which xdg-shell clients use to keep the maximized state
     // visible while fullscreen.
     struct ConfigureState {
-        QSize size;
+        base::Size size;
         WindowStateType stateType = WindowStateType::Normal;
         WindowStateType restoreStateType = WindowStateType::Normal;
         bool resizing = false;
         bool activated = false;
         // xdg_toplevel.configure_bounds: the largest window the work area of
         // its output holds, in client-area terms. 0x0 when unknown.
-        QSize bounds {0, 0};
+        base::Size bounds {0, 0};
         // xdg_toplevel.wm_capabilities: maximize is only offered to a window
         // that can be resized; minimize and fullscreen always are.
         bool maximizable = true;
@@ -91,7 +88,7 @@ public:
     using ConfigureCallback = std::function<uint32_t(const ConfigureState &state)>;
     // xdg_popup.configure, in coordinates relative to the parent's window
     // geometry, followed by xdg_surface.configure.
-    using PopupConfigureCallback = std::function<uint32_t(const QRect &bounds)>;
+    using PopupConfigureCallback = std::function<uint32_t(const base::Rect &bounds)>;
     // xdg_toplevel.close / xdg_popup.popup_done.
     using CloseCallback = std::function<void()>;
     // xdg_wm_base.ping, and ending the client process; see Window.
@@ -127,7 +124,7 @@ public:
     bool setToplevel();
     // `bounds` is the positioner result, relative to `parent`'s window
     // geometry.
-    bool setPopup(ShellSurface *parent, const QRect &bounds);
+    bool setPopup(ShellSurface *parent, const base::Rect &bounds);
 
     // Destroying an xdg_toplevel or xdg_popup unmaps the surface and gives up
     // the role. The xdg_surface stays, and may be given a new one.
@@ -144,9 +141,9 @@ public:
 
     // Pending until the next commit. An empty rect clears it, so the surface's
     // own content bounds are used again.
-    void setGeometry(const QRect &geometry);
+    void setGeometry(const base::Rect &geometry);
     // The committed window geometry, or the content rect when none was set.
-    QRect visibleBounds() const;
+    base::Rect visibleBounds() const;
 
     // False when the serial was never sent or has already been superseded; the
     // caller posts the protocol error.
@@ -192,24 +189,24 @@ public:
 
     // --- xdg_toplevel ---
 
-    void setTitle(const QString &title);
+    void setTitle(const std::string &title);
 
-    QString title() const { return m_title; }
+    const std::string &title() const { return m_title; }
 
-    void setApplicationId(const QString &id);
+    void setApplicationId(const std::string &id);
 
-    QString applicationId() const { return m_applicationId; }
+    const std::string &applicationId() const { return m_applicationId; }
 
     // The process behind the client connection this surface came in on. Set by
     // the protocol layer, which is the only place that can ask libwayland; the
     // window carries it on to the task list.
-    void setProcessId(qint64 pid) { m_processId = pid; }
+    void setProcessId(int64_t pid) { m_processId = pid; }
 
-    qint64 processId() const { return m_processId; }
+    int64_t processId() const { return m_processId; }
 
     // Pending until the next commit, like the geometry.
-    void setMinimumSize(const QSize &size);
-    void setMaximumSize(const QSize &size);
+    void setMinimumSize(const base::Size &size);
+    void setMaximumSize(const base::Size &size);
 
     // Refused, returning false, when it would form a cycle. A parent that is
     // not a mapped toplevel counts as no parent, as xdg-shell requires.
@@ -221,7 +218,7 @@ public:
     void unmaximize();
     void minimize();
     void setFullscreen(bool fullscreen);
-    void setFullscreenOutput(const QString &waylandName);
+    void setFullscreenOutput(const std::string &waylandName);
 
     // A toplevel attached to a drag before it maps follows the pointer, so it
     // maps in the normal state instead of one it would inherit from another
@@ -250,12 +247,12 @@ public:
     // they are configured only when the compositor is asked to place them.
     void configurePopup();
     // xdg_popup.reposition, with an already-solved positioner result.
-    void reposition(const QRect &bounds);
+    void reposition(const base::Rect &bounds);
 
-    QRect popupBounds() const { return m_popupBounds; }
+    base::Rect popupBounds() const { return m_popupBounds; }
 
     // The popup origin in output coordinates.
-    QPoint absoluteOrigin() const;
+    base::Point absoluteOrigin() const;
 
     // --- compositor::SurfaceObserver ---
 
@@ -265,7 +262,7 @@ public:
 
     // --- WindowObserver ---
 
-    void onWindowBoundsChanged(Window *window, const QRect &oldBounds) override;
+    void onWindowBoundsChanged(Window *window, const base::Rect &oldBounds) override;
     void onWindowStateTypeChanged(Window *window, WindowStateType oldType) override;
     void onWindowActivationChanged(Window *window, bool active) override;
     void onWindowResizingChanged(Window *window, bool resizing) override;
@@ -299,7 +296,7 @@ private:
     // Surface state associated with each outstanding configure.
     struct Config {
         uint32_t serial;
-        QPoint originOffset;
+        base::Point originOffset;
         ResizeEdge resizeEdge;
         ConfigureState state;
     };
@@ -307,12 +304,12 @@ private:
     // Double-buffered state, taken when the client commits and installed when
     // that commit applies, which may be later.
     struct CommittedState {
-        QRect geometry;
-        QSize minimumSize;
-        QSize maximumSize;
+        base::Rect geometry;
+        base::Size minimumSize;
+        base::Size maximumSize;
         // The accumulated offset of every configure acknowledged before the
         // commit, and the resize direction that came with the newest of them.
-        QPoint originOffset;
+        base::Point originOffset;
         ResizeEdge resizeEdge = ResizeEdge::None;
         std::optional<ConfigureState> acknowledgedConfigure;
         bool decorationRemoval = false;
@@ -338,15 +335,15 @@ private:
     Insets clientInputInsets() const;
     void updateWindowBoundsFromClient();
     void updateSizeConstraints();
-    QSize configureBounds() const;
+    base::Size configureBounds() const;
     // The frame a normal window would have, whatever the current state.
     Insets normalFrameInsets() const;
     bool computeResizable() const;
     // An ordinary top-level application window: no transient parent, not the
     // trusted shell's.
     bool isPositionManaged() const;
-    QSize initialSizeForState(WindowStateType stateType) const;
-    QPoint surfaceOriginForWindow() const;
+    base::Size initialSizeForState(WindowStateType stateType) const;
+    base::Point surfaceOriginForWindow() const;
     void resetConfigureState();
     void applyDecorationMode();
     void addChildShell(ShellSurface *child);
@@ -374,16 +371,16 @@ private:
     PingCallback m_pingCallback;
     KillCallback m_killCallback;
 
-    QString m_title;
-    QString m_applicationId;
-    qint64 m_processId = 0;
+    std::string m_title;
+    std::string m_applicationId;
+    int64_t m_processId = 0;
 
-    QRect m_geometry;
-    QRect m_pendingGeometry;
-    QSize m_minimumSize;
-    QSize m_pendingMinimumSize;
-    QSize m_maximumSize;
-    QSize m_pendingMaximumSize;
+    base::Rect m_geometry;
+    base::Rect m_pendingGeometry;
+    base::Size m_minimumSize;
+    base::Size m_pendingMinimumSize;
+    base::Size m_maximumSize;
+    base::Size m_pendingMaximumSize;
 
     // The state the client asked for before it was mapped. Applied when the
     // window is created, and reported in the initial configure.
@@ -392,8 +389,8 @@ private:
     bool m_initialStateInherited = false;
     // The output chosen for an ordinary window at its initial configure, so the
     // inherited state, the initial size and the placement all agree on it.
-    QRect m_initialOutput;
-    QString m_fullscreenOutputName;
+    base::Rect m_initialOutput;
+    std::string m_fullscreenOutputName;
     bool m_initialConfigureSent = false;
 
     ScopedConfigure *m_scopedConfigure = nullptr;
@@ -405,9 +402,9 @@ private:
     // resized the window while the client is still painting the old size.
     // `m_originOffset` holds the surface where it was until the client catches
     // up. Upstream: ShellSurface::origin_offset_ and friends.
-    QPoint m_originOffset;
-    QPoint m_pendingOriginOffset;
-    QPoint m_pendingOriginOffsetAccumulator;
+    base::Point m_originOffset;
+    base::Point m_pendingOriginOffset;
+    base::Point m_pendingOriginOffsetAccumulator;
 
     // The acknowledged resize direction, which decides which corner of the
     // window the surface is anchored to.
@@ -426,8 +423,8 @@ private:
     // compared against what the client was actually told. The outer bounds also
     // move when the frame comes and goes, which is not something the client
     // needs to hear about.
-    QRect m_configuredContentBounds;
-    QSize m_boundsTransitionOldContentSize;
+    base::Rect m_configuredContentBounds;
+    base::Size m_boundsTransitionOldContentSize;
 
     // Set while the window bounds are being changed to follow the client's own
     // geometry, so that change does not bounce a configure back at it.
@@ -437,7 +434,7 @@ private:
     ShellSurface *m_transientParentShell = nullptr;
     std::vector<ShellSurface *> m_transientChildShells;
     std::vector<ShellSurface *> m_childShells;
-    QRect m_popupBounds;
+    base::Rect m_popupBounds;
     bool m_hasGrab = false;
     bool m_popupMapped = false;
 };

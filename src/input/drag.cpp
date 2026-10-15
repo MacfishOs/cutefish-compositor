@@ -22,20 +22,16 @@
 
 namespace cutefish::input {
 
-namespace {
-
 // ash's kCancelAnimationDuration.
-constexpr double kReturnDurationMs = 250;
+static constexpr double kReturnDurationMs = 250;
 
-void setSubtreeAlpha(scene::Node *node, float alpha)
+static void setSubtreeAlpha(scene::Node *node, float alpha)
 {
     if (auto *surface = dynamic_cast<scene::SurfaceNode *>(node))
         surface->setAlpha(alpha);
     for (scene::Node *child : node->children())
         setSubtreeAlpha(child, alpha);
 }
-
-} // namespace
 
 DragOffer::DragOffer(std::shared_ptr<clipboard::DataSource> source, uint32_t sourceActions,
                      bool legacy)
@@ -71,7 +67,7 @@ void DragOffer::accept(const char *mime)
                                                                                             : "";
     if (m_state == State::Dropped && m_source && m_source->alive())
         m_source->target(m_mime.empty() ? nullptr : m_mime.c_str());
-    emit feedbackChanged();
+    feedbackChanged();
 }
 
 void DragOffer::setActions(uint32_t actions, uint32_t preferred)
@@ -105,9 +101,9 @@ void DragOffer::negotiate()
                                                      : (available & (~available + 1));
     if (m_action != action) {
         m_action = action;
-        emit actionChanged(action);
+        actionChanged(action);
     }
-    emit feedbackChanged();
+    feedbackChanged();
 }
 
 bool DragOffer::canDrop() const
@@ -156,7 +152,7 @@ void DragOffer::invalidate()
         return;
     const bool dropped = m_state == State::Dropped;
     m_state = State::Cancelled;
-    emit feedbackChanged();
+    feedbackChanged();
     if (dropped && m_source)
         m_source->cancel();
 }
@@ -186,7 +182,7 @@ void DragController::start(compositor::Surface *origin, compositor::Surface *ico
     m_seat->clearPointerFocus();
     if (generation != m_generation)
         return;
-    emit started();
+    started();
     if (generation != m_generation)
         return;
     m_seat->setCursorOverride(idleCursor());
@@ -197,7 +193,7 @@ void DragController::start(compositor::Surface *origin, compositor::Surface *ico
 
 void DragController::startTouch(compositor::Surface *origin, compositor::Surface *icon,
                                 std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
-                                int32_t touchId, const QPointF &location)
+                                int32_t touchId, const base::PointF &location)
 {
     if (busy() || !origin || m_seat->wasShutdown())
         return;
@@ -209,7 +205,7 @@ void DragController::startTouch(compositor::Surface *origin, compositor::Surface
     m_seat->takeTouchPoint(touchId);
     if (generation != m_generation)
         return;
-    emit started();
+    started();
     if (generation != m_generation)
         return;
     m_seat->setCursorOverride(idleCursor());
@@ -220,7 +216,7 @@ void DragController::startTouch(compositor::Surface *origin, compositor::Surface
 
 bool DragController::begin(compositor::Surface *origin, compositor::Surface *icon,
                            std::shared_ptr<clipboard::DataSource> source, uint32_t actions,
-                           const QPointF &location)
+                           const base::PointF &location)
 {
     releaseReturn();
     const auto generation = ++m_generation;
@@ -234,8 +230,9 @@ bool DragController::begin(compositor::Surface *origin, compositor::Surface *ico
     origin->addSurfaceObserver(this);
     if (m_source) {
         m_source->markUsed();
-        m_sourceConnection = connect(m_source.get(), &clipboard::DataSource::invalidated, this,
-                                     &DragController::cancel);
+        m_sourceConnection = m_source->invalidated.connect([this] {
+            cancel();
+        });
     }
     if (icon) {
         icon->setHasRole(true);
@@ -261,8 +258,9 @@ void DragController::startExternal(compositor::Surface *origin,
     m_location = m_seat->pointerLocation();
     origin->addSurfaceObserver(this);
     m_source->markUsed();
-    m_sourceConnection = connect(m_source.get(), &clipboard::DataSource::invalidated, this,
-                                 &DragController::cancel);
+    m_sourceConnection = m_source->invalidated.connect([this] {
+        cancel();
+    });
 }
 
 void DragController::setCursor(CursorShape shape)
@@ -278,9 +276,12 @@ std::shared_ptr<DragOffer> DragController::createOffer(bool legacy)
         return nullptr;
     auto offer = std::make_shared<DragOffer>(m_source, m_actions, legacy);
     m_offers.push_back(offer);
-    connect(offer.get(), &DragOffer::feedbackChanged, this, [this, raw = offer.get()] {
-        updateFeedback(raw);
+    std::erase_if(m_offerConnections, [](const auto &connection) {
+        return connection.first.expired();
     });
+    m_offerConnections.emplace_back(offer, offer->feedbackChanged.connect([this, raw = offer.get()] {
+        updateFeedback(raw);
+    }));
     offer->setModifierAction(modifierAction());
     return offer;
 }
@@ -290,25 +291,27 @@ void DragController::updateFeedback(DragOffer *offer)
     if (!active())
         return;
     if (offer->state() != DragOffer::State::Hover) {
-        if (m_selected != offer)
+        if (selectedOffer() != offer)
             return;
-        m_selected = nullptr;
+        m_selected.reset();
         for (auto it = m_offers.rbegin(); it != m_offers.rend(); ++it) {
             if (auto candidate = it->lock(); candidate && candidate->canDrop()) {
-                m_selected = candidate.get();
+                m_selected = candidate;
                 break;
             }
         }
     } else {
-        if (!offer->canDrop() && m_selected && m_selected != offer && m_selected->canDrop())
+        DragOffer *selected = selectedOffer();
+        if (!offer->canDrop() && selected && selected != offer && selected->canDrop())
             return;
-        m_selected = offer;
+        m_selected = offer->weak_from_this();
     }
-    const uint32_t action = m_selected && m_selected->canDrop() ? m_selected->action() : 0;
+    DragOffer *selected = selectedOffer();
+    const uint32_t action = selected && selected->canDrop() ? selected->action() : 0;
     const auto generation = m_generation;
     const auto source = m_source;
     if (source) {
-        const auto mime = m_selected ? m_selected->acceptedMime() : std::string();
+        const auto mime = selected ? selected->acceptedMime() : std::string();
         source->target(mime.empty() ? nullptr : mime.c_str());
         if (generation != m_generation || !active())
             return;
@@ -327,7 +330,7 @@ void DragController::updateFeedback(DragOffer *offer)
 void DragController::leave()
 {
     auto *target = std::exchange(m_target, nullptr);
-    m_selected = nullptr;
+    m_selected.reset();
     auto offers = std::exchange(m_offers, {});
     if (target && target != m_origin && target != m_icon)
         target->removeSurfaceObserver(this);
@@ -338,7 +341,7 @@ void DragController::leave()
     const auto generation = m_generation;
     const auto source = m_source;
     if (target)
-        emit left();
+        left();
     if (generation == m_generation && source && source->alive()) {
         source->target(nullptr);
         if (generation == m_generation && source->alive())
@@ -350,7 +353,7 @@ void DragController::leave()
     }
 }
 
-void DragController::motion(Timestamp timestamp, const QPointF &location)
+void DragController::motion(Timestamp timestamp, const base::PointF &location)
 {
     if (!active())
         return;
@@ -358,7 +361,7 @@ void DragController::motion(Timestamp timestamp, const QPointF &location)
     updateIcon();
     {
         const auto generation = m_generation;
-        emit locationChanged(location);
+        locationChanged(location);
         if (generation != m_generation || !active())
             return;
     }
@@ -368,29 +371,29 @@ void DragController::motion(Timestamp timestamp, const QPointF &location)
         if (generation != m_generation || !active())
             return;
     }
-    QPointF local;
+    base::PointF local;
     auto *target = findTargetSurface(m_seat->compositor(), location, &local);
     if (target != m_target) {
         const auto generation = m_generation;
         const auto lifetime = target ? target->lifetimeToken() : nullptr;
         leave();
-        if (generation != m_generation || !active() || m_target || m_location != location)
+        if (generation != m_generation || !active() || m_target || !fuzzyEqual(m_location, location))
             return;
         target = lifetime ? *lifetime : nullptr;
         m_target = target;
         if (target) {
             target->addSurfaceObserver(this);
-            emit entered(target, local);
+            entered(target, local);
         }
     }
     if (target && target == m_target && active())
-        emit moved(timestamp, local);
+        moved(timestamp, local);
 }
 
 void DragController::detach()
 {
     ++m_generation;
-    disconnect(m_sourceConnection);
+    m_sourceConnection.reset();
     auto *origin = std::exchange(m_origin, nullptr);
     auto *icon = std::exchange(m_icon, nullptr);
     m_touchId.reset();
@@ -427,13 +430,13 @@ void DragController::drop()
         return;
     {
         const auto generation = m_generation;
-        emit released();
+        released();
         if (generation != m_generation || !active())
             return;
     }
     std::shared_ptr<DragOffer> selected;
     for (auto &weak : m_offers) {
-        if (auto offer = weak.lock(); offer && offer.get() == m_selected)
+        if (auto offer = weak.lock(); offer && offer.get() == selectedOffer())
             selected = std::move(offer);
     }
     if (!selected || !selected->canDrop()) {
@@ -453,7 +456,7 @@ void DragController::drop()
         auto source = std::exchange(m_source, nullptr);
         auto offers = std::exchange(m_offers, {});
         auto *target = std::exchange(m_target, nullptr);
-        m_selected = nullptr;
+        m_selected.reset();
         if (target && target != m_origin && target != m_icon)
             target->removeSurfaceObserver(this);
         detach();
@@ -462,15 +465,15 @@ void DragController::drop()
                 offer->invalidate();
         }
         if (selected->drop())
-            emit dropped(selected.get());
+            dropped(selected.get());
         else if (source)
             source->cancel();
         if (target)
-            emit left();
+            left();
         m_finishing = false;
         if (window)
             window->dragEnded(true);
-        emit ended();
+        ended();
     }
 }
 
@@ -490,7 +493,7 @@ void DragController::end(bool released)
     auto source = std::exchange(m_source, nullptr);
     auto offers = std::exchange(m_offers, {});
     auto *target = std::exchange(m_target, nullptr);
-    m_selected = nullptr;
+    m_selected.reset();
     if (target && target != m_origin && target != m_icon)
         target->removeSurfaceObserver(this);
     detach();
@@ -499,7 +502,7 @@ void DragController::end(bool released)
             offer->invalidate();
     }
     if (target)
-        emit left();
+        left();
     if (source)
         source->cancel();
     m_finishing = false;
@@ -507,7 +510,7 @@ void DragController::end(bool released)
         window->dragEnded(released);
     if (returns)
         startReturn(std::move(home));
-    emit ended();
+    ended();
     // Nothing to slide back: home at once, after the end.
     if (m_returning && !m_returnNode)
         finishReturn();
@@ -518,7 +521,7 @@ void DragController::setWindowDelegate(DragWindowDelegate *delegate)
     if (!active() || m_external)
         return;
     m_windowDelegate = delegate;
-    if (!m_selected || !m_selected->canDrop())
+    if (!selectedOffer() || !selectedOffer()->canDrop())
         setCursor(idleCursor());
 }
 
@@ -527,7 +530,7 @@ void DragController::setPlainIdleCursor(bool plain)
     if (!active() || m_external)
         return;
     m_plainIdleCursor = plain;
-    if (!m_selected || !m_selected->canDrop())
+    if (!selectedOffer() || !selectedOffer()->canDrop())
         setCursor(idleCursor());
 }
 
@@ -537,7 +540,7 @@ void DragController::setReturnsHome(bool returns)
         m_returnsHome = returns;
 }
 
-void DragController::setHome(const QPointF &home)
+void DragController::setHome(const base::PointF &home)
 {
     if (active() && !m_external)
         m_home = home;
@@ -548,7 +551,7 @@ std::unique_ptr<scene::SurfaceNode> DragController::takeIconForReturn() const
     scene::SurfaceNode *icon = m_icon ? m_icon->node() : nullptr;
     if (!icon || !icon->texture() || !m_seat->dragIconContainer())
         return nullptr;
-    auto node = std::make_unique<scene::SurfaceNode>(QStringLiteral("drag-return"));
+    auto node = std::make_unique<scene::SurfaceNode>("drag-return");
     node->setGeometry(icon->geometry());
     node->setTextureMapping(icon->textureMapping());
     node->setAlpha(m_iconOpacity);
@@ -569,8 +572,9 @@ void DragController::startReturn(std::unique_ptr<scene::SurfaceNode> node)
     m_returnNode = static_cast<scene::SurfaceNode *>(
             m_seat->dragIconContainer()->addChild(std::move(node)));
     if (compositor::Compositor *compositor = m_seat->compositor()) {
-        m_returnFrames = connect(compositor, &compositor::Compositor::frameStarted, this,
-                                 &DragController::advanceReturn);
+        m_returnFrames = compositor->frameStarted.connect([this](double frameTimeMs) {
+            advanceReturn(frameTimeMs);
+        });
         compositor->scheduleRepaint();
     }
 }
@@ -584,7 +588,10 @@ void DragController::advanceReturn(double frameTimeMs)
     const double t = std::clamp((frameTimeMs - m_returnStarted) / kReturnDurationMs, 0.0, 1.0);
     const auto &curve = scene::motion::kAccel20Decel100;
     const double eased = scene::motion::cubicBezier(curve.x1, curve.y1, curve.x2, curve.y2, t);
-    m_returnNode->setPosition(m_returnFrom + (m_returnTo - m_returnFrom) * eased);
+    const base::Point travel = m_returnTo - m_returnFrom;
+    m_returnNode->setPosition(m_returnFrom
+                              + base::Point(base::roundToInt(travel.x() * eased),
+                                            base::roundToInt(travel.y() * eased)));
     m_returnNode->setAlpha(m_returnOpacity + (1.0f - m_returnOpacity) * float(eased));
     if (t >= 1)
         finishReturn();
@@ -597,8 +604,8 @@ void DragController::finishReturn()
     if (!m_returning)
         return;
     m_returning = false;
-    disconnect(m_returnFrames);
-    emit returned();
+    m_returnFrames.reset();
+    returned();
 }
 
 void DragController::releaseReturn()
@@ -613,7 +620,8 @@ void DragController::releaseReturn()
 void DragController::notifyWindowTarget()
 {
     if (m_windowDelegate)
-        m_windowDelegate->dragTargetChanged(m_target, m_selected && m_selected->canDrop());
+        m_windowDelegate->dragTargetChanged(m_target,
+                                            selectedOffer() && selectedOffer()->canDrop());
 }
 
 CursorShape DragController::idleCursor() const

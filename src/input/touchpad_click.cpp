@@ -39,7 +39,7 @@ bool inPalmEdge(const TouchpadContact &contact, double width)
 } // namespace
 
 bool isTwoFingerClick(const TouchpadContact &first, const TouchpadContact &second,
-                      Timestamp pressTime, const QSizeF &padSize)
+                      Timestamp pressTime, const base::SizeF &padSize)
 {
     if (inPalmEdge(first, padSize.width()) || inPalmEdge(second, padSize.width()))
         return false;
@@ -58,7 +58,7 @@ bool isTwoFingerClick(const TouchpadContact &first, const TouchpadContact &secon
     const auto inThumbZone = [&padSize](const TouchpadContact &contact) {
         return contact.position.y() > padSize.height() - kThumbZone;
     };
-    const QPointF travel = older.position - older.origin;
+    const base::PointF travel = older.position - older.origin;
     const bool olderResting = pressTime - older.downTime >= kRestingAge
             && std::hypot(travel.x(), travel.y()) < kRestingTravel;
     if (olderResting && inThumbZone(older))

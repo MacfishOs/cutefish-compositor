@@ -8,8 +8,6 @@
 #include <memory>
 #include <unistd.h>
 
-#include <QObject>
-#include <QPointer>
 
 #include "clipboard/selection.h"
 #include "ext-data-control-v1-server-protocol.h"
@@ -89,7 +87,7 @@ void sourceOffer(wl_client*, wl_resource* resource, const char* mime)
 const struct ext_data_control_source_v1_interface sourceImplementation = {sourceOffer, destroy};
 
 struct OfferResource {
-    QPointer<clipboard::SelectionController> controller;
+    base::WeakPtr<clipboard::SelectionController> controller;
     std::weak_ptr<clipboard::DataSource> source;
     std::weak_ptr<bool> device;
     std::vector<std::string> formats;
@@ -111,29 +109,29 @@ void receive(wl_client*, wl_resource* resource, const char* mime, int fd)
 
 const struct ext_data_control_offer_v1_interface offerImplementation = {receive, destroy};
 
-class Device : public QObject
+class Device
 {
 public:
     Device(wl_resource* resourceArg, const Protocol* protocol,
            clipboard::SelectionController* controller, clipboard::SelectionController* primary)
         : resource(resourceArg)
         , protocol(protocol)
-        , controller(controller)
+        , controller(controller->weakPtr())
     {
         // wlr added primary selection in version 2; ext has it from version 1.
         if (protocol == &ext ||
             wl_resource_get_version(resource) >=
                 ZWLR_DATA_CONTROL_DEVICE_V1_PRIMARY_SELECTION_SINCE_VERSION)
-            this->primary = primary;
-        connect(controller, &clipboard::SelectionController::selectionChanged, this, [this] {
-            deliver(this->controller, 1);
+            this->primary = primary ? primary->weakPtr() : nullptr;
+        selectionChanged = controller->selectionChanged.connect([this] {
+            deliver(this->controller.get(), 1);
         });
-        if (this->primary)
-            connect(this->primary, &clipboard::SelectionController::selectionChanged, this,
-                    [this] {
-                        deliver(this->primary, 3);
-                    });
-        connect(controller, &QObject::destroyed, this, [this] {
+        if (this->primary) {
+            primaryChanged = this->primary->selectionChanged.connect([this] {
+                deliver(this->primary.get(), 3);
+            });
+        }
+        controllerDestroyed = controller->destroyed.connect([this] {
             lifetime.reset();
             wl_resource_post_event(resource, 2);
             wl_client_flush(wl_resource_get_client(resource));
@@ -142,9 +140,9 @@ public:
 
     void deliverAll()
     {
-        deliver(controller, 1);
+        deliver(controller.get(), 1);
         if (primary)
-            deliver(primary, 3);
+            deliver(primary.get(), 3);
     }
 
     // event is the selection (1) or primary_selection (3) opcode.
@@ -161,7 +159,7 @@ public:
                 return;
             }
             auto data = std::make_unique<OfferResource>();
-            data->controller = selection;
+            data->controller = selection->weakPtr();
             data->source = source;
             data->device = lifetime;
             data->formats = source->formats();
@@ -177,9 +175,12 @@ public:
 
     wl_resource* resource;
     const Protocol* protocol;
-    QPointer<clipboard::SelectionController> controller;
-    QPointer<clipboard::SelectionController> primary;
+    base::WeakPtr<clipboard::SelectionController> controller;
+    base::WeakPtr<clipboard::SelectionController> primary;
     std::shared_ptr<bool> lifetime = std::make_shared<bool>(true);
+    base::Subscription selectionChanged;
+    base::Subscription primaryChanged;
+    base::Subscription controllerDestroyed;
 };
 
 void setSource(wl_client* client, wl_resource* resource, wl_resource* sourceResource,
@@ -206,13 +207,13 @@ void setSource(wl_client* client, wl_resource* resource, wl_resource* sourceReso
 void setSelection(wl_client* client, wl_resource* resource, wl_resource* sourceResource)
 {
     auto* device = getUserDataAs<Device>(resource);
-    setSource(client, resource, sourceResource, device ? device->controller.data() : nullptr);
+    setSource(client, resource, sourceResource, device ? device->controller.get() : nullptr);
 }
 
 void setPrimary(wl_client* client, wl_resource* resource, wl_resource* sourceResource)
 {
     auto* device = getUserDataAs<Device>(resource);
-    setSource(client, resource, sourceResource, device ? device->primary.data() : nullptr);
+    setSource(client, resource, sourceResource, device ? device->primary.get() : nullptr);
 }
 
 const struct ext_data_control_device_v1_interface deviceImplementation = {setSelection, destroy,

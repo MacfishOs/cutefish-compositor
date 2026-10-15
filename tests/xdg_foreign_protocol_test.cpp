@@ -42,7 +42,7 @@ using namespace cutefish;
 
 namespace {
 
-constexpr QRect kOutput(0, 0, 800, 600);
+const base::Rect kOutput(0, 0, 800, 600);
 
 struct XdgWindow {
     wl_surface *surface = nullptr;
@@ -140,7 +140,7 @@ struct Client {
         wl_display_disconnect(display);
     }
 
-    wl_buffer *makeBuffer(const QSize &size)
+    wl_buffer *makeBuffer(const base::Size &size)
     {
         const int stride = size.width() * 4;
         const size_t bytes = static_cast<size_t>(stride) * size.height();
@@ -166,7 +166,7 @@ struct Client {
         wl_surface_commit(window->surface);
         sync();
 
-        const QSize size(200, 100);
+        const base::Size size(200, 100);
         xdg_surface_ack_configure(window->xdgSurface, window->lastSerial);
         window->buffer = makeBuffer(size);
         wl_surface_attach(window->surface, window->buffer, 0, 0);
@@ -221,7 +221,7 @@ class XdgForeignProtocolTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     input::Seat seat {&compositor};
     input::InputManager manager {&seat};
@@ -254,7 +254,7 @@ protected:
         future.wait();
     }
 
-    wm::Window *windowTitled(const QString &title)
+    wm::Window *windowTitled(const std::string &title)
     {
         for (wm::Window *window : windowManager.windows()) {
             if (window->title() == title)
@@ -341,8 +341,8 @@ TEST_F(XdgForeignProtocolTest, AnImportedHandleParentsTheOtherClientsToplevel)
         importerClient.sync();
 
         check([&] {
-            wm::Window *parentWindow = windowTitled(QStringLiteral("parent"));
-            wm::Window *childWindow = windowTitled(QStringLiteral("child"));
+            wm::Window *parentWindow = windowTitled("parent");
+            wm::Window *childWindow = windowTitled("child");
             ASSERT_TRUE(parentWindow);
             ASSERT_TRUE(childWindow);
             EXPECT_EQ(parentWindow, childWindow->transientParent());
@@ -355,7 +355,7 @@ TEST_F(XdgForeignProtocolTest, AnImportedHandleParentsTheOtherClientsToplevel)
         EXPECT_EQ(1, importerClient.destroyedEvents);
 
         check([&] {
-            wm::Window *childWindow = windowTitled(QStringLiteral("child"));
+            wm::Window *childWindow = windowTitled("child");
             ASSERT_TRUE(childWindow);
             EXPECT_EQ(nullptr, childWindow->transientParent());
         });
@@ -391,7 +391,7 @@ TEST_F(XdgForeignProtocolTest, TheChildMayDropItsToplevelRoleBeforeTheExportGoes
         zxdg_imported_v2_destroy(imported);
         importerClient.sync();
         check([&] {
-            EXPECT_EQ(nullptr, windowTitled(QStringLiteral("child")));
+            EXPECT_EQ(nullptr, windowTitled("child"));
         });
     });
 }
@@ -407,7 +407,7 @@ TEST_F(XdgForeignProtocolTest, AnUnknownHandleIsImportedInert)
         zxdg_imported_v2_set_parent_of(imported, child->surface);
         importerClient.sync();
         check([&] {
-            wm::Window *childWindow = windowTitled(QStringLiteral("child"));
+            wm::Window *childWindow = windowTitled("child");
             ASSERT_TRUE(childWindow);
             EXPECT_EQ(nullptr, childWindow->transientParent());
         });

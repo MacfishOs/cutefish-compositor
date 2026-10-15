@@ -20,9 +20,9 @@
 #include <set>
 #include <vector>
 
-#include <QPointF>
 
 #include "clipboard/selection.h"
+#include "base/geometry.h"
 #include "compositor/surface_observer.h"
 #include "input/cursor_shape.h"
 #include "input/drag.h"
@@ -123,7 +123,7 @@ public:
 
     void setCursorOverride(std::optional<CursorShape> shape);
 
-    QPointF cursorPosition() const { return m_cursorPosition; }
+    base::PointF cursorPosition() const { return m_cursorPosition; }
 
     // A touch hides the pointer until the mouse moves, clicks or scrolls
     // again, as wm::CompoundEventFilter does on a touch press.
@@ -133,7 +133,7 @@ public:
     void setCursorHiddenByTouch(bool hidden);
 
     void traceCursors(const char *transition) const;
-    void updateCursorPosition(const QPointF &position);
+    void updateCursorPosition(const base::PointF &position);
     void releasePointerButton(Timestamp timestamp, uint32_t evdevButton);
     void updatePointerButtonState(uint32_t evdevButton, bool pressed);
     void endPointerGrabIfReleased();
@@ -234,14 +234,14 @@ public:
     // Every pointer event carries the location, as it does in Exo, so a button
     // that arrives before any motion is still placed correctly.
     // `relative` is the physical motion behind this location, if there was one.
-    void onPointerMotion(Timestamp timestamp, const QPointF &rootLocation,
+    void onPointerMotion(Timestamp timestamp, const base::PointF &rootLocation,
                          const RelativeMotion *relative = nullptr);
-    void onPointerButton(Timestamp timestamp, const QPointF &rootLocation, uint32_t evdevButton,
+    void onPointerButton(Timestamp timestamp, const base::PointF &rootLocation, uint32_t evdevButton,
                          bool pressed);
-    void onPointerAxis(Timestamp timestamp, const QPointF &rootLocation, const QPointF &offset,
+    void onPointerAxis(Timestamp timestamp, const base::PointF &rootLocation, const base::PointF &offset,
                        bool discrete);
-    void onPointerAxisStop(Timestamp timestamp, const QPointF &rootLocation);
-    void onPointerGestureBegin(Timestamp timestamp, const QPointF &rootLocation,
+    void onPointerAxisStop(Timestamp timestamp, const base::PointF &rootLocation);
+    void onPointerGestureBegin(Timestamp timestamp, const base::PointF &rootLocation,
                                GestureType type, uint32_t fingers);
     void onPointerGestureUpdate(Timestamp timestamp, GestureType type,
                                 const GestureUpdate &update);
@@ -251,15 +251,15 @@ public:
     // A new touch point is targeted once, at the surface it lands on; the
     // rest of its events follow it there. `rootLocation` is in output
     // coordinates. Frames close each batch from the device.
-    void onTouchDown(Timestamp timestamp, int32_t id, const QPointF &rootLocation);
-    void onTouchMotion(Timestamp timestamp, int32_t id, const QPointF &rootLocation);
+    void onTouchDown(Timestamp timestamp, int32_t id, const base::PointF &rootLocation);
+    void onTouchMotion(Timestamp timestamp, int32_t id, const base::PointF &rootLocation);
     void onTouchUp(Timestamp timestamp, int32_t id);
     void onTouchCancel();
     void onTouchFrame();
 
     struct TouchPoint {
         int32_t id = 0;
-        QPointF location;
+        base::PointF location;
     };
 
     // The newest point still down that a client was given on `root` or a
@@ -270,14 +270,14 @@ public:
     // which ends every point it had.
     void takeTouchPoint(int32_t id);
 
-    QPointF pointerLocation() const { return m_pointerLocation; }
+    base::PointF pointerLocation() const { return m_pointerLocation; }
 
     // The surface under `location` in `root`'s subtree. Every handler asking
     // during one pointer motion gets the one answer, as aura resolves a located
     // event's target once for all its handlers. Outside a motion, and for a
     // press, whose activation may restack, it is searched afresh.
-    compositor::Surface *pointerTargetAt(scene::Node *root, const QPointF &location,
-                                         QPointF *surfaceLocation);
+    compositor::Surface *pointerTargetAt(scene::Node *root, const base::PointF &location,
+                                         base::PointF *surfaceLocation);
     // Brackets the dispatch of one pointer motion.
     void beginPointerMotion();
     void endPointerMotion();
@@ -333,7 +333,7 @@ private:
     bool m_cursorHiddenByTouch = false;
 
     struct DeliveredTouch {
-        QPointF location;
+        base::PointF location;
         std::shared_ptr<compositor::Surface *> surface;
         uint64_t order = 0;
     };
@@ -347,18 +347,18 @@ private:
     bool m_focusBorrowed = false;
     compositor::Surface *m_pointerGrabSurface = nullptr;
 
-    QPointF m_pointerLocation;
+    base::PointF m_pointerLocation;
 
     struct PointerTarget {
         scene::Node *root;
-        QPointF location;
+        base::PointF location;
         std::shared_ptr<compositor::Surface *> surface;
-        QPointF surfaceLocation;
+        base::PointF surfaceLocation;
     };
 
     bool m_inPointerMotion = false;
     std::optional<PointerTarget> m_pointerTarget;
-    QPointF m_cursorPosition;
+    base::PointF m_cursorPosition;
     CursorShape m_compositorCursorShape = CursorShape::Default;
     std::optional<CursorShape> m_cursorOverride;
     ButtonFlags m_pressedButtons = NoButton;

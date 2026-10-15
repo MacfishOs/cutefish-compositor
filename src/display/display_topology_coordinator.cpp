@@ -5,44 +5,50 @@
 #include "display/display_topology_coordinator.h"
 #include "display/recommended_scale.h"
 
-#include <QSet>
 #include <algorithm>
+#include <set>
+
+#include "base/event_loop.h"
+#include "core/main_loop.h"
 
 namespace cutefish::display {
 
 DisplayTopologyCoordinator::DisplayTopologyCoordinator(DisplayManager *manager,
                                                        CallbackNativeDisplayDelegate *delegate,
                                                        DisplayConfigurationController *controller,
-                                                       Probe probe, DisplayPreferences preferences,
-                                                       QObject *parent)
-    : QObject(parent)
-    , m_manager(manager)
+                                                       Probe probe, DisplayPreferences preferences)
+    : m_manager(manager)
     , m_delegate(delegate)
     , m_controller(controller)
     , m_probe(std::move(probe))
     , m_preferences(std::move(preferences))
+    , m_retry(core::mainLoop())
 {
     m_retry.setSingleShot(true);
-    connect(&m_retry, &QTimer::timeout, this, &DisplayTopologyCoordinator::run);
-    connect(
-            controller, &DisplayConfigurationController::operationFinished, this,
-            [this](const QString &token, const ConfigurationResult &result) {
-                if (m_running && token == m_operationToken) {
-                    m_running = false;
-                    if (!m_pending)
-                        m_controller->setTopologyPending(false);
-                    emit reconciled(result.succeeded);
-                }
-                if (m_pending)
-                    m_retry.start(0);
-            },
-            Qt::QueuedConnection);
+    m_retry.onTimeout = [this] { run(); };
+    // Handled from the loop: the operation's own caller finishes first.
+    m_operationFinished = controller->operationFinished.connect(
+            [this](const std::string &token, const ConfigurationResult &result) {
+                core::mainLoop()->post([this, alive = std::weak_ptr<bool>(m_alive), token,
+                                        succeeded = result.succeeded] {
+                    if (alive.expired())
+                        return;
+                    if (m_running && token == m_operationToken) {
+                        m_running = false;
+                        if (!m_pending)
+                            m_controller->setTopologyPending(false);
+                        reconciled(succeeded);
+                    }
+                    if (m_pending)
+                        m_retry.start(std::chrono::milliseconds(0));
+                });
+            });
 }
 
 void DisplayTopologyCoordinator::invalidate()
 {
     if (!m_pending && !m_running && m_manager->applied()
-        && !m_manager->applied()->logicalDisplays.isEmpty())
+        && !m_manager->applied()->logicalDisplays.empty())
         m_previous = m_controller->recoveryState();
     schedule();
 }
@@ -60,7 +66,7 @@ void DisplayTopologyCoordinator::schedule()
     m_controller->setTopologyPending(true);
     m_delegate->invalidateSnapshots();
     if (!m_retry.isActive())
-        m_retry.start(100);
+        m_retry.start(std::chrono::milliseconds(100));
 }
 
 DisplayConfiguration DisplayTopologyCoordinator::candidate(const HardwareSnapshot &hardware,
@@ -72,19 +78,19 @@ DisplayConfiguration DisplayTopologyCoordinator::candidate(const HardwareSnapsho
     }
     DisplayConfiguration result;
     result.base = {hardware.compositorInstanceId, hardware.topologyGeneration, revision};
-    QSet<DisplayId> active;
+    std::set<DisplayId> active;
     for (const auto &physical : hardware.displays) {
         const LogicalDisplay *logical = nullptr;
         if (m_previous) {
             for (const auto &old : m_previous->logicalDisplays) {
-                if (old.destinations.contains(physical.sessionId)) {
+                if (old.hasDestination(physical.sessionId)) {
                     logical = &old;
                     break;
                 }
             }
         }
         auto mode = physical.nativeMode.value_or(
-                physical.currentMode.value_or(physical.modes.first()));
+                physical.currentMode.value_or(physical.modes.front()));
         bool previouslyKnown = false;
         if (m_previous) {
             for (const auto &old : m_previous->physicalDisplays) {
@@ -99,17 +105,17 @@ DisplayConfiguration DisplayTopologyCoordinator::candidate(const HardwareSnapsho
             }
         }
         const bool enabled = logical || !previouslyKnown;
-        result.displays.append({physical.sessionId, enabled, mode,
-                                logical ? logical->scale : recommendedScale(physical),
-                                logical ? logical->rotation : DisplayRotation::Normal});
+        result.displays.push_back({physical.sessionId, enabled, mode,
+                                   logical ? logical->scale : recommendedScale(physical),
+                                   logical ? logical->rotation : DisplayRotation::Normal});
         if (enabled)
             active.insert(physical.sessionId);
-        if (logical && logical->primary && result.primary.value().isEmpty())
+        if (logical && logical->primary && result.primary.value().empty())
             result.primary = physical.sessionId;
     }
-    if (active.isEmpty() && !result.displays.isEmpty()) {
-        result.displays.first().enabled = true;
-        active.insert(result.displays.first().display);
+    if (active.empty() && !result.displays.empty()) {
+        result.displays.front().enabled = true;
+        active.insert(result.displays.front().display);
     }
     if (!active.contains(result.primary)) {
         for (const auto &request : result.displays) {
@@ -119,26 +125,25 @@ DisplayConfiguration DisplayTopologyCoordinator::candidate(const HardwareSnapsho
             }
         }
     }
-    QSet<DisplayId> mirrorSinks;
+    std::set<DisplayId> mirrorSinks;
     if (m_previous) {
         for (const auto &logical : m_previous->logicalDisplays) {
-            QList<DisplayId> group;
+            std::vector<DisplayId> group;
             for (const auto &id : logical.destinations)
                 if (active.contains(id))
-                    group.append(id);
+                    group.push_back(id);
             if (group.size() > 1) {
-                result.mirrorGroups.append(group);
-                for (const auto &sink : group.mid(1))
-                    mirrorSinks.insert(sink);
-                if (group.contains(result.primary))
-                    result.primary = group.first();
+                result.mirrorGroups.push_back(group);
+                mirrorSinks.insert(group.begin() + 1, group.end());
+                if (std::ranges::find(group, result.primary) != group.end())
+                    result.primary = group.front();
             }
         }
         for (const auto &placement : m_previous->placements) {
             if (active.contains(placement.display) && active.contains(placement.parent)
                 && !mirrorSinks.contains(placement.display)
                 && !mirrorSinks.contains(placement.parent))
-                result.placements.append(placement);
+                result.placements.push_back(placement);
         }
     }
     if (DisplayConfigurationValidator::validateExtended(hardware, revision, result).succeeded)
@@ -149,7 +154,7 @@ DisplayConfiguration DisplayTopologyCoordinator::candidate(const HardwareSnapsho
         if (!request.enabled || request.display == result.primary
             || mirrorSinks.contains(request.display))
             continue;
-        result.placements.append({request.display, parent, LayoutEdge::Right, 0});
+        result.placements.push_back({request.display, parent, LayoutEdge::Right, 0});
         parent = request.display;
     }
     return result;
@@ -165,18 +170,18 @@ void DisplayTopologyCoordinator::run()
     auto hardware = m_probe();
     if (!hardware || !hardware->isValid()) {
         if (++m_attempts < 3)
-            m_retry.start(250);
+            m_retry.start(std::chrono::milliseconds(250));
         else {
             m_pending = false;
             m_controller->setTopologyPending(false);
-            emit reconciled(false);
+            reconciled(false);
         }
         return;
     }
     const uint64_t revision = ++m_revision;
     const auto request = candidate(*hardware, revision);
     if (!m_manager->installHardware(*hardware)) {
-        emit reconciled(false);
+        reconciled(false);
         return;
     }
     m_delegate->setSnapshot(*hardware);
@@ -188,17 +193,17 @@ void DisplayTopologyCoordinator::run()
     for (auto &physical : empty.physicalDisplays)
         physical.currentMode.reset();
     if (!m_manager->installApplied(empty)) {
-        emit reconciled(false);
+        reconciled(false);
         return;
     }
     m_pending = false;
-    if (hardware->displays.isEmpty()) {
+    if (hardware->displays.empty()) {
         m_controller->setTopologyPending(false);
-        emit reconciled(true);
+        reconciled(true);
         return;
     }
     m_running = true;
-    m_operationToken = m_controller->apply(request, QStringLiteral("topology"), -1);
+    m_operationToken = m_controller->apply(request, "topology", -1);
 }
 
 } // namespace cutefish::display

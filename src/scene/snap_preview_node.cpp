@@ -8,6 +8,7 @@
 #include <chrono>
 
 #include "scene/motion.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
@@ -32,7 +33,7 @@ render::Color faded(render::Color color, float opacity)
 } // namespace
 
 SnapPreviewNode::SnapPreviewNode(std::function<double()> clock)
-    : Node(QStringLiteral("snap-preview"))
+    : Node("snap-preview")
     , m_now(clock ? std::move(clock) : [] {
         return std::chrono::duration<double, std::milli>(
                        std::chrono::steady_clock::now().time_since_epoch())
@@ -41,9 +42,9 @@ SnapPreviewNode::SnapPreviewNode(std::function<double()> clock)
 {
 }
 
-void SnapPreviewNode::show(const QRect &windowBounds)
+void SnapPreviewNode::show(const base::Rect &windowBounds)
 {
-    const QRect target = windowBounds.adjusted(kInset, kInset, -kInset, -kInset);
+    const base::Rect target = windowBounds.adjusted(kInset, kInset, -kInset, -kInset);
     if (target == geometry())
         return;
     m_started = -1;
@@ -60,13 +61,13 @@ void SnapPreviewNode::setColors(const render::Color &fill, const render::Color &
     notifyChanged();
 }
 
-QRectF SnapPreviewNode::entranceBounds(const QRectF &target, double elapsedMs)
+base::RectF SnapPreviewNode::entranceBounds(const base::RectF &target, double elapsedMs)
 {
     const double duration = kSizeDurationMs * motion::durationScale();
     const double t = accel20Decel100(elapsedMs / duration);
     const double scale = kStartScale + (1 - kStartScale) * t;
-    const QSizeF size = target.size() * scale;
-    return QRectF(target.center() - QPointF(size.width(), size.height()) / 2, size);
+    const base::SizeF size = target.size() * scale;
+    return base::RectF(target.center() - base::PointF(size.width(), size.height()) / 2, size);
 }
 
 float SnapPreviewNode::entranceOpacity(double elapsedMs)
@@ -75,7 +76,7 @@ float SnapPreviewNode::entranceOpacity(double elapsedMs)
     return float(std::clamp(elapsedMs / duration, 0.0, 1.0));
 }
 
-void SnapPreviewNode::paint(render::Renderer &renderer, const QRect &absoluteGeometry) const
+void SnapPreviewNode::paint(render::Renderer &renderer, const base::Rect &absoluteGeometry) const
 {
     if (absoluteGeometry.isEmpty())
         return;
@@ -85,7 +86,7 @@ void SnapPreviewNode::paint(render::Renderer &renderer, const QRect &absoluteGeo
     if (m_started < 0 && !renderer.capturing)
         m_started = now;
     const double elapsed = m_started < 0 ? 0 : now - m_started;
-    const QRectF bounds = entranceBounds(QRectF(absoluteGeometry), elapsed);
+    const base::RectF bounds = entranceBounds(base::RectF(absoluteGeometry), elapsed);
     const float opacity = entranceOpacity(elapsed);
 
     if (opacity > 0) {
@@ -98,7 +99,7 @@ void SnapPreviewNode::paint(render::Renderer &renderer, const QRect &absoluteGeo
         // views::HighlightBorder: a physical-pixel hairline, and a second one
         // just inside it on the same radius.
         renderer.drawRoundedOutline(shape, faded(m_outline, opacity), 1);
-        const qreal pixel = 1 / renderer.rasterScale();
+        const double pixel = 1 / renderer.rasterScale();
         const render::RoundedShape inner {bounds.adjusted(pixel, pixel, -pixel, -pixel), kRadius,
                                           {1, 1}};
         renderer.drawRoundedOutline(inner, faded(m_highlight, opacity), 1);

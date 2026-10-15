@@ -16,9 +16,9 @@
 
 #include <map>
 
-#include <QPointF>
 
 #include "compositor/surface_observer.h"
+#include "base/geometry.h"
 #include "input/types.h"
 
 namespace cutefish::input {
@@ -43,8 +43,8 @@ public:
     // null when it landed on nothing a client owns; `rootLocation` is in
     // output coordinates.
     void onTouchDown(compositor::Surface* target, Timestamp timestamp, int32_t id,
-                     const QPointF& rootLocation);
-    void onTouchMotion(Timestamp timestamp, int32_t id, const QPointF& rootLocation);
+                     const base::PointF& rootLocation);
+    void onTouchMotion(Timestamp timestamp, int32_t id, const base::PointF& rootLocation);
     void onTouchUp(Timestamp timestamp, int32_t id);
     void onTouchCancel();
     void onTouchFrame();

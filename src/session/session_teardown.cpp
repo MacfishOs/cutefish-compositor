@@ -85,7 +85,7 @@ void SessionTeardown::onSessionUnblocked()
     // the activation below leaves it there.
     if (wm::Window *grab = m_windowManager->keyboardGrab())
         m_windowManager->setKeyboardGrab(grab);
-    const quint64 id = std::exchange(m_activeBeforeBlock, 0);
+    const uint64_t id = std::exchange(m_activeBeforeBlock, 0);
     if (!id)
         return;
     wm::Activation *activation = m_windowManager->activation();

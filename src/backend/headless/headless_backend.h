@@ -8,9 +8,9 @@
 #include <memory>
 #include <vector>
 
-#include <QObject>
-#include <QSize>
-#include <QTimer>
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/timer.h"
 
 namespace cutefish {
 
@@ -27,14 +27,14 @@ namespace backend {
 // This is deliberately not a DrmBackend sibling. There is no shared interface to
 // implement: DisplayRuntime and the topology coordinator take a DrmBackend and
 // already treat a null one as "no hardware", which is exactly what headless is.
-class HeadlessBackend : public QObject
+class HeadlessBackend
 {
-    Q_OBJECT
-
 public:
-    static QSize outputSize() { return QSize(1920, 1080); }
+    static base::Size outputSize() { return base::Size(1920, 1080); }
 
-    HeadlessBackend(compositor::Compositor *compositor, int outputCount, QObject *parent = nullptr);
+    HeadlessBackend(compositor::Compositor *compositor, int outputCount);
+    HeadlessBackend(const HeadlessBackend &) = delete;
+    HeadlessBackend &operator=(const HeadlessBackend &) = delete;
 
     // Describes the primary output and returns any further ones. A Qt or GTK
     // client with no output has no screen to place itself on, so headless mode
@@ -46,15 +46,14 @@ public:
     // first buffer, so a plain 60 Hz timer stands in for the flip.
     void startClock();
 
-signals:
     // Emitted before the compositor is told, so session state settles first.
-    void aboutToPresent();
+    base::Signal<> aboutToPresent;
 
 private:
     compositor::Compositor *const m_compositor;
     const int m_outputCount;
-    QTimer m_clock;
-    quint64 m_generation = 0;
+    base::Timer m_clock;
+    uint64_t m_generation = 0;
 };
 
 } // namespace backend

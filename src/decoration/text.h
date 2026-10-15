@@ -11,9 +11,10 @@
 #define CUTEFISH_DECORATION_TEXT_H_
 
 #include <memory>
+#include <string>
+#include <string_view>
 
-#include <QSize>
-#include <QString>
+#include "base/geometry.h"
 
 #include "decoration/raster.h"
 
@@ -28,12 +29,12 @@ public:
     TextRenderer(const TextRenderer&) = delete;
     TextRenderer& operator=(const TextRenderer&) = delete;
 
-    QSize textSize(const QString& text, int pixelSize);
+    base::Size textSize(std::string_view text, int pixelSize);
     // `rasterDensity` may be fractional: the text is rasterized at the size it
     // is shown at, not at a whole multiple scaled down.
-    Image renderText(const QString& text, int pixelSize, const render::Color& color,
+    Image renderText(std::string_view text, int pixelSize, const render::Color& color,
                      double rasterDensity = 1);
-    QString elideText(const QString& text, int pixelSize, int maxWidth);
+    std::string elideText(std::string_view text, int pixelSize, int maxWidth);
 
 private:
     struct Impl;

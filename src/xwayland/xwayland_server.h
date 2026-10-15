@@ -4,20 +4,21 @@
 
 #pragma once
 
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
+#include <string>
+#include <sys/types.h>
 #include <vector>
 #include <wayland-server-core.h>
 
-#include <QObject>
-#include <QProcess>
-#include <QTemporaryDir>
-#include <QTimer>
-
+#include "base/timer.h"
 #include "surface_association.h"
 
-class QSocketNotifier;
+namespace cutefish::base {
+class EventLoop;
+}
 
 namespace cutefish::wayland {
 class PrivilegedClients;
@@ -33,12 +34,12 @@ class XwaylandKeyboardGrab;
 class XwaylandShell;
 class Xwm;
 
-class XwaylandServer : public QObject
+class XwaylandServer
 {
 public:
     struct Options {
-        QString executable = QStringLiteral("/usr/bin/Xwayland");
-        QString readinessFile;
+        std::string executable = "/usr/bin/Xwayland";
+        std::string readinessFile;
         bool software = false;
         int timeoutMs = 10000;
         // Restarts after a crash allowed within one minute; beyond that
@@ -56,7 +57,9 @@ public:
     };
 
     XwaylandServer(wl_display*, wayland::PrivilegedClients*, wm::WindowManager*);
-    ~XwaylandServer() override;
+    XwaylandServer(const XwaylandServer&) = delete;
+    XwaylandServer& operator=(const XwaylandServer&) = delete;
+    ~XwaylandServer();
     bool start(const Options& options);
     void stop();
 
@@ -68,19 +71,20 @@ public:
     // before this.
     bool isReady() const { return m_ready; }
 
-    QString display() const { return m_displayName; }
+    std::string display() const { return m_displayName; }
 
-    QString authority() const { return m_authority; }
+    std::string authority() const { return m_authority; }
 
-    QString error() const { return m_error; }
+    std::string error() const { return m_error; }
 
-    qint64 processId() const { return m_process.processId(); }
+    // Zero while Xwayland is not running.
+    pid_t processId() const { return m_pid > 0 ? m_pid : 0; }
 
     // The display is published to the session. For a lazy server that is
     // before Xwayland runs; started follows once it does.
     std::function<void()> ready;
     std::function<void()> started;
-    std::function<void(const QString&)> failure;
+    std::function<void(const std::string&)> failure;
 
 private:
     bool launch();
@@ -89,8 +93,16 @@ private:
     void arm();
     bool writeReadiness();
     void readDisplay();
-    void fail(const QString& error);
-    void deferFailure(const QString& error);
+    void fail(const std::string& error);
+    // Once the current callback is done, as one crash reports itself through
+    // several channels: the first report of an epoch counts.
+    void deferFailure(const std::string& error);
+    // Starts Xwayland with the descriptors it inherits; false when it cannot.
+    bool spawn(const std::vector<std::string>& arguments, const std::vector<int>& inherited,
+               int waylandSocket);
+    void reap();
+    void stopProcess();
+    void closeListenWatches();
     void publish();
     // Ends the running server. `keepSession` keeps what the session was given
     // - display, Xauthority and readiness file - for a restart to reuse.
@@ -107,25 +119,30 @@ private:
         XwaylandServer* owner;
     } m_destroy;
 
-    QProcess m_process;
-    QTimer m_timeout;
+    base::EventLoop& m_loop;
+    pid_t m_pid = -1;
+    int m_pidfd = -1;
+    int m_pidWatch = 0;
+    base::Timer m_timeout;
+    base::Timer m_deferredFailure;
+    std::string m_deferredError;
     Options m_options;
-    std::deque<qint64> m_restarts;
+    std::deque<int64_t> m_restarts;
     // A lazy server's listening sockets and the lock file that reserves them.
     std::vector<int> m_listenFds;
-    std::vector<std::unique_ptr<QSocketNotifier>> m_listenNotifiers;
-    QString m_lockFile, m_socketFile;
+    std::vector<int> m_listenWatches;
+    std::string m_lockFile, m_socketFile;
     double m_scale = 1;
-    std::unique_ptr<QTemporaryDir> m_runtime;
+    // The private runtime directory, removed with what is in it.
+    std::string m_runtime;
     std::unique_ptr<SurfaceAssociation> m_association;
     std::unique_ptr<XwaylandShell> m_shell;
     std::unique_ptr<XwaylandKeyboardGrab> m_keyboardGrab;
     std::unique_ptr<Xwm> m_xwm;
-    QSocketNotifier* m_readNotifier = nullptr;
+    int m_readWatch = 0;
     int m_readFd = -1;
-    QByteArray m_readiness;
-    QString m_displayName, m_authority, m_error, m_readinessFile;
-    uint64_t m_epoch = 0;
+    std::string m_readiness;
+    std::string m_displayName, m_authority, m_error, m_readinessFile;
     bool m_ready = false, m_stopping = false, m_xwmReady = false, m_published = false;
 };
 

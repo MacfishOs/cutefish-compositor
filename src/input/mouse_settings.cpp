@@ -3,73 +3,82 @@
 // found in the LICENSE file.
 
 #include "input/mouse_settings.h"
+#include "core/logging.h"
 
-#include <QDBusError>
-#include <QDebug>
+#include <algorithm>
 #include <cmath>
 
 #include "core/preferences.h"
+#include "input/dbus_export.h"
 
 namespace cutefish::input {
-namespace {
-constexpr auto service = "com.cutefish.Mouse1";
-constexpr auto path = "/com/cutefish/Mouse1";
-} // namespace
 
-MouseSettings::MouseSettings(QObject *parent, const QString &settingsFile)
-    : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
-                                       : settingsFile,
-                 QSettings::IniFormat)
+static constexpr auto service = "com.cutefish.Mouse1";
+static constexpr auto path = "/com/cutefish/Mouse1";
+static constexpr auto group = "Mouse/";
+
+MouseSettings::MouseSettings(const std::string &settingsFile)
+    : m_settings(settingsFile.empty() ? preferencesFile("compositor") : settingsFile)
 {
-    m_settings.beginGroup(QStringLiteral("Mouse"));
-    m_leftHanded = m_settings.value(QStringLiteral("leftHanded"), false).toBool();
-    m_naturalScroll = m_settings.value(QStringLiteral("naturalScroll"), m_naturalScroll).toBool();
+    m_leftHanded = m_settings.boolValue("Mouse/leftHanded", false);
+    m_naturalScroll = m_settings.boolValue("Mouse/naturalScroll", m_naturalScroll);
     // The legacy accelerationProfile preference means flat (acceleration disabled).
-    m_acceleration = !m_settings.value(QStringLiteral("accelerationProfile"), false).toBool();
-    bool valid = false;
-    const double speed =
-            m_settings.value(QStringLiteral("pointerAcceleration"), 0).toDouble(&valid);
-    if (valid && std::isfinite(speed))
-        m_pointerAcceleration = qBound(-1.0, speed, 1.0);
+    m_acceleration = !m_settings.boolValue("Mouse/accelerationProfile", false);
+    const double speed = m_settings.doubleValue("Mouse/pointerAcceleration", NAN);
+    if (std::isfinite(speed))
+        m_pointerAcceleration = std::clamp(speed, -1.0, 1.0);
 }
 
-MouseSettings::~MouseSettings()
-{
-    if (m_registered) {
-        auto bus = QDBusConnection::sessionBus();
-        bus.unregisterObject(QLatin1String(path));
-        bus.unregisterService(QLatin1String(service));
-    }
-}
+MouseSettings::~MouseSettings() = default;
 
 bool MouseSettings::registerService()
 {
-    if (m_registered)
+    if (m_object)
         return true;
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.registerObject(QLatin1String(path), this,
-                            QDBusConnection::ExportAllProperties | QDBusConnection::ExportAllSlots
-                                    | QDBusConnection::ExportAllSignals)) {
-        qWarning() << "Cannot export mouse settings:" << bus.lastError().message();
+    auto exported = DBusExport::create(service, path, service);
+    if (!exported) {
+        CF_WARNING(cfInput) << "Cannot export mouse settings: no session bus";
         return false;
     }
-    if (!bus.registerService(QLatin1String(service))) {
-        qWarning() << "Cannot register mouse settings:" << bus.lastError().message();
-        bus.unregisterObject(QLatin1String(path));
+    base::dbus::Object &object = exported->object();
+    object.addProperty("available", [this] { return m_available; });
+    object.addProperty("leftHanded", [this] { return m_leftHanded; });
+    object.addProperty("naturalScroll", [this] { return m_naturalScroll; });
+    object.addProperty("acceleration", [this] { return m_acceleration; });
+    object.addProperty("pointerAcceleration", [this] { return m_pointerAcceleration; });
+    object.addMethod("setLeftHanded", [this](bool enabled) { setLeftHanded(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setNaturalScroll", [this](bool enabled) { setNaturalScroll(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setAcceleration", [this](bool enabled) { setAcceleration(enabled); },
+                     base::dbus::ArgumentNames{{"enabled"}, {}});
+    object.addMethod("setPointerAcceleration",
+                     [this](double value) { setPointerAcceleration(value); },
+                     base::dbus::ArgumentNames{{"value"}, {}});
+    for (const char *member : {"availableChanged", "leftHandedChanged", "naturalScrollChanged",
+                               "accelerationChanged", "pointerAccelerationChanged",
+                               "settingsChanged"})
+        object.addSignal(member, "");
+    if (!exported->publish("mouse settings"))
         return false;
-    }
-    m_registered = true;
+    m_object = std::move(exported);
     return true;
 }
 
-void MouseSettings::save(const QString &key, const QVariant &value)
+template<typename T>
+void MouseSettings::save(const std::string &key, T value)
 {
-    m_settings.setValue(key, value);
-    m_settings.sync();
-    if (m_settings.status() != QSettings::NoError)
-        qWarning() << "Cannot persist mouse settings to" << m_settings.fileName();
-    emit settingsChanged();
+    m_settings.setValue(group + key, value);
+    if (!m_settings.sync())
+        CF_WARNING(cfInput) << "Cannot persist mouse settings to" << m_settings.path();
+    notify(settingsChanged, "settingsChanged");
+}
+
+void MouseSettings::notify(const base::Signal<> &signal, const char *member)
+{
+    signal();
+    if (m_object)
+        m_object->emitSignal(member);
 }
 
 void MouseSettings::setAvailable(bool available)
@@ -77,7 +86,7 @@ void MouseSettings::setAvailable(bool available)
     if (m_available == available)
         return;
     m_available = available;
-    emit availableChanged();
+    notify(availableChanged, "availableChanged");
 }
 
 void MouseSettings::setLeftHanded(bool enabled)
@@ -85,8 +94,8 @@ void MouseSettings::setLeftHanded(bool enabled)
     if (m_leftHanded == enabled)
         return;
     m_leftHanded = enabled;
-    save(QStringLiteral("leftHanded"), enabled);
-    emit leftHandedChanged();
+    save("leftHanded", enabled);
+    notify(leftHandedChanged, "leftHandedChanged");
 }
 
 void MouseSettings::setNaturalScroll(bool enabled)
@@ -94,8 +103,8 @@ void MouseSettings::setNaturalScroll(bool enabled)
     if (m_naturalScroll == enabled)
         return;
     m_naturalScroll = enabled;
-    save(QStringLiteral("naturalScroll"), enabled);
-    emit naturalScrollChanged();
+    save("naturalScroll", enabled);
+    notify(naturalScrollChanged, "naturalScrollChanged");
 }
 
 void MouseSettings::setAcceleration(bool enabled)
@@ -103,19 +112,19 @@ void MouseSettings::setAcceleration(bool enabled)
     if (m_acceleration == enabled)
         return;
     m_acceleration = enabled;
-    save(QStringLiteral("accelerationProfile"), !enabled);
-    emit accelerationChanged();
+    save("accelerationProfile", !enabled);
+    notify(accelerationChanged, "accelerationChanged");
 }
 
 void MouseSettings::setPointerAcceleration(double value)
 {
     if (!std::isfinite(value))
         return;
-    value = qBound(-1.0, value, 1.0);
+    value = std::clamp(value, -1.0, 1.0);
     if (m_pointerAcceleration == value)
         return;
     m_pointerAcceleration = value;
-    save(QStringLiteral("pointerAcceleration"), value);
-    emit pointerAccelerationChanged();
+    save("pointerAcceleration", value);
+    notify(pointerAccelerationChanged, "pointerAccelerationChanged");
 }
 } // namespace cutefish::input

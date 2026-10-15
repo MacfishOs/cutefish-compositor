@@ -12,7 +12,7 @@ namespace cutefish::decoration {
 namespace {
 
 constexpr int kRadius = 14; // Logical pixels, all four corners.
-constexpr qreal kOutlineWidthPx = 1.0;
+constexpr double kOutlineWidthPx = 1.0;
 
 constexpr render::Color kOutlineColor {0, 0, 0, 0.05f};
 // Drawn just inside the outline; only shows on dark content.
@@ -77,7 +77,7 @@ WindowVisualStyle::WindowVisualStyle(bool dark, int accentIndex)
     snapPreviewFill.a = kSnapPreviewFillAlpha;
 }
 
-int WindowVisualStyle::radiusFor(const QSize &size)
+int WindowVisualStyle::radiusFor(const base::Size &size)
 {
     return std::max(0, std::min({kRadius, size.width() / 2, size.height() / 2}));
 }

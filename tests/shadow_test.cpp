@@ -17,6 +17,7 @@
 #include "decoration/decoration_theme.h"
 #include "decoration/shadow.h"
 #include "fake_renderer.h"
+#include "ui/path.h"
 #include "wm/shadow_types.h"
 
 using namespace cutefish;
@@ -24,19 +25,24 @@ using namespace cutefish::decoration;
 
 namespace {
 
+base::Size times(const base::Size &size, int factor)
+{
+    return base::Size(size.width() * factor, size.height() * factor);
+}
+
 TEST(ShadowTest, OffsetMarginsAndUnits)
 {
     const ShadowStyle style {{{2, {1, 2}, 0.4f}, {1, {-2, -3}, 0.2f}}};
     ShadowGeometry geometry({300, 200}, 11, style);
-    EXPECT_EQ(geometry.margins(), QMargins(5, 6, 7, 8));
-    EXPECT_EQ(geometry.paintBounds(), QRect(-5, -6, 312, 214));
+    EXPECT_EQ(geometry.margins(), base::Insets(5, 6, 7, 8));
+    EXPECT_EQ(geometry.paintBounds(), base::Rect(-5, -6, 312, 214));
     ShadowGeometry scaled({300, 200}, 11, style, 2);
     EXPECT_EQ(scaled.paintBounds(), geometry.paintBounds());
-    EXPECT_EQ(scaled.rasterSize(), geometry.rasterSize() * 2);
+    EXPECT_EQ(scaled.rasterSize(), times(geometry.rasterSize(), 2));
     EXPECT_NE(scaled.key(), geometry.key());
     ShadowGeometry scale4({300, 200}, 11, style, 4);
     EXPECT_EQ(scale4.paintBounds(), geometry.paintBounds());
-    EXPECT_EQ(scale4.rasterSize(), geometry.rasterSize() * 4);
+    EXPECT_EQ(scale4.rasterSize(), times(geometry.rasterSize(), 4));
     EXPECT_NE(scale4.key(), scaled.key());
     EXPECT_TRUE(ShadowGeometry({0, 2}, 0, style).paintBounds().isEmpty());
     EXPECT_TRUE(ShadowGeometry({2, 2}, 0, style, 0).paintBounds().isEmpty());
@@ -45,10 +51,10 @@ TEST(ShadowTest, OffsetMarginsAndUnits)
 TEST(ShadowTest, TinyAndLargeSlicesAreBoundedAndDoNotOverlap)
 {
     Metrics metrics;
-    const ShadowGeometry largest(QSize(1 << 16, 1 << 16), metrics.cornerRadius,
+    const ShadowGeometry largest(base::Size(1 << 16, 1 << 16), metrics.cornerRadius,
                                  metrics.shadow(true));
-    for (const QSize size : {QSize(1, 1), QSize(2, 2), QSize(3, 40), QSize(40, 3), QSize(21, 31),
-                             QSize(100, 400), QSize(100000, 100000)}) {
+    for (const base::Size size : {base::Size(1, 1), base::Size(2, 2), base::Size(3, 40), base::Size(40, 3),
+                                  base::Size(21, 31), base::Size(100, 400), base::Size(100000, 100000)}) {
         ShadowGeometry geometry(size, WindowVisualStyle::radiusFor(size), metrics.shadow(true));
         int64_t area = 0;
         for (size_t i = 0; i < 9; ++i) {
@@ -68,23 +74,23 @@ TEST(ShadowTest, TinyAndLargeSlicesAreBoundedAndDoNotOverlap)
 }
 
 // A tall popup with an arrow under its bottom edge.
-QPainterPath arrowedPopup(const QSize &size)
+ui::Path arrowedPopup(const base::Size &size)
 {
-    const qreal body = size.height() - 9;
-    QPainterPath path;
-    path.addRoundedRect(QRectF(0, 0, size.width(), body), 10, 10);
-    QPainterPath arrow;
+    const double body = size.height() - 9;
+    ui::Path path;
+    path.addRoundedRect(ui::RectF {0, 0, double(size.width()), body}, 10, 10);
+    ui::Path arrow;
     arrow.moveTo(size.width() / 2.0 - 10, body - 1);
     arrow.lineTo(size.width() / 2.0 + 10, body - 1);
     arrow.lineTo(size.width() / 2.0, size.height());
-    arrow.closeSubpath();
+    arrow.close();
     return path.united(arrow);
 }
 
 TEST(ShadowTest, SilhouetteStretchesOnlyItsStraightRuns)
 {
     Metrics metrics;
-    const QSize size(160, 700);
+    const base::Size size(160, 700);
     const auto style = metrics.shadowFor(wm::ShadowElevation::MenuOrTooltip);
     for (int scale : {1, 2}) {
         ShadowGeometry geometry(size, 0, style, scale, Corners::all(), arrowedPopup(size));
@@ -111,10 +117,10 @@ TEST(ShadowTest, LobesReachTheRendererInImagePixels)
     // A lobe with no opacity is left out.
     ASSERT_EQ(renderer.lastShadowLobes.size(), 2u);
     EXPECT_FLOAT_EQ(renderer.lastShadowLobes[0].sigma, 5);
-    EXPECT_EQ(renderer.lastShadowLobes[0].offset, QPoint(2, 6));
+    EXPECT_EQ(renderer.lastShadowLobes[0].offset, base::Point(2, 6));
     EXPECT_FLOAT_EQ(renderer.lastShadowLobes[0].opacity, 0.4f);
     EXPECT_FLOAT_EQ(renderer.lastShadowLobes[1].sigma, 8);
-    EXPECT_EQ(renderer.lastShadowLobes[1].offset, QPoint(-4, 0));
+    EXPECT_EQ(renderer.lastShadowLobes[1].offset, base::Point(-4, 0));
     const ShadowStyle invisible {{{2, {}, 0}}};
     EXPECT_FALSE(ShadowGeometry({300, 200}, 11, invisible).render(renderer));
 }
@@ -145,7 +151,7 @@ TEST(ShadowTest, MovesAndOrdinaryResizesReuseAndSmallVariantsRetire)
     paintShadow(replacement, ShadowGeometry({500, 400}, 11, metrics.shadow(true)), {});
     EXPECT_EQ(replacement.renderedShadows, 1);
     // One image, drawn as the eight slices around the window.
-    EXPECT_EQ(replacement.kinds(), QStringList(8, QStringLiteral("texture")));
+    EXPECT_EQ(replacement.kinds(), std::vector<std::string>(8, "texture"));
 }
 
 } // namespace

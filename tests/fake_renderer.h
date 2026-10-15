@@ -5,15 +5,14 @@
 #ifndef CUTEFISH_TESTS_FAKE_RENDERER_H_
 #define CUTEFISH_TESTS_FAKE_RENDERER_H_
 
-#include <QList>
-#include <QString>
-#include <QStringList>
-
+#include <algorithm>
 #include <cstring>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "render/renderer.h"
+#include "base/region.h"
 
 namespace cutefish::testsupport {
 
@@ -21,14 +20,14 @@ namespace cutefish::testsupport {
 class FakeTexture : public render::Texture
 {
 public:
-    FakeTexture(const QSize &size, const uint8_t *pixels, int stride, render::PixelFormat format)
+    FakeTexture(const base::Size &size, const uint8_t *pixels, int stride, render::PixelFormat format)
         : m_size(size)
         , m_format(format)
     {
         upload(pixels, stride);
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
     render::PixelFormat format() const override { return m_format; }
 
@@ -48,7 +47,7 @@ public:
     int uploadCount = 0;
 
 private:
-    QSize m_size;
+    base::Size m_size;
     render::PixelFormat m_format;
     std::vector<uint8_t> m_pixels;
 };
@@ -58,13 +57,13 @@ class FakeRenderer : public render::Renderer
 {
 public:
     struct Call {
-        QString kind;
-        QRect rect;
+        std::string kind;
+        base::Rect rect;
         render::Color color;
         render::Texture *texture = nullptr;
         float alpha = 1.0f;
-        QTransform mapping;
-        QRectF target;
+        base::AffineTransform mapping;
+        base::RectF target;
     };
 
     bool beginFrame(render::RenderTarget *) override { return true; }
@@ -73,35 +72,35 @@ public:
 
     void clear(const render::Color &color) override
     {
-        calls.append(Call {QStringLiteral("clear"), QRect(), color, nullptr, 1.0f});
+        calls.push_back(Call {"clear", base::Rect(), color, nullptr, 1.0f});
     }
 
-    void fillRect(const QRect &rect, const render::Color &color) override
+    void fillRect(const base::Rect &rect, const render::Color &color) override
     {
-        calls.append(Call {QStringLiteral("fill"), rect, color, nullptr, 1.0f});
+        calls.push_back(Call {"fill", rect, color, nullptr, 1.0f});
     }
 
-    void drawTexture(render::Texture *texture, const QRect &target, float alpha) override
+    void drawTexture(render::Texture *texture, const base::Rect &target, float alpha) override
     {
-        calls.append(Call {QStringLiteral("texture"), target, render::Color {}, texture, alpha});
+        calls.push_back(Call {"texture", target, render::Color {}, texture, alpha});
     }
 
-    void drawTextureTransformed(render::Texture *texture, const QRectF &target,
-                                const QTransform &transform, float alpha) override
+    void drawTextureTransformed(render::Texture *texture, const base::RectF &target,
+                                const base::AffineTransform &transform, float alpha) override
     {
-        calls.append(Call {QStringLiteral("transformed"), target.toAlignedRect(), render::Color {},
+        calls.push_back(Call {"transformed", target.toEnclosingRect(), render::Color {},
                            texture, alpha, transform});
-        calls.last().target = target;
+        calls.back().target = target;
     }
 
-    void drawTextureMapped(render::Texture *texture, const QRect &target, float alpha,
-                           const QTransform &mapping) override
+    void drawTextureMapped(render::Texture *texture, const base::Rect &target, float alpha,
+                           const base::AffineTransform &mapping) override
     {
         drawTexture(texture, target, alpha);
-        calls.last().mapping = mapping;
+        calls.back().mapping = mapping;
     }
 
-    std::unique_ptr<render::Texture> createTexture(const QSize &size, const uint8_t *pixels,
+    std::unique_ptr<render::Texture> createTexture(const base::Size &size, const uint8_t *pixels,
                                                    int stride, render::PixelFormat format) override
     {
         if (size.isEmpty() || !pixels || stride < size.width() * 4 || failTextureCreation)
@@ -125,10 +124,10 @@ public:
     bool failTextureCreation = false;
 
     // What the last partial update was asked to take.
-    std::optional<QRegion> lastUploadDamage;
+    std::optional<base::Region> lastUploadDamage;
 
     bool updateTexture(render::Texture *texture, const uint8_t *pixels, int stride,
-                       render::PixelFormat format, const QRegion &damage) override
+                       render::PixelFormat format, const base::Region &damage) override
     {
         lastUploadDamage = damage;
         return updateTexture(texture, pixels, stride, format);
@@ -137,7 +136,7 @@ public:
     using render::Renderer::createTexture;
 
     // A transparent image of the size asked for; the caster is not painted.
-    std::unique_ptr<render::Texture> renderShadow(const QSize &size,
+    std::unique_ptr<render::Texture> renderShadow(const base::Size &size,
                                                   const std::vector<render::ShadowLobe> &lobes,
                                                   const std::function<void()> &) override
     {
@@ -150,17 +149,25 @@ public:
                                              render::PixelFormat::Rgba8888);
     }
 
-    QSize viewportSize() const override { return QSize(1920, 1080); }
+    base::Size viewportSize() const override { return base::Size(1920, 1080); }
 
-    QStringList kinds() const
+    // The kinds of the recorded calls in order.
+    class KindList : public std::vector<std::string>
     {
-        QStringList result;
+    public:
+        int count(const char *kind) const { return int(std::count(begin(), end(), kind)); }
+        int count(const std::string &kind) const { return count(kind.c_str()); }
+    };
+
+    KindList kinds() const
+    {
+        KindList result;
         for (const Call &call : calls)
-            result.append(call.kind);
+            result.push_back(call.kind);
         return result;
     }
 
-    QList<Call> calls;
+    std::vector<Call> calls;
     int createdTextures = 0;
     int renderedShadows = 0;
     std::vector<render::ShadowLobe> lastShadowLobes;

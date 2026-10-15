@@ -74,7 +74,7 @@ gbm_bo *importThroughGbm(gbm_device *gbm, const render::DmaBufAttributes &attrib
 
 } // namespace
 
-DrmFramebuffer::DrmFramebuffer(DrmDeviceApi *device, uint32_t id, const QSize &size,
+DrmFramebuffer::DrmFramebuffer(DrmDeviceApi *device, uint32_t id, const base::Size &size,
                                uint32_t format, uint64_t modifier,
                                std::vector<uint32_t> ownedHandles)
     : m_device(device)
@@ -134,12 +134,12 @@ DrmFramebuffer *DrmFramebuffer::forBuffer(DrmDeviceApi *device, gbm_bo *bo)
 
     uint32_t id = 0;
     if (!device->addFramebuffer(params, &id)) {
-        qCCritical(cfDrm, "Failed to register a %ux%u GBM buffer as a framebuffer", params.width,
-                   params.height);
+        CF_CRITICAL(cfDrm).printf("Failed to register a %ux%u GBM buffer as a framebuffer", params.width,
+                                  params.height);
         return nullptr;
     }
 
-    auto *framebuffer = new DrmFramebuffer(device, id, QSize(params.width, params.height),
+    auto *framebuffer = new DrmFramebuffer(device, id, base::Size(params.width, params.height),
                                            params.format, params.modifier, {});
     gbm_bo_set_user_data(bo, framebuffer, &DrmFramebuffer::destroyCallback);
     return framebuffer;
@@ -163,7 +163,7 @@ DrmFramebuffer *DrmFramebuffer::importForBuffer(DrmDeviceApi *device, gbm_bo *bo
         return existing;
 
     render::DmaBufAttributes attributes;
-    attributes.size = QSize(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
+    attributes.size = base::Size(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
     attributes.format = gbm_bo_get_format(bo);
     attributes.modifier = gbm_bo_get_modifier(bo);
     for (int plane = 0; plane < gbm_bo_get_plane_count(bo); ++plane)
@@ -179,7 +179,7 @@ DrmFramebuffer *DrmFramebuffer::copyForBuffer(DrmDeviceApi *device, gbm_bo *bo,
 {
     if (!device || !bo)
         return nullptr;
-    const QSize size(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
+    const base::Size size(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
     auto *existing = static_cast<DrmFramebuffer *>(gbm_bo_get_user_data(bo));
     if (existing && existing->m_device == device && existing->m_dumbHandle
         && existing->m_size == size)
@@ -202,10 +202,12 @@ bool DrmFramebuffer::fill(const uint8_t *pixels, uint32_t stride)
     return true;
 }
 
-std::unique_ptr<DrmFramebuffer> DrmFramebuffer::fromPixels(DrmDeviceApi *device, const QSize &size,
+std::unique_ptr<DrmFramebuffer> DrmFramebuffer::fromPixels(DrmDeviceApi *device,
+                                                           const base::Size &size,
                                                            const uint8_t *pixels, uint32_t stride)
 {
-    if (!device || !pixels || size.isEmpty() || qint64(size.width()) * size.height() > kMaximumCpuCopyPixels
+    if (!device || !pixels || size.isEmpty()
+        || int64_t(size.width()) * size.height() > kMaximumCpuCopyPixels
         || stride < uint64_t(size.width()) * 4)
         return nullptr;
     DumbBufferInfo dumb;
@@ -304,7 +306,8 @@ DrmFramebuffer::fromDmaBuf(DrmDeviceApi *device, const render::DmaBufAttributes 
     }
 
     return std::unique_ptr<DrmFramebuffer>(new DrmFramebuffer(
-            device, id, attributes.size, params.format, params.modifier, std::move(handles)));
+            device, id, attributes.size, params.format, params.modifier,
+            std::move(handles)));
 }
 
 } // namespace cutefish::backend

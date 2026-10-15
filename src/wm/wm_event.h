@@ -10,7 +10,7 @@
 #ifndef CUTEFISH_WM_WM_EVENT_H_
 #define CUTEFISH_WM_WM_EVENT_H_
 
-#include <QRect>
+#include "base/geometry.h"
 
 namespace cutefish::wm {
 
@@ -65,13 +65,13 @@ private:
 class SetBoundsWMEvent : public WMEvent
 {
 public:
-    explicit SetBoundsWMEvent(const QRect& bounds);
+    explicit SetBoundsWMEvent(const base::Rect& bounds);
     ~SetBoundsWMEvent() override;
 
-    const QRect& requestedBounds() const { return m_requestedBounds; }
+    const base::Rect& requestedBounds() const { return m_requestedBounds; }
 
 private:
-    QRect m_requestedBounds;
+    base::Rect m_requestedBounds;
 };
 
 } // namespace cutefish::wm

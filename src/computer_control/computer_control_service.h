@@ -5,8 +5,10 @@
 #ifndef CUTEFISH_COMPUTER_CONTROL_COMPUTER_CONTROL_SERVICE_H_
 #define CUTEFISH_COMPUTER_CONTROL_COMPUTER_CONTROL_SERVICE_H_
 
-#include <QDBusConnection>
-#include <QObject>
+#include <memory>
+
+#include "base/dbus.h"
+#include "base/signal.h"
 
 namespace cutefish::computer_control {
 
@@ -15,30 +17,23 @@ class Controller;
 // com.cutefish.ComputerControl1: whether an agent is in control, for the
 // status bar's Stop button. Stopping is never a privilege, so any session
 // client may call Stop.
-class ComputerControlService : public QObject
+class ComputerControlService
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.ComputerControl1")
-
 public:
+    // The session bus when no connection is given.
     explicit ComputerControlService(Controller *controller,
-                                    QDBusConnection bus = QDBusConnection::sessionBus());
-    ~ComputerControlService() override;
+                                    base::dbus::Connection *bus = nullptr);
+    ComputerControlService(const ComputerControlService &) = delete;
+    ComputerControlService &operator=(const ComputerControlService &) = delete;
+    ~ComputerControlService();
 
     bool registerService();
 
-public slots:
-    Q_SCRIPTABLE bool GetActive() const;
-    // The agent's own name for itself; empty while no agent is in control.
-    Q_SCRIPTABLE QString GetAgentName() const;
-    Q_SCRIPTABLE void Stop();
-
-signals:
-    Q_SCRIPTABLE void ActiveChanged(bool active);
-
 private:
     Controller *m_controller;
-    QDBusConnection m_bus;
+    base::dbus::Connection *m_bus;
+    std::unique_ptr<base::dbus::Object> m_object;
+    base::Subscription m_activeChanged;
     bool m_registered = false;
 };
 

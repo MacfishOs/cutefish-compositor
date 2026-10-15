@@ -2,14 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <QCommandLineParser>
-#include <QCoreApplication>
-#include <QElapsedTimer>
-#include <QImage>
-#include <QSaveFile>
-#include <QTransform>
-
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -23,10 +18,20 @@
 #include <vector>
 #include <wayland-client.h>
 
+#include "base/command_line.h"
+#include "base/file.h"
+#include "base/geometry.h"
+#include "base/transform.h"
+#include "ui/bitmap.h"
+
 namespace {
+
+namespace base = cutefish::base;
+namespace ui = cutefish::ui;
+
 struct Output {
     wl_output *proxy = nullptr;
-    QString name;
+    std::string name;
 };
 
 struct Capture {
@@ -40,13 +45,13 @@ struct Capture {
     ext_image_copy_capture_frame_v1 *frame = nullptr;
     wl_buffer *buffer = nullptr;
     std::vector<std::unique_ptr<Output>> outputs;
-    QSize size;
+    base::Size size;
     bool argb = false;
     bool constraints = false;
     bool finished = false;
     bool ready = false;
     uint32_t transform = 0;
-    QString error;
+    std::string error;
     void *pixels = MAP_FAILED;
     size_t length = 0;
 
@@ -78,8 +83,7 @@ struct Capture {
 
     bool wait(const std::function<bool()> &done)
     {
-        QElapsedTimer timer;
-        timer.start();
+        const auto start = std::chrono::steady_clock::now();
         while (!done() && !finished) {
             if (wl_display_dispatch_pending(display) < 0)
                 return false;
@@ -88,7 +92,10 @@ struct Capture {
             if (wl_display_flush(display) < 0 && errno != EAGAIN)
                 return false;
             pollfd fd {wl_display_get_fd(display), POLLIN, 0};
-            const int remaining = 5000 - int(timer.elapsed());
+            const int remaining = 5000
+                    - int(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - start)
+                                  .count());
             if (remaining <= 0) {
                 error = "Capture timed out";
                 return false;
@@ -127,7 +134,7 @@ const wl_output_listener outputListener = {
         [](void *, wl_output *) {},
         [](void *, wl_output *, int32_t) {},
         [](void *data, wl_output *, const char *name) {
-            static_cast<Output *>(data)->name = QString::fromUtf8(name);
+            static_cast<Output *>(data)->name = name;
         },
         [](void *, wl_output *, const char *) {}};
 
@@ -159,7 +166,8 @@ const wl_registry_listener registryListener = {
 const ext_image_copy_capture_session_v1_listener sessionListener = {
         [](void *data, ext_image_copy_capture_session_v1 *, uint32_t w, uint32_t h) {
             auto &capture = *static_cast<Capture *>(data);
-            capture.size = w > 0 && h > 0 && w <= 16384 && h <= 16384 ? QSize(w, h) : QSize();
+            capture.size = w > 0 && h > 0 && w <= 16384 && h <= 16384 ? base::Size(int(w), int(h))
+                                                                      : base::Size();
             capture.argb = false;
         },
         [](void *data, ext_image_copy_capture_session_v1 *, uint32_t format) {
@@ -189,25 +197,60 @@ const ext_image_copy_capture_frame_v1_listener frameListener = {
         },
         [](void *data, ext_image_copy_capture_frame_v1 *, uint32_t reason) {
             auto &capture = *static_cast<Capture *>(data);
-            capture.error = QStringLiteral("Capture failed (reason %1)").arg(reason);
+            capture.error = "Capture failed (reason " + std::to_string(reason) + ")";
             capture.finished = true;
         }};
+// The frame turned upright: a mirror for the flipped transforms, then whole
+// quarter turns, each pixel moved whole.
+ui::Bitmap orient(const ui::Bitmap &source, uint32_t outputTransform)
+{
+    base::AffineTransform transform;
+    if (outputTransform & 4)
+        transform.scale(-1, 1);
+    transform.rotate(90 * int(outputTransform & 3));
+    const bool turned = outputTransform & 1;
+    const int width = turned ? source.height() : source.width();
+    const int height = turned ? source.width() : source.height();
+    // Where the source's corner lands, so the turned frame starts at 0, 0.
+    double minX = 0, minY = 0;
+    for (const auto &[x, y] : {std::pair<double, double> {0, 0},
+                              {double(source.width()), 0},
+                              {0, double(source.height())},
+                              {double(source.width()), double(source.height())}}) {
+        double mappedX = 0, mappedY = 0;
+        transform.map(x, y, &mappedX, &mappedY);
+        minX = std::min(minX, mappedX);
+        minY = std::min(minY, mappedY);
+    }
+    ui::Bitmap result(width, height, source.format());
+    for (int y = 0; y < source.height(); ++y) {
+        const auto *row = reinterpret_cast<const uint32_t *>(source.constScanLine(y));
+        for (int x = 0; x < source.width(); ++x) {
+            double mappedX = 0, mappedY = 0;
+            transform.map(x + 0.5, y + 0.5, &mappedX, &mappedY);
+            const int toX = int(std::floor(mappedX - minX));
+            const int toY = int(std::floor(mappedY - minY));
+            reinterpret_cast<uint32_t *>(result.scanLine(toY))[toX] = row[x];
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
-    QCoreApplication app(argc, argv);
-    QCommandLineParser parser;
+    base::CommandLineParser parser;
     parser.setApplicationDescription("Capture a Wayland output to PNG.");
     parser.addHelpOption();
     parser.addOption({"list", "List output names."});
     parser.addOption({"output", "Output to capture (required with multiple outputs).", "name"});
     parser.addOption({"cursor", "Include the pointer cursor."});
     parser.addPositionalArgument("file", "Destination PNG file.", "[file]");
-    parser.process(app);
+    parser.process(argc, argv);
     Capture capture;
-    const auto fail = [&](const QString &message) {
-        fprintf(stderr, "%s\n", qPrintable(message));
+    const auto fail = [&](const std::string &message) {
+        fprintf(stderr, "%s\n", message.c_str());
         return 1;
     };
     capture.display = wl_display_connect(nullptr);
@@ -219,7 +262,7 @@ int main(int argc, char **argv)
         return fail("Cannot enumerate outputs");
     if (parser.isSet("list")) {
         for (const auto &output : capture.outputs)
-            printf("%s\n", qPrintable(output->name));
+            printf("%s\n", output->name.c_str());
         return 0;
     }
     if (parser.positionalArguments().size() != 1)
@@ -244,8 +287,8 @@ int main(int argc, char **argv)
             return capture.constraints;
         })
         || capture.size.isEmpty() || !capture.argb)
-        return fail(capture.error.isEmpty() ? "No supported SHM capture format" : capture.error);
-    const QSize bufferSize = capture.size;
+        return fail(capture.error.empty() ? "No supported SHM capture format" : capture.error);
+    const base::Size bufferSize = capture.size;
     capture.length = size_t(bufferSize.width()) * bufferSize.height() * 4;
     const int fd = memfd_create("cutefish-screenshot", MFD_CLOEXEC);
     if (fd < 0)
@@ -273,16 +316,13 @@ int main(int argc, char **argv)
     if (!capture.wait([&] {
             return capture.ready;
         }))
-        return fail(capture.error.isEmpty() ? "Capture did not complete" : capture.error);
-    QImage image(static_cast<const uchar *>(capture.pixels), bufferSize.width(),
-                 bufferSize.height(), bufferSize.width() * 4, QImage::Format_ARGB32_Premultiplied);
-    QTransform transform;
-    if (capture.transform & 4)
-        transform.scale(-1, 1);
-    transform.rotate(90 * int(capture.transform & 3));
-    image = image.transformed(transform);
-    QSaveFile file(parser.positionalArguments().front());
-    if (!file.open(QIODevice::WriteOnly) || !image.save(&file, "PNG") || !file.commit())
+        return fail(capture.error.empty() ? "Capture did not complete" : capture.error);
+    const ui::Bitmap captured =
+            ui::Bitmap::wrap(capture.pixels, bufferSize.width(), bufferSize.height(),
+                             size_t(bufferSize.width()) * 4, ui::Bitmap::Format::Argb32Premultiplied);
+    const std::optional<std::string> png =
+            orient(captured, capture.transform).encodePng();
+    if (!png || !base::file::writeAtomically(parser.positionalArguments().front(), *png))
         return fail("Cannot save PNG");
     return 0;
 }

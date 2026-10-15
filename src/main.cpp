@@ -2,19 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <clocale>
 #include <csignal>
 #include <memory>
+#include <sys/epoll.h>
 #include <sys/signalfd.h>
 #include <unistd.h>
 
-#include <QCoreApplication>
-#include <QSocketNotifier>
-
+#include "base/event_loop.h"
 #include "core/compositor_options.h"
 #include "core/compositor_shell.h"
 #include "core/logging.h"
-#include "core/process_environment.h"
+#include "core/main_loop.h"
 #include "core/scoped_fd.h"
+#include "scene/motion.h"
 
 namespace {
 
@@ -41,49 +42,48 @@ int createSignalFd()
 int main(int argc, char *argv[])
 {
     signal(SIGPIPE, SIG_IGN);
+    // The user's locale from the start, not only once the embedded toolkit
+    // sets it when the lock screen first appears.
+    setlocale(LC_ALL, "");
     const cutefish::ScopedFd signalFdOwner(createSignalFd());
     const int signalFd = signalFdOwner.get();
-    // Nothing here runs on a GMainLoop, and Qt's glib dispatcher reads the
-    // clock for every source on every iteration: two thirds of a frame's
-    // clock_gettime calls, each a syscall on a machine without a usable TSC.
-    cutefish::setPrivateEnvironment("QT_NO_GLIB", "1");
-    QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("cutefish-compositor"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    // Outlives the shell, whose objects may watch, time or post on it.
+    const cutefish::core::MainLoop mainLoop;
 
-    const auto options = cutefish::core::CompositorOptions::parse(app);
+    const auto options = cutefish::core::CompositorOptions::parse(argc, argv);
     if (!options)
         return 1;
+    if (!options->logRules.empty())
+        cutefish::core::setLoggingRules(options->logRules);
+    cutefish::scene::motion::setDurationScale(options->animationDurationScale);
 
     auto shell = std::make_unique<cutefish::core::CompositorShell>(*options);
     if (!shell->init())
         return 1;
 
-    QSocketNotifier *signalNotifier = nullptr;
+    int signalWatch = 0;
     if (signalFd >= 0) {
-        signalNotifier = new QSocketNotifier(signalFd, QSocketNotifier::Read, &app);
-        QObject::connect(signalNotifier, &QSocketNotifier::activated, &app, [&] {
+        signalWatch = mainLoop.loop().watch(signalFd, EPOLLIN, [&](uint32_t) {
             signalfd_siginfo info;
             while (read(signalFd, &info, sizeof(info)) == sizeof(info))
                 ;
-            qCInfo(cfWayland) << "Shutting down";
+            CF_INFO(cfWayland) << "Shutting down";
             shell->stop();
-            app.quit();
+            mainLoop.loop().quit();
         });
     } else {
-        qCWarning(cfWayland) << "Failed to create signalfd; Ctrl-C will not shut down cleanly";
+        CF_WARNING(cfWayland) << "Failed to create signalfd; Ctrl-C will not shut down cleanly";
     }
 
-    qCInfo(cfWayland, "cutefish-compositor started, WAYLAND_DISPLAY=%s",
-           qUtf8Printable(shell->socketName()));
+    CF_INFO(cfWayland) << "cutefish-compositor started, WAYLAND_DISPLAY=" + shell->socketName();
 
     if (!shell->notifyReady())
         return 1;
 
-    const int result = app.exec();
+    const int result = mainLoop.loop().run();
     shell.reset();
 
-    if (signalNotifier)
-        signalNotifier->setEnabled(false);
+    if (signalWatch)
+        mainLoop.loop().unwatch(signalWatch);
     return result;
 }

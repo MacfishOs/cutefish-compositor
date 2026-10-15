@@ -16,7 +16,7 @@
 
 namespace cutefish::backend {
 
-DrmCursor::DrmCursor(DrmDeviceApi* device, uint32_t crtcId, const QSize& size,
+DrmCursor::DrmCursor(DrmDeviceApi* device, uint32_t crtcId, const base::Size& size,
                      std::array<Buffer, 2> buffers)
     : m_device(device)
     , m_crtcId(crtcId)
@@ -40,7 +40,7 @@ std::unique_ptr<DrmCursor> DrmCursor::create(DrmDeviceApi* device, uint32_t crtc
     if (!device || !crtcId)
         return nullptr;
 
-    const QSize size = device->maxCursorSize();
+    const base::Size size = device->maxCursorSize();
     if (size.isEmpty())
         return nullptr;
 
@@ -61,23 +61,23 @@ std::unique_ptr<DrmCursor> DrmCursor::create(DrmDeviceApi* device, uint32_t crtc
             if (buffer.info.handle)
                 device->destroyDumbBuffer(buffer.info.handle);
         }
-        qCInfo(cfDrm) << "No hardware cursor buffers; the cursor stays composited";
+        CF_INFO(cfDrm) << "No hardware cursor buffers; the cursor stays composited";
         return nullptr;
     }
 
     return std::unique_ptr<DrmCursor>(new DrmCursor(device, crtcId, size, buffers));
 }
 
-bool DrmCursor::setImage(const uint8_t* pixels, const QSize& size, int stride,
-                         const QPoint& hotspot)
+bool DrmCursor::setImage(const uint8_t* pixels, const base::Size& size, int stride,
+                         const base::Point& hotspot)
 {
     if (m_failed || !pixels || size.isEmpty())
         return false;
     if (size.width() > m_size.width() || size.height() > m_size.height())
         return false;
 
-    m_image = QByteArray(reinterpret_cast<const char*>(pixels),
-                         qsizetype(stride) * (size.height() - 1) + size.width() * 4);
+    m_image.assign(reinterpret_cast<const char*>(pixels),
+                   size_t(stride) * (size.height() - 1) + size_t(size.width()) * 4);
     m_imageSize = size;
     m_imageStride = stride;
     m_hotspot = hotspot;
@@ -89,7 +89,7 @@ void DrmCursor::setTint(const render::ColorTransform& tint)
     if (tint == m_tint)
         return;
     m_tint = tint;
-    if (m_visible && !m_image.isEmpty())
+    if (m_visible && !m_image.empty())
         upload();
 }
 
@@ -101,7 +101,7 @@ bool DrmCursor::upload()
 
     std::memset(buffer.data, 0, buffer.info.size);
     auto* destination = static_cast<uint8_t*>(buffer.data);
-    const auto* pixels = reinterpret_cast<const uint8_t*>(m_image.constData());
+    const auto* pixels = reinterpret_cast<const uint8_t*>(m_image.data());
     const int rowBytes = m_imageSize.width() * 4;
     for (int y = 0; y < m_imageSize.height(); ++y) {
         uint8_t* row = destination + static_cast<size_t>(y) * buffer.info.stride;
@@ -121,7 +121,7 @@ bool DrmCursor::upload()
     }
 
     if (!m_device->setCursor(m_crtcId, buffer.info.handle, m_size, m_hotspot)) {
-        qCInfo(cfDrm) << "The driver rejected the hardware cursor; compositing it instead";
+        CF_INFO(cfDrm) << "The driver rejected the hardware cursor; compositing it instead";
         m_failed = true;
         m_visible = false;
         return false;
@@ -141,10 +141,10 @@ void DrmCursor::hide()
     if (!m_visible)
         return;
     m_visible = false;
-    m_device->setCursor(m_crtcId, 0, QSize(), QPoint());
+    m_device->setCursor(m_crtcId, 0, base::Size(-1, -1), base::Point());
 }
 
-void DrmCursor::move(const QPoint& position)
+void DrmCursor::move(const base::Point& position)
 {
     m_position = position;
     m_positioned = true;

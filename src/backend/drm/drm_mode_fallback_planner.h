@@ -10,16 +10,17 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 
-#include <QList>
-#include <QString>
+#include <string>
+#include <vector>
 
 namespace cutefish::backend {
 
 struct DrmModeCandidate {
-    QString key;
+    std::string key;
     int width = 0;
     int height = 0;
     int refreshMilliHz = 0;
@@ -29,32 +30,32 @@ struct DrmModeCandidate {
 
 struct DrmFallbackHead {
     uint32_t connectorId = 0;
-    QString connectorName;
-    QString baseConnectorKey;
+    std::string connectorName;
+    std::string baseConnectorKey;
     bool internal = false;
-    QList<DrmModeCandidate> modes;
+    std::vector<DrmModeCandidate> modes;
 };
 
 struct DrmFallbackTestResult {
     bool succeeded = false;
-    QStringList failedBaseConnectorKeys;
-    QString message;
+    std::vector<std::string> failedBaseConnectorKeys;
+    std::string message;
     bool retryable = true;
 };
 
 struct DrmFallbackPlan {
-    QList<DrmModeCandidate> modes;
-    QStringList downgradedConnectors;
-    QString diagnostic;
+    std::vector<DrmModeCandidate> modes;
+    std::vector<std::string> downgradedConnectors;
+    std::string diagnostic;
     int attempts = 0;
 };
 
 class DrmModeFallbackPlanner
 {
 public:
-    using Tester = std::function<DrmFallbackTestResult(const QList<DrmModeCandidate> &)>;
-    static std::optional<DrmFallbackPlan> choose(const QList<DrmFallbackHead> &heads, Tester tester,
-                                                 int maximumAttempts = 64);
+    using Tester = std::function<DrmFallbackTestResult(const std::vector<DrmModeCandidate> &)>;
+    static std::optional<DrmFallbackPlan> choose(const std::vector<DrmFallbackHead> &heads,
+                                                 Tester tester, int maximumAttempts = 64);
 };
 
 } // namespace cutefish::backend

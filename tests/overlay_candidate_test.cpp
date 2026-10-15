@@ -22,17 +22,18 @@
 #include "scene/scene.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "base/geometry.h"
 
 namespace cutefish {
 
 namespace {
 
-constexpr QSize kOutputSize {1920, 1080};
+constexpr base::Size kOutputSize {1920, 1080};
 
 class TestScanoutBuffer final : public render::ScanoutBuffer
 {
 public:
-    explicit TestScanoutBuffer(const QSize &size, bool yInvert = false)
+    explicit TestScanoutBuffer(const base::Size &size, bool yInvert = false)
     {
         m_attributes.size = size;
         m_attributes.yInvert = yInvert;
@@ -52,23 +53,23 @@ private:
 class TestTexture final : public render::Texture
 {
 public:
-    explicit TestTexture(const QSize &size)
+    explicit TestTexture(const base::Size &size)
         : m_size(size)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 // Builds a surface node with everything scanout needs, ready to be spoiled one
 // property at a time.
-scene::SurfaceNode *addSurface(scene::Node *parent, const QRect &geometry, bool opaque = true)
+scene::SurfaceNode *addSurface(scene::Node *parent, const base::Rect &geometry, bool opaque = true)
 {
     auto *node = static_cast<scene::SurfaceNode *>(
-            parent->addChild(std::make_unique<scene::SurfaceNode>(QStringLiteral("surface"))));
+            parent->addChild(std::make_unique<scene::SurfaceNode>("surface")));
     node->setGeometry(geometry);
     node->setTexture(std::make_shared<TestTexture>(geometry.size()));
     node->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(geometry.size()));
@@ -93,7 +94,7 @@ protected:
 
 TEST_F(OverlayCandidateTest, AFullscreenOpaqueSurfaceTakesThePrimaryPlane)
 {
-    scene::SurfaceNode *surface = addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize));
+    scene::SurfaceNode *surface = addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize));
 
     const scene::OverlayPlan plan = propose();
 
@@ -101,22 +102,22 @@ TEST_F(OverlayCandidateTest, AFullscreenOpaqueSurfaceTakesThePrimaryPlane)
     EXPECT_EQ(plan.primary.node, surface);
     EXPECT_EQ(plan.primary.zOrder, 0);
     EXPECT_TRUE(plan.primary.opaque);
-    EXPECT_EQ(plan.primary.displayRect, QRect(QPoint(0, 0), kOutputSize));
-    EXPECT_EQ(plan.primary.sourceRect, QRect(QPoint(0, 0), kOutputSize));
+    EXPECT_EQ(plan.primary.displayRect, base::Rect(base::Point(0, 0), kOutputSize));
+    EXPECT_EQ(plan.primary.sourceRect, base::Rect(base::Point(0, 0), kOutputSize));
     // With the whole output on one plane there is nothing left to overlay.
     EXPECT_TRUE(plan.overlays.empty());
 }
 
 TEST_F(OverlayCandidateTest, ATranslucentFullscreenSurfaceIsNotScannedOut)
 {
-    addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize), /*opaque=*/false);
+    addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize), /*opaque=*/false);
 
     EXPECT_TRUE(propose().isEmpty());
 }
 
 TEST_F(OverlayCandidateTest, AFadedSurfaceIsNotScannedOut)
 {
-    scene::SurfaceNode *surface = addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize));
+    scene::SurfaceNode *surface = addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize));
     surface->setAlpha(0.5f);
 
     EXPECT_TRUE(propose().isEmpty());
@@ -126,11 +127,11 @@ TEST_F(OverlayCandidateTest, AScaledSurfaceIsNotScannedOut)
 {
     auto *node = static_cast<scene::SurfaceNode *>(
             m_scene.root()->addChild(std::make_unique<scene::SurfaceNode>()));
-    node->setGeometry(QRect(QPoint(0, 0), kOutputSize));
+    node->setGeometry(base::Rect(base::Point(0, 0), kOutputSize));
     node->setTexture(std::make_shared<TestTexture>(kOutputSize));
     // The buffer is half the size of the geometry, so a plane would have to
     // scale it. The planner never asks a plane to do that.
-    node->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(QSize(960, 540)));
+    node->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(base::Size(960, 540)));
     node->setOpaque(true);
 
     EXPECT_FALSE(propose().hasDirectScanout());
@@ -139,7 +140,7 @@ TEST_F(OverlayCandidateTest, AScaledSurfaceIsNotScannedOut)
 
 TEST_F(OverlayCandidateTest, ASurfaceClippedByTheOutputIsNotScannedOut)
 {
-    addSurface(m_scene.root(), QRect(QPoint(-10, 0), kOutputSize));
+    addSurface(m_scene.root(), base::Rect(base::Point(-10, 0), kOutputSize));
 
     const scene::OverlayPlan plan = propose();
     EXPECT_FALSE(plan.hasDirectScanout());
@@ -148,7 +149,7 @@ TEST_F(OverlayCandidateTest, ASurfaceClippedByTheOutputIsNotScannedOut)
 
 TEST_F(OverlayCandidateTest, ASurfaceWithoutADmaBufIsNotScannedOut)
 {
-    scene::SurfaceNode *surface = addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize));
+    scene::SurfaceNode *surface = addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize));
     // Shm content: composited from a compositor-owned texture, never scanned out.
     surface->setScanoutBuffer(nullptr);
 
@@ -157,7 +158,7 @@ TEST_F(OverlayCandidateTest, ASurfaceWithoutADmaBufIsNotScannedOut)
 
 TEST_F(OverlayCandidateTest, AHiddenSurfaceIsNotProposed)
 {
-    scene::SurfaceNode *surface = addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize));
+    scene::SurfaceNode *surface = addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize));
     surface->setVisible(false);
 
     EXPECT_TRUE(propose().isEmpty());
@@ -165,12 +166,12 @@ TEST_F(OverlayCandidateTest, AHiddenSurfaceIsNotProposed)
 
 TEST_F(OverlayCandidateTest, ContentAboveTheFullscreenSurfaceBlocksDirectScanout)
 {
-    addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize));
+    addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize));
     // A cursor, a panel, anything drawn afterwards: the fullscreen surface is
     // no longer the topmost thing on screen.
     auto *overlayColor = static_cast<scene::ColorNode *>(m_scene.root()->addChild(
             std::make_unique<scene::ColorNode>(render::Color {1.0f, 0.0f, 0.0f, 1.0f})));
-    overlayColor->setGeometry(QRect(100, 100, 64, 64));
+    overlayColor->setGeometry(base::Rect(100, 100, 64, 64));
 
     EXPECT_FALSE(propose().hasDirectScanout());
 }
@@ -179,8 +180,8 @@ TEST_F(OverlayCandidateTest, AnUnoccludedSurfaceGoesOnAnOverlayPlane)
 {
     auto *backdrop = static_cast<scene::ColorNode *>(m_scene.root()->addChild(
             std::make_unique<scene::ColorNode>(render::Color {0.0f, 0.0f, 0.0f, 1.0f})));
-    backdrop->setGeometry(QRect(QPoint(0, 0), kOutputSize));
-    scene::SurfaceNode *video = addSurface(m_scene.root(), QRect(200, 200, 640, 480));
+    backdrop->setGeometry(base::Rect(base::Point(0, 0), kOutputSize));
+    scene::SurfaceNode *video = addSurface(m_scene.root(), base::Rect(200, 200, 640, 480));
 
     const scene::OverlayPlan plan = propose();
 
@@ -188,15 +189,15 @@ TEST_F(OverlayCandidateTest, AnUnoccludedSurfaceGoesOnAnOverlayPlane)
     ASSERT_EQ(plan.overlays.size(), 1u);
     EXPECT_EQ(plan.overlays[0].node, video);
     EXPECT_EQ(plan.overlays[0].zOrder, 1);
-    EXPECT_EQ(plan.overlays[0].displayRect, QRect(200, 200, 640, 480));
+    EXPECT_EQ(plan.overlays[0].displayRect, base::Rect(200, 200, 640, 480));
 }
 
 TEST_F(OverlayCandidateTest, AnOccludedSurfaceStaysComposited)
 {
-    scene::SurfaceNode *lower = addSurface(m_scene.root(), QRect(200, 200, 640, 480));
+    scene::SurfaceNode *lower = addSurface(m_scene.root(), base::Rect(200, 200, 640, 480));
     auto *above = static_cast<scene::ColorNode *>(m_scene.root()->addChild(
             std::make_unique<scene::ColorNode>(render::Color {1.0f, 1.0f, 1.0f, 0.5f})));
-    above->setGeometry(QRect(400, 400, 100, 100));
+    above->setGeometry(base::Rect(400, 400, 100, 100));
 
     const scene::OverlayPlan plan = propose();
 
@@ -206,9 +207,9 @@ TEST_F(OverlayCandidateTest, AnOccludedSurfaceStaysComposited)
 
 TEST_F(OverlayCandidateTest, OverlaysAreCappedAtTheAvailablePlaneCount)
 {
-    addSurface(m_scene.root(), QRect(0, 0, 100, 100));
-    addSurface(m_scene.root(), QRect(200, 0, 100, 100));
-    addSurface(m_scene.root(), QRect(400, 0, 100, 100));
+    addSurface(m_scene.root(), base::Rect(0, 0, 100, 100));
+    addSurface(m_scene.root(), base::Rect(200, 0, 100, 100));
+    addSurface(m_scene.root(), base::Rect(400, 0, 100, 100));
 
     EXPECT_EQ(propose(/*maxOverlays=*/1).overlays.size(), 1u);
     EXPECT_EQ(propose(/*maxOverlays=*/3).overlays.size(), 3u);
@@ -217,8 +218,8 @@ TEST_F(OverlayCandidateTest, OverlaysAreCappedAtTheAvailablePlaneCount)
 
 TEST_F(OverlayCandidateTest, OverlaysAreProposedInAscendingZOrder)
 {
-    scene::SurfaceNode *lower = addSurface(m_scene.root(), QRect(0, 0, 100, 100));
-    scene::SurfaceNode *upper = addSurface(m_scene.root(), QRect(200, 0, 100, 100));
+    scene::SurfaceNode *lower = addSurface(m_scene.root(), base::Rect(0, 0, 100, 100));
+    scene::SurfaceNode *upper = addSurface(m_scene.root(), base::Rect(200, 0, 100, 100));
 
     const scene::OverlayPlan plan = propose();
 
@@ -233,23 +234,23 @@ TEST_F(OverlayCandidateTest, AnAnimationOverTheSceneBlocksEveryPlane)
 {
     auto *animation = static_cast<scene::WindowAnimation *>(
             m_scene.root()->addChild(std::make_unique<scene::WindowAnimation>()));
-    animation->setGeometry(QRect(QPoint(0, 0), kOutputSize));
+    animation->setGeometry(base::Rect(base::Point(0, 0), kOutputSize));
     // The surface sits inside the effect, which composites its whole subtree.
-    addSurface(animation, QRect(QPoint(0, 0), kOutputSize));
+    addSurface(animation, base::Rect(base::Point(0, 0), kOutputSize));
 
     EXPECT_TRUE(propose().isEmpty());
 }
 
 TEST_F(OverlayCandidateTest, ScanoutIsGivenUpAndTakenBackAsTheSceneChanges)
 {
-    scene::SurfaceNode *surface = addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize));
+    scene::SurfaceNode *surface = addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize));
     ASSERT_TRUE(propose().hasDirectScanout());
 
     // Something is drawn over it: back to composition, with no intermediate
     // state in which neither path owns the content.
     auto *notification = static_cast<scene::ColorNode *>(m_scene.root()->addChild(
             std::make_unique<scene::ColorNode>(render::Color {1.0f, 1.0f, 1.0f, 1.0f})));
-    notification->setGeometry(QRect(0, 0, 300, 80));
+    notification->setGeometry(base::Rect(0, 0, 300, 80));
     EXPECT_FALSE(propose().hasDirectScanout());
 
     // And away again: scanout resumes on the very next plan.
@@ -261,7 +262,7 @@ TEST_F(OverlayCandidateTest, ScanoutIsGivenUpAndTakenBackAsTheSceneChanges)
 
 TEST_F(OverlayCandidateTest, PromotedContentIsSkippedByComposition)
 {
-    scene::SurfaceNode *surface = addSurface(m_scene.root(), QRect(QPoint(0, 0), kOutputSize));
+    scene::SurfaceNode *surface = addSurface(m_scene.root(), base::Rect(base::Point(0, 0), kOutputSize));
 
     EXPECT_FALSE(surface->isPromotedToOverlay());
     surface->setPromotedToOverlay(true);
@@ -270,7 +271,7 @@ TEST_F(OverlayCandidateTest, PromotedContentIsSkippedByComposition)
 
 TEST_F(OverlayCandidateTest, BackgroundBlurKeepsUnderlyingSurfacesInComposition)
 {
-    addSurface(m_scene.root(), QRect(QPoint(), kOutputSize));
+    addSurface(m_scene.root(), base::Rect(base::Point(), kOutputSize));
     auto *popup = addSurface(m_scene.root(), {100, 100, 200, 100}, false);
     popup->setBackgroundBlur({0, 0, 200, 100}, 12);
     auto plan = propose();
@@ -285,12 +286,12 @@ TEST_F(OverlayCandidateTest, BackgroundBlurKeepsUnderlyingSurfacesInComposition)
 namespace cutefish {
 TEST_F(OverlayCandidateTest, CroppingAndRotationFallBackAndResetRestoresPromotion)
 {
-    auto *surface = addSurface(m_scene.root(), QRect(QPoint(), kOutputSize));
+    auto *surface = addSurface(m_scene.root(), base::Rect(base::Point(), kOutputSize));
     EXPECT_TRUE(propose().primary.isValid());
-    surface->setTextureMapping(QTransform(0.5, 0, 0, 0.5, 0.25, 0.25));
+    surface->setTextureMapping(base::AffineTransform(0.5, 0, 0, 0.5, 0.25, 0.25));
     EXPECT_FALSE(propose().primary.isValid());
     EXPECT_TRUE(propose().overlays.empty());
-    surface->setTextureMapping(QTransform(0, -1, 1, 0, 0, 1));
+    surface->setTextureMapping(base::AffineTransform(0, -1, 1, 0, 0, 1));
     EXPECT_FALSE(propose().primary.isValid());
     surface->setTextureMapping({});
     EXPECT_TRUE(propose().primary.isValid());
@@ -298,7 +299,7 @@ TEST_F(OverlayCandidateTest, CroppingAndRotationFallBackAndResetRestoresPromotio
 
 TEST_F(OverlayCandidateTest, OutputScaleFallsBackAndResetRestoresPromotion)
 {
-    addSurface(m_scene.root(), QRect(QPoint(), kOutputSize));
+    addSurface(m_scene.root(), base::Rect(base::Point(), kOutputSize));
     for (double scale : {1.0, 1.25, 1.5, 1.75, 2.0, 1.0}) {
         const auto plan = scene::proposeOverlays(*m_scene.root(), kOutputSize, 2, scale);
         EXPECT_EQ(plan.hasDirectScanout(), scale == 1);
@@ -310,16 +311,16 @@ TEST_F(OverlayCandidateTest, AFullscreenBufferOfTheModeSizeScansOutAtAFractional
 {
     // A 2160x1440 mode at 150% is 1440x960 logical; the fullscreen client
     // draws a buffer of the mode's size.
-    const QSize pixels(2160, 1440);
-    const QRect logical(QPoint(), QSize(1440, 960));
+    const base::Size pixels(2160, 1440);
+    const base::Rect logical(base::Point(), base::Size(1440, 960));
     m_scene.setSize(logical.size());
     scene::SurfaceNode *surface = addSurface(m_scene.root(), logical);
     surface->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(pixels));
 
     const scene::OverlayPlan plan = scene::proposeOverlays(*m_scene.root(), pixels, 2, 1.5);
     ASSERT_TRUE(plan.hasDirectScanout());
-    EXPECT_EQ(plan.primary.displayRect, QRect(QPoint(), pixels));
-    EXPECT_EQ(plan.primary.sourceRect, QRect(QPoint(), pixels));
+    EXPECT_EQ(plan.primary.displayRect, base::Rect(base::Point(), pixels));
+    EXPECT_EQ(plan.primary.sourceRect, base::Rect(base::Point(), pixels));
     EXPECT_TRUE(plan.overlays.empty());
 
     // A buffer of the logical size would have to be scaled by the plane.
@@ -329,7 +330,7 @@ TEST_F(OverlayCandidateTest, AFullscreenBufferOfTheModeSizeScansOutAtAFractional
     // Not fullscreen: an unoccluded opaque surface is not an overlay either, as
     // its logical bounds are not device pixels.
     surface->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(pixels));
-    surface->setGeometry(QRect(QPoint(0, 0), QSize(1440, 900)));
+    surface->setGeometry(base::Rect(base::Point(0, 0), base::Size(1440, 900)));
     const scene::OverlayPlan partial = scene::proposeOverlays(*m_scene.root(), pixels, 2, 1.5);
     EXPECT_FALSE(partial.hasDirectScanout());
     EXPECT_TRUE(partial.overlays.empty());
@@ -339,15 +340,15 @@ TEST_F(OverlayCandidateTest, WindowVisualEffectsBlockOnlyTheirSubtreeAndRestoreE
 {
     auto animation = std::make_unique<scene::WindowAnimation>();
     auto *root = animation.get();
-    root->setGeometry({QPoint(), kOutputSize});
+    root->setGeometry({base::Point(), kOutputSize});
     root->finish();
     auto visual = std::make_unique<scene::WindowVisualNode>();
     auto *body = visual.get();
     scene::WindowVisualState state;
-    state.shape = {{QPoint(), kOutputSize}, 14};
+    state.shape = {{base::Point(), kOutputSize}, 14};
     state.clipContent = state.drawOutline = true;
     body->setState(state);
-    auto *surface = addSurface(body, {QPoint(), kOutputSize});
+    auto *surface = addSurface(body, {base::Point(), kOutputSize});
     root->addChild(std::move(visual));
     m_scene.root()->addChild(std::move(animation));
     EXPECT_FALSE(propose().hasDirectScanout());
@@ -369,7 +370,7 @@ TEST_F(OverlayCandidateTest, AnimationBelowFullscreenMustAdvanceThroughCompositi
 {
     auto *animation = m_scene.root()->addChild(std::make_unique<scene::WindowAnimation>());
     animation->setGeometry({0, 0, 100, 100});
-    addSurface(m_scene.root(), QRect(QPoint(), kOutputSize));
+    addSurface(m_scene.root(), base::Rect(base::Point(), kOutputSize));
     EXPECT_TRUE(propose().isEmpty());
     static_cast<scene::WindowAnimation *>(animation)->finish();
     EXPECT_TRUE(propose().hasDirectScanout());
@@ -379,9 +380,9 @@ TEST_F(OverlayCandidateTest, ATranslucentWindowIsComposited)
 {
     auto *animation = static_cast<scene::WindowAnimation *>(
             m_scene.root()->addChild(std::make_unique<scene::WindowAnimation>()));
-    animation->setGeometry({QPoint(), kOutputSize});
+    animation->setGeometry({base::Point(), kOutputSize});
     animation->finish();
-    scene::SurfaceNode *surface = addSurface(animation, {QPoint(), kOutputSize});
+    scene::SurfaceNode *surface = addSurface(animation, {base::Point(), kOutputSize});
     ASSERT_EQ(propose().primary.node, surface);
     animation->setOpacity(0);
     EXPECT_TRUE(propose().isEmpty());
@@ -393,10 +394,10 @@ TEST_F(OverlayCandidateTest, ATranslucentWindowIsComposited)
 namespace cutefish {
 TEST_F(OverlayCandidateTest, AMinimizeOfAHiddenWindowStillNeedsComposition)
 {
-    addSurface(m_scene.root(), QRect(QPoint(), kOutputSize));
+    addSurface(m_scene.root(), base::Rect(base::Point(), kOutputSize));
     auto *animation = static_cast<scene::WindowAnimation *>(
             m_scene.root()->addChild(std::make_unique<scene::WindowAnimation>()));
-    const QRect bounds(100, 100, 400, 300);
+    const base::Rect bounds(100, 100, 400, 300);
     animation->setGeometry(bounds);
     animation->finish();
     animation->setVisible(false);
@@ -411,14 +412,14 @@ TEST_F(OverlayCandidateTest, AMinimizeOfAHiddenWindowStillNeedsComposition)
 namespace cutefish {
 TEST_F(OverlayCandidateTest, InvertedDmaBufRequiresComposition)
 {
-    auto *surface = addSurface(m_scene.root(), QRect(QPoint(), kOutputSize));
+    auto *surface = addSurface(m_scene.root(), base::Rect(base::Point(), kOutputSize));
     surface->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(kOutputSize, true));
     EXPECT_TRUE(propose().isEmpty());
 }
 
 TEST_F(OverlayCandidateTest, OpacityAboveOneCannotBeReproducedByScanout)
 {
-    auto *surface = addSurface(m_scene.root(), QRect(QPoint(), kOutputSize));
+    auto *surface = addSurface(m_scene.root(), base::Rect(base::Point(), kOutputSize));
     surface->setAlpha(1.5f);
     EXPECT_TRUE(propose().isEmpty());
 }

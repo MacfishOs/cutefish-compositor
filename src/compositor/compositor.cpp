@@ -23,13 +23,32 @@
 namespace cutefish::compositor {
 
 namespace {
+
+// The centre of the last pixels inside: an even extent rounds toward the origin.
+base::Point innerCenter(const base::Rect &rect)
+{
+    return {int((int64_t(rect.x()) * 2 + rect.width() - 1) / 2),
+            int((int64_t(rect.y()) * 2 + rect.height() - 1) / 2)};
+}
+
+// Containment that is never true when either has neither width nor height.
+bool containsNonNull(const base::Rect &outer, const base::Rect &inner)
+{
+    const auto null = [](const base::Rect &rect) {
+        return rect.width() == 0 && rect.height() == 0;
+    };
+    return !null(outer) && !null(inner) && outer.contains(inner);
+}
+
+} // namespace
+
+namespace {
 constexpr int kCascadeStep = 40;
 constexpr int kCascadeCount = 8;
 } // namespace
 
-Compositor::Compositor(scene::Node *surfaceContainer, QObject *parent)
-    : QObject(parent)
-    , m_surfaceContainer(surfaceContainer)
+Compositor::Compositor(scene::Node *surfaceContainer)
+    : m_surfaceContainer(surfaceContainer)
 {
 }
 
@@ -53,16 +72,16 @@ std::shared_ptr<Buffer> Compositor::createDmaBufBuffer(render::DmaBufAttributes 
 scene::SurfaceNode *Compositor::createSurfaceNode(Surface *surface)
 {
     m_surfaces.push_back(surface);
-    qCDebug(cfCompositor) << "Surface created; total" << m_surfaces.size();
+    CF_DEBUG(cfCompositor) << "Surface created; total" << m_surfaces.size();
 
     if (!m_surfaceContainer)
         return nullptr;
 
     const int step = (m_placementIndex++ % kCascadeCount) * kCascadeStep;
     auto *node = static_cast<scene::SurfaceNode *>(m_surfaceContainer->addChild(
-            std::make_unique<scene::SurfaceNode>(QStringLiteral("surface"))));
-    node->setPosition(QPoint(step, step));
-    surface->setPosition(QPoint(step, step));
+            std::make_unique<scene::SurfaceNode>("surface")));
+    node->setPosition(base::Point(step, step));
+    surface->setPosition(base::Point(step, step));
     m_surfaceByNode.emplace(node, surface);
     return node;
 }
@@ -77,7 +96,7 @@ void Compositor::surfaceDestroyed(Surface *surface)
 {
     m_surfaceByNode.erase(surface->node());
     m_surfaces.erase(std::remove(m_surfaces.begin(), m_surfaces.end(), surface), m_surfaces.end());
-    qCDebug(cfCompositor) << "Surface destroyed; total" << m_surfaces.size();
+    CF_DEBUG(cfCompositor) << "Surface destroyed; total" << m_surfaces.size();
     scheduleRepaint();
 }
 
@@ -93,7 +112,7 @@ void Compositor::frameSubmitted(uint64_t generation)
         surface->frameSubmitted(generation);
 }
 
-void Compositor::frameSubmittedForOutput(const QRect &viewport, uint64_t generation)
+void Compositor::frameSubmittedForOutput(const base::Rect &viewport, uint64_t generation)
 {
     for (Surface *surface : m_surfaces) {
         const auto *node = surface->node();
@@ -102,7 +121,7 @@ void Compositor::frameSubmittedForOutput(const QRect &viewport, uint64_t generat
     }
 }
 
-void Compositor::abandonUnsubmittedPresentation(const QRect &viewport,
+void Compositor::abandonUnsubmittedPresentation(const base::Rect &viewport,
                                                 const render::PresentationSubmission &submission)
 {
     // Discarding runs client callbacks, which may destroy any surface.
@@ -114,12 +133,12 @@ void Compositor::abandonUnsubmittedPresentation(const QRect &viewport,
         const scene::Node *node = surface ? surface->node() : nullptr;
         if (!node)
             continue;
-        const QRect bounds = node->absoluteGeometry();
+        const base::Rect bounds = node->absoluteGeometry();
         const bool elsewhere = std::any_of(
                 m_outputViews.begin(), m_outputViews.end(), [&](const OutputView &output) {
                     return output.bounds.intersects(bounds);
                 });
-        if (node->isEffectivelyVisible() && !viewport.contains(bounds) && elsewhere)
+        if (node->isEffectivelyVisible() && !containsNonNull(viewport, bounds) && elsewhere)
             continue;
         surface->abandonUnsubmittedPresentation(submission);
     }
@@ -127,7 +146,7 @@ void Compositor::abandonUnsubmittedPresentation(const QRect &viewport,
 
 void Compositor::frameDiscarded(uint64_t generation)
 {
-    Q_EMIT outputDiscarded(generation);
+    outputDiscarded(generation);
     for (Surface *surface : m_surfaces)
         surface->frameDiscarded(generation);
 }
@@ -148,17 +167,17 @@ void Compositor::setOutputScale(OutputScale scale)
     if (scale == m_outputScale)
         return;
     m_outputScale = scale;
-    Q_EMIT outputScaleChanged();
+    outputScaleChanged();
     refreshOutputScales();
     scheduleRepaint();
 }
 
-void Compositor::setOutputViews(QList<OutputView> outputs)
+void Compositor::setOutputViews(std::vector<OutputView> outputs)
 {
     if (m_outputViews == outputs)
         return;
     m_outputViews = std::move(outputs);
-    Q_EMIT outputViewsChanged();
+    outputViewsChanged();
     refreshOutputScales();
     scheduleRepaint();
 }
@@ -184,7 +203,7 @@ std::vector<std::shared_ptr<Surface *>> Compositor::takeMovedSurfaces()
     return moved;
 }
 
-bool Compositor::awaitsFrame(const QRect &viewport) const
+bool Compositor::awaitsFrame(const base::Rect &viewport) const
 {
     return std::any_of(m_surfaces.begin(), m_surfaces.end(), [&](const Surface *surface) {
         const auto *node = surface->node();
@@ -194,10 +213,10 @@ bool Compositor::awaitsFrame(const QRect &viewport) const
 
 uint32_t Compositor::preferredScaleFor(const Surface *surface) const
 {
-    if (!surface || m_outputViews.isEmpty() || !surface->node())
+    if (!surface || m_outputViews.empty() || !surface->node())
         return m_outputScale.numerator();
     uint32_t result = 0;
-    const QRect geometry = surface->node()->absoluteGeometry();
+    const base::Rect geometry = surface->node()->absoluteGeometry();
     for (const OutputView &output : m_outputViews) {
         if (geometry.intersects(output.bounds))
             result = std::max(result, output.scale.numerator());
@@ -206,16 +225,16 @@ uint32_t Compositor::preferredScaleFor(const Surface *surface) const
         return result;
     // Unmapped and displaced surfaces still need a current output density.
     const OutputView *nearest = nullptr;
-    qint64 distance = std::numeric_limits<qint64>::max();
-    const QPoint position = geometry.center();
+    int64_t distance = std::numeric_limits<int64_t>::max();
+    const base::Point position = innerCenter(geometry);
     for (const OutputView &output : m_outputViews) {
         if (output.bounds.isEmpty())
             continue;
-        const qint64 dx = qint64(position.x())
-                - std::clamp(position.x(), output.bounds.left(), output.bounds.right());
-        const qint64 dy = qint64(position.y())
-                - std::clamp(position.y(), output.bounds.top(), output.bounds.bottom());
-        const qint64 candidate = std::abs(dx) + std::abs(dy);
+        const int64_t dx = int64_t(position.x())
+                - std::clamp(position.x(), output.bounds.left(), output.bounds.right() - 1);
+        const int64_t dy = int64_t(position.y())
+                - std::clamp(position.y(), output.bounds.top(), output.bounds.bottom() - 1);
+        const int64_t candidate = std::abs(dx) + std::abs(dy);
         if (candidate < distance) {
             distance = candidate;
             nearest = &output;
@@ -226,7 +245,7 @@ uint32_t Compositor::preferredScaleFor(const Surface *surface) const
 
 void Compositor::scheduleRepaint(bool decoration)
 {
-    Q_EMIT repaintNeeded(decoration);
+    repaintNeeded(decoration);
 }
 
 } // namespace cutefish::compositor

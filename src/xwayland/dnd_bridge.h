@@ -17,10 +17,12 @@
 #include <vector>
 #include <xcb/xcb.h>
 
-#include <QObject>
-#include <QPoint>
-#include <QTimer>
 
+#include "base/geometry.h"
+#include "base/timer.h"
+#include "base/weak_ptr.h"
+
+#include "base/signal.h"
 #include "clipboard/selection.h"
 #include "xwayland/selection_bridge.h"
 
@@ -49,12 +51,14 @@ namespace cutefish::xwayland {
 // the output whenever the pointer is off every X11 window. The source's
 // XdndEnter starts an external Wayland drag, its XdndPosition moves it and its
 // XdndDrop drops it.
-class DndBridge : public QObject
+class DndBridge
 {
 public:
     DndBridge(xcb_connection_t *connection, xcb_window_t root, wm::WindowManager *manager,
               SelectionBridge::Reply reply);
-    ~DndBridge() override;
+    DndBridge(const DndBridge &) = delete;
+    DndBridge &operator=(const DndBridge &) = delete;
+    ~DndBridge();
     void start(uint8_t xfixesEvent);
     bool event(xcb_generic_event_t *event);
 
@@ -65,9 +69,9 @@ public:
     std::function<xcb_window_t(compositor::Surface *)> windowForSurface;
     // Between logical positions and X11 root coordinates, and the X11 screen
     // size; the XWM owns the scale between them.
-    std::function<QPoint(const QPoint &)> toRoot;
-    std::function<QPoint(const QPoint &)> fromRoot;
-    std::function<QSize()> rootSize;
+    std::function<base::Point(const base::Point &)> toRoot;
+    std::function<base::Point(const base::Point &)> fromRoot;
+    std::function<base::Size()> rootSize;
 
 private:
     struct Outgoing;
@@ -131,11 +135,13 @@ private:
     bool m_exportOwned = false;
     bool m_exportReady = false;
     std::vector<xcb_atom_t> m_exportTypes;
-    QTimer m_finishTimeout;
+    base::Timer m_finishTimeout;
 
     xcb_window_t m_owner = 0;
     std::unique_ptr<Incoming> m_in;
-    QTimer m_tracker;
+    base::Timer m_tracker;
+    std::vector<base::Subscription> m_dragConnections;
+    base::WeakPtrFactory<DndBridge> m_weakFactory {this};
 };
 
 } // namespace cutefish::xwayland

@@ -11,7 +11,7 @@
 #include <memory>
 #include <vector>
 
-#include <QString>
+#include <string>
 
 #include "scene/node.h"
 
@@ -30,12 +30,12 @@ public:
     Content content() const override { return Content::Translucent; }
 
 protected:
-    void paint(render::Renderer& renderer, const QRect& absoluteGeometry) const override;
+    void paint(render::Renderer& renderer, const base::Rect& geometry) const override;
 
 private:
-    void paintFrame(render::Renderer& renderer, const QRect& bounds) const;
-    void paintCaption(render::Renderer& renderer, const QRect& bounds) const;
-    void paintButtons(render::Renderer& renderer, const QRect& bounds) const;
+    void paintFrame(render::Renderer& renderer, const base::Rect& bounds) const;
+    void paintCaption(render::Renderer& renderer, const base::Rect& bounds) const;
+    void paintButtons(render::Renderer& renderer, const base::Rect& bounds) const;
 
     const Decoration* m_decoration = nullptr;
     Theme* m_theme = nullptr;
@@ -46,7 +46,7 @@ private:
     // for each other every frame.
     struct Caption {
         double scale = 0;
-        QString key;
+        std::string key;
         std::unique_ptr<render::Texture> texture;
     };
     mutable std::vector<Caption> m_captions;

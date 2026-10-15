@@ -5,16 +5,31 @@
 #ifndef CUTEFISH_CORE_LOGGING_H_
 #define CUTEFISH_CORE_LOGGING_H_
 
-#include <QLoggingCategory>
+#include <string_view>
 
-Q_DECLARE_LOGGING_CATEGORY(cfWayland)
-Q_DECLARE_LOGGING_CATEGORY(cfSession)
-Q_DECLARE_LOGGING_CATEGORY(cfDrm)
-Q_DECLARE_LOGGING_CATEGORY(cfRender)
-Q_DECLARE_LOGGING_CATEGORY(cfScene)
-Q_DECLARE_LOGGING_CATEGORY(cfCompositor)
-Q_DECLARE_LOGGING_CATEGORY(cfInput)
-Q_DECLARE_LOGGING_CATEGORY(cfInputTransitions)
-Q_DECLARE_LOGGING_CATEGORY(cfCursorTransitions)
+#include "base/logging.h"
+
+namespace cutefish::core {
+
+// Written to with CF_DEBUG(cfInput) and friends.
+using LogCategory = base::LogCategory;
+
+// Applies `rules` (base::logging::setRules syntax) to every category.
+void setLoggingRules(std::string_view rules);
+
+} // namespace cutefish::core
+
+// Startup and operational messages are on; routine window and input
+// diagnostics need a debug rule (--log-rules).
+extern const cutefish::core::LogCategory cfWayland;
+extern const cutefish::core::LogCategory cfSession;
+extern const cutefish::core::LogCategory cfDrm;
+extern const cutefish::core::LogCategory cfRender;
+extern const cutefish::core::LogCategory cfScene;
+extern const cutefish::core::LogCategory cfCompositor;
+extern const cutefish::core::LogCategory cfInput;
+// Opt-in button/capture transitions; no pointer-motion or keyboard text logging.
+extern const cutefish::core::LogCategory cfInputTransitions;
+extern const cutefish::core::LogCategory cfCursorTransitions;
 
 #endif // CUTEFISH_CORE_LOGGING_H_

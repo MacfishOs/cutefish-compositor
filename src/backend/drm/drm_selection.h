@@ -5,14 +5,12 @@
 #ifndef CUTEFISH_BACKEND_DRM_DRM_SELECTION_H_
 #define CUTEFISH_BACKEND_DRM_DRM_SELECTION_H_
 
-#include <QList>
-#include <QString>
-#include <QStringList>
-
 #include <xf86drmMode.h>
 
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <vector>
 
 // Pure connector/CRTC/mode selection. Kept free of ioctls so it can be tested
 // without a DRM device.
@@ -38,7 +36,7 @@ struct ConnectorInfo {
 bool isDesktopOutput(const ConnectorInfo& connector);
 
 // Index of the connector to drive: the first desktop output.
-std::optional<int> selectConnector(const QList<ConnectorInfo>& connectors);
+std::optional<int> selectConnector(const std::vector<ConnectorInfo>& connectors);
 
 // Preferred mode, else the largest progressive one by pixel area (highest
 // refresh breaks ties), else the largest interlaced one, else nothing.
@@ -49,15 +47,15 @@ std::optional<drmModeModeInfo> selectMode(const drmModeModeInfo* modes, int coun
 // to wins when it is compatible and free, which avoids a needless modeset.
 // Returns 0 when nothing is available.
 uint32_t selectCrtc(uint32_t possibleCrtcs,
-                    const QList<uint32_t>& crtcIds,
+                    const std::vector<uint32_t>& crtcIds,
                     uint32_t usedCrtcMask,
                     uint32_t currentCrtcId = 0);
 
 // A primary DRM node the desktop could run on.
 struct DrmDeviceCandidate {
-    QString path;
+    std::string path;
     // The DRM driver, such as "i915", as drmGetVersion names it.
-    QString driver;
+    std::string driver;
     // The firmware showed its boot console there: /sys/.../device/boot_vga.
     bool bootVga = false;
 };
@@ -66,11 +64,11 @@ struct DrmDeviceCandidate {
 // display device. The firmware's boot display goes first, as KWin and wlroots
 // choose it, then ozone's preferred drivers (GetPreferredDrmDrivers), then the
 // enumeration order.
-QStringList orderDisplayDevices(const QList<DrmDeviceCandidate>& candidates);
+std::vector<std::string> orderDisplayDevices(const std::vector<DrmDeviceCandidate>& candidates);
 
 double refreshRate(const drmModeModeInfo& mode);
 
-QString connectorName(uint32_t type, uint32_t typeId);
+std::string connectorName(uint32_t type, uint32_t typeId);
 
 } // namespace cutefish::backend
 

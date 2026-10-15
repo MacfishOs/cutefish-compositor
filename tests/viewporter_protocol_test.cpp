@@ -184,24 +184,24 @@ TEST_F(ViewporterProtocolTest, DiscoveryIndependentStateAndManagerLifetime)
     EXPECT_FALSE(model->viewport());
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(200, 100));
-    EXPECT_EQ(model->crop(), std::optional<QRectF>({25, 10, 100, 50}));
+    EXPECT_EQ(model->contentSize(), base::Size(200, 100));
+    EXPECT_EQ(model->crop(), std::optional<base::RectF>({25, 10, 100, 50}));
     wp_viewporter_destroy(manager);
     manager = nullptr;
     wp_viewport_set_destination(viewport, -1, -1);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(100, 50));
+    EXPECT_EQ(model->contentSize(), base::Size(100, 50));
     EXPECT_TRUE(model->crop());
     source(-1, -1, -1, -1);
     wp_viewport_set_destination(viewport, 80, 30);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
     EXPECT_FALSE(model->crop());
-    EXPECT_EQ(model->contentSize(), QSize(80, 30));
+    EXPECT_EQ(model->contentSize(), base::Size(80, 30));
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(80, 30));
+    EXPECT_EQ(model->contentSize(), base::Size(80, 30));
 }
 
 TEST_F(ViewporterProtocolTest, DuplicateViewport)
@@ -232,7 +232,7 @@ INSTANTIATE_TEST_SUITE_P(Arguments, InvalidSourceTest,
                                          std::array<double, 4> {-1, -1, -1, 1}));
 
 class InvalidDestinationTest : public ViewporterProtocolTest,
-                               public testing::WithParamInterface<QSize>
+                               public testing::WithParamInterface<base::Size>
 {
 };
 
@@ -243,7 +243,8 @@ TEST_P(InvalidDestinationTest, BadValue)
 }
 
 INSTANTIATE_TEST_SUITE_P(Arguments, InvalidDestinationTest,
-                         testing::Values(QSize(-1, 3), QSize(3, -1), QSize(0, 3), QSize(3, 0)));
+                         testing::Values(base::Size(-1, 3), base::Size(3, -1), base::Size(0, 3),
+                                         base::Size(3, 0)));
 
 TEST_F(ViewporterProtocolTest, BadSizeAtApplication)
 {
@@ -274,7 +275,7 @@ TEST_F(ViewporterProtocolTest, EffectiveBufferScaleTransformAndViewportAreOneSna
     wp_viewport_set_destination(viewport, 200, 100);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(200, 100));
+    EXPECT_EQ(model->contentSize(), base::Size(200, 100));
     source(25.25, 10.5, 75, 189.5);
     wl_surface_commit(surface);
     error(WP_VIEWPORT_ERROR_OUT_OF_BUFFER);
@@ -291,7 +292,7 @@ TEST_F(ViewporterProtocolTest, NullBufferHasNoOutOfBufferAndRemaps)
     attach(200, 200);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(50, 50));
+    EXPECT_EQ(model->contentSize(), base::Size(50, 50));
     wl_surface_attach(surface, nullptr, 0, 0);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
@@ -308,14 +309,14 @@ TEST_F(ViewporterProtocolTest, DestructionAndRecreationAreCommitBuffered)
     wp_viewport_destroy(viewport);
     viewport = nullptr;
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(30, 20));
+    EXPECT_EQ(model->contentSize(), base::Size(30, 20));
     EXPECT_FALSE(model->hasViewport());
     viewport = wp_viewporter_get_viewport(manager, surface);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
     EXPECT_FALSE(model->crop());
     EXPECT_FALSE(model->viewport());
-    EXPECT_EQ(model->contentSize(), QSize(16, 8));
+    EXPECT_EQ(model->contentSize(), base::Size(16, 8));
 }
 
 class NoSurfaceTest : public ViewporterProtocolTest, public testing::WithParamInterface<bool>
@@ -367,20 +368,20 @@ TEST_F(ViewporterProtocolTest, MultipleCachedCommitsAndViewportRecreation)
     EXPECT_TRUE(model->contentSize().isEmpty());
     wl_surface_commit(parent);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(30, 20));
+    EXPECT_EQ(model->contentSize(), base::Size(30, 20));
     wp_viewport_destroy(viewport);
     viewport = wp_viewporter_get_viewport(manager, surface);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(30, 20));
+    EXPECT_EQ(model->contentSize(), base::Size(30, 20));
     wl_surface_commit(parent);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(16, 8));
+    EXPECT_EQ(model->contentSize(), base::Size(16, 8));
     wl_subsurface_set_desync(sub);
     wp_viewport_set_destination(viewport, 25, 11);
     wl_surface_commit(surface);
     ASSERT_GE(roundtrip(), 0);
-    EXPECT_EQ(model->contentSize(), QSize(25, 11));
+    EXPECT_EQ(model->contentSize(), base::Size(25, 11));
     wl_subsurface_destroy(sub);
     wl_surface_destroy(parent);
 }

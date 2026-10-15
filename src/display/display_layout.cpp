@@ -5,22 +5,20 @@
 // Upstream: chromium/src/ui/display/display_layout.cc
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: resolve a bounded Qt layout graph, including primary
+// Adapted for Cutefish: resolve a bounded layout graph, including primary
 // rerooting and minimum shared-edge normalization, without Ash display state.
 
 #include "display/display_layout.h"
 
 #include <algorithm>
 #include <cstdlib>
-
-#include <QQueue>
-#include <QSet>
+#include <deque>
 
 namespace cutefish::display {
 
 namespace {
 
-DisplayLayout::Result failure(QString message, QList<DisplayId> displays = {})
+DisplayLayout::Result failure(std::string message, std::vector<DisplayId> displays = {})
 {
     DisplayLayout::Result result;
     result.error = {DisplayErrorCode::InvalidLayout, std::move(message), std::move(displays)};
@@ -42,7 +40,7 @@ LayoutEdge opposite(LayoutEdge edge)
     return LayoutEdge::Right;
 }
 
-int normalizedOffset(int offset, LayoutEdge edge, const QSize& child, const QSize& parent,
+int normalizedOffset(int offset, LayoutEdge edge, const base::Size& child, const base::Size& parent,
                      int minimumSharedEdge)
 {
     const bool horizontalEdge = edge == LayoutEdge::Top || edge == LayoutEdge::Bottom;
@@ -53,17 +51,18 @@ int normalizedOffset(int offset, LayoutEdge edge, const QSize& child, const QSiz
     return std::clamp(offset, -childExtent + shared, parentExtent - shared);
 }
 
-QPoint childOrigin(const QRect& parent, const QSize& childSize, LayoutEdge edge, int offset)
+base::Point childOrigin(const base::Rect& parent, const base::Size& childSize, LayoutEdge edge,
+                        int offset)
 {
     switch (edge) {
     case LayoutEdge::Top:
-        return QPoint(parent.x() + offset, parent.y() - childSize.height());
+        return base::Point(parent.x() + offset, parent.y() - childSize.height());
     case LayoutEdge::Right:
-        return QPoint(parent.x() + parent.width(), parent.y() + offset);
+        return base::Point(parent.x() + parent.width(), parent.y() + offset);
     case LayoutEdge::Bottom:
-        return QPoint(parent.x() + offset, parent.y() + parent.height());
+        return base::Point(parent.x() + offset, parent.y() + parent.height());
     case LayoutEdge::Left:
-        return QPoint(parent.x() - childSize.width(), parent.y() + offset);
+        return base::Point(parent.x() - childSize.width(), parent.y() + offset);
     }
     return parent.topLeft();
 }
@@ -71,59 +70,64 @@ QPoint childOrigin(const QRect& parent, const QSize& childSize, LayoutEdge edge,
 } // namespace
 
 DisplayLayout::Result DisplayLayout::resolve(const DisplayId& primary,
-                                             const QHash<DisplayId, QSize>& displaySizes,
-                                             const QList<DisplayPlacement>& placements,
+                                             const std::map<DisplayId, base::Size>& displaySizes,
+                                             const std::vector<DisplayPlacement>& placements,
                                              int minimumSharedEdge)
 {
     if (minimumSharedEdge < 0)
-        return failure(QStringLiteral("The minimum shared edge cannot be negative"));
-    if (displaySizes.isEmpty())
-        return failure(QStringLiteral("At least one enabled display is required"));
+        return failure("The minimum shared edge cannot be negative");
+    if (displaySizes.empty())
+        return failure("At least one enabled display is required");
     if (displaySizes.size() > maximumDisplayCount)
-        return failure(QStringLiteral("The layout contains too many displays"));
+        return failure("The layout contains too many displays");
     if (!primary.isValid() || !displaySizes.contains(primary))
-        return failure(QStringLiteral("The primary display is missing"), {primary});
+        return failure("The primary display is missing", {primary});
 
-    for (auto it = displaySizes.cbegin(); it != displaySizes.cend(); ++it) {
-        if (!it.key().isValid() || it.value().width() <= 0 || it.value().height() <= 0)
-            return failure(QStringLiteral("A display has an invalid identity or size"), {it.key()});
+    for (const auto& [id, size] : displaySizes) {
+        if (!id.isValid() || size.width() <= 0 || size.height() <= 0)
+            return failure("A display has an invalid identity or size", {id});
     }
     if (placements.size() != displaySizes.size() - 1)
-        return failure(QStringLiteral("The placement graph must contain one edge per non-primary display"));
+        return failure(
+                "The placement graph must contain one edge per non-primary display");
 
-    QList<DisplayPlacement> normalized;
-    QHash<DisplayId, QList<int>> adjacency;
+    std::vector<DisplayPlacement> normalized;
+    std::map<DisplayId, std::vector<int>> adjacency;
     normalized.reserve(placements.size());
     for (const DisplayPlacement& requested : placements) {
         if (!displaySizes.contains(requested.display) || !displaySizes.contains(requested.parent))
-            return failure(QStringLiteral("A placement refers to an unknown display"),
+            return failure("A placement refers to an unknown display",
                            {requested.display, requested.parent});
         if (requested.display == requested.parent) {
-            return failure(QStringLiteral("A display cannot be placed relative to itself"),
+            return failure("A display cannot be placed relative to itself",
                            {requested.display});
         }
         if (std::abs(int64_t(requested.offset)) > maximumCoordinate)
-            return failure(QStringLiteral("A placement offset is outside the supported range"),
+            return failure("A placement offset is outside the supported range",
                            {requested.display});
 
         DisplayPlacement placement = requested;
         placement.offset = normalizedOffset(placement.offset, placement.edge,
-                                            displaySizes.value(placement.display),
-                                            displaySizes.value(placement.parent), minimumSharedEdge);
-        const int index = normalized.size();
-        normalized.append(placement);
-        adjacency[placement.display].append(index);
-        adjacency[placement.parent].append(index);
+                                            displaySizes.at(placement.display),
+                                            displaySizes.at(placement.parent), minimumSharedEdge);
+        const int index = int(normalized.size());
+        normalized.push_back(placement);
+        adjacency[placement.display].push_back(index);
+        adjacency[placement.parent].push_back(index);
     }
 
     Result result;
-    result.bounds.insert(primary, QRect(QPoint(), displaySizes.value(primary)));
-    QQueue<DisplayId> pending;
-    pending.enqueue(primary);
-    while (!pending.isEmpty()) {
-        const DisplayId current = pending.dequeue();
-        for (const int index : adjacency.value(current)) {
-            const DisplayPlacement& edge = normalized.at(index);
+    result.bounds.insert_or_assign(primary, base::Rect(displaySizes.at(primary)));
+    std::deque<DisplayId> pending;
+    pending.push_back(primary);
+    while (!pending.empty()) {
+        const DisplayId current = pending.front();
+        pending.pop_front();
+        const auto edges = adjacency.find(current);
+        if (edges == adjacency.end())
+            continue;
+        for (const int index : edges->second) {
+            const DisplayPlacement& edge = normalized[size_t(index)];
             const bool forward = edge.parent == current;
             const DisplayId next = forward ? edge.display : edge.parent;
             if (result.bounds.contains(next))
@@ -131,32 +135,33 @@ DisplayLayout::Result DisplayLayout::resolve(const DisplayId& primary,
 
             const LayoutEdge direction = forward ? edge.edge : opposite(edge.edge);
             const int offset = forward ? edge.offset : -edge.offset;
-            const QSize nextSize = displaySizes.value(next);
-            result.bounds.insert(next,
-                                 QRect(childOrigin(result.bounds.value(current), nextSize,
-                                                   direction, offset),
-                                       nextSize));
-            pending.enqueue(next);
+            const base::Size nextSize = displaySizes.at(next);
+            const base::Point origin =
+                    childOrigin(result.bounds.at(current), nextSize, direction, offset);
+            result.bounds.insert_or_assign(next, base::Rect(origin, nextSize));
+            pending.push_back(next);
         }
     }
 
     if (result.bounds.size() != displaySizes.size())
-        return failure(QStringLiteral("The placement graph is disconnected or cyclic"));
+        return failure("The placement graph is disconnected or cyclic");
 
-    const QList<DisplayId> ids = result.bounds.keys();
-    for (int i = 0; i < ids.size(); ++i) {
-        const QRect bounds = result.bounds.value(ids.at(i));
+    std::vector<DisplayId> ids;
+    for (const auto& [id, bounds] : result.bounds)
+        ids.push_back(id);
+    for (size_t i = 0; i < ids.size(); ++i) {
+        const base::Rect bounds = result.bounds.at(ids[i]);
         if (std::abs(int64_t(bounds.x())) > maximumCoordinate ||
             std::abs(int64_t(bounds.y())) > maximumCoordinate ||
             std::abs(int64_t(bounds.x()) + bounds.width()) > maximumCoordinate ||
             std::abs(int64_t(bounds.y()) + bounds.height()) > maximumCoordinate) {
-            return failure(QStringLiteral("The resolved layout is outside the supported range"),
-                           {ids.at(i)});
+            return failure("The resolved layout is outside the supported range",
+                           {ids[i]});
         }
-        for (int j = i + 1; j < ids.size(); ++j) {
-            if (bounds.intersects(result.bounds.value(ids.at(j))))
-                return failure(QStringLiteral("Displays overlap after resolving the layout"),
-                               {ids.at(i), ids.at(j)});
+        for (size_t j = i + 1; j < ids.size(); ++j) {
+            if (bounds.intersects(result.bounds.at(ids[j])))
+                return failure("Displays overlap after resolving the layout",
+                               {ids[i], ids[j]});
         }
     }
 

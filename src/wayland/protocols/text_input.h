@@ -10,7 +10,7 @@
 #include <utility>
 #include <wayland-server-core.h>
 
-#include <QRect>
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 class Surface;
@@ -31,7 +31,7 @@ struct TextInputState {
     int32_t anchor = 0;
     uint32_t cause = 0;
     std::optional<std::pair<uint32_t, uint32_t>> content;
-    std::optional<QRect> rectangle;
+    std::optional<base::Rect> rectangle;
 };
 
 // One input-method-v2 commit, already validated against the text input's state.

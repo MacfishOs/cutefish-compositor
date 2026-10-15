@@ -7,11 +7,10 @@
 #include <algorithm>
 #include <linux/input-event-codes.h>
 
-#include <QTimer>
-
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "input/input_manager.h"
 #include "scene/node.h"
 #include "scene/surface_node.h"
@@ -23,14 +22,16 @@
 
 namespace cutefish::wm {
 
-DemoController::DemoController(WindowManager* manager, input::InputManager* input,
-                               QObject* parent)
-    : QObject(parent)
-    , m_manager(manager)
+DemoController::DemoController(WindowManager* manager, input::InputManager* input)
+    : m_manager(manager)
     , m_input(input)
+    , m_scriptTimer(core::mainLoop())
 {
-    qCInfo(cfCompositor,
-           "WM demo keys: F1 maximize  F2 restore  F3 minimize  F4 unminimize all  "
+    m_scriptTimer.setSingleShot(true);
+    m_scriptTimer.onTimeout = [this] {
+        runNextScriptStep();
+    };
+    CF_INFO(cfCompositor).printf("WM demo keys: F1 maximize  F2 restore  F3 minimize  F4 unminimize all  "
            "F5 fullscreen  F6 move  F7 resize  F8 transient  F9 next window");
 }
 
@@ -53,8 +54,9 @@ void DemoController::adoptNewSurfaces()
         Window* window = m_manager->createWindow(surface);
         // xdg_toplevel.set_min_size sets this for real clients. Without it the
         // model's 1x1 default lets an interactive resize collapse the window.
-        window->setMinimumSize(QSize(120, 90));
-        qCInfo(cfCompositor) << "WM demo adopted a surface as a window at" << window->bounds();
+        window->setMinimumSize(base::Size(120, 90));
+        CF_INFO(cfCompositor) << "WM demo adopted a surface as a window at"
+                             << window->bounds();
         m_manager->activation()->activate(window);
     }
 }
@@ -64,12 +66,12 @@ Window* DemoController::target() const
     return m_manager->activation()->activeWindow();
 }
 
-bool DemoController::onPointerMotion(input::Timestamp timestamp, const QPointF& location)
+bool DemoController::onPointerMotion(input::Timestamp timestamp, const base::PointF &location)
 {
     return m_manager->onPointerMotion(timestamp, location);
 }
 
-bool DemoController::onPointerButton(input::Timestamp timestamp, const QPointF& location,
+bool DemoController::onPointerButton(input::Timestamp timestamp, const base::PointF &location,
                                      uint32_t evdevButton, bool pressed)
 {
     return m_manager->onPointerButton(timestamp, location, evdevButton, pressed);
@@ -82,13 +84,13 @@ bool DemoController::onKey(input::Timestamp timestamp, uint32_t evdevCode, bool 
     return m_manager->onKey(timestamp, evdevCode, pressed);
 }
 
-bool DemoController::onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF& location)
+bool DemoController::onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF &location)
 {
     return m_manager->onTouchDown(timestamp, id, location);
 }
 
 bool DemoController::onTouchMotion(input::Timestamp timestamp, int32_t id,
-                                   const QPointF& location)
+                                   const base::PointF &location)
 {
     return m_manager->onTouchMotion(timestamp, id, location);
 }
@@ -128,13 +130,14 @@ bool DemoController::handleShortcut(uint32_t evdevCode)
             window->setFullscreen(!window->state()->isFullscreen());
         return true;
     case KEY_F6:
-        qCDebug(cfInputTransitions) << "demo F6 begin move request";
+        CF_DEBUG(cfInputTransitions) << "demo F6 begin move request";
         if (window) {
-            m_manager->eventHandler()->beginMove(window, m_input->pointerPosition());
+            m_manager->eventHandler()->beginMove(window,
+                                                 m_input->pointerPosition());
         }
         return true;
     case KEY_F7:
-        qCDebug(cfInputTransitions) << "demo F7 begin resize request";
+        CF_DEBUG(cfInputTransitions) << "demo F7 begin resize request";
         if (window) {
             m_manager->eventHandler()->beginResize(window, ResizeEdge::BottomRight,
                                                    m_input->pointerPosition());
@@ -187,12 +190,12 @@ void DemoController::toggleTransientOnActive()
 
     if (window->transientParent()) {
         window->setTransientParent(nullptr);
-        qCInfo(cfCompositor) << "WM demo cleared the transient parent";
+        CF_INFO(cfCompositor) << "WM demo cleared the transient parent";
         return;
     }
     for (Window* candidate : windows) {
         if (candidate != window && window->setTransientParent(candidate)) {
-            qCInfo(cfCompositor) << "WM demo made the active window transient for the one below";
+            CF_INFO(cfCompositor) << "WM demo made the active window transient for the one below";
             return;
         }
     }
@@ -202,34 +205,28 @@ void DemoController::startScript(int stepIntervalMs)
 {
     m_scriptIntervalMs = stepIntervalMs;
     buildScript();
-    qCInfo(cfCompositor, "WM demo script: %zu steps, %d ms apart", m_script.size(),
+    CF_INFO(cfCompositor).printf("WM demo script: %zu steps, %d ms apart", m_script.size(),
            stepIntervalMs);
     // Wait for a client to map something before the first step.
-    QTimer::singleShot(m_scriptIntervalMs, this, [this] {
-        runNextScriptStep();
-    });
+    m_scriptTimer.start(std::chrono::milliseconds(m_scriptIntervalMs));
 }
 
 void DemoController::runNextScriptStep()
 {
     if (m_scriptStep >= m_script.size()) {
-        qCInfo(cfCompositor, "WM demo script: finished");
+        CF_INFO(cfCompositor).printf("WM demo script: finished");
         return;
     }
 
     // Nothing to drive until a client has mapped a window; keep waiting rather
     // than running the script against nothing.
     if (m_manager->windows().empty()) {
-        QTimer::singleShot(m_scriptIntervalMs, this, [this] {
-            runNextScriptStep();
-        });
+        m_scriptTimer.start(std::chrono::milliseconds(m_scriptIntervalMs));
         return;
     }
 
     m_script[m_scriptStep++]();
-    QTimer::singleShot(m_scriptIntervalMs, this, [this] {
-        runNextScriptStep();
-    });
+    m_scriptTimer.start(std::chrono::milliseconds(m_scriptIntervalMs));
 }
 
 Window* DemoController::scriptTarget()
@@ -247,7 +244,7 @@ void DemoController::buildScript()
 
     auto log = [this](const char* what) {
         Window* window = scriptTarget();
-        qCInfo(cfCompositor, "WM demo script: %s -> windows=%zu state=%s bounds=%d,%d %dx%d", what,
+        CF_INFO(cfCompositor).printf("WM demo script: %s -> windows=%zu state=%s bounds=%d,%d %dx%d", what,
                m_manager->windows().size(), window ? toString(window->stateType()) : "none",
                window ? window->bounds().x() : 0, window ? window->bounds().y() : 0,
                window ? window->bounds().width() : 0, window ? window->bounds().height() : 0);
@@ -269,7 +266,7 @@ void DemoController::buildScript()
         Window* window = scriptTarget();
         if (!window)
             return;
-        m_dragAnchor = QPointF(window->bounds().topLeft());
+        m_dragAnchor = base::PointF(window->bounds().topLeft());
         m_input->warpPointer(m_dragAnchor);
         m_manager->eventHandler()->beginMove(window, m_dragAnchor);
         log("begin-move");
@@ -277,7 +274,7 @@ void DemoController::buildScript()
     for (int i = 1; i <= 3; ++i) {
         m_script.push_back([this, log, i] {
             m_input->onPointerMotionAbsolute(input::Timestamp::clock::now(),
-                                             m_dragAnchor + QPointF(60.0 * i, 40.0 * i));
+                                             m_dragAnchor + base::PointF(60.0 * i, 40.0 * i));
             log("move");
         });
     }
@@ -291,7 +288,7 @@ void DemoController::buildScript()
         Window* window = scriptTarget();
         if (!window)
             return;
-        m_dragAnchor = QPointF(window->bounds().bottomRight());
+        m_dragAnchor = base::PointF(window->bounds().bottomRight() - base::Point(1, 1));
         m_input->warpPointer(m_dragAnchor);
         m_manager->eventHandler()->beginResize(window, ResizeEdge::BottomRight, m_dragAnchor);
         log("begin-resize");
@@ -299,7 +296,7 @@ void DemoController::buildScript()
     for (int i = 1; i <= 3; ++i) {
         m_script.push_back([this, log, i] {
             m_input->onPointerMotionAbsolute(input::Timestamp::clock::now(),
-                                             m_dragAnchor + QPointF(40.0 * i, 30.0 * i));
+                                             m_dragAnchor + base::PointF(40.0 * i, 30.0 * i));
             log("resize");
         });
     }
@@ -341,7 +338,7 @@ void DemoController::buildScript()
     });
     m_script.push_back([this, log] {
         activateNext();
-        qCInfo(cfCompositor, "WM demo script: active window is now %p",
+        CF_INFO(cfCompositor).printf("WM demo script: active window is now %p",
                static_cast<void*>(m_manager->activation()->activeWindow()));
         log("activate-next");
     });
@@ -351,7 +348,7 @@ void DemoController::buildScript()
                 if (candidate != window && window->setTransientParent(candidate))
                     break;
             }
-            qCInfo(cfCompositor, "WM demo script: transient parent is %p",
+            CF_INFO(cfCompositor).printf("WM demo script: transient parent is %p",
                    static_cast<void*>(window->transientParent()));
         }
         log("set-transient");

@@ -40,12 +40,12 @@ bool Desk::contains(const Window *window) const
     return std::find(m_windows.begin(), m_windows.end(), window) != m_windows.end();
 }
 
-void Desk::setName(const QString &name, bool setByUser)
+void Desk::setName(const std::string &name, bool setByUser)
 {
     if (name == m_name && setByUser == m_nameSetByUser)
         return;
     m_name = name;
-    m_nameSetByUser = setByUser && !name.isEmpty();
+    m_nameSetByUser = setByUser && !name.empty();
     m_controller->notify([this](DesksObserver *observer) {
         observer->onDeskNameChanged(this);
     });

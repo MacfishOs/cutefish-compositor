@@ -12,10 +12,9 @@
 
 #include <gtest/gtest.h>
 
-#include <QTemporaryDir>
-
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <set>
@@ -27,9 +26,11 @@
 #include <wayland-client.h>
 
 #include "protocol_interfaces.h"
+#include "temporary_directory.h"
 
 #include "compositor/compositor.h"
 #include "compositor/output.h"
+#include "core/preferences.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
 #include "scene/node.h"
@@ -60,7 +61,7 @@ public:
         return client && client == computerUse;
     }
 
-    bool showsSystemDialogs(qint64) const override { return false; }
+    bool showsSystemDialogs(int64_t) const override { return false; }
 
     const wl_client *computerUse = nullptr;
 };
@@ -95,13 +96,14 @@ protected:
     void SetUp() override
     {
         ASSERT_TRUE(m_home.isValid());
-        for (const char *variable : {"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"})
-            qputenv(variable, m_home.path().toUtf8());
+        for (const char *variable : {"XDG_DATA_HOME", "XDG_RUNTIME_DIR"})
+            setenv(variable, m_home.path().c_str(), 1);
+        cutefish::setConfigHomeForTesting(m_home.path());
 
-        m_scene.setSize(QSize(1280, 800));
-        m_manager.setBounds(QSize(1280, 800));
-        m_windowManager.setOutputBounds(QRect(0, 0, 1280, 800));
-        m_output.pixelSize = QSize(1280, 800);
+        m_scene.setSize(cutefish::base::Size(1280, 800));
+        m_manager.setBounds(cutefish::base::Size(1280, 800));
+        m_windowManager.setOutputBounds(cutefish::base::Rect(0, 0, 1280, 800));
+        m_output.pixelSize = cutefish::base::Size(1280, 800);
         m_output.refreshMilliHz = 60000;
 
         wayland::ProtocolGlobals::Dependencies dependencies;
@@ -214,12 +216,12 @@ protected:
             EXPECT_TRUE(client->globals.contains(interface)) << interface;
     }
 
-    QTemporaryDir m_home;
+    test::TemporaryDirectory m_home;
     scene::Scene m_scene;
     scene::Node *m_surfaces =
-            m_scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            m_scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node *m_popups =
-            m_scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("popups")));
+            m_scene.root()->addChild(std::make_unique<scene::Node>("popups"));
     compositor::Compositor m_compositor {m_surfaces};
     input::Seat m_seat {&m_compositor};
     input::InputManager m_manager {&m_seat};

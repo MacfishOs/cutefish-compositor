@@ -29,6 +29,7 @@
 
 #include <appmenu-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
+#include "ui/bitmap.h"
 #include "wayland/protocols/window_hints.h"
 #include "wm/mru_window_tracker.h"
 #include <cutefish-shell-v1-client-protocol.h>
@@ -72,13 +73,13 @@ struct RunningClient {
     ~RunningClient() { --count; }
 };
 
-constexpr QRect kOutput(0, 0, 800, 600);
+const base::Rect kOutput(0, 0, 800, 600);
 
 // What the client learned about one managed window.
 struct TrackedWindow {
     cutefish_window_v1 *object = nullptr;
-    quint64 id = 0;
-    quint64 parentId = 0;
+    uint64_t id = 0;
+    uint64_t parentId = 0;
     std::string title;
     std::string appId;
     std::string menuService;
@@ -91,8 +92,8 @@ struct TrackedWindow {
     bool hidden = false;
     bool skipTaskbar = false;
     int skipTaskbarCount = 0;
-    QRect geometry;
-    QImage thumbnail;
+    base::Rect geometry;
+    ui::Bitmap thumbnail;
     int doneCount = 0;
     int parentCount = 0;
     int minimizeLandedCount = 0;
@@ -111,7 +112,7 @@ struct XdgWindow {
     cutefish_shell_surface_v1 *shellSurface = nullptr;
     wl_buffer *buffer = nullptr;
     std::vector<uint32_t> surfaceConfigures;
-    std::vector<QSize> bounds;
+    std::vector<base::Size> bounds;
     int closes = 0;
 
     uint32_t lastSerial() const { return surfaceConfigures.back(); }
@@ -154,7 +155,7 @@ const cutefish_window_v1_listener windowListener = {
             window->hidden = hidden != 0;
         },
         [](void *data, cutefish_window_v1 *, int32_t x, int32_t y, int32_t width, int32_t height) {
-            static_cast<TrackedWindow *>(data)->geometry = QRect(x, y, width, height);
+            static_cast<TrackedWindow *>(data)->geometry = base::Rect(x, y, width, height);
         },
         [](void *data, cutefish_window_v1 *) {
             ++static_cast<TrackedWindow *>(data)->doneCount;
@@ -173,9 +174,8 @@ const cutefish_window_v1_listener windowListener = {
             close(fd);
             ASSERT_NE(pixels, MAP_FAILED);
             static_cast<TrackedWindow *>(data)->thumbnail =
-                    QImage(static_cast<const uchar *>(pixels), int(width), int(height),
-                           QImage::Format_ARGB32_Premultiplied)
-                            .copy();
+                    ui::Bitmap::copyOf(pixels, int(width), int(height), size_t(width) * 4,
+                                       ui::Bitmap::Format::Argb32Premultiplied);
             munmap(pixels, size);
         },
         [](void *data, cutefish_window_v1 *) {
@@ -183,7 +183,7 @@ const cutefish_window_v1_listener windowListener = {
         },
         [](void *data, cutefish_window_v1 *, uint32_t high, uint32_t low) {
             auto *window = static_cast<TrackedWindow *>(data);
-            window->parentId = (quint64(high) << 32) | low;
+            window->parentId = (uint64_t(high) << 32) | low;
             ++window->parentCount;
         },
         [](void *data, cutefish_window_v1 *, uint32_t skip) {
@@ -214,11 +214,11 @@ struct Client {
     std::map<std::string, std::pair<uint32_t, uint32_t>> globals;
 
     std::vector<std::unique_ptr<TrackedWindow>> tracked;
-    quint64 activeWindowId = 0;
+    uint64_t activeWindowId = 0;
     int initialStateDone = 0;
     struct Pick {
         uint32_t kind = CUTEFISH_WINDOW_MANAGEMENT_V1_PICKED_KIND_NONE;
-        quint64 id = 0;
+        uint64_t id = 0;
     };
     std::map<uint32_t, Pick> picks;
     std::vector<uint32_t> desks;
@@ -307,12 +307,12 @@ struct Client {
                     client->tracked.push_back(std::make_unique<TrackedWindow>());
                     TrackedWindow *window = client->tracked.back().get();
                     window->object = object;
-                    window->id = (static_cast<quint64>(idHi) << 32) | idLo;
+                    window->id = (static_cast<uint64_t>(idHi) << 32) | idLo;
                     cutefish_window_v1_add_listener(object, &windowListener, window);
                 },
                 [](void *data, cutefish_window_management_v1 *, uint32_t idHi, uint32_t idLo) {
                     static_cast<Client *>(data)->activeWindowId =
-                            (static_cast<quint64>(idHi) << 32) | idLo;
+                            (static_cast<uint64_t>(idHi) << 32) | idLo;
                 },
                 [](void *data, cutefish_window_management_v1 *) {
                     ++static_cast<Client *>(data)->initialStateDone;
@@ -320,7 +320,7 @@ struct Client {
                 [](void *data, cutefish_window_management_v1 *, uint32_t serial, uint32_t kind,
                    uint32_t idHi, uint32_t idLo) {
                     static_cast<Client *>(data)->picks[serial] = {
-                            kind, (static_cast<quint64>(idHi) << 32) | idLo};
+                            kind, (static_cast<uint64_t>(idHi) << 32) | idLo};
                 },
                 [](void *data, cutefish_window_management_v1 *, uint32_t desk) {
                     static_cast<Client *>(data)->desks.push_back(desk);
@@ -342,7 +342,7 @@ struct Client {
         return true;
     }
 
-    TrackedWindow *trackedById(quint64 id)
+    TrackedWindow *trackedById(uint64_t id)
     {
         for (auto &window : tracked) {
             if (window->id == id && !window->closed)
@@ -362,7 +362,7 @@ struct Client {
         return live;
     }
 
-    wl_buffer *makeBuffer(const QSize &size)
+    wl_buffer *makeBuffer(const base::Size &size)
     {
         const int stride = size.width() * 4;
         const size_t bytes = static_cast<size_t>(stride) * size.height();
@@ -391,7 +391,7 @@ struct Client {
         return window;
     }
 
-    void map(XdgWindow *window, const QSize &size)
+    void map(XdgWindow *window, const base::Size &size)
     {
         wl_surface_commit(window->surface);
         sync();
@@ -489,9 +489,9 @@ class PrivateShellProtocolTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node *cursorContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("cursor")));
+            scene.root()->addChild(std::make_unique<scene::Node>("cursor"));
     compositor::Compositor compositor {surfaceContainer};
     input::Seat seat {&compositor};
     input::InputManager manager {&seat};
@@ -724,13 +724,13 @@ TEST_F(PrivateShellProtocolTest, TheRoleIsSetBeforeTheWindowIsFirstMapped)
         cutefish_shell_surface_v1_set_role(window->shellSurface,
                                            CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
         cutefish_shell_surface_v1_set_position(window->shellSurface, 100, 500);
-        c.map(window, QSize(600, 60));
+        c.map(window, base::Size(600, 60));
 
         check([&] {
             wm::Window *dock = windowWithRole(wm::WindowRole::Dock);
             ASSERT_NE(nullptr, dock);
             // Placed exactly where it asked, not cascaded, and undecorated.
-            EXPECT_EQ(QPoint(100, 500), dock->bounds().topLeft());
+            EXPECT_EQ(base::Point(100, 500), dock->bounds().topLeft());
             EXPECT_FALSE(dock->isDecorated());
         });
     });
@@ -746,13 +746,13 @@ TEST_F(PrivateShellProtocolTest, AShellSurfaceGetsNoConfigureBounds)
         desktop->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, desktop->surface);
         cutefish_shell_surface_v1_set_role(desktop->shellSurface,
                                            CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP);
-        c.map(desktop, QSize(800, 600));
+        c.map(desktop, base::Size(800, 600));
         XdgWindow *app = c.makeToplevel("App", "app");
-        c.map(app, QSize(300, 200));
+        c.map(app, base::Size(300, 200));
 
         ASSERT_FALSE(desktop->bounds.empty());
-        for (const QSize &bounds : desktop->bounds)
-            EXPECT_EQ(QSize(0, 0), bounds);
+        for (const base::Size &bounds : desktop->bounds)
+            EXPECT_EQ(base::Size(0, 0), bounds);
         ASSERT_FALSE(app->bounds.empty());
         EXPECT_FALSE(app->bounds.front().isEmpty());
     });
@@ -777,7 +777,7 @@ TEST_F(PrivateShellProtocolTest, RoleStackingOrdersTheShellAroundApplications)
                             cutefish_shell_v1_get_shell_surface(c.shell, window->surface);
                     cutefish_shell_surface_v1_set_role(window->shellSurface, role);
                     cutefish_shell_surface_v1_set_position(window->shellSurface, 0, 0);
-                    c.map(window, QSize(200, 100));
+                    c.map(window, base::Size(200, 100));
                 }
 
                 ASSERT_TRUE(awaitRole(wm::WindowRole::Normal));
@@ -801,7 +801,7 @@ TEST_F(PrivateShellProtocolTest, RoleStackingOrdersTheShellAroundApplications)
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
             });
 }
 
@@ -815,11 +815,11 @@ TEST_F(PrivateShellProtocolTest, ActivationNeverLiftsAWindowOutOfItsLayer)
                 cutefish_shell_surface_v1_set_role(dock->shellSurface,
                                                    CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
                 cutefish_shell_surface_v1_set_position(dock->shellSurface, 0, 540);
-                c.map(dock, QSize(800, 60));
+                c.map(dock, base::Size(800, 60));
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 ASSERT_TRUE(awaitRole(wm::WindowRole::Dock));
                 check([&] {
                     wm::Window *app = nullptr;
@@ -852,7 +852,7 @@ TEST_F(PrivateShellProtocolTest, FinishedPeerBodyRetainsItsMappedWindowThroughAs
             },
             [&](Client &c) {
                 auto *window = c.makeToplevel("Retained", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 appBodyFinished = true;
             });
 }
@@ -870,10 +870,10 @@ TEST_F(PrivateShellProtocolTest, DestroyingTheShellSurfaceLeavesAMappedWindowInI
         cutefish_shell_surface_v1_set_position(dock->shellSurface, 0, 540);
         cutefish_shell_surface_v1_set_exclusive_zone(dock->shellSurface,
                                                      CUTEFISH_SHELL_SURFACE_V1_EDGE_BOTTOM, 60);
-        c.map(dock, QSize(800, 60));
+        c.map(dock, base::Size(800, 60));
         check([&] {
             ASSERT_NE(nullptr, windowWithRole(wm::WindowRole::Dock));
-            EXPECT_EQ(QRect(0, 0, 800, 540), windowManager.workAreaFor(nullptr));
+            EXPECT_EQ(base::Rect(0, 0, 800, 540), windowManager.workAreaFor(nullptr));
         });
 
         // Only the extension object goes; the wl_surface and its xdg_toplevel
@@ -907,7 +907,7 @@ TEST_F(PrivateShellProtocolTest, ANoFocusDockNeverTakesTheKeyboardFromAnApplicat
                 cutefish_shell_surface_v1_set_focus_policy(
                         dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_FOCUS_POLICY_NO_FOCUS);
                 cutefish_shell_surface_v1_set_position(dock->shellSurface, 0, 540);
-                c.map(dock, QSize(800, 60));
+                c.map(dock, base::Size(800, 60));
 
                 check([&] {
                     wm::Window *dockWindow = windowWithRole(wm::WindowRole::Dock);
@@ -920,7 +920,7 @@ TEST_F(PrivateShellProtocolTest, ANoFocusDockNeverTakesTheKeyboardFromAnApplicat
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 check([&] {
                     wm::Window *active = windowManager.activation()->activeWindow();
                     ASSERT_NE(nullptr, active);
@@ -939,7 +939,7 @@ TEST_F(PrivateShellProtocolTest, AnOsdNeverTakesTheKeyboardWhateverItsFocusPolic
                 cutefish_shell_surface_v1_set_role(osd->shellSurface,
                                                    CUTEFISH_SHELL_SURFACE_V1_ROLE_OSD);
                 cutefish_shell_surface_v1_set_position(osd->shellSurface, 300, 480);
-                c.map(osd, QSize(200, 50));
+                c.map(osd, base::Size(200, 50));
 
                 cutefish_shell_surface_v1_activate(osd->shellSurface);
                 c.sync();
@@ -954,7 +954,7 @@ TEST_F(PrivateShellProtocolTest, AnOsdNeverTakesTheKeyboardWhateverItsFocusPolic
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 check([&] {
                     wm::Window *active = windowManager.activation()->activeWindow();
                     ASSERT_NE(nullptr, active);
@@ -972,7 +972,7 @@ TEST_F(PrivateShellProtocolTest, TheLauncherTakesFocusThroughActivate)
         cutefish_shell_surface_v1_set_role(launcher->shellSurface,
                                            CUTEFISH_SHELL_SURFACE_V1_ROLE_LAUNCHER);
         cutefish_shell_surface_v1_set_position(launcher->shellSurface, 0, 0);
-        c.map(launcher, QSize(800, 600));
+        c.map(launcher, base::Size(800, 600));
 
         check([&] {
             wm::Window *window = windowWithRole(wm::WindowRole::Launcher);
@@ -1061,7 +1061,7 @@ TEST_F(PrivateShellProtocolTest, TheCaptureInterfaceTakesTheKeyboardAndStaysOutO
                 check([&] {
                     wm::Window *app = windowWithRole(wm::WindowRole::Normal);
                     ASSERT_NE(nullptr, app);
-                    const QPointF inside = QRectF(app->bounds()).center();
+                    const base::PointF inside = base::RectF(app->bounds()).center();
                     windowManager.onPointerButton(std::chrono::steady_clock::now(), inside,
                                                   BTN_LEFT, true);
                     windowManager.onPointerButton(std::chrono::steady_clock::now(), inside,
@@ -1086,7 +1086,7 @@ TEST_F(PrivateShellProtocolTest, TheCaptureInterfaceTakesTheKeyboardAndStaysOutO
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
             });
 }
 
@@ -1103,18 +1103,18 @@ TEST_F(PrivateShellProtocolTest, ExclusiveZonesCompose)
                                            CUTEFISH_SHELL_SURFACE_V1_ROLE_PANEL);
         cutefish_shell_surface_v1_set_exclusive_zone(statusBar->shellSurface,
                                                      CUTEFISH_SHELL_SURFACE_V1_EDGE_TOP, 30);
-        c.map(statusBar, QSize(800, 30));
+        c.map(statusBar, base::Size(800, 30));
 
         XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
         dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
         cutefish_shell_surface_v1_set_role(dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
         cutefish_shell_surface_v1_set_exclusive_zone(dock->shellSurface,
                                                      CUTEFISH_SHELL_SURFACE_V1_EDGE_BOTTOM, 60);
-        c.map(dock, QSize(800, 60));
+        c.map(dock, base::Size(800, 60));
         c.sync();
 
         check([&] {
-            EXPECT_EQ(QRect(0, 30, 800, 510), windowManager.workAreaFor(nullptr));
+            EXPECT_EQ(base::Rect(0, 30, 800, 510), windowManager.workAreaFor(nullptr));
         });
 
         // Changing the dock's thickness updates the reservation in place.
@@ -1122,14 +1122,14 @@ TEST_F(PrivateShellProtocolTest, ExclusiveZonesCompose)
                                                      CUTEFISH_SHELL_SURFACE_V1_EDGE_BOTTOM, 100);
         c.sync();
         check([&] {
-            EXPECT_EQ(QRect(0, 30, 800, 470), windowManager.workAreaFor(nullptr));
+            EXPECT_EQ(base::Rect(0, 30, 800, 470), windowManager.workAreaFor(nullptr));
         });
 
         // Auto-hiding the dock gives the space back.
         cutefish_shell_surface_v1_clear_exclusive_zone(dock->shellSurface);
         c.sync();
         check([&] {
-            EXPECT_EQ(QRect(0, 30, 800, 570), windowManager.workAreaFor(nullptr));
+            EXPECT_EQ(base::Rect(0, 30, 800, 570), windowManager.workAreaFor(nullptr));
         });
     });
 }
@@ -1146,11 +1146,11 @@ TEST_F(PrivateShellProtocolTest, MaximizedFollowsTheWorkAreaAndFullscreenDoesNot
                                                    CUTEFISH_SHELL_SURFACE_V1_ROLE_PANEL);
                 cutefish_shell_surface_v1_set_exclusive_zone(
                         statusBar->shellSurface, CUTEFISH_SHELL_SURFACE_V1_EDGE_TOP, 30);
-                c.map(statusBar, QSize(800, 30));
+                c.map(statusBar, base::Size(800, 30));
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 ASSERT_TRUE(awaitRole(wm::WindowRole::Panel));
 
                 xdg_toplevel_set_maximized(window->toplevel);
@@ -1162,7 +1162,7 @@ TEST_F(PrivateShellProtocolTest, MaximizedFollowsTheWorkAreaAndFullscreenDoesNot
                             app = candidate;
                     }
                     ASSERT_NE(nullptr, app);
-                    EXPECT_EQ(QRect(0, 30, 800, 570), app->bounds());
+                    EXPECT_EQ(base::Rect(0, 30, 800, 570), app->bounds());
                 });
 
                 xdg_toplevel_set_fullscreen(window->toplevel, nullptr);
@@ -1209,7 +1209,7 @@ TEST_F(PrivateShellProtocolTest, TheManagerEnumeratesExistingApplicationWindows)
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 appMapped.set_value();
                 ASSERT_TRUE(c.waitFor([&] {
                     return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
@@ -1291,7 +1291,7 @@ TEST_F(PrivateShellProtocolTest, DesksAndTheWindowsOnThemReachTheShell)
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 appMapped.set_value();
                 ASSERT_TRUE(c.waitFor([&] {
                     return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
@@ -1310,12 +1310,12 @@ TEST_F(PrivateShellProtocolTest, APickLooksThroughTheCaptureInterface)
     run(
             [&](Client &c) {
                 ASSERT_TRUE(c.bindShell());
-                const std::tuple<const char *, uint32_t, QPoint, QSize> surfaces[] = {
-                        {"Desktop", CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP, QPoint(0, 0),
+                const std::tuple<const char *, uint32_t, base::Point, base::Size> surfaces[] = {
+                        {"Desktop", CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP, base::Point(0, 0),
                          kOutput.size()},
-                        {"Dock", CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK, QPoint(200, 540),
-                         QSize(400, 50)},
-                        {"Capture", CUTEFISH_SHELL_SURFACE_V1_ROLE_CAPTURE, QPoint(0, 0),
+                        {"Dock", CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK, base::Point(200, 540),
+                         base::Size(400, 50)},
+                        {"Capture", CUTEFISH_SHELL_SURFACE_V1_ROLE_CAPTURE, base::Point(0, 0),
                          kOutput.size()},
                 };
                 for (const auto &[title, role, position, size] : surfaces) {
@@ -1334,8 +1334,8 @@ TEST_F(PrivateShellProtocolTest, APickLooksThroughTheCaptureInterface)
                 c.sync();
                 std::vector<TrackedWindow *> live = c.liveTracked();
                 ASSERT_EQ(1u, live.size());
-                const QPoint app = live[0]->geometry.center();
-                ASSERT_FALSE(live[0]->geometry.contains(QPoint(790, 10)));
+                const base::Point app = wm::centerPixel(live[0]->geometry);
+                ASSERT_FALSE(live[0]->geometry.contains(base::Point(790, 10)));
 
                 cutefish_window_management_v1_pick(c.management, 1, app.x(), app.y());
                 cutefish_window_management_v1_pick(c.management, 2, 250, 560);
@@ -1354,7 +1354,7 @@ TEST_F(PrivateShellProtocolTest, APickLooksThroughTheCaptureInterface)
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 appMapped.set_value();
                 ASSERT_TRUE(c.waitFor([&] {
                     return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
@@ -1371,7 +1371,7 @@ TEST_F(PrivateShellProtocolTest, ShellRoleWindowsAreNotInTheTaskList)
         XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
         dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
         cutefish_shell_surface_v1_set_role(dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-        c.map(dock, QSize(800, 60));
+        c.map(dock, base::Size(800, 60));
         c.sync();
         EXPECT_TRUE(c.liveTracked().empty());
     });
@@ -1472,7 +1472,7 @@ TEST_F(PrivateShellProtocolTest, LiveChangesAndCommandsReachTheWindow)
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 appMapped.set_value();
                 ASSERT_TRUE(c.waitFor([&] {
                     return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
@@ -1496,10 +1496,10 @@ TEST_F(PrivateShellProtocolTest, AMinimizedWindowSendsItsThumbnailToEveryManager
     std::promise<void> shellDone;
     auto shellDoneFuture = shellDone.get_future();
 
-    QImage snapshot(6, 4, QImage::Format_ARGB32_Premultiplied);
-    snapshot.fill(Qt::transparent);
-    snapshot.setPixelColor(0, 0, Qt::red);
-    snapshot.setPixelColor(5, 3, Qt::blue);
+    ui::Bitmap snapshot(6, 4, ui::Bitmap::Format::Argb32Premultiplied);
+    snapshot.fill(0);
+    snapshot.setPixel(0, 0, 0xffff0000);
+    snapshot.setPixel(5, 3, 0xff0000ff);
 
     run(
             [&](Client &c) {
@@ -1542,7 +1542,7 @@ TEST_F(PrivateShellProtocolTest, AMinimizedWindowSendsItsThumbnailToEveryManager
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 appMapped.set_value();
                 ASSERT_TRUE(c.waitFor([&] {
                     return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
@@ -1578,7 +1578,7 @@ TEST_F(PrivateShellProtocolTest, ClosingAnApplicationWindowClosesItsTask)
             },
             [&](Client &c) {
                 XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, QSize(300, 200));
+                c.map(window, base::Size(300, 200));
                 appMapped.set_value();
                 ASSERT_EQ(managerReadyFuture.wait_for(std::chrono::seconds(5)),
                           std::future_status::ready);
@@ -1632,7 +1632,7 @@ TEST_F(PrivateShellProtocolTest, ShellDisconnectClearsItsReservationsAndKeepsApp
         {
             Client c(appFds[1]);
             XdgWindow *window = c.makeToplevel("App", "app");
-            c.map(window, QSize(300, 200));
+            c.map(window, base::Size(300, 200));
             appMapped.set_value();
             ASSERT_TRUE(c.waitFor([&] {
                 return finishedFuture.wait_for(std::chrono::milliseconds(0))
@@ -1666,10 +1666,10 @@ TEST_F(PrivateShellProtocolTest, ShellDisconnectClearsItsReservationsAndKeepsApp
                                                CUTEFISH_SHELL_SURFACE_V1_ROLE_PANEL);
             cutefish_shell_surface_v1_set_exclusive_zone(bar->shellSurface,
                                                          CUTEFISH_SHELL_SURFACE_V1_EDGE_TOP, 30);
-            c.map(bar, QSize(800, 30));
+            c.map(bar, base::Size(800, 30));
             c.sync();
             check([&] {
-                EXPECT_EQ(QRect(0, 30, 800, 570), windowManager.workAreaFor(nullptr));
+                EXPECT_EQ(base::Rect(0, 30, 800, 570), windowManager.workAreaFor(nullptr));
             });
             zone = bar->shellSurface;
         }
@@ -1750,8 +1750,8 @@ TEST_F(PrivateShellProtocolTest, PerSurfaceMenusReachShellBeforeMapAndOnReplacem
                 auto *secondMenu = org_kde_kwin_appmenu_manager_create(menus, second->surface);
                 org_kde_kwin_appmenu_set_address(firstMenu, ":1.123", "/first");
                 org_kde_kwin_appmenu_set_address(secondMenu, ":1.123", "/second");
-                c.map(first, QSize(180, 120));
-                c.map(second, QSize(180, 120));
+                c.map(first, base::Size(180, 120));
+                c.map(second, base::Size(180, 120));
                 ASSERT_TRUE(c.bindManagement());
                 ASSERT_EQ(c.liveTracked().size(), 2u);
                 TrackedWindow *a = nullptr;
@@ -1810,7 +1810,7 @@ TEST_F(PrivateShellProtocolTest, AppMenuVersionOneValidatesAndClearsAddresses)
         auto *menu = org_kde_kwin_appmenu_manager_create(manager, window->surface);
         org_kde_kwin_appmenu_manager_destroy(manager);
         org_kde_kwin_appmenu_set_address(menu, "org.test.App", "/");
-        c.map(window, QSize(180, 120));
+        c.map(window, base::Size(180, 120));
         ASSERT_TRUE(c.bindManagement());
         ASSERT_EQ(c.liveTracked().size(), 1u);
         auto *tracked = c.liveTracked().front();
@@ -1847,7 +1847,7 @@ TEST_F(PrivateShellProtocolTest, ActiveSurfaceCanBeDestroyedBeforeItsMenuResourc
         auto *window = c.makeToplevel("Menu", "org.test.App");
         auto *menu = org_kde_kwin_appmenu_manager_create(manager, window->surface);
         org_kde_kwin_appmenu_set_address(menu, ":1.42", "/menu");
-        c.map(window, QSize(180, 120));
+        c.map(window, base::Size(180, 120));
         ASSERT_TRUE(c.bindManagement());
         ASSERT_EQ(c.liveTracked().size(), 1u);
         auto *tracked = c.liveTracked().front();
@@ -1875,7 +1875,7 @@ TEST_F(PrivateShellProtocolTest, ManagedPopupsAreNotAnnouncedAsTasks)
         check([&] {
             wm::WindowInit init;
             init.type = wm::WindowType::Popup;
-            init.requestedSize = QSize(120, 90);
+            init.requestedSize = base::Size(120, 90);
             auto *popup = windowManager.createWindow(nullptr, init);
             EXPECT_FALSE(windowManager.activation()->canActivate(popup));
             windowManager.destroyWindow(popup);
@@ -1896,7 +1896,7 @@ TEST_F(PrivateShellProtocolTest, WindowHintsApplyBeforeMapAndUpdateWithoutChangi
                 &cutefish_window_hints_v1_interface, 1));
         auto *window = c.makeToplevel("Helper", "arbitrary-app-id");
         cutefish_window_hints_v1_set_skip_taskbar(hints, window->surface, 1);
-        c.map(window, QSize(300, 200));
+        c.map(window, base::Size(300, 200));
         ASSERT_EQ(c.liveTracked().size(), 1u);
         auto *tracked = c.liveTracked().front();
         EXPECT_TRUE(tracked->skipTaskbar);
@@ -1935,13 +1935,13 @@ TEST_F(PrivateShellProtocolTest, ShellApplicationWindowsStayOutOfManagementAndPr
     run([&](Client &c) {
         ASSERT_TRUE(c.bindManagement());
         auto *app = c.makeToplevel("App", "ordinary-app");
-        c.map(app, QSize(300, 200));
+        c.map(app, base::Size(300, 200));
         ASSERT_EQ(c.liveTracked().size(), 1u);
-        const quint64 appId = c.liveTracked().front()->id;
+        const uint64_t appId = c.liveTracked().front()->id;
         EXPECT_EQ(c.activeWindowId, appId);
 
         auto *helper = c.makeToplevel("Properties", "cutefish-shell");
-        c.map(helper, QSize(200, 100));
+        c.map(helper, base::Size(200, 100));
         ASSERT_EQ(c.liveTracked().size(), 1u);
         EXPECT_EQ(c.activeWindowId, appId);
         check([&] {
@@ -1973,17 +1973,17 @@ TEST_F(PrivateShellProtocolTest, ChangingTheShellAppIdClosesAndReannouncesTheTas
     run([&](Client &c) {
         ASSERT_TRUE(c.bindManagement());
         auto *app = c.makeToplevel("App", "ordinary-app");
-        c.map(app, QSize(300, 200));
-        const quint64 appId = c.liveTracked().front()->id;
+        c.map(app, base::Size(300, 200));
+        const uint64_t appId = c.liveTracked().front()->id;
         auto *helper = c.makeToplevel("Helper", "cutefish-shell");
-        c.map(helper, QSize(200, 100));
+        c.map(helper, base::Size(200, 100));
         ASSERT_EQ(c.liveTracked().size(), 1u);
 
         xdg_toplevel_set_app_id(helper->toplevel, "other-application");
         c.sync();
         ASSERT_EQ(c.liveTracked().size(), 2u);
         auto *task = c.tracked.back().get();
-        const quint64 helperId = task->id;
+        const uint64_t helperId = task->id;
         EXPECT_FALSE(task->skipTaskbar);
         EXPECT_EQ(c.activeWindowId, helperId);
         check([&] {
@@ -2013,7 +2013,7 @@ TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAWindowComesFromImageCapture)
             [](wl_client *, wl_resource *resource) {
                 wl_resource_destroy(resource);
             }};
-    std::atomic<quint64> exported = 0;
+    std::atomic<uint64_t> exported = 0;
     std::atomic<int> exports = 0;
     configureManagement = [&](wayland::WaylandCutefishWindowManagement &management) {
         management.setCaptureSourceExporter(
@@ -2032,7 +2032,7 @@ TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAWindowComesFromImageCapture)
         ASSERT_TRUE(c.bindShell());
         ASSERT_TRUE(c.bindManagement());
         XdgWindow *app = c.makeToplevel("Editor", "editor");
-        c.map(app, QSize(400, 300));
+        c.map(app, base::Size(400, 300));
         ASSERT_EQ(1u, c.liveTracked().size());
         TrackedWindow *task = c.liveTracked().front();
 
@@ -2064,7 +2064,7 @@ TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAShellSurfaceComesFromImageCapt
             [](wl_client *, wl_resource *resource) {
                 wl_resource_destroy(resource);
             }};
-    std::atomic<quint64> exported = 0;
+    std::atomic<uint64_t> exported = 0;
     std::atomic<int> exports = 0;
     configureManagement = [&](wayland::WaylandCutefishWindowManagement &management) {
         management.setCaptureSourceExporter(
@@ -2094,9 +2094,9 @@ TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAShellSurfaceComesFromImageCapt
         EXPECT_EQ(exported, 0u);
         ext_image_capture_source_v1_destroy(source);
 
-        c.map(dock, QSize(800, 60));
+        c.map(dock, base::Size(800, 60));
         ASSERT_TRUE(awaitRole(wm::WindowRole::Dock));
-        quint64 dockId = 0;
+        uint64_t dockId = 0;
         check([&] {
             dockId = windowWithRole(wm::WindowRole::Dock)->id();
         });
@@ -2117,7 +2117,7 @@ TEST_F(PrivateShellProtocolTest, WithoutImageCaptureAWindowSourceOnlyStops)
         ASSERT_TRUE(c.bindShell());
         ASSERT_TRUE(c.bindManagement());
         XdgWindow *app = c.makeToplevel("Editor", "editor");
-        c.map(app, QSize(400, 300));
+        c.map(app, base::Size(400, 300));
         ASSERT_EQ(1u, c.liveTracked().size());
 
         auto *source = cutefish_window_v1_create_capture_source(c.liveTracked().front()->object);
@@ -2134,7 +2134,7 @@ TEST_F(PrivateShellProtocolTest, AnUnresponsiveWindowAsksTheShellAndTakesASheet)
         ASSERT_TRUE(c.bindShell());
         ASSERT_TRUE(c.bindManagement());
         XdgWindow *app = c.makeToplevel("Editor", "editor");
-        c.map(app, QSize(400, 300));
+        c.map(app, base::Size(400, 300));
         ASSERT_EQ(1u, c.liveTracked().size());
         TrackedWindow *task = c.liveTracked().front();
         EXPECT_TRUE(task->responsive);
@@ -2159,7 +2159,7 @@ TEST_F(PrivateShellProtocolTest, AnUnresponsiveWindowAsksTheShellAndTakesASheet)
                                            CUTEFISH_SHELL_SURFACE_V1_ROLE_SHEET);
         cutefish_shell_surface_v1_set_parent(sheet->shellSurface, uint32_t(task->id >> 32),
                                              uint32_t(task->id));
-        c.map(sheet, QSize(200, 100));
+        c.map(sheet, base::Size(200, 100));
 
         check([&] {
             wm::Window *parent = windowManager.windowById(task->id);
@@ -2169,10 +2169,11 @@ TEST_F(PrivateShellProtocolTest, AnUnresponsiveWindowAsksTheShellAndTakesASheet)
             EXPECT_TRUE(sheetWindow->isModal());
             EXPECT_EQ(sheetWindow, windowManager.activation()->activeWindow());
             EXPECT_EQ(sheetWindow, windowManager.windows().back());
-            const QRect bounds = parent->bounds();
-            EXPECT_EQ(bounds.center(), sheetWindow->bounds().center());
+            const base::Rect bounds = parent->bounds();
+            EXPECT_EQ(wm::centerPixel(bounds), wm::centerPixel(sheetWindow->bounds()));
             parent->setBounds(bounds.translated(30, 40));
-            EXPECT_EQ(bounds.translated(30, 40).center(), sheetWindow->bounds().center());
+            EXPECT_EQ(wm::centerPixel(bounds.translated(30, 40)),
+                      wm::centerPixel(sheetWindow->bounds()));
         });
         // The sheet is not a task of its own, and the window it hangs from
         // stays the active application.

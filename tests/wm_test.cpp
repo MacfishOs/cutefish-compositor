@@ -11,12 +11,14 @@
 
 #include <algorithm>
 #include <optional>
-
-#include <QCoreApplication>
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
 
+#include "base/auto_reset.h"
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/sub_surface.h"
 #include "compositor/surface.h"
@@ -26,6 +28,7 @@
 #include "input/session_gate.h"
 #include "input/touch.h"
 #include "input/touch_delegate.h"
+#include "loop_test_util.h"
 #include "scene/node.h"
 #include "scene/scene.h"
 #include "scene/snap_preview_node.h"
@@ -59,14 +62,14 @@ input::Timestamp at(int ms)
     return input::Timestamp(std::chrono::milliseconds(ms));
 }
 
-constexpr QRect kOutput(0, 0, 1000, 800);
+const base::Rect kOutput(0, 0, 1000, 800);
 
 class WmTest : public testing::Test
 {
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     input::Seat seat {&compositor};
@@ -87,20 +90,20 @@ protected:
     void TearDown() override { seat.shutdown(); }
 
     // A mapped surface of `size`, owned by the fixture.
-    compositor::Surface *makeSurface(const QSize &size)
+    compositor::Surface *makeSurface(const base::Size &size)
     {
         surfaces.push_back(compositor.createSurface());
         compositor::Surface *surface = surfaces.back().get();
         auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(base::Point(), size));
         surface->commit();
         compositor.updateTextures(renderer);
         return surface;
     }
 
-    Window *makeWindow(const QRect &bounds)
+    Window *makeWindow(const base::Rect &bounds)
     {
         Window *window =
                 manager.createWindow(makeSurface(bounds.size()), {.requestedSize = bounds.size()});
@@ -108,8 +111,7 @@ protected:
         return window;
     }
 
-    Window *mapManagedWindow(const QSize &size,
-                             const QString &applicationId = QStringLiteral("app"))
+    Window *mapManagedWindow(const base::Size &size, const std::string &applicationId = "app")
     {
         return manager.createWindow(
                 makeSurface(size),
@@ -122,8 +124,8 @@ protected:
 
 TEST_F(WmTest, QuitClosesTheApplicationsWindowsAndTerminatesWhatStaysBehind)
 {
-    std::vector<QString> closed;
-    const auto make = [&](const QString &name, const QString &applicationId, qint64 process,
+    std::vector<std::string> closed;
+    const auto make = [&](const std::string &name, const std::string &applicationId, int64_t process,
                           Window *parent = nullptr) {
         return manager.createWindow(makeSurface({200, 100}),
                                     {.requestedSize = {200, 100},
@@ -135,15 +137,15 @@ TEST_F(WmTest, QuitClosesTheApplicationsWindowsAndTerminatesWhatStaysBehind)
                                          closed.push_back(name);
                                      }});
     };
-    Window *browser = make(QStringLiteral("browser"), QStringLiteral("browser"), 10);
-    Window *browser2 = make(QStringLiteral("browser 2"), QStringLiteral("Browser"), 11);
-    Window *prompt = make(QStringLiteral("prompt"), QStringLiteral("browser"), 10, browser);
+    Window *browser = make("browser", "browser", 10);
+    Window *browser2 = make("browser 2", "Browser", 11);
+    Window *prompt = make("prompt", "browser", 10, browser);
     // An installed web app runs in the browser's process but is its own
     // application.
-    make(QStringLiteral("web app"), QStringLiteral("web-app"), 10);
+    make("web app", "web-app", 10);
 
-    std::vector<qint64> terminated;
-    manager.setTerminateProcess([&terminated](qint64 pid) {
+    std::vector<int64_t> terminated;
+    manager.setTerminateProcess([&terminated](int64_t pid) {
         terminated.push_back(pid);
     });
     manager.setQuitGracePeriod(std::chrono::milliseconds(0));
@@ -151,10 +153,10 @@ TEST_F(WmTest, QuitClosesTheApplicationsWindowsAndTerminatesWhatStaysBehind)
     // From a dialog, the application is its parent's. Dialogs are left alone,
     // so a prompt is never answered for the user.
     manager.quitApplication(prompt);
-    EXPECT_EQ(std::vector<QString>({QStringLiteral("browser"), QStringLiteral("browser 2")}),
+    EXPECT_EQ(std::vector<std::string>({"browser", "browser 2"}),
               closed);
     // The windows are still up after the grace period: nothing is terminated.
-    QCoreApplication::processEvents();
+    test::processPendingEvents();
     EXPECT_TRUE(terminated.empty());
 
     // Once they are gone, a process with no window left is terminated; the one
@@ -163,25 +165,25 @@ TEST_F(WmTest, QuitClosesTheApplicationsWindowsAndTerminatesWhatStaysBehind)
         manager.destroyWindow(window);
     closed.clear();
     Window *web = manager.windows().back();
-    ASSERT_EQ(QStringLiteral("web-app"), web->applicationId());
-    Window *other = make(QStringLiteral("other"), QStringLiteral("browser"), 11);
+    ASSERT_EQ("web-app", web->applicationId());
+    Window *other = make("other", "browser", 11);
     manager.quitApplication(other);
     manager.destroyWindow(other);
-    QCoreApplication::processEvents();
-    EXPECT_EQ(std::vector<qint64>({11}), terminated);
+    test::processPendingEvents();
+    EXPECT_EQ(std::vector<int64_t>({11}), terminated);
 }
 
 class QuitAllTest : public WmTest
 {
 protected:
-    qint64 now = 0;
+    int64_t now = 0;
     QuitAll quitAll {&manager, [this] {
                          return now;
                      }};
-    std::vector<QString> closed;
+    std::vector<std::string> closed;
     std::optional<QuitAll::Result> result;
 
-    Window *make(const QString &applicationId, qint64 process, Window *parent = nullptr)
+    Window *make(const std::string &applicationId, int64_t process, Window *parent = nullptr)
     {
         return manager.createWindow(makeSurface({200, 100}),
                                     {.requestedSize = {200, 100},
@@ -202,19 +204,19 @@ protected:
 
     void settle()
     {
-        QCoreApplication::processEvents();
+        test::processPendingEvents();
         quitAll.update();
     }
 };
 
 TEST_F(QuitAllTest, EndsOnceTheLastApplicationWindowIsGone)
 {
-    Window *editor = make(QStringLiteral("kate"), 20);
-    Window *player = make(QStringLiteral("player"), 21);
+    Window *editor = make("kate", 20);
+    Window *player = make("player", 21);
     // Shell windows are not the user's to quit.
-    make(QStringLiteral("desktop"), 22)->setRole(WindowRole::Desktop);
+    make("desktop", 22)->setRole(WindowRole::Desktop);
     start();
-    EXPECT_EQ(std::vector<QString>({QStringLiteral("kate"), QStringLiteral("player")}), closed);
+    EXPECT_EQ(std::vector<std::string>({"kate", "player"}), closed);
     EXPECT_FALSE(quitAll.start({})) << "one request at a time";
 
     manager.destroyWindow(player);
@@ -229,9 +231,9 @@ TEST_F(QuitAllTest, EndsOnceTheLastApplicationWindowIsGone)
 
 TEST_F(QuitAllTest, APromptIsWaitedForHoweverLongItTakes)
 {
-    Window *editor = make(QStringLiteral("kate"), 20);
+    Window *editor = make("kate", 20);
     start();
-    Window *prompt = make(QStringLiteral("kate"), 20, editor);
+    Window *prompt = make("kate", 20, editor);
     now = 10 * 60 * 1000;
     settle();
     EXPECT_FALSE(result);
@@ -250,10 +252,10 @@ TEST_F(QuitAllTest, APromptIsWaitedForHoweverLongItTakes)
 
 TEST_F(QuitAllTest, AWindowKeptAfterItsPromptCancels)
 {
-    Window *editor = make(QStringLiteral("kate"), 20);
-    make(QStringLiteral("player"), 21);
+    Window *editor = make("kate", 20);
+    make("player", 21);
     start();
-    Window *prompt = make(QStringLiteral("kate"), 20, editor);
+    Window *prompt = make("kate", 20, editor);
     now = 1000;
     settle();
     manager.destroyWindow(prompt);
@@ -264,12 +266,12 @@ TEST_F(QuitAllTest, AWindowKeptAfterItsPromptCancels)
     settle();
     ASSERT_TRUE(result);
     EXPECT_EQ(QuitAll::Outcome::Cancelled, result->outcome);
-    EXPECT_EQ(QStringLiteral("kate"), result->applicationId);
+    EXPECT_EQ("kate", result->applicationId);
 }
 
 TEST_F(QuitAllTest, AWindowThatNeitherClosesNorAsksStoppedResponding)
 {
-    make(QStringLiteral("frozen"), 20);
+    make("frozen", 20);
     start();
     now = QuitAll::kUnresponsiveAfterMs;
     settle();
@@ -278,20 +280,20 @@ TEST_F(QuitAllTest, AWindowThatNeitherClosesNorAsksStoppedResponding)
     settle();
     ASSERT_TRUE(result);
     EXPECT_EQ(QuitAll::Outcome::Unresponsive, result->outcome);
-    EXPECT_EQ(QStringLiteral("frozen"), result->applicationId);
+    EXPECT_EQ("frozen", result->applicationId);
 }
 
 TEST_F(QuitAllTest, AWindowOpenedMeanwhileIsAskedOnce)
 {
-    Window *editor = make(QStringLiteral("kate"), 20);
+    Window *editor = make("kate", 20);
     start();
-    Window *second = make(QStringLiteral("kate"), 20);
-    Window *other = make(QStringLiteral("player"), 21);
+    Window *second = make("kate", 20);
+    Window *other = make("player", 21);
     settle();
     settle();
     // The second editor window counts as asked with the first: Quit closed both.
-    EXPECT_EQ(std::vector<QString>({QStringLiteral("kate"), QStringLiteral("kate"),
-                                    QStringLiteral("player")}),
+    EXPECT_EQ(std::vector<std::string>({"kate", "kate",
+                                    "player"}),
               closed);
     for (Window *window : {editor, second, other})
         manager.destroyWindow(window);
@@ -302,18 +304,18 @@ TEST_F(QuitAllTest, AWindowOpenedMeanwhileIsAskedOnce)
 
 TEST_F(WmTest, HideAndHideOthersActOnWholeApplications)
 {
-    const auto make = [this](qint64 process, const QString &applicationId) {
+    const auto make = [this](int64_t process, const std::string &applicationId) {
         return manager.createWindow(makeSurface({200, 100}),
                                     {.requestedSize = {200, 100},
                                      .applicationId = applicationId,
                                      .processId = process});
     };
-    Window *editor = make(10, QStringLiteral("editor"));
-    Window *editor2 = make(11, QStringLiteral("editor"));
+    Window *editor = make(10, "editor");
+    Window *editor2 = make(11, "editor");
     // Same process, another application id: another application.
-    Window *viewer = make(10, QStringLiteral("viewer"));
-    Window *tool = make(0, QStringLiteral("tool"));
-    Window *tool2 = make(0, QStringLiteral("Tool"));
+    Window *viewer = make(10, "viewer");
+    Window *tool = make(0, "tool");
+    Window *tool2 = make(0, "Tool");
 
     manager.hideOtherApplications(editor);
     EXPECT_FALSE(editor->isHidden());
@@ -346,7 +348,7 @@ TEST_F(WmTest, HideAndHideOthersActOnWholeApplications)
 
 TEST_F(WmTest, CloseAsksAResponsiveWindowAndKillsAnUnresponsiveOne)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     int closes = 0;
     int pings = 0;
     int kills = 0;
@@ -378,7 +380,7 @@ TEST_F(WmTest, CloseAsksAResponsiveWindowAndKillsAnUnresponsiveOne)
 
 TEST_F(WmTest, WaitingOnAnUnresponsiveWindowOffersForceQuit)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
     int closes = 0;
     int kills = 0;
     window->setCloseCallback([&] {
@@ -433,20 +435,20 @@ TEST_F(WmTest, ForceQuitEndsTheClientAndItsApplication)
     window->setKillCallback([&] {
         ++kills;
     });
-    std::vector<qint64> ended;
-    manager.setForceQuitProcess([&](qint64 pid) {
+    std::vector<int64_t> ended;
+    manager.setForceQuitProcess([&](int64_t pid) {
         ended.push_back(pid);
     });
 
     manager.forceQuit(window);
     EXPECT_EQ(1, kills);
-    EXPECT_EQ(std::vector<qint64>({4242}), ended);
+    EXPECT_EQ(std::vector<int64_t>({4242}), ended);
 }
 
 TEST_F(WmTest, ASheetHangsFromItsParentWhereverItGoes)
 {
-    Window *parent = makeWindow(QRect(100, 100, 400, 300));
-    Window *other = makeWindow(QRect(600, 100, 300, 200));
+    Window *parent = makeWindow(base::Rect(100, 100, 400, 300));
+    Window *other = makeWindow(base::Rect(600, 100, 300, 200));
     compositor::Surface *surface = makeSurface({200, 80});
     ShellWindowMetadata metadata;
     metadata.role = WindowRole::Sheet;
@@ -457,23 +459,23 @@ TEST_F(WmTest, ASheetHangsFromItsParentWhereverItGoes)
     // Centred on the parent, and modal for it.
     EXPECT_EQ(parent, sheet->transientParent());
     EXPECT_EQ(sheet, modalTransient(parent));
-    EXPECT_EQ(QRect(200, 210, 200, 80), sheet->bounds());
+    EXPECT_EQ(base::Rect(200, 210, 200, 80), sheet->bounds());
     EXPECT_EQ(StackingLayer::Normal, layerFor(sheet));
 
     // It follows what the parent shows: until the client draws its new size,
     // as a hung one never does, its old contents stay where they were.
-    parent->setBounds(QRect(300, 200, 500, 300));
-    EXPECT_EQ(QRect(400, 310, 200, 80), sheet->bounds());
+    parent->setBounds(base::Rect(300, 200, 500, 300));
+    EXPECT_EQ(base::Rect(400, 310, 200, 80), sheet->bounds());
     compositor::Surface *parentSurface = parent->rootSurface();
     parentSurface->attach(pool->createBuffer({500, 300}, 0, 500 * 4,
                                              render::PixelFormat::Bgrx8888, nullptr),
                           {});
-    parentSurface->damage(QRect(0, 0, 500, 300));
+    parentSurface->damage(base::Rect(0, 0, 500, 300));
     parentSurface->commit();
     compositor.updateTextures(renderer);
-    EXPECT_EQ(QRect(450, 310, 200, 80), sheet->bounds());
-    sheet->setBounds(QRect(sheet->bounds().topLeft(), QSize(300, 120)));
-    EXPECT_EQ(QRect(400, 290, 300, 120), sheet->bounds());
+    EXPECT_EQ(base::Rect(450, 310, 200, 80), sheet->bounds());
+    sheet->setBounds(base::Rect(sheet->bounds().topLeft(), base::Size(300, 120)));
+    EXPECT_EQ(base::Rect(400, 290, 300, 120), sheet->bounds());
 
     // Right above the parent whichever window is raised.
     manager.raise(other);
@@ -491,7 +493,7 @@ TEST_F(WmTest, ASheetHangsFromItsParentWhereverItGoes)
 
 TEST_F(WmTest, ASheetNeverHangsFromAShellWindow)
 {
-    Window *panel = makeWindow(QRect(0, 0, 800, 30));
+    Window *panel = makeWindow(base::Rect(0, 0, 800, 30));
     panel->setRole(WindowRole::Panel);
     compositor::Surface *surface = makeSurface({200, 80});
     ShellWindowMetadata metadata;
@@ -506,9 +508,9 @@ TEST_F(WmTest, ASheetNeverHangsFromAShellWindow)
 
 TEST_F(WmTest, ShellWindowsAreNeverPinged)
 {
-    Window *panel = makeWindow(QRect(0, 0, 800, 30));
+    Window *panel = makeWindow(base::Rect(0, 0, 800, 30));
     panel->setRole(WindowRole::Panel);
-    Window *shellApp = mapManagedWindow(QSize(300, 200), QStringLiteral("cutefish-shell"));
+    Window *shellApp = mapManagedWindow(base::Size(300, 200), "cutefish-shell");
     int pings = 0;
     for (Window *window : {panel, shellApp}) {
         window->setPingCallback([&] {
@@ -524,25 +526,25 @@ TEST_F(WmTest, ShellWindowsAreNeverPinged)
 
 TEST_F(WmTest, NormalToMaximizedUsesTheWorkArea)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
     window->maximize();
 
     EXPECT_EQ(WindowStateType::Maximized, window->stateType());
     EXPECT_EQ(kOutput, window->bounds());
     EXPECT_TRUE(window->state()->hasRestoreBounds());
-    EXPECT_EQ(QRect(100, 100, 300, 200), window->state()->restoreBounds());
+    EXPECT_EQ(base::Rect(100, 100, 300, 200), window->state()->restoreBounds());
 }
 
 TEST_F(WmTest, MinimizedGeometryFollowsDockMovementWithoutAnotherIconUpdate)
 {
     Window *window = makeWindow({100, 100, 300, 200});
     Window *dock = makeWindow({400, 700, 300, 80});
-    const QRect icon(30, 10, 48, 48);
+    const base::Rect icon(30, 10, 48, 48);
     window->setMinimizedGeometry(dock, icon);
     EXPECT_EQ(window->minimizedGeometry(), icon.translated(dock->contentBounds().topLeft()));
-    for (const QRect bounds :
-         {QRect(700, 1100, 300, 80), QRect(200, 500, 300, 80), QRect(-800, 600, 300, 80)}) {
+    for (const base::Rect bounds :
+         {base::Rect(700, 1100, 300, 80), base::Rect(200, 500, 300, 80), base::Rect(-800, 600, 300, 80)}) {
         dock->setBounds(bounds);
         EXPECT_EQ(window->minimizedGeometry(), icon.translated(dock->contentBounds().topLeft()));
         window->minimize();
@@ -552,25 +554,25 @@ TEST_F(WmTest, MinimizedGeometryFollowsDockMovementWithoutAnotherIconUpdate)
     manager.destroyWindow(dock);
     EXPECT_TRUE(window->minimizedGeometry().isEmpty());
     window->setMinimizedGeometry({20, 30, 40, 40});
-    EXPECT_EQ(window->minimizedGeometry(), QRect(20, 30, 40, 40));
+    EXPECT_EQ(window->minimizedGeometry(), base::Rect(20, 30, 40, 40));
 }
 
 TEST_F(WmTest, MaximizedRestoresToItsPreviousBounds)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
     window->maximize();
     window->restore();
 
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(100, 100, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(100, 100, 300, 200), window->bounds());
     // Nothing left to restore to, so the bounds are dropped with the history.
     EXPECT_FALSE(window->state()->hasRestoreBounds());
 }
 
 TEST_F(WmTest, NormalToFullscreenUsesTheOutput)
 {
-    Window *window = makeWindow(QRect(10, 20, 300, 200));
+    Window *window = makeWindow(base::Rect(10, 20, 300, 200));
 
     window->setFullscreen(true);
 
@@ -579,12 +581,12 @@ TEST_F(WmTest, NormalToFullscreenUsesTheOutput)
 
     window->setFullscreen(false);
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(10, 20, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(10, 20, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, MaximizeThenFullscreenRestoresBackThroughMaximized)
 {
-    Window *window = makeWindow(QRect(10, 20, 300, 200));
+    Window *window = makeWindow(base::Rect(10, 20, 300, 200));
 
     window->maximize();
     window->setFullscreen(true);
@@ -596,23 +598,23 @@ TEST_F(WmTest, MaximizeThenFullscreenRestoresBackThroughMaximized)
 
     window->restore();
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(10, 20, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(10, 20, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, FullscreenFromNormalRestoresStraightToNormal)
 {
-    Window *window = makeWindow(QRect(10, 20, 300, 200));
+    Window *window = makeWindow(base::Rect(10, 20, 300, 200));
 
     window->setFullscreen(true);
     window->restore();
 
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(10, 20, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(10, 20, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, MinimizeAndRestorePreserveGeometry)
 {
-    Window *window = makeWindow(QRect(40, 50, 300, 200));
+    Window *window = makeWindow(base::Rect(40, 50, 300, 200));
 
     window->minimize();
     EXPECT_EQ(WindowStateType::Minimized, window->stateType());
@@ -621,7 +623,7 @@ TEST_F(WmTest, MinimizeAndRestorePreserveGeometry)
     window->restore();
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
     EXPECT_TRUE(window->isVisible());
-    EXPECT_EQ(QRect(40, 50, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(40, 50, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, RestoreUsesLatestDockGeometryOrOutputFallback)
@@ -629,13 +631,13 @@ TEST_F(WmTest, RestoreUsesLatestDockGeometryOrOutputFallback)
     class SnapshotRenderer : public testsupport::FakeRenderer
     {
     public:
-        bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &,
+        bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &,
                              const std::function<void()> &paint) override
         {
             class Snapshot : public render::Texture
             {
             public:
-                QSize size() const override { return {1, 1}; }
+                base::Size size() const override { return {1, 1}; }
             };
 
             paint();
@@ -644,7 +646,7 @@ TEST_F(WmTest, RestoreUsesLatestDockGeometryOrOutputFallback)
         }
     } snapshotRenderer;
 
-    const QRect bounds(100, 100, 300, 200);
+    const base::Rect bounds(100, 100, 300, 200);
     Window *window = makeWindow(bounds);
     auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node());
     ASSERT_NE(animation, nullptr);
@@ -652,20 +654,20 @@ TEST_F(WmTest, RestoreUsesLatestDockGeometryOrOutputFallback)
     animation->render(snapshotRenderer);
     window->setMinimizedGeometry({200, 700, 48, 48});
 
-    for (const QRect dock : {QRect(600, 720, 40, 32), QRect()}) {
+    for (const base::Rect dock : {base::Rect(600, 720, 40, 32), base::Rect()}) {
         window->minimize();
         animation->finish();
         window->setMinimizedGeometry(dock);
         window->restore();
         animation->render(snapshotRenderer);
 
-        const QRect target =
-                dock.isEmpty() ? QRect(kOutput.center().x(), kOutput.bottom(), 1, 1) : dock;
+        const base::Rect target =
+                dock.isEmpty() ? base::Rect(centerPixel(kOutput).x(), kOutput.bottom() - 1, 1, 1) : dock;
         const double sx = double(target.width()) / bounds.width();
         const double sy = double(target.height()) / bounds.height();
-        const QRect expected = QRectF(target.x() - 64 * sx, target.y() - 64 * sy,
+        const base::Rect expected = base::RectF(target.x() - 64 * sx, target.y() - 64 * sy,
                                       (bounds.width() + 128) * sx, (bounds.height() + 128) * sy)
-                                       .toAlignedRect();
+                                       .toEnclosingRect();
         EXPECT_EQ(snapshotRenderer.calls.back().rect, expected);
         EXPECT_EQ(window->bounds(), bounds);
         animation->finish();
@@ -674,7 +676,7 @@ TEST_F(WmTest, RestoreUsesLatestDockGeometryOrOutputFallback)
 
 TEST_F(WmTest, MinimizingAMaximizedWindowRestoresBackToMaximized)
 {
-    Window *window = makeWindow(QRect(40, 50, 300, 200));
+    Window *window = makeWindow(base::Rect(40, 50, 300, 200));
 
     window->maximize();
     window->minimize();
@@ -685,19 +687,19 @@ TEST_F(WmTest, MinimizingAMaximizedWindowRestoresBackToMaximized)
 
     window->restore();
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(40, 50, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(40, 50, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, AMinimizedWindowIsNotRenderedAndIsNotHitTested)
 {
-    Window *window = makeWindow(QRect(0, 0, 300, 200));
-    ASSERT_EQ(window, manager.windowAt(QPointF(50, 50)));
+    Window *window = makeWindow(base::Rect(0, 0, 300, 200));
+    ASSERT_EQ(window, manager.windowAt(base::PointF(50, 50)));
     ASSERT_TRUE(window->node()->isEffectivelyVisible());
 
     window->minimize();
 
     EXPECT_FALSE(window->node()->isEffectivelyVisible());
-    EXPECT_EQ(nullptr, manager.windowAt(QPointF(50, 50)));
+    EXPECT_EQ(nullptr, manager.windowAt(base::PointF(50, 50)));
     // The surface and its buffer are untouched.
     EXPECT_TRUE(window->rootSurface()->isMapped());
     EXPECT_TRUE(window->rootSurface()->hasContents());
@@ -705,8 +707,8 @@ TEST_F(WmTest, AMinimizedWindowIsNotRenderedAndIsNotHitTested)
 
 TEST_F(WmTest, AHiddenWindowLeavesTheScreenAndKeepsItsState)
 {
-    Window *behind = makeWindow(QRect(0, 0, 300, 200));
-    Window *window = makeWindow(QRect(0, 0, 300, 200));
+    Window *behind = makeWindow(base::Rect(0, 0, 300, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 300, 200));
     window->maximize();
     window->activate();
     ASSERT_EQ(window, manager.activation()->activeWindow());
@@ -716,7 +718,7 @@ TEST_F(WmTest, AHiddenWindowLeavesTheScreenAndKeepsItsState)
     EXPECT_TRUE(window->isHidden());
     EXPECT_FALSE(window->isVisible());
     EXPECT_FALSE(window->node()->isEffectivelyVisible());
-    EXPECT_EQ(behind, manager.windowAt(QPointF(50, 50)));
+    EXPECT_EQ(behind, manager.windowAt(base::PointF(50, 50)));
     // The focus moves on, as it does for a closed window.
     EXPECT_EQ(behind, manager.activation()->activeWindow());
     EXPECT_EQ(WindowStateType::Maximized, window->stateType());
@@ -731,7 +733,7 @@ TEST_F(WmTest, AHiddenWindowLeavesTheScreenAndKeepsItsState)
 
 TEST_F(WmTest, AHiddenWindowStaysMinimizedUnderneath)
 {
-    Window *window = makeWindow(QRect(0, 0, 300, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 300, 200));
     window->minimize();
     window->setHidden(true);
     ASSERT_FALSE(window->isVisible());
@@ -753,10 +755,10 @@ TEST_F(WmTest, AHiddenWindowStaysMinimizedUnderneath)
 
 TEST_F(WmTest, AMinimizedWindowSurvivesACommit)
 {
-    Window *window = makeWindow(QRect(0, 0, 300, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 300, 200));
     window->minimize();
 
-    window->rootSurface()->damage(QRect(0, 0, 10, 10));
+    window->rootSurface()->damage(base::Rect(0, 0, 10, 10));
     window->rootSurface()->commit();
 
     EXPECT_FALSE(window->node()->isEffectivelyVisible());
@@ -787,35 +789,35 @@ TEST_F(WmTest, MinimizeAndFullscreenRoundTripsKeepWorkAreaSizedBounds)
 
 TEST_F(WmTest, SetBoundsIsHonouredOnlyInTheNormalState)
 {
-    Window *window = makeWindow(QRect(10, 10, 300, 200));
+    Window *window = makeWindow(base::Rect(10, 10, 300, 200));
 
-    window->requestBounds(QRect(50, 60, 400, 300));
-    EXPECT_EQ(QRect(50, 60, 400, 300), window->bounds());
+    window->requestBounds(base::Rect(50, 60, 400, 300));
+    EXPECT_EQ(base::Rect(50, 60, 400, 300), window->bounds());
 
     window->maximize();
-    window->requestBounds(QRect(0, 0, 100, 100));
+    window->requestBounds(base::Rect(0, 0, 100, 100));
     EXPECT_EQ(kOutput, window->bounds());
 }
 
 TEST_F(WmTest, AWorkAreaChangeReappliesTheCurrentState)
 {
-    Window *window = makeWindow(QRect(10, 10, 300, 200));
+    Window *window = makeWindow(base::Rect(10, 10, 300, 200));
     window->maximize();
 
-    manager.setOutputBounds(QRect(0, 0, 640, 480));
+    manager.setOutputBounds(base::Rect(0, 0, 640, 480));
 
-    EXPECT_EQ(QRect(0, 0, 640, 480), window->bounds());
+    EXPECT_EQ(base::Rect(0, 0, 640, 480), window->bounds());
 }
 
 TEST_F(WmTest, ANonResizableWindowDoesNotMaximize)
 {
-    Window *window = makeWindow(QRect(10, 10, 300, 200));
+    Window *window = makeWindow(base::Rect(10, 10, 300, 200));
     window->setResizable(false);
 
     window->maximize();
 
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(10, 10, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(10, 10, 300, 200), window->bounds());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -823,7 +825,7 @@ TEST_F(WmTest, ANonResizableWindowDoesNotMaximize)
 
 TEST_F(WmTest, TheFirstWindowActivatesOnRequestAndTakesKeyboardFocus)
 {
-    Window *window = makeWindow(QRect(0, 0, 200, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 200, 200));
     EXPECT_EQ(nullptr, manager.activation()->activeWindow());
 
     window->activate();
@@ -835,8 +837,8 @@ TEST_F(WmTest, TheFirstWindowActivatesOnRequestAndTakesKeyboardFocus)
 
 TEST_F(WmTest, ActivatingASecondWindowDeactivatesTheFirst)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(300, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(300, 0, 200, 200));
 
     first->activate();
     second->activate();
@@ -859,8 +861,8 @@ TEST_F(WmTest, ActivationChangesAreOrderedLossBeforeGain)
         }
     } recorder;
 
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(300, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(300, 0, 200, 200));
     manager.activation()->addObserver(&recorder);
 
     first->activate();
@@ -874,8 +876,8 @@ TEST_F(WmTest, ActivationChangesAreOrderedLossBeforeGain)
 
 TEST_F(WmTest, DestroyingTheActiveWindowActivatesTheNextOne)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(300, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(300, 0, 200, 200));
 
     first->activate();
     second->activate();
@@ -887,7 +889,7 @@ TEST_F(WmTest, DestroyingTheActiveWindowActivatesTheNextOne)
 
 TEST_F(WmTest, DestroyingTheOnlyWindowClearsActivationAndFocus)
 {
-    Window *window = makeWindow(QRect(0, 0, 200, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 200, 200));
     window->activate();
 
     manager.destroyWindow(window);
@@ -898,7 +900,7 @@ TEST_F(WmTest, DestroyingTheOnlyWindowClearsActivationAndFocus)
 
 TEST_F(WmTest, DestroyingTheRootSurfaceDestroysTheWindow)
 {
-    Window *window = makeWindow(QRect(0, 0, 200, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 200, 200));
     window->activate();
 
     surfaces.back().reset();
@@ -910,8 +912,8 @@ TEST_F(WmTest, DestroyingTheRootSurfaceDestroysTheWindow)
 
 TEST_F(WmTest, MinimizingTheActiveWindowMovesActivationOn)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(300, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(300, 0, 200, 200));
 
     first->activate();
     second->activate();
@@ -924,14 +926,14 @@ TEST_F(WmTest, MinimizingTheActiveWindowMovesActivationOn)
 
 TEST_F(WmTest, MinimizePassesOverTheDockAndLeavesItsSlotAfterwards)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(0, 0, 200, 200));
-    Window *front = makeWindow(QRect(0, 0, 200, 200));
-    Window *dock = makeWindow(QRect(0, 700, 1000, 100));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *front = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *dock = makeWindow(base::Rect(0, 700, 1000, 100));
     dock->setRole(WindowRole::Dock);
     dock->setFocusPolicy(FocusPolicy::NoFocus);
     // The dock's tooltip: it stays readable while a window lands under it.
-    Window *tip = manager.createWindow(makeSurface(QSize(100, 40)),
+    Window *tip = manager.createWindow(makeSurface(base::Size(100, 40)),
                                        {.type = WindowType::Popup, .transientParent = dock});
     second->activate();
     front->activate();
@@ -968,18 +970,18 @@ TEST_F(WmTest, MinimizePassesOverTheDockAndLeavesItsSlotAfterwards)
 
 TEST_F(WmTest, ASystemDialogStacksAboveApplicationsAndBelowTheDock)
 {
-    manager.setSystemDialogPolicy([](qint64 pid) {
+    manager.setSystemDialogPolicy([](int64_t pid) {
         return pid == 42;
     });
-    Window *app = makeWindow(QRect(0, 0, 400, 300));
-    Window *dock = makeWindow(QRect(0, 700, 1000, 100));
+    Window *app = makeWindow(base::Rect(0, 0, 400, 300));
+    Window *dock = makeWindow(base::Rect(0, 700, 1000, 100));
     dock->setRole(WindowRole::Dock);
     Window *prompt = manager.createWindow(
-            makeSurface(QSize(300, 200)),
+            makeSurface(base::Size(300, 200)),
             {.requestedSize = {300, 200}, .processId = 42, .transientParent = app, .modal = true});
-    Window *other = makeWindow(QRect(0, 0, 400, 300));
+    Window *other = makeWindow(base::Rect(0, 0, 400, 300));
     // Its menus follow it, and an application raised afterwards stays under it.
-    Window *menu = manager.createWindow(makeSurface(QSize(100, 40)),
+    Window *menu = manager.createWindow(makeSurface(base::Size(100, 40)),
                                         {.type = WindowType::Popup, .transientParent = prompt});
     other->activate();
     app->activate();
@@ -1001,11 +1003,11 @@ TEST_F(WmTest, ASystemDialogStacksAboveApplicationsAndBelowTheDock)
 
 TEST_F(WmTest, AWindowAskingToStayOnTopStacksAboveApplicationsAndBelowTheDock)
 {
-    Window *app = makeWindow(QRect(0, 0, 400, 300));
-    Window *dock = makeWindow(QRect(0, 700, 1000, 100));
+    Window *app = makeWindow(base::Rect(0, 0, 400, 300));
+    Window *dock = makeWindow(base::Rect(0, 700, 1000, 100));
     dock->setRole(WindowRole::Dock);
     // The hint arrives before the first commit, so before the window exists.
-    compositor::Surface *surface = makeSurface(QSize(300, 200));
+    compositor::Surface *surface = makeSurface(base::Size(300, 200));
     surface->setAlwaysOnTop(true);
     Window *dialog = manager.createWindow(surface, {.requestedSize = {300, 200}});
     auto index = [&](Window *window) {
@@ -1030,8 +1032,8 @@ TEST_F(WmTest, AWindowAskingToStayOnTopStacksAboveApplicationsAndBelowTheDock)
 
 TEST_F(WmTest, MinimizingBackgroundWindowKeepsTheActiveWindow)
 {
-    Window *back = makeWindow(QRect(0, 0, 200, 200));
-    Window *front = makeWindow(QRect(0, 0, 200, 200));
+    Window *back = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *front = makeWindow(base::Rect(0, 0, 200, 200));
     front->activate();
     back->minimize();
     manager.raise(front);
@@ -1041,7 +1043,7 @@ TEST_F(WmTest, MinimizingBackgroundWindowKeepsTheActiveWindow)
 
 TEST_F(WmTest, AMinimizedWindowCannotBeActivated)
 {
-    Window *window = makeWindow(QRect(0, 0, 200, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 200, 200));
     window->minimize();
 
     window->activate();
@@ -1052,8 +1054,8 @@ TEST_F(WmTest, AMinimizedWindowCannotBeActivated)
 
 TEST_F(WmTest, ActivatingAMinimizedTransientChildActivatesItsParent)
 {
-    Window *parent = makeWindow(QRect(0, 0, 200, 200));
-    Window *child = makeWindow(QRect(50, 50, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *child = makeWindow(base::Rect(50, 50, 100, 100));
     ASSERT_TRUE(child->setTransientParent(parent));
     child->minimize();
 
@@ -1064,36 +1066,36 @@ TEST_F(WmTest, ActivatingAMinimizedTransientChildActivatesItsParent)
 
 TEST_F(WmTest, OnlyAWindowMovingUnderOrAcrossAStillPointerRetargetsIt)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
-    input.onPointerMotionAbsolute(at(1), QPointF(150, 150));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
+    input.onPointerMotionAbsolute(at(1), base::PointF(150, 150));
     int changes = 0;
-    QObject::connect(&manager, &WindowManager::pointerTargetsChanged, [&changes] {
+    const base::Subscription counting = manager.pointerTargetsChanged.connect([&changes] {
         ++changes;
     });
 
     // A resize in place leaves the pointer where it was in the window.
-    window->setBounds(QRect(100, 100, 400, 300));
+    window->setBounds(base::Rect(100, 100, 400, 300));
     EXPECT_EQ(0, changes);
 
-    window->setBounds(QRect(120, 100, 400, 300));
+    window->setBounds(base::Rect(120, 100, 400, 300));
     EXPECT_LT(0, changes);
 
     changes = 0;
-    window->setBounds(QRect(500, 400, 400, 300));
+    window->setBounds(base::Rect(500, 400, 400, 300));
     EXPECT_LT(0, changes);
 
     // Nothing under the pointer changes.
     changes = 0;
-    window->setBounds(QRect(520, 400, 400, 300));
+    window->setBounds(base::Rect(520, 400, 400, 300));
     EXPECT_EQ(0, changes);
 }
 
 TEST_F(WmTest, ClickingAWindowActivatesItAndFocusesItsSurface)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(300, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(300, 0, 200, 200));
 
-    input.onPointerMotionAbsolute(at(1), QPointF(50, 50));
+    input.onPointerMotionAbsolute(at(1), base::PointF(50, 50));
     EXPECT_EQ(nullptr, manager.activation()->activeWindow());
 
     input.onPointerButton(at(2), BTN_LEFT, true);
@@ -1101,14 +1103,14 @@ TEST_F(WmTest, ClickingAWindowActivatesItAndFocusesItsSurface)
     EXPECT_EQ(first->rootSurface(), seat.focusedSurface());
 
     input.onPointerButton(at(3), BTN_LEFT, false);
-    input.onPointerMotionAbsolute(at(4), QPointF(350, 50));
+    input.onPointerMotionAbsolute(at(4), base::PointF(350, 50));
     input.onPointerButton(at(5), BTN_LEFT, true);
     EXPECT_EQ(second, manager.activation()->activeWindow());
     EXPECT_EQ(second->rootSurface(), seat.focusedSurface());
 
     // Clicking the background clears activation.
     input.onPointerButton(at(6), BTN_LEFT, false);
-    input.onPointerMotionAbsolute(at(7), QPointF(800, 700));
+    input.onPointerMotionAbsolute(at(7), base::PointF(800, 700));
     input.onPointerButton(at(8), BTN_LEFT, true);
     EXPECT_EQ(nullptr, manager.activation()->activeWindow());
     EXPECT_EQ(nullptr, seat.focusedSurface());
@@ -1117,27 +1119,27 @@ TEST_F(WmTest, ClickingAWindowActivatesItAndFocusesItsSurface)
 TEST_F(WmTest, PickingACandidateLeavesTheWindowTypedIntoActive)
 {
     scene::Node *inputMethod =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("input-method")));
+            scene.root()->addChild(std::make_unique<scene::Node>("input-method"));
     compositor.setInputMethodContainer(inputMethod);
-    Window *window = makeWindow(QRect(0, 0, 300, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 300, 200));
     window->activate();
-    compositor::Surface *candidates = makeSurface(QSize(100, 50));
+    compositor::Surface *candidates = makeSurface(base::Size(100, 50));
     candidates->reparentNode(inputMethod);
-    candidates->setPosition(QPoint(20, 20));
+    candidates->setPosition(base::Point(20, 20));
 
     compositor::Surface *hit = nullptr;
-    manager.windowAt(QPointF(30, 30), &hit);
+    manager.windowAt(base::PointF(30, 30), &hit);
     EXPECT_EQ(candidates, hit);
 
-    input.onPointerMotionAbsolute(at(1), QPointF(30, 30));
+    input.onPointerMotionAbsolute(at(1), base::PointF(30, 30));
     input.onPointerButton(at(2), BTN_LEFT, true);
     input.onPointerButton(at(3), BTN_LEFT, false);
     EXPECT_EQ(window, manager.activation()->activeWindow());
     EXPECT_EQ(window->rootSurface(), seat.focusedSurface());
 
     // Beside the popup the window is pressed as before.
-    input.onPointerMotionAbsolute(at(4), QPointF(200, 150));
-    manager.windowAt(QPointF(200, 150), &hit);
+    input.onPointerMotionAbsolute(at(4), base::PointF(200, 150));
+    manager.windowAt(base::PointF(200, 150), &hit);
     EXPECT_EQ(window->rootSurface(), hit);
 }
 
@@ -1148,12 +1150,13 @@ struct TouchRecorder : input::TouchDelegate {
     std::vector<int32_t> downs;
     void onTouchDestroying(input::Touch *) override { }
     bool canAcceptTouchEventsForSurface(compositor::Surface *) const override { return true; }
-    void onTouchDown(compositor::Surface *, input::Timestamp, int32_t id, const QPointF &) override
+    void onTouchDown(compositor::Surface *, input::Timestamp, int32_t id,
+                     const base::PointF &) override
     {
         downs.push_back(id);
     }
     void onTouchUp(input::Timestamp, int32_t) override { }
-    void onTouchMotion(input::Timestamp, int32_t, const QPointF &) override { }
+    void onTouchMotion(input::Timestamp, int32_t, const base::PointF &) override { }
     void onTouchFrame() override { }
     void onTouchCancel() override { }
 };
@@ -1164,12 +1167,12 @@ struct TouchRecorder : input::TouchDelegate {
 // for a click, and the point itself goes on to the client.
 TEST_F(WmTest, TouchingAWindowActivatesItAndTheClientGetsThePoint)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(300, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(300, 0, 200, 200));
     TouchRecorder recorder;
     input::Touch touch(&recorder, &seat);
-    const auto normalized = [this](QPointF point) {
-        return QPointF(point.x() / kOutput.width(), point.y() / kOutput.height());
+    const auto normalized = [this](base::PointF point) {
+        return base::PointF(point.x() / kOutput.width(), point.y() / kOutput.height());
     };
 
     input.onTouchDown(at(1), 1, normalized({50, 50}));
@@ -1187,17 +1190,17 @@ TEST_F(WmTest, TouchingAWindowActivatesItAndTheClientGetsThePoint)
 
 TEST_F(WmTest, ClickingASubsurfaceActivatesTheOwningRootWindow)
 {
-    Window *window = makeWindow(QRect(0, 0, 200, 200));
-    compositor::Surface *child = makeSurface(QSize(60, 60));
+    Window *window = makeWindow(base::Rect(0, 0, 200, 200));
+    compositor::Surface *child = makeSurface(base::Size(60, 60));
     auto sub = compositor::SubSurface::create(child, window->rootSurface());
-    sub->setPosition(QPoint(10, 10));
+    sub->setPosition(base::Point(10, 10));
     window->rootSurface()->commit();
 
     compositor::Surface *hit = nullptr;
-    ASSERT_EQ(window, manager.windowAt(QPointF(20, 20), &hit));
+    ASSERT_EQ(window, manager.windowAt(base::PointF(20, 20), &hit));
     ASSERT_EQ(child, hit);
 
-    input.onPointerMotionAbsolute(at(1), QPointF(20, 20));
+    input.onPointerMotionAbsolute(at(1), base::PointF(20, 20));
     input.onPointerButton(at(2), BTN_LEFT, true);
 
     EXPECT_EQ(window, manager.activation()->activeWindow());
@@ -1210,17 +1213,17 @@ TEST_F(WmTest, ClickingASubsurfaceActivatesTheOwningRootWindow)
 
 TEST_F(WmTest, TheFirstWindowIsCenteredInTheWorkArea)
 {
-    Window *window = manager.createWindow(makeSurface(QSize(300, 200)));
-    EXPECT_EQ(QRect(350, 300, 300, 200), window->bounds());
+    Window *window = manager.createWindow(makeSurface(base::Size(300, 200)));
+    EXPECT_EQ(base::Rect(350, 300, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, SuccessiveWindowsAreCentered)
 {
-    Window *first = manager.createWindow(makeSurface(QSize(300, 200)));
-    Window *second = manager.createWindow(makeSurface(QSize(300, 200)));
-    Window *third = manager.createWindow(makeSurface(QSize(300, 200)));
+    Window *first = manager.createWindow(makeSurface(base::Size(300, 200)));
+    Window *second = manager.createWindow(makeSurface(base::Size(300, 200)));
+    Window *third = manager.createWindow(makeSurface(base::Size(300, 200)));
 
-    EXPECT_EQ(QRect(350, 300, 300, 200), first->bounds());
+    EXPECT_EQ(base::Rect(350, 300, 300, 200), first->bounds());
     EXPECT_EQ(first->bounds(), second->bounds());
     EXPECT_EQ(first->bounds(), third->bounds());
 }
@@ -1228,41 +1231,41 @@ TEST_F(WmTest, SuccessiveWindowsAreCentered)
 TEST(PlacementTest, CentersInAnOffsetWorkAreaAndClampsEachDimension)
 {
     Placement placement;
-    const QRect workArea(-1000, 30, 1000, 721);
-    EXPECT_EQ(QRect(-650, 290, 300, 200), placement.place(QSize(300, 200), workArea));
-    EXPECT_EQ(QRect(-1000, 290, 1000, 200), placement.place(QSize(1200, 200), workArea));
-    EXPECT_EQ(QRect(-650, 30, 300, 721), placement.place(QSize(300, 900), workArea));
+    const base::Rect workArea(-1000, 30, 1000, 721);
+    EXPECT_EQ(base::Rect(-650, 290, 300, 200), placement.place(base::Size(300, 200), workArea));
+    EXPECT_EQ(base::Rect(-1000, 290, 1000, 200), placement.place(base::Size(1200, 200), workArea));
+    EXPECT_EQ(base::Rect(-650, 30, 300, 721), placement.place(base::Size(300, 900), workArea));
 }
 
 TEST_F(WmTest, AnOversizedWindowIsClampedToTheWorkArea)
 {
     Window *window =
-            manager.createWindow(makeSurface(QSize(64, 64)), {.requestedSize = QSize(2000, 1600)});
+            manager.createWindow(makeSurface(base::Size(64, 64)), {.requestedSize = base::Size(2000, 1600)});
 
     EXPECT_EQ(kOutput, window->bounds());
 }
 
 TEST_F(WmTest, MovingAWindowOffScreenLeavesAGraspableStrip)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
-    window->requestBounds(QRect(1500, 100, 300, 200));
+    window->requestBounds(base::Rect(1500, 100, 300, 200));
     EXPECT_LT(window->bounds().x(), kOutput.width());
     EXPECT_GT(window->bounds().x() + window->bounds().width(), 0);
 
     // Never above the work area: the titlebar must stay reachable.
-    window->requestBounds(QRect(100, -400, 300, 200));
+    window->requestBounds(base::Rect(100, -400, 300, 200));
     EXPECT_EQ(0, window->bounds().y());
 }
 
 TEST_F(WmTest, MovingAWindowUnderTheDockKeepsItsStripAboveTheDock)
 {
     manager.setExclusiveZone(this, ScreenEdge::Bottom, 80);
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
     // The body may slide under the dock, but a strip stays above it: a
     // window whose only visible part is behind the dock cannot be grabbed.
-    window->requestBounds(QRect(100, 790, 300, 200));
+    window->requestBounds(base::Rect(100, 790, 300, 200));
     EXPECT_EQ(kOutput.height() - 80 - kMinimumOnScreenArea, window->bounds().y());
     EXPECT_GT(window->bounds().y() + window->bounds().height(), kOutput.height() - 80);
 
@@ -1274,9 +1277,9 @@ TEST_F(WmTest, MovingAWindowUnderTheDockKeepsItsStripAboveTheDock)
 
 TEST_F(WmTest, SettingAndChangingATransientParent)
 {
-    Window *a = makeWindow(QRect(0, 0, 100, 100));
-    Window *b = makeWindow(QRect(0, 0, 100, 100));
-    Window *child = makeWindow(QRect(0, 0, 100, 100));
+    Window *a = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *b = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *child = makeWindow(base::Rect(0, 0, 100, 100));
 
     ASSERT_TRUE(child->setTransientParent(a));
     EXPECT_EQ(a, child->transientParent());
@@ -1294,9 +1297,9 @@ TEST_F(WmTest, SettingAndChangingATransientParent)
 
 TEST_F(WmTest, ATransientParentCannotFormACycle)
 {
-    Window *a = makeWindow(QRect(0, 0, 100, 100));
-    Window *b = makeWindow(QRect(0, 0, 100, 100));
-    Window *c = makeWindow(QRect(0, 0, 100, 100));
+    Window *a = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *b = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *c = makeWindow(base::Rect(0, 0, 100, 100));
 
     ASSERT_TRUE(b->setTransientParent(a));
     ASSERT_TRUE(c->setTransientParent(b));
@@ -1308,8 +1311,8 @@ TEST_F(WmTest, ATransientParentCannotFormACycle)
 
 TEST_F(WmTest, DestroyingATransientParentOrphansItsChildren)
 {
-    Window *parent = makeWindow(QRect(0, 0, 100, 100));
-    Window *child = makeWindow(QRect(0, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *child = makeWindow(base::Rect(0, 0, 100, 100));
     ASSERT_TRUE(child->setTransientParent(parent));
 
     manager.destroyWindow(parent);
@@ -1320,8 +1323,8 @@ TEST_F(WmTest, DestroyingATransientParentOrphansItsChildren)
 
 TEST_F(WmTest, DestroyingATransientChildDetachesItFromTheParent)
 {
-    Window *parent = makeWindow(QRect(0, 0, 100, 100));
-    Window *child = makeWindow(QRect(0, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *child = makeWindow(base::Rect(0, 0, 100, 100));
     ASSERT_TRUE(child->setTransientParent(parent));
 
     manager.destroyWindow(child);
@@ -1334,29 +1337,29 @@ TEST_F(WmTest, DestroyingATransientChildDetachesItFromTheParent)
 
 TEST_F(WmTest, AMoveFollowsThePointerDelta)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 120)));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(150, 120)));
     EXPECT_TRUE(manager.eventHandler()->isDragging());
     EXPECT_FALSE(window->isResizing()); // A move is not a resize.
 
-    manager.eventHandler()->onPointerMotion(QPointF(200, 170));
-    EXPECT_EQ(QRect(150, 150, 300, 200), window->bounds());
+    manager.eventHandler()->onPointerMotion(base::PointF(200, 170));
+    EXPECT_EQ(base::Rect(150, 150, 300, 200), window->bounds());
 
     manager.eventHandler()->onPointerButtonReleased();
     EXPECT_FALSE(manager.eventHandler()->isDragging());
-    EXPECT_EQ(QRect(150, 150, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(150, 150, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, AMoveIsDrivenThroughTheInputManagerAndConsumesEvents)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
-    input.onPointerMotionAbsolute(at(1), QPointF(150, 120));
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 120)));
+    input.onPointerMotionAbsolute(at(1), base::PointF(150, 120));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(150, 120)));
 
-    input.onPointerMotionAbsolute(at(2), QPointF(250, 220));
-    EXPECT_EQ(QRect(200, 200, 300, 200), window->bounds());
+    input.onPointerMotionAbsolute(at(2), base::PointF(250, 220));
+    EXPECT_EQ(base::Rect(200, 200, 300, 200), window->bounds());
 
     input.onPointerButton(at(3), BTN_LEFT, false);
     EXPECT_FALSE(manager.eventHandler()->isDragging());
@@ -1364,55 +1367,55 @@ TEST_F(WmTest, AMoveIsDrivenThroughTheInputManagerAndConsumesEvents)
 
 TEST_F(WmTest, EscapeRevertsAMove)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 120)));
-    input.onPointerMotionAbsolute(at(1), QPointF(400, 400));
-    ASSERT_NE(QRect(100, 100, 300, 200), window->bounds());
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(150, 120)));
+    input.onPointerMotionAbsolute(at(1), base::PointF(400, 400));
+    ASSERT_NE(base::Rect(100, 100, 300, 200), window->bounds());
 
     input.onKey(at(2), KEY_ESC, true);
 
     EXPECT_FALSE(manager.eventHandler()->isDragging());
-    EXPECT_EQ(QRect(100, 100, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(100, 100, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, ASecondDragIsRefusedWhileOneIsRunning)
 {
-    Window *first = makeWindow(QRect(100, 100, 300, 200));
-    Window *second = makeWindow(QRect(500, 100, 300, 200));
+    Window *first = makeWindow(base::Rect(100, 100, 300, 200));
+    Window *second = makeWindow(base::Rect(500, 100, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(first, QPointF(150, 120)));
-    EXPECT_FALSE(manager.eventHandler()->beginMove(second, QPointF(550, 120)));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(first, base::PointF(150, 120)));
+    EXPECT_FALSE(manager.eventHandler()->beginMove(second, base::PointF(550, 120)));
     EXPECT_EQ(first, manager.eventHandler()->draggedWindow());
 }
 
 TEST_F(WmTest, AMaximizedWindowMovesButDoesNotResize)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
     window->maximize();
-    EXPECT_FALSE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, QPointF(999, 400)));
-    EXPECT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 20)));
+    EXPECT_FALSE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, base::PointF(999, 400)));
+    EXPECT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(150, 20)));
     manager.eventHandler()->completeDrag(ToplevelEventHandler::DragResult::Revert);
 }
 
 TEST_F(WmTest, MinimizedAndFullscreenWindowsRefuseInteractiveDrags)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
 
     window->setFullscreen(true);
-    EXPECT_FALSE(manager.eventHandler()->beginMove(window, QPointF(150, 120)));
-    EXPECT_FALSE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, QPointF(400, 200)));
+    EXPECT_FALSE(manager.eventHandler()->beginMove(window, base::PointF(150, 120)));
+    EXPECT_FALSE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, base::PointF(400, 200)));
 
     window->setFullscreen(false);
     window->minimize();
-    EXPECT_FALSE(manager.eventHandler()->beginMove(window, QPointF(150, 120)));
+    EXPECT_FALSE(manager.eventHandler()->beginMove(window, base::PointF(150, 120)));
 }
 
 TEST_F(WmTest, DestroyingTheDraggedWindowEndsTheDrag)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 120)));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(150, 120)));
 
     manager.destroyWindow(window);
 
@@ -1422,15 +1425,15 @@ TEST_F(WmTest, DestroyingTheDraggedWindowEndsTheDrag)
 
 TEST_F(WmTest, MovingUpdatesTheSceneNodePosition)
 {
-    Window *window = makeWindow(QRect(100, 100, 300, 200));
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 120)));
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(150, 120)));
 
-    manager.eventHandler()->onPointerMotion(QPointF(200, 170));
+    manager.eventHandler()->onPointerMotion(base::PointF(200, 170));
 
-    EXPECT_EQ(QPoint(150, 150), window->node()->position());
+    EXPECT_EQ(base::Point(150, 150), window->node()->position());
     // The node keeps the committed buffer's size; resizing the client is
     // xdg_toplevel's job, not the window manager's.
-    EXPECT_EQ(QSize(300, 200), window->node()->geometry().size());
+    EXPECT_EQ(base::Size(300, 200), window->node()->geometry().size());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1440,62 +1443,62 @@ TEST_F(WmTest, TheEdgeTolerancesFollowTheWorkArea)
 {
     // Every edge of the work area is an edge of the output, so all three
     // tolerances apply.
-    EXPECT_EQ(QRect(32, 8, 936, 792), nonSnapArea(kOutput, kOutput));
+    EXPECT_EQ(base::Rect(32, 8, 936, 792), nonSnapArea(kOutput, kOutput));
 
     // Behind a dock the tolerance goes away: the pointer has to cross the dock
     // to reach the edge.
-    const QRect withLeftDock(60, 0, 940, 800);
-    EXPECT_EQ(QRect(60, 8, 908, 792), nonSnapArea(withLeftDock, kOutput));
+    const base::Rect withLeftDock(60, 0, 940, 800);
+    EXPECT_EQ(base::Rect(60, 8, 908, 792), nonSnapArea(withLeftDock, kOutput));
 
-    EXPECT_EQ(SnapType::Primary, snapTypeAt(QPointF(20, 400), kOutput, kOutput));
-    EXPECT_EQ(SnapType::Secondary, snapTypeAt(QPointF(980, 400), kOutput, kOutput));
-    EXPECT_EQ(SnapType::Maximize, snapTypeAt(QPointF(500, 4), kOutput, kOutput));
-    EXPECT_EQ(SnapType::None, snapTypeAt(QPointF(500, 400), kOutput, kOutput));
+    EXPECT_EQ(SnapType::Primary, snapTypeAt(base::PointF(20, 400), kOutput, kOutput));
+    EXPECT_EQ(SnapType::Secondary, snapTypeAt(base::PointF(980, 400), kOutput, kOutput));
+    EXPECT_EQ(SnapType::Maximize, snapTypeAt(base::PointF(500, 4), kOutput, kOutput));
+    EXPECT_EQ(SnapType::None, snapTypeAt(base::PointF(500, 400), kOutput, kOutput));
     // A corner belongs to the side, as it does in Ash.
-    EXPECT_EQ(SnapType::Primary, snapTypeAt(QPointF(4, 2), kOutput, kOutput));
+    EXPECT_EQ(SnapType::Primary, snapTypeAt(base::PointF(4, 2), kOutput, kOutput));
 }
 
 TEST_F(WmTest, DraggingToTheLeftEdgeSnapsTheWindowToThatHalf)
 {
-    Window *window = makeWindow(QRect(300, 300, 300, 200));
+    Window *window = makeWindow(base::Rect(300, 300, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(350, 320)));
-    manager.eventHandler()->onPointerMotion(QPointF(20, 400));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(350, 320)));
+    manager.eventHandler()->onPointerMotion(base::PointF(20, 400));
     EXPECT_EQ(SnapType::Primary, manager.eventHandler()->snapController()->snapType());
 
     manager.eventHandler()->onPointerButtonReleased();
 
     EXPECT_EQ(WindowStateType::PrimarySnapped, window->stateType());
-    EXPECT_EQ(QRect(0, 0, 500, 800), window->bounds());
+    EXPECT_EQ(base::Rect(0, 0, 500, 800), window->bounds());
 
     window->restore();
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QSize(300, 200), window->bounds().size());
+    EXPECT_EQ(base::Size(300, 200), window->bounds().size());
 }
 
 TEST_F(WmTest, DraggingToTheRightEdgeSnapsTheWindowToTheOtherHalf)
 {
-    Window *window = makeWindow(QRect(300, 300, 300, 200));
+    Window *window = makeWindow(base::Rect(300, 300, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(350, 320)));
-    manager.eventHandler()->onPointerMotion(QPointF(990, 400));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(350, 320)));
+    manager.eventHandler()->onPointerMotion(base::PointF(990, 400));
     manager.eventHandler()->onPointerButtonReleased();
 
     EXPECT_EQ(WindowStateType::SecondarySnapped, window->stateType());
-    EXPECT_EQ(QRect(500, 0, 500, 800), window->bounds());
+    EXPECT_EQ(base::Rect(500, 0, 500, 800), window->bounds());
 }
 
 TEST_F(WmTest, TheSnapPreviewGrowsOutOfItsCentreAndFadesIn)
 {
-    const QRectF target(8, 8, 484, 784);
+    const base::RectF target(8, 8, 484, 784);
 
-    const QRectF start = scene::SnapPreviewNode::entranceBounds(target, 0);
+    const base::RectF start = scene::SnapPreviewNode::entranceBounds(target, 0);
     EXPECT_EQ(target.center(), start.center());
     EXPECT_DOUBLE_EQ(target.width() * 0.75, start.width());
     EXPECT_DOUBLE_EQ(target.height() * 0.75, start.height());
     EXPECT_EQ(0.f, scene::SnapPreviewNode::entranceOpacity(0));
 
-    const QRectF middle = scene::SnapPreviewNode::entranceBounds(target, 75);
+    const base::RectF middle = scene::SnapPreviewNode::entranceBounds(target, 75);
     EXPECT_GT(middle.width(), start.width());
     EXPECT_LT(middle.width(), target.width());
     EXPECT_EQ(1.f, scene::SnapPreviewNode::entranceOpacity(75));
@@ -1505,11 +1508,11 @@ TEST_F(WmTest, TheSnapPreviewGrowsOutOfItsCentreAndFadesIn)
 
 TEST_F(WmTest, AWindowTooWideForHalfTheWorkAreaIgnoresTheSideEdges)
 {
-    Window *window = makeWindow(QRect(300, 300, 300, 200));
-    window->setMinimumSize(QSize(800, 100));
+    Window *window = makeWindow(base::Rect(300, 300, 300, 200));
+    window->setMinimumSize(base::Size(800, 100));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(350, 320)));
-    manager.eventHandler()->onPointerMotion(QPointF(20, 400));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(350, 320)));
+    manager.eventHandler()->onPointerMotion(base::PointF(20, 400));
 
     EXPECT_EQ(SnapType::None, manager.eventHandler()->snapController()->snapType());
     manager.eventHandler()->onPointerButtonReleased();
@@ -1518,10 +1521,10 @@ TEST_F(WmTest, AWindowTooWideForHalfTheWorkAreaIgnoresTheSideEdges)
 
 TEST_F(WmTest, TheTopEdgeMaximizesOnlyAfterTheDwellRunsOut)
 {
-    Window *window = makeWindow(QRect(300, 300, 300, 200));
+    Window *window = makeWindow(base::Rect(300, 300, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(350, 320)));
-    manager.eventHandler()->onPointerMotion(QPointF(350, 4));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(350, 320)));
+    manager.eventHandler()->onPointerMotion(base::PointF(350, 4));
     // The countdown is running, but nothing has been decided yet.
     EXPECT_EQ(SnapType::None, manager.eventHandler()->snapController()->snapType());
 
@@ -1537,10 +1540,10 @@ TEST_F(WmTest, AWindowJustBelowTheTopMaximizesWithoutAFullDragDown)
 {
     // Grabbed a few pixels under the top edge: far less than Ash's 64px of
     // vertical travel, which is what made the top so hard to hit.
-    Window *window = makeWindow(QRect(300, 10, 300, 200));
+    Window *window = makeWindow(base::Rect(300, 10, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(350, 20)));
-    manager.eventHandler()->onPointerMotion(QPointF(360, 2));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(350, 20)));
+    manager.eventHandler()->onPointerMotion(base::PointF(360, 2));
     manager.eventHandler()->snapController()->triggerDwellForTesting();
 
     EXPECT_EQ(SnapType::Maximize, manager.eventHandler()->snapController()->snapType());
@@ -1550,15 +1553,15 @@ TEST_F(WmTest, AWindowJustBelowTheTopMaximizesWithoutAFullDragDown)
 
 TEST_F(WmTest, DraggingAlongTheTopEdgeDoesNotMaximizeUntilThePointerLeavesIt)
 {
-    Window *window = makeWindow(QRect(300, 0, 300, 200));
+    Window *window = makeWindow(base::Rect(300, 0, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(350, 4)));
-    manager.eventHandler()->onPointerMotion(QPointF(600, 4));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(350, 4)));
+    manager.eventHandler()->onPointerMotion(base::PointF(600, 4));
     manager.eventHandler()->snapController()->triggerDwellForTesting();
     EXPECT_EQ(SnapType::None, manager.eventHandler()->snapController()->snapType());
 
-    manager.eventHandler()->onPointerMotion(QPointF(600, 40));
-    manager.eventHandler()->onPointerMotion(QPointF(600, 4));
+    manager.eventHandler()->onPointerMotion(base::PointF(600, 40));
+    manager.eventHandler()->onPointerMotion(base::PointF(600, 4));
     manager.eventHandler()->snapController()->triggerDwellForTesting();
     EXPECT_EQ(SnapType::Maximize, manager.eventHandler()->snapController()->snapType());
     manager.eventHandler()->onPointerButtonReleased();
@@ -1566,18 +1569,18 @@ TEST_F(WmTest, DraggingAlongTheTopEdgeDoesNotMaximizeUntilThePointerLeavesIt)
 
 TEST_F(WmTest, AMaximizedWindowShrinksUnderThePointerAndEndsUpNormal)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
     window->maximize();
-    ASSERT_EQ(QRect(0, 0, 1000, 800), window->bounds());
+    ASSERT_EQ(base::Rect(0, 0, 1000, 800), window->bounds());
 
     // Grabbed halfway along the title bar.
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(500, 10)));
-    manager.eventHandler()->onPointerMotion(QPointF(503, 12));
-    EXPECT_EQ(QRect(0, 0, 1000, 800), window->bounds()) << "below the unmaximize threshold";
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(500, 10)));
+    manager.eventHandler()->onPointerMotion(base::PointF(503, 12));
+    EXPECT_EQ(base::Rect(0, 0, 1000, 800), window->bounds()) << "below the unmaximize threshold";
 
-    manager.eventHandler()->onPointerMotion(QPointF(500, 300));
+    manager.eventHandler()->onPointerMotion(base::PointF(500, 300));
     // Back to the restore size, still grabbed halfway along it.
-    EXPECT_EQ(QRect(300, 290, 400, 300), window->bounds());
+    EXPECT_EQ(base::Rect(300, 290, 400, 300), window->bounds());
     // The state machine only follows at the end of the drag, but everything
     // the client and the decoration see is already the restored window.
     EXPECT_EQ(WindowStateType::Maximized, window->stateType());
@@ -1586,117 +1589,117 @@ TEST_F(WmTest, AMaximizedWindowShrinksUnderThePointerAndEndsUpNormal)
     manager.eventHandler()->onPointerButtonReleased();
 
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(300, 290, 400, 300), window->bounds());
+    EXPECT_EQ(base::Rect(300, 290, 400, 300), window->bounds());
     EXPECT_FALSE(window->state()->hasRestoreBounds());
     EXPECT_FALSE(window->isRestoringFromDrag());
 }
 
 TEST_F(WmTest, EscapeDuringAnUnmaximizeDragLeavesTheWindowMaximized)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
     window->maximize();
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(500, 10)));
-    manager.eventHandler()->onPointerMotion(QPointF(500, 300));
-    ASSERT_NE(QRect(0, 0, 1000, 800), window->bounds());
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(500, 10)));
+    manager.eventHandler()->onPointerMotion(base::PointF(500, 300));
+    ASSERT_NE(base::Rect(0, 0, 1000, 800), window->bounds());
 
     input.onKey(at(1), KEY_ESC, true);
 
     EXPECT_EQ(WindowStateType::Maximized, window->stateType());
-    EXPECT_EQ(QRect(0, 0, 1000, 800), window->bounds());
+    EXPECT_EQ(base::Rect(0, 0, 1000, 800), window->bounds());
     EXPECT_FALSE(window->isRestoringFromDrag());
     // The bounds it would have gone back to are back as well.
     window->restore();
-    EXPECT_EQ(QRect(200, 100, 400, 300), window->bounds());
+    EXPECT_EQ(base::Rect(200, 100, 400, 300), window->bounds());
 }
 
 TEST_F(WmTest, AMaximizedWindowDraggedBackToTheTopStaysMaximized)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
     window->maximize();
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(500, 10)));
-    manager.eventHandler()->onPointerMotion(QPointF(500, 300));
-    manager.eventHandler()->onPointerMotion(QPointF(500, 4));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(500, 10)));
+    manager.eventHandler()->onPointerMotion(base::PointF(500, 300));
+    manager.eventHandler()->onPointerMotion(base::PointF(500, 4));
     manager.eventHandler()->snapController()->triggerDwellForTesting();
     manager.eventHandler()->onPointerButtonReleased();
 
     EXPECT_EQ(WindowStateType::Maximized, window->stateType());
-    EXPECT_EQ(QRect(0, 0, 1000, 800), window->bounds());
+    EXPECT_EQ(base::Rect(0, 0, 1000, 800), window->bounds());
     // And it still knows where to go back to.
     window->restore();
-    EXPECT_EQ(QRect(200, 100, 400, 300), window->bounds());
+    EXPECT_EQ(base::Rect(200, 100, 400, 300), window->bounds());
 }
 
 TEST_F(WmTest, ASnappedWindowDraggedIntoTheMiddleBecomesNormal)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
     window->snapPrimary();
-    ASSERT_EQ(QRect(0, 0, 500, 800), window->bounds());
+    ASSERT_EQ(base::Rect(0, 0, 500, 800), window->bounds());
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(250, 10)));
-    manager.eventHandler()->onPointerMotion(QPointF(600, 400));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(250, 10)));
+    manager.eventHandler()->onPointerMotion(base::PointF(600, 400));
     manager.eventHandler()->onPointerButtonReleased();
 
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QSize(400, 300), window->bounds().size());
+    EXPECT_EQ(base::Size(400, 300), window->bounds().size());
 }
 
 TEST_F(WmTest, ASnappedWindowKeepsItsStateWhileItsSharedEdgeIsResized)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
     window->snapPrimary();
 
-    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, QPointF(500, 400)));
-    manager.eventHandler()->onPointerMotion(QPointF(650, 400));
+    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, base::PointF(500, 400)));
+    manager.eventHandler()->onPointerMotion(base::PointF(650, 400));
     manager.eventHandler()->onPointerButtonReleased();
 
     EXPECT_EQ(WindowStateType::PrimarySnapped, window->stateType());
-    EXPECT_EQ(QRect(0, 0, 650, 800), window->bounds());
+    EXPECT_EQ(base::Rect(0, 0, 650, 800), window->bounds());
 }
 
 TEST_F(WmTest, ASnappedWindowResizedOffItsEdgeBecomesNormal)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
     window->snapPrimary();
 
-    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Bottom, QPointF(250, 800)));
-    manager.eventHandler()->onPointerMotion(QPointF(250, 600));
+    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Bottom, base::PointF(250, 800)));
+    manager.eventHandler()->onPointerMotion(base::PointF(250, 600));
     manager.eventHandler()->onPointerButtonReleased();
 
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(0, 0, 500, 600), window->bounds());
+    EXPECT_EQ(base::Rect(0, 0, 500, 600), window->bounds());
 }
 
 TEST_F(WmTest, MaximizingASnappedWindowRestoresBackToSnapped)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
 
     window->snapSecondary();
     window->maximize();
-    ASSERT_EQ(QRect(0, 0, 1000, 800), window->bounds());
+    ASSERT_EQ(base::Rect(0, 0, 1000, 800), window->bounds());
 
     window->restore();
     EXPECT_EQ(WindowStateType::SecondarySnapped, window->stateType());
-    EXPECT_EQ(QRect(500, 0, 500, 800), window->bounds());
+    EXPECT_EQ(base::Rect(500, 0, 500, 800), window->bounds());
 
     window->restore();
     EXPECT_EQ(WindowStateType::Normal, window->stateType());
-    EXPECT_EQ(QRect(200, 100, 400, 300), window->bounds());
+    EXPECT_EQ(base::Rect(200, 100, 400, 300), window->bounds());
 }
 
 TEST_F(WmTest, TheSnapPreviewIsStackedDirectlyUnderTheDraggedWindow)
 {
-    Window *below = makeWindow(QRect(100, 100, 300, 200));
-    Window *window = makeWindow(QRect(300, 300, 300, 200));
+    Window *below = makeWindow(base::Rect(100, 100, 300, 200));
+    Window *window = makeWindow(base::Rect(300, 300, 300, 200));
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(350, 320)));
-    manager.eventHandler()->onPointerMotion(QPointF(20, 400));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(350, 320)));
+    manager.eventHandler()->onPointerMotion(base::PointF(20, 400));
 
     scene::Node *preview = manager.dragOverlay();
     ASSERT_NE(nullptr, preview);
     // Ash's phantom sits inset from where the window will land.
-    EXPECT_EQ(QRect(8, 8, 484, 784), preview->geometry());
+    EXPECT_EQ(base::Rect(8, 8, 484, 784), preview->geometry());
     const auto &order = surfaceContainer->children();
     const auto previewSlot = std::find(order.begin(), order.end(), preview);
     const auto windowSlot = std::find(order.begin(), order.end(), window->node());
@@ -1711,17 +1714,17 @@ TEST_F(WmTest, TheSnapPreviewIsStackedDirectlyUnderTheDraggedWindow)
 
 TEST_F(WmTest, LeavingATiledStateByHandCrossFades)
 {
-    Window *window = makeWindow(QRect(200, 100, 400, 300));
+    Window *window = makeWindow(base::Rect(200, 100, 400, 300));
     window->maximize();
     auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node());
     ASSERT_NE(nullptr, animation);
     animation->finish(); // The maximize animation is not what this is about.
 
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(500, 10)));
-    manager.eventHandler()->onPointerMotion(QPointF(503, 12));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(500, 10)));
+    manager.eventHandler()->onPointerMotion(base::PointF(503, 12));
     EXPECT_FALSE(animation->isRunning()) << "nothing has moved yet";
 
-    manager.eventHandler()->onPointerMotion(QPointF(500, 300));
+    manager.eventHandler()->onPointerMotion(base::PointF(500, 300));
     EXPECT_TRUE(animation->isRunning());
     EXPECT_EQ(scene::WindowAnimation::Type::DragBounds, animation->type());
 }
@@ -1729,16 +1732,16 @@ TEST_F(WmTest, LeavingATiledStateByHandCrossFades)
 ////////////////////////////////////////////////////////////////////////////////
 // Interactive resize
 
-class ResizeTest : public WmTest, public testing::WithParamInterface<std::pair<ResizeEdge, QRect>>
+class ResizeTest : public WmTest, public testing::WithParamInterface<std::pair<ResizeEdge, base::Rect>>
 {
 };
 
 TEST_P(ResizeTest, DraggingAnEdgeKeepsTheOppositeOneFixed)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
-    const QPointF start(350, 300);
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
+    const base::PointF start(350, 300);
     // The same drag for every edge; only the edge under test may respond.
-    const QPointF end = start + QPointF(-40, -30);
+    const base::PointF end = start + base::PointF(-40, -30);
 
     ASSERT_TRUE(manager.eventHandler()->beginResize(window, GetParam().first, start));
     EXPECT_TRUE(window->isResizing());
@@ -1752,109 +1755,109 @@ TEST_P(ResizeTest, DraggingAnEdgeKeepsTheOppositeOneFixed)
 INSTANTIATE_TEST_SUITE_P(AllEdges, ResizeTest,
                          testing::Values(
                                  // dx = -40, dy = -30 from a 300x200 window at (200, 200).
-                                 std::make_pair(ResizeEdge::Left, QRect(160, 200, 340, 200)),
-                                 std::make_pair(ResizeEdge::Right, QRect(200, 200, 260, 200)),
-                                 std::make_pair(ResizeEdge::Top, QRect(200, 170, 300, 230)),
-                                 std::make_pair(ResizeEdge::Bottom, QRect(200, 200, 300, 170)),
-                                 std::make_pair(ResizeEdge::TopLeft, QRect(160, 170, 340, 230)),
-                                 std::make_pair(ResizeEdge::TopRight, QRect(200, 170, 260, 230)),
-                                 std::make_pair(ResizeEdge::BottomLeft, QRect(160, 200, 340, 170)),
+                                 std::make_pair(ResizeEdge::Left, base::Rect(160, 200, 340, 200)),
+                                 std::make_pair(ResizeEdge::Right, base::Rect(200, 200, 260, 200)),
+                                 std::make_pair(ResizeEdge::Top, base::Rect(200, 170, 300, 230)),
+                                 std::make_pair(ResizeEdge::Bottom, base::Rect(200, 200, 300, 170)),
+                                 std::make_pair(ResizeEdge::TopLeft, base::Rect(160, 170, 340, 230)),
+                                 std::make_pair(ResizeEdge::TopRight, base::Rect(200, 170, 260, 230)),
+                                 std::make_pair(ResizeEdge::BottomLeft, base::Rect(160, 200, 340, 170)),
                                  std::make_pair(ResizeEdge::BottomRight,
-                                                QRect(200, 200, 260, 170))));
+                                                base::Rect(200, 200, 260, 170))));
 
 TEST_F(WmTest, ResizingLeftPastTheMinimumWidthPinsTheRightEdge)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
-    window->setMinimumSize(QSize(100, 80));
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
+    window->setMinimumSize(base::Size(100, 80));
 
-    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Left, QPointF(200, 300)));
-    manager.eventHandler()->onPointerMotion(QPointF(1000, 300));
+    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Left, base::PointF(200, 300)));
+    manager.eventHandler()->onPointerMotion(base::PointF(1000, 300));
 
-    EXPECT_EQ(QSize(100, 200), window->bounds().size());
+    EXPECT_EQ(base::Size(100, 200), window->bounds().size());
     // Right edge unmoved at 500.
     EXPECT_EQ(500, window->bounds().x() + window->bounds().width());
 }
 
 TEST_F(WmTest, ResizingTopPastTheMinimumHeightPinsTheBottomEdge)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
-    window->setMinimumSize(QSize(100, 80));
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
+    window->setMinimumSize(base::Size(100, 80));
 
-    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Top, QPointF(350, 200)));
-    manager.eventHandler()->onPointerMotion(QPointF(350, 700));
+    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Top, base::PointF(350, 200)));
+    manager.eventHandler()->onPointerMotion(base::PointF(350, 700));
 
-    EXPECT_EQ(QSize(300, 80), window->bounds().size());
+    EXPECT_EQ(base::Size(300, 80), window->bounds().size());
     EXPECT_EQ(400, window->bounds().y() + window->bounds().height());
 }
 
 TEST_F(WmTest, ResizingLeftPastTheMaximumWidthPinsTheRightEdge)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
-    window->setMaximumSize(QSize(400, 400));
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
+    window->setMaximumSize(base::Size(400, 400));
 
-    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Left, QPointF(200, 300)));
-    manager.eventHandler()->onPointerMotion(QPointF(0, 300));
+    ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::Left, base::PointF(200, 300)));
+    manager.eventHandler()->onPointerMotion(base::PointF(0, 300));
 
-    EXPECT_EQ(QSize(400, 200), window->bounds().size());
+    EXPECT_EQ(base::Size(400, 200), window->bounds().size());
     EXPECT_EQ(500, window->bounds().x() + window->bounds().width());
 }
 
 TEST_F(WmTest, ANonResizableWindowDoesNotResize)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
     window->setResizable(false);
 
-    EXPECT_FALSE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, QPointF(500, 300)));
-    EXPECT_EQ(QRect(200, 200, 300, 200), window->bounds());
+    EXPECT_FALSE(manager.eventHandler()->beginResize(window, ResizeEdge::Right, base::PointF(500, 300)));
+    EXPECT_EQ(base::Rect(200, 200, 300, 200), window->bounds());
 }
 
 TEST_F(WmTest, EscapeRevertsAResize)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
 
     ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::BottomRight,
-                                                    QPointF(500, 400)));
-    input.onPointerMotionAbsolute(at(1), QPointF(600, 500));
-    ASSERT_EQ(QSize(400, 300), window->bounds().size());
+                                                    base::PointF(500, 400)));
+    input.onPointerMotionAbsolute(at(1), base::PointF(600, 500));
+    ASSERT_EQ(base::Size(400, 300), window->bounds().size());
 
     input.onKey(at(2), KEY_ESC, true);
 
-    EXPECT_EQ(QRect(200, 200, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(200, 200, 300, 200), window->bounds());
     EXPECT_FALSE(window->isResizing());
 }
 
 TEST_F(WmTest, AResizeTakesOneStepPerFrame)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
     ASSERT_TRUE(manager.eventHandler()->beginResize(window, ResizeEdge::BottomRight,
-                                                    QPointF(500, 400)));
+                                                    base::PointF(500, 400)));
     // The first move lands at once; the rest of the frame's wait for it.
-    input.onPointerMotionAbsolute(at(1), QPointF(510, 410));
-    EXPECT_EQ(QSize(310, 210), window->bounds().size());
-    input.onPointerMotionAbsolute(at(2), QPointF(520, 420));
-    input.onPointerMotionAbsolute(at(3), QPointF(530, 430));
-    EXPECT_EQ(QSize(310, 210), window->bounds().size());
+    input.onPointerMotionAbsolute(at(1), base::PointF(510, 410));
+    EXPECT_EQ(base::Size(310, 210), window->bounds().size());
+    input.onPointerMotionAbsolute(at(2), base::PointF(520, 420));
+    input.onPointerMotionAbsolute(at(3), base::PointF(530, 430));
+    EXPECT_EQ(base::Size(310, 210), window->bounds().size());
     // The next frame takes only the newest.
-    Q_EMIT compositor.frameStarted(16);
-    EXPECT_EQ(QSize(330, 230), window->bounds().size());
-    Q_EMIT compositor.frameStarted(32);
-    input.onPointerMotionAbsolute(at(4), QPointF(540, 440));
-    EXPECT_EQ(QSize(340, 240), window->bounds().size());
-    input.onPointerMotionAbsolute(at(5), QPointF(560, 460));
+    compositor.frameStarted(16);
+    EXPECT_EQ(base::Size(330, 230), window->bounds().size());
+    compositor.frameStarted(32);
+    input.onPointerMotionAbsolute(at(4), base::PointF(540, 440));
+    EXPECT_EQ(base::Size(340, 240), window->bounds().size());
+    input.onPointerMotionAbsolute(at(5), base::PointF(560, 460));
     // The drag ends where the pointer last was.
     input.onPointerButton(at(6), BTN_LEFT, false);
-    EXPECT_EQ(QRect(200, 200, 360, 260), window->bounds());
+    EXPECT_EQ(base::Rect(200, 200, 360, 260), window->bounds());
     EXPECT_FALSE(window->isResizing());
 }
 
 TEST_F(WmTest, TheResizerMathIsIndependentOfTheWindow)
 {
-    Window *window = makeWindow(QRect(200, 200, 300, 200));
-    WindowResizer resizer(window, QPointF(200, 200), ResizeEdge::TopLeft, kOutput);
+    Window *window = makeWindow(base::Rect(200, 200, 300, 200));
+    WindowResizer resizer(window, base::PointF(200, 200), ResizeEdge::TopLeft, kOutput);
 
-    EXPECT_EQ(QRect(180, 190, 320, 210), resizer.calculateBoundsForDrag(QPointF(180, 190)));
+    EXPECT_EQ(base::Rect(180, 190, 320, 210), resizer.calculateBoundsForDrag(base::PointF(180, 190)));
     // Nothing was applied.
-    EXPECT_EQ(QRect(200, 200, 300, 200), window->bounds());
+    EXPECT_EQ(base::Rect(200, 200, 300, 200), window->bounds());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1862,8 +1865,8 @@ TEST_F(WmTest, TheResizerMathIsIndependentOfTheWindow)
 
 TEST_F(WmTest, ASubsurfaceResolvesToItsToplevelWindow)
 {
-    Window *window = makeWindow(QRect(0, 0, 200, 200));
-    compositor::Surface *child = makeSurface(QSize(60, 60));
+    Window *window = makeWindow(base::Rect(0, 0, 200, 200));
+    compositor::Surface *child = makeSurface(base::Size(60, 60));
     auto sub = compositor::SubSurface::create(child, window->rootSurface());
     window->rootSurface()->commit();
 
@@ -1873,15 +1876,15 @@ TEST_F(WmTest, ASubsurfaceResolvesToItsToplevelWindow)
 
 TEST_F(WmTest, ASurfaceWithNoWindowResolvesToNothing)
 {
-    compositor::Surface *orphan = makeSurface(QSize(60, 60));
+    compositor::Surface *orphan = makeSurface(base::Size(60, 60));
     EXPECT_EQ(nullptr, manager.windowForSurface(orphan));
     EXPECT_EQ(nullptr, manager.windowForSurface(nullptr));
 }
 
 TEST_F(WmTest, RaisingReordersBothTheModelAndTheScene)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(0, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(0, 0, 200, 200));
     ASSERT_EQ(second, manager.windows().back());
 
     manager.raise(first);
@@ -1889,35 +1892,35 @@ TEST_F(WmTest, RaisingReordersBothTheModelAndTheScene)
     EXPECT_EQ(first, manager.windows().back());
     EXPECT_EQ(first->node(), surfaceContainer->children().back());
     // Overlapping windows: the topmost one wins the hit test.
-    EXPECT_EQ(first, manager.windowAt(QPointF(50, 50)));
+    EXPECT_EQ(first, manager.windowAt(base::PointF(50, 50)));
 }
 
 TEST_F(WmTest, RaisingSettingsKeepsItsDialogAboveIt)
 {
-    Window *settings = makeWindow(QRect(0, 0, 200, 200));
-    Window *dialog = makeWindow(QRect(0, 0, 200, 200));
+    Window *settings = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *dialog = makeWindow(base::Rect(0, 0, 200, 200));
     ASSERT_TRUE(dialog->setTransientParent(settings));
-    Window *other = makeWindow(QRect(0, 0, 200, 200));
+    Window *other = makeWindow(base::Rect(0, 0, 200, 200));
 
     manager.raise(settings);
 
     EXPECT_EQ((std::vector<Window *> {other, settings, dialog}), manager.windows());
     EXPECT_EQ(dialog->node(), surfaceContainer->children().back());
-    EXPECT_EQ(dialog, manager.windowAt(QPointF(50, 50)));
+    EXPECT_EQ(dialog, manager.windowAt(base::PointF(50, 50)));
 
     manager.raise(other);
-    EXPECT_EQ(other, manager.windowAt(QPointF(50, 50)));
+    EXPECT_EQ(other, manager.windowAt(base::PointF(50, 50)));
     manager.raise(dialog);
     EXPECT_EQ((std::vector<Window *> {other, settings, dialog}), manager.windows());
-    EXPECT_EQ(dialog, manager.windowAt(QPointF(50, 50)));
+    EXPECT_EQ(dialog, manager.windowAt(base::PointF(50, 50)));
 }
 
 TEST_F(WmTest, RaisingTransientSiblingPreservesNestedFamilyOrder)
 {
-    Window *parent = makeWindow(QRect(0, 0, 200, 200));
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *nested = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(0, 0, 200, 200));
+    Window *parent = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *nested = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(0, 0, 200, 200));
     ASSERT_TRUE(first->setTransientParent(parent));
     ASSERT_TRUE(nested->setTransientParent(first));
     ASSERT_TRUE(second->setTransientParent(parent));
@@ -1932,9 +1935,9 @@ TEST_F(WmTest, RaisingTransientSiblingPreservesNestedFamilyOrder)
 
 TEST_F(WmTest, ChangingDialogParentRestacksImmediately)
 {
-    Window *dialog = makeWindow(QRect(0, 0, 200, 200));
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
-    Window *second = makeWindow(QRect(0, 0, 200, 200));
+    Window *dialog = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *second = makeWindow(base::Rect(0, 0, 200, 200));
 
     ASSERT_TRUE(dialog->setTransientParent(second));
     EXPECT_EQ((std::vector<Window *> {first, second, dialog}), manager.windows());
@@ -1949,7 +1952,7 @@ TEST_F(WmTest, ChangingDialogParentRestacksImmediately)
 TEST_F(WmTest, PanelsAndTheDockAppearWithoutAnimation)
 {
     for (WindowRole role : {WindowRole::Panel, WindowRole::Dock}) {
-        Window *window = makeWindow(QRect(0, 700, 1000, 100));
+        Window *window = makeWindow(base::Rect(0, 700, 1000, 100));
         window->setRole(role);
         auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node());
         ASSERT_NE(nullptr, animation);
@@ -1959,8 +1962,8 @@ TEST_F(WmTest, PanelsAndTheDockAppearWithoutAnimation)
 
 TEST_F(WmTest, PopupsGetAFadeAnimationNode)
 {
-    Window *parent = makeWindow(QRect(0, 0, 400, 300));
-    Window *popup = manager.createWindow(makeSurface(QSize(100, 40)),
+    Window *parent = makeWindow(base::Rect(0, 0, 400, 300));
+    Window *popup = manager.createWindow(makeSurface(base::Size(100, 40)),
                                          {.type = WindowType::Popup, .transientParent = parent});
     auto *animation = dynamic_cast<scene::WindowAnimation *>(popup->node());
     ASSERT_NE(nullptr, animation);
@@ -1968,11 +1971,11 @@ TEST_F(WmTest, PopupsGetAFadeAnimationNode)
     popup->setRole(WindowRole::Dock);
     EXPECT_EQ(scene::WindowAnimation::Style::Popup, animation->style());
 
-    Window *dock = makeWindow(QRect(0, 700, 1000, 100));
+    Window *dock = makeWindow(base::Rect(0, 700, 1000, 100));
     dock->setRole(WindowRole::Dock);
-    Window *tip = manager.createWindow(makeSurface(QSize(100, 40)),
+    Window *tip = manager.createWindow(makeSurface(base::Size(100, 40)),
                                        {.type = WindowType::Popup, .transientParent = dock});
-    Window *submenu = manager.createWindow(makeSurface(QSize(100, 40)),
+    Window *submenu = manager.createWindow(makeSurface(base::Size(100, 40)),
                                            {.type = WindowType::Popup, .transientParent = tip});
     for (Window *window : {tip, submenu}) {
         EXPECT_EQ(scene::WindowAnimation::Style::None,
@@ -1982,13 +1985,13 @@ TEST_F(WmTest, PopupsGetAFadeAnimationNode)
 
 TEST_F(WmTest, DesktopPopupTreeStaysAboveApplicationsAndBelowDock)
 {
-    Window *desktop = makeWindow(QRect(0, 0, 1000, 800));
+    Window *desktop = makeWindow(base::Rect(0, 0, 1000, 800));
     desktop->setRole(WindowRole::Desktop);
-    Window *application = makeWindow(QRect(0, 0, 200, 200));
-    Window *dock = makeWindow(QRect(0, 700, 200, 100));
+    Window *application = makeWindow(base::Rect(0, 0, 200, 200));
+    Window *dock = makeWindow(base::Rect(0, 700, 200, 100));
     dock->setRole(WindowRole::Dock);
     auto makePopup = [&](Window *parent) {
-        return manager.createWindow(makeSurface(QSize(100, 100)),
+        return manager.createWindow(makeSurface(base::Size(100, 100)),
                                     {.type = WindowType::Popup, .transientParent = parent});
     };
     Window *popup = makePopup(desktop);
@@ -2020,7 +2023,7 @@ TEST_F(WmTest, DesktopPopupTreeStaysAboveApplicationsAndBelowDock)
 
 TEST_F(WmTest, ADyingSurfaceIsNoLongerListedByTheCompositor)
 {
-    Window *window = makeWindow(QRect(0, 0, 200, 200));
+    Window *window = makeWindow(base::Rect(0, 0, 200, 200));
     compositor::Surface *surface = window->rootSurface();
 
     bool sawSurface = true;
@@ -2049,7 +2052,7 @@ TEST_F(WmTest, ADyingSurfaceIsNoLongerListedByTheCompositor)
 
 TEST_F(WmTest, AWindowAddedWhileTheActiveOneIsBeingDestroyedDoesNotCorruptTheList)
 {
-    Window *first = makeWindow(QRect(0, 0, 200, 200));
+    Window *first = makeWindow(base::Rect(0, 0, 200, 200));
     first->activate();
     ASSERT_EQ(first, manager.activation()->activeWindow());
 
@@ -2069,7 +2072,7 @@ TEST_F(WmTest, AWindowAddedWhileTheActiveOneIsBeingDestroyedDoesNotCorruptTheLis
     } adopter;
 
     adopter.manager = &manager;
-    adopter.surface = makeSurface(QSize(100, 100));
+    adopter.surface = makeSurface(base::Size(100, 100));
     manager.activation()->addObserver(&adopter);
 
     manager.destroyWindow(first);
@@ -2088,20 +2091,20 @@ TEST_F(WmTest, OutputScaleChangesLogicalStatesAndPreservesRestoreBounds)
     auto *fullscreen = makeWindow({200, 150, 300, 200});
     maximized->maximize();
     fullscreen->setFullscreen(true);
-    QObject::connect(&compositor, &compositor::Compositor::outputScaleChanged, &manager, [&] {
+    const auto scaleChanged = compositor.outputScaleChanged.connect([&] {
         manager.setOutputBounds(
-                QRect(QPoint(), compositor.outputScale().logicalSize({1920, 1080})));
+                base::Rect(base::Point(), compositor.outputScale().logicalSize({1920, 1080})));
     });
     for (const auto &value : {"1.5", "1.75", "2", "1"}) {
-        compositor.setOutputScale(*compositor::OutputScale::parse(QString::fromLatin1(value)));
-        EXPECT_EQ(normal->bounds(), QRect(100, 50, 300, 200));
+        compositor.setOutputScale(*compositor::OutputScale::parse(value));
+        EXPECT_EQ(normal->bounds(), base::Rect(100, 50, 300, 200));
         EXPECT_EQ(maximized->bounds(), manager.workAreaFor(maximized));
         EXPECT_EQ(fullscreen->bounds(), manager.outputBounds());
     }
     maximized->restore();
     fullscreen->setFullscreen(false);
-    EXPECT_EQ(maximized->bounds(), QRect(150, 100, 300, 200));
-    EXPECT_EQ(fullscreen->bounds(), QRect(200, 150, 300, 200));
+    EXPECT_EQ(maximized->bounds(), base::Rect(150, 100, 300, 200));
+    EXPECT_EQ(fullscreen->bounds(), base::Rect(200, 150, 300, 200));
 }
 
 } // namespace
@@ -2109,8 +2112,8 @@ TEST_F(WmTest, OutputScaleChangesLogicalStatesAndPreservesRestoreBounds)
 TEST_F(WmTest, ClosingWindowKeepsItsSceneSlotWhenFocusRaisesAnotherWindow)
 {
     Window *background = makeWindow(kOutput);
-    Window *next = makeWindow(QRect(100, 100, 300, 200));
-    Window *closing = makeWindow(QRect(100, 100, 300, 200));
+    Window *next = makeWindow(base::Rect(100, 100, 300, 200));
+    Window *closing = makeWindow(base::Rect(100, 100, 300, 200));
     manager.activation()->activate(closing);
     scene::Node *snapshot = closing->node();
 
@@ -2135,191 +2138,191 @@ TEST_F(WmTest, ClosingWindowKeepsItsSceneSlotWhenFocusRaisesAnotherWindow)
 
 TEST_F(WmTest, WindowsOfOneApplicationCascadeFromTheCenter)
 {
-    Window *first = mapManagedWindow(QSize(300, 200));
-    Window *second = mapManagedWindow(QSize(300, 200));
+    Window *first = mapManagedWindow(base::Size(300, 200));
+    Window *second = mapManagedWindow(base::Size(300, 200));
     manager.activation()->activate(second);
-    Window *third = mapManagedWindow(QSize(200, 100));
+    Window *third = mapManagedWindow(base::Size(200, 100));
 
-    EXPECT_EQ(QRect(350, 300, 300, 200), first->bounds());
-    EXPECT_EQ(QRect(382, 332, 300, 200), second->bounds());
-    EXPECT_EQ(QRect(414, 364, 200, 100), third->bounds());
+    EXPECT_EQ(base::Rect(350, 300, 300, 200), first->bounds());
+    EXPECT_EQ(base::Rect(382, 332, 300, 200), second->bounds());
+    EXPECT_EQ(base::Rect(414, 364, 200, 100), third->bounds());
 }
 
 TEST_F(WmTest, AnotherApplicationsWindowIsCentered)
 {
-    mapManagedWindow(QSize(300, 200), QStringLiteral("files"));
-    Window *other = mapManagedWindow(QSize(300, 200), QStringLiteral("terminal"));
-    Window *unnamed = mapManagedWindow(QSize(300, 200), QString());
-    Window *unnamedAgain = mapManagedWindow(QSize(300, 200), QString());
+    mapManagedWindow(base::Size(300, 200), "files");
+    Window *other = mapManagedWindow(base::Size(300, 200), "terminal");
+    Window *unnamed = mapManagedWindow(base::Size(300, 200), std::string());
+    Window *unnamedAgain = mapManagedWindow(base::Size(300, 200), std::string());
 
-    EXPECT_EQ(QRect(350, 300, 300, 200), other->bounds());
-    EXPECT_EQ(QRect(350, 300, 300, 200), unnamed->bounds());
-    EXPECT_EQ(QRect(350, 300, 300, 200), unnamedAgain->bounds());
+    EXPECT_EQ(base::Rect(350, 300, 300, 200), other->bounds());
+    EXPECT_EQ(base::Rect(350, 300, 300, 200), unnamed->bounds());
+    EXPECT_EQ(base::Rect(350, 300, 300, 200), unnamedAgain->bounds());
 }
 
 TEST_F(WmTest, FixedSizeWindowCentersOverActiveApplicationWithoutParenting)
 {
-    Window *first = mapManagedWindow(QSize(400, 300));
-    first->requestBounds(QRect(100, 100, 400, 300));
+    Window *first = mapManagedWindow(base::Size(400, 300));
+    first->requestBounds(base::Rect(100, 100, 400, 300));
     manager.activation()->activate(first);
-    Window *dialog = manager.createWindow(makeSurface(QSize(200, 100)),
-                                          {.requestedSize = QSize(200, 100),
-                                           .applicationId = QStringLiteral("app"),
-                                           .minimumSize = QSize(200, 100),
-                                           .maximumSize = QSize(200, 100),
+    Window *dialog = manager.createWindow(makeSurface(base::Size(200, 100)),
+                                          {.requestedSize = base::Size(200, 100),
+                                           .applicationId = "app",
+                                           .minimumSize = base::Size(200, 100),
+                                           .maximumSize = base::Size(200, 100),
                                            .positionManaged = true});
 
-    EXPECT_EQ(QRect(200, 200, 200, 100), dialog->bounds());
+    EXPECT_EQ(base::Rect(200, 200, 200, 100), dialog->bounds());
     EXPECT_EQ(nullptr, dialog->transientParent());
-    first->requestBounds(QRect(300, 300, 400, 300));
-    EXPECT_EQ(QRect(200, 200, 200, 100), dialog->bounds());
+    first->requestBounds(base::Rect(300, 300, 400, 300));
+    EXPECT_EQ(base::Rect(200, 200, 200, 100), dialog->bounds());
 }
 
 TEST_F(WmTest, FixedSizeWindowWithoutActiveApplicationReferenceUsesWorkArea)
 {
-    Window *first = mapManagedWindow(QSize(400, 300));
-    first->requestBounds(QRect(100, 100, 400, 300));
-    Window *other = mapManagedWindow(QSize(300, 200), QStringLiteral("other"));
+    Window *first = mapManagedWindow(base::Size(400, 300));
+    first->requestBounds(base::Rect(100, 100, 400, 300));
+    Window *other = mapManagedWindow(base::Size(300, 200), "other");
     manager.activation()->activate(other);
-    Window *dialog = manager.createWindow(makeSurface(QSize(200, 100)),
-                                          {.requestedSize = QSize(200, 100),
-                                           .applicationId = QStringLiteral("app"),
-                                           .minimumSize = QSize(200, 100),
-                                           .maximumSize = QSize(200, 100),
+    Window *dialog = manager.createWindow(makeSurface(base::Size(200, 100)),
+                                          {.requestedSize = base::Size(200, 100),
+                                           .applicationId = "app",
+                                           .minimumSize = base::Size(200, 100),
+                                           .maximumSize = base::Size(200, 100),
                                            .positionManaged = true});
 
-    EXPECT_EQ(QRect(400, 350, 200, 100), dialog->bounds());
+    EXPECT_EQ(base::Rect(400, 350, 200, 100), dialog->bounds());
     EXPECT_EQ(nullptr, dialog->transientParent());
 }
 
 TEST_F(WmTest, AWindowWithARestoreIdOpensWhereTheLastOneWasLeft)
 {
-    const auto map = [&](const QSize &size, compositor::ResizeAnchor anchor) {
+    const auto map = [&](const base::Size &size, compositor::ResizeAnchor anchor) {
         compositor::Surface *surface = makeSurface(size);
-        surface->setRestoreId(QStringLiteral("preview"));
+        surface->setRestoreId("preview");
         surface->setResizeAnchor(anchor);
         return manager.createWindow(surface, {.requestedSize = size,
-                                              .applicationId = QStringLiteral("app"),
+                                              .applicationId = "app",
                                               .positionManaged = true});
     };
-    Window *first = map(QSize(200, 100), compositor::ResizeAnchor::TopLeft);
-    EXPECT_EQ(QRect(400, 350, 200, 100), first->bounds());
-    first->requestBounds(QRect(100, 120, 200, 100));
+    Window *first = map(base::Size(200, 100), compositor::ResizeAnchor::TopLeft);
+    EXPECT_EQ(base::Rect(400, 350, 200, 100), first->bounds());
+    first->requestBounds(base::Rect(100, 120, 200, 100));
     manager.destroyWindow(first);
 
-    Window *second = map(QSize(300, 200), compositor::ResizeAnchor::TopLeft);
-    EXPECT_EQ(QRect(100, 120, 300, 200), second->bounds());
-    second->requestBounds(QRect(600, 500, 300, 200));
+    Window *second = map(base::Size(300, 200), compositor::ResizeAnchor::TopLeft);
+    EXPECT_EQ(base::Rect(100, 120, 300, 200), second->bounds());
+    second->requestBounds(base::Rect(600, 500, 300, 200));
     manager.destroyWindow(second);
 
     // The centre comes back, and the window stays inside the work area.
-    Window *third = map(QSize(600, 500), compositor::ResizeAnchor::Center);
-    EXPECT_EQ(QRect(400, 300, 600, 500), third->bounds());
+    Window *third = map(base::Size(600, 500), compositor::ResizeAnchor::Center);
+    EXPECT_EQ(base::Rect(400, 300, 600, 500), third->bounds());
 }
 
 TEST_F(WmTest, AMaximizedWindowWithARestoreIdIsRememberedByItsRestoreBounds)
 {
     const auto map = [&] {
-        compositor::Surface *surface = makeSurface(QSize(200, 100));
-        surface->setRestoreId(QStringLiteral("preview"));
-        return manager.createWindow(surface, {.requestedSize = QSize(200, 100),
-                                              .applicationId = QStringLiteral("app"),
+        compositor::Surface *surface = makeSurface(base::Size(200, 100));
+        surface->setRestoreId("preview");
+        return manager.createWindow(surface, {.requestedSize = base::Size(200, 100),
+                                              .applicationId = "app",
                                               .positionManaged = true});
     };
     Window *first = map();
-    first->requestBounds(QRect(100, 120, 200, 100));
+    first->requestBounds(base::Rect(100, 120, 200, 100));
     first->maximize();
     manager.destroyWindow(first);
 
     Window *second = map();
-    EXPECT_EQ(QRect(100, 120, 200, 100), second->bounds());
+    EXPECT_EQ(base::Rect(100, 120, 200, 100), second->bounds());
 }
 
 TEST_F(WmTest, ARestoreIdIsKeptPerApplicationAndOutput)
 {
-    const auto map = [&](const QString &applicationId, const QString &restoreId) {
-        compositor::Surface *surface = makeSurface(QSize(200, 100));
+    const auto map = [&](const std::string &applicationId, const std::string &restoreId) {
+        compositor::Surface *surface = makeSurface(base::Size(200, 100));
         surface->setRestoreId(restoreId);
-        return manager.createWindow(surface, {.requestedSize = QSize(200, 100),
+        return manager.createWindow(surface, {.requestedSize = base::Size(200, 100),
                                               .applicationId = applicationId,
                                               .positionManaged = true});
     };
-    Window *first = map(QStringLiteral("app"), QStringLiteral("preview"));
-    first->requestBounds(QRect(100, 120, 200, 100));
+    Window *first = map("app", "preview");
+    first->requestBounds(base::Rect(100, 120, 200, 100));
     manager.destroyWindow(first);
 
-    Window *other = map(QStringLiteral("other"), QStringLiteral("preview"));
-    EXPECT_EQ(QRect(400, 350, 200, 100), other->bounds());
+    Window *other = map("other", "preview");
+    EXPECT_EQ(base::Rect(400, 350, 200, 100), other->bounds());
     manager.destroyWindow(other);
-    Window *otherId = map(QStringLiteral("app"), QStringLiteral("inspector"));
-    EXPECT_EQ(QRect(400, 350, 200, 100), otherId->bounds());
+    Window *otherId = map("app", "inspector");
+    EXPECT_EQ(base::Rect(400, 350, 200, 100), otherId->bounds());
     manager.destroyWindow(otherId);
 
     // The output it was left on is gone.
-    manager.setOutputBounds(QRect(0, 0, 1200, 900));
-    Window *moved = map(QStringLiteral("app"), QStringLiteral("preview"));
-    EXPECT_EQ(QRect(500, 400, 200, 100), moved->bounds());
+    manager.setOutputBounds(base::Rect(0, 0, 1200, 900));
+    Window *moved = map("app", "preview");
+    EXPECT_EQ(base::Rect(500, 400, 200, 100), moved->bounds());
 }
 
 TEST_F(WmTest, TheCascadeFollowsTheMostRecentWindowWhereverItIs)
 {
-    Window *first = mapManagedWindow(QSize(300, 200));
-    first->requestBounds(QRect(10, 20, 300, 200));
-    Window *second = mapManagedWindow(QSize(300, 200));
-    EXPECT_EQ(QRect(42, 52, 300, 200), second->bounds());
+    Window *first = mapManagedWindow(base::Size(300, 200));
+    first->requestBounds(base::Rect(10, 20, 300, 200));
+    Window *second = mapManagedWindow(base::Size(300, 200));
+    EXPECT_EQ(base::Rect(42, 52, 300, 200), second->bounds());
 
     // Minimized windows and dialogs are not followed.
     second->minimize();
-    Window *dialog = makeWindow(QRect(600, 500, 100, 100));
-    dialog->setApplicationId(QStringLiteral("app"));
+    Window *dialog = makeWindow(base::Rect(600, 500, 100, 100));
+    dialog->setApplicationId("app");
     ASSERT_TRUE(dialog->setTransientParent(first));
-    Window *third = mapManagedWindow(QSize(300, 200));
-    EXPECT_EQ(QRect(42, 52, 300, 200), third->bounds());
+    Window *third = mapManagedWindow(base::Size(300, 200));
+    EXPECT_EQ(base::Rect(42, 52, 300, 200), third->bounds());
 }
 
 TEST_F(WmTest, AnAlwaysOnTopWindowIsNotACascadeReferenceForNormalWindows)
 {
-    Window *floating = mapManagedWindow(QSize(200, 100));
+    Window *floating = mapManagedWindow(base::Size(200, 100));
     floating->setAlwaysOnTop(true);
-    floating->requestBounds(QRect(10, 20, 200, 100));
-    Window *normal = mapManagedWindow(QSize(300, 200));
-    EXPECT_EQ(QRect(350, 300, 300, 200), normal->bounds());
+    floating->requestBounds(base::Rect(10, 20, 200, 100));
+    Window *normal = mapManagedWindow(base::Size(300, 200));
+    EXPECT_EQ(base::Rect(350, 300, 300, 200), normal->bounds());
 
-    Window *second = mapManagedWindow(QSize(300, 200));
-    EXPECT_EQ(QRect(382, 332, 300, 200), second->bounds());
+    Window *second = mapManagedWindow(base::Size(300, 200));
+    EXPECT_EQ(base::Rect(382, 332, 300, 200), second->bounds());
 }
 
 TEST_F(WmTest, ACascadeRunningOffTheWorkAreaRestartsAtItsCorner)
 {
-    Window *first = mapManagedWindow(QSize(300, 200));
-    first->requestBounds(QRect(690, 400, 300, 200));
-    Window *second = mapManagedWindow(QSize(300, 200));
-    EXPECT_EQ(QRect(0, 0, 300, 200), second->bounds());
+    Window *first = mapManagedWindow(base::Size(300, 200));
+    first->requestBounds(base::Rect(690, 400, 300, 200));
+    Window *second = mapManagedWindow(base::Size(300, 200));
+    EXPECT_EQ(base::Rect(0, 0, 300, 200), second->bounds());
 }
 
 TEST_F(WmTest, ANewWindowCascadesFromAMaximizedOnesRestoreBounds)
 {
-    Window *first = mapManagedWindow(QSize(300, 200));
+    Window *first = mapManagedWindow(base::Size(300, 200));
     first->maximize();
-    ASSERT_EQ(QRect(350, 300, 300, 200), first->state()->restoreBounds());
+    ASSERT_EQ(base::Rect(350, 300, 300, 200), first->state()->restoreBounds());
 
-    Window *second = mapManagedWindow(QSize(200, 100));
-    EXPECT_EQ(QRect(382, 332, 200, 100), second->bounds());
+    Window *second = mapManagedWindow(base::Size(200, 100));
+    EXPECT_EQ(base::Rect(382, 332, 200, 100), second->bounds());
     EXPECT_EQ(kOutput, first->bounds());
 }
 
 TEST_F(WmTest, OnlyTheSameApplicationsMaximizedStateIsInherited)
 {
-    mapManagedWindow(QSize(300, 200))->maximize();
+    mapManagedWindow(base::Size(300, 200))->maximize();
 
     EXPECT_EQ(WindowStateType::Maximized,
-              window_positioner::showStateForNewWindow(&manager, kOutput, QStringLiteral("app"),
+              window_positioner::showStateForNewWindow(&manager, kOutput, "app",
                                                        WindowStateType::Normal));
     EXPECT_EQ(WindowStateType::Fullscreen,
-              window_positioner::showStateForNewWindow(&manager, kOutput, QStringLiteral("app"),
+              window_positioner::showStateForNewWindow(&manager, kOutput, "app",
                                                        WindowStateType::Fullscreen));
     EXPECT_EQ(WindowStateType::Normal,
-              window_positioner::showStateForNewWindow(&manager, kOutput, QStringLiteral("other"),
+              window_positioner::showStateForNewWindow(&manager, kOutput, "other",
                                                        WindowStateType::Normal));
 }
 
@@ -2328,40 +2331,40 @@ TEST_F(WmTest, OnlyTheSameApplicationsMaximizedStateIsInherited)
 
 TEST_F(WmTest, ATransientWindowIsCenteredOverItsParent)
 {
-    Window *parent = makeWindow(QRect(100, 100, 600, 400));
+    Window *parent = makeWindow(base::Rect(100, 100, 600, 400));
     Window *dialog =
-            manager.createWindow(makeSurface(QSize(200, 100)),
-                                 {.requestedSize = QSize(200, 100), .transientParent = parent});
+            manager.createWindow(makeSurface(base::Size(200, 100)),
+                                 {.requestedSize = base::Size(200, 100), .transientParent = parent});
 
-    EXPECT_EQ(QRect(300, 250, 200, 100), dialog->bounds());
+    EXPECT_EQ(base::Rect(300, 250, 200, 100), dialog->bounds());
 }
 
 TEST_F(WmTest, ATransientLargerThanItsParentIsCenteredInTheWorkArea)
 {
-    Window *parent = makeWindow(QRect(0, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 100, 100));
     Window *dialog =
-            manager.createWindow(makeSurface(QSize(400, 300)),
-                                 {.requestedSize = QSize(400, 300), .transientParent = parent});
+            manager.createWindow(makeSurface(base::Size(400, 300)),
+                                 {.requestedSize = base::Size(400, 300), .transientParent = parent});
 
-    EXPECT_EQ(QRect(300, 250, 400, 300), dialog->bounds());
+    EXPECT_EQ(base::Rect(300, 250, 400, 300), dialog->bounds());
 }
 
 TEST_F(WmTest, ATransientStaysInsideTheWorkArea)
 {
-    Window *parent = makeWindow(QRect(800, 700, 600, 400));
+    Window *parent = makeWindow(base::Rect(800, 700, 600, 400));
     Window *dialog =
-            manager.createWindow(makeSurface(QSize(300, 200)),
-                                 {.requestedSize = QSize(300, 200), .transientParent = parent});
+            manager.createWindow(makeSurface(base::Size(300, 200)),
+                                 {.requestedSize = base::Size(300, 200), .transientParent = parent});
 
-    EXPECT_EQ(QRect(700, 600, 300, 200), dialog->bounds());
+    EXPECT_EQ(base::Rect(700, 600, 300, 200), dialog->bounds());
 }
 
 TEST(PlacementTest, TransientPlacementSkipsTheParentsTopInset)
 {
     Placement placement;
-    EXPECT_EQ(QRect(150, 130, 100, 100),
-              placement.placeTransient(QSize(100, 100), QRect(0, 0, 400, 300), 60,
-                                       QRect(0, 0, 1000, 800)));
+    EXPECT_EQ(base::Rect(150, 130, 100, 100),
+              placement.placeTransient(base::Size(100, 100), base::Rect(0, 0, 400, 300), 60,
+                                       base::Rect(0, 0, 1000, 800)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2369,9 +2372,9 @@ TEST(PlacementTest, TransientPlacementSkipsTheParentsTopInset)
 
 TEST_F(WmTest, AModalTransientTakesActivationFromItsParent)
 {
-    Window *w1 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w11 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w12 = makeWindow(QRect(0, 0, 100, 100));
+    Window *w1 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w11 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w12 = makeWindow(base::Rect(0, 0, 100, 100));
 
     ASSERT_TRUE(w11->setTransientParent(w1));
     manager.activation()->activate(w1);
@@ -2399,9 +2402,9 @@ TEST_F(WmTest, AModalTransientTakesActivationFromItsParent)
 
 TEST_F(WmTest, AModalTransientDimsItsParentWhileInEffect)
 {
-    Window *w1 = makeWindow(QRect(0, 0, 300, 200));
-    Window *w2 = makeWindow(QRect(0, 0, 300, 200));
-    Window *w11 = makeWindow(QRect(0, 0, 100, 100));
+    Window *w1 = makeWindow(base::Rect(0, 0, 300, 200));
+    Window *w2 = makeWindow(base::Rect(0, 0, 300, 200));
+    Window *w11 = makeWindow(base::Rect(0, 0, 100, 100));
     const auto dim = [](Window *window) {
         return dynamic_cast<scene::WindowVisualNode *>(window->visualNode())->state().dimOpacity;
     };
@@ -2434,7 +2437,7 @@ TEST_F(WmTest, AModalTransientDimsItsParentWhileInEffect)
 
 TEST_F(WmTest, AWindowCreatedModalDimsItsParentAtOnce)
 {
-    Window *parent = makeWindow(QRect(0, 0, 300, 200));
+    Window *parent = makeWindow(base::Rect(0, 0, 300, 200));
     Window *dialog = manager.createWindow(
             makeSurface({100, 100}),
             {.requestedSize = {100, 100}, .transientParent = parent, .modal = true});
@@ -2446,10 +2449,10 @@ TEST_F(WmTest, AWindowCreatedModalDimsItsParentAtOnce)
 
 TEST_F(WmTest, ActivatingAParentReachesTheInnermostNestedModal)
 {
-    Window *w1 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w11 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w111 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w2 = makeWindow(QRect(0, 0, 100, 100));
+    Window *w1 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w11 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w111 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w2 = makeWindow(base::Rect(0, 0, 100, 100));
     ASSERT_TRUE(w11->setTransientParent(w1));
     ASSERT_TRUE(w111->setTransientParent(w11));
 
@@ -2477,9 +2480,9 @@ TEST_F(WmTest, ActivatingAParentReachesTheInnermostNestedModal)
 
 TEST_F(WmTest, HidingTheInnerModalHandsActivationToTheOuterOne)
 {
-    Window *w1 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w11 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w111 = makeWindow(QRect(0, 0, 100, 100));
+    Window *w1 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w11 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w111 = makeWindow(base::Rect(0, 0, 100, 100));
     ASSERT_TRUE(w11->setTransientParent(w1));
     ASSERT_TRUE(w111->setTransientParent(w11));
     w11->setModal(true);
@@ -2498,14 +2501,14 @@ TEST_F(WmTest, HidingTheInnerModalHandsActivationToTheOuterOne)
 
 TEST_F(WmTest, APressOnABlockedParentActivatesTheModalAndIsNotDelivered)
 {
-    Window *w1 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w11 = makeWindow(QRect(20, 20, 50, 50));
-    Window *w111 = makeWindow(QRect(20, 20, 50, 50));
+    Window *w1 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w11 = makeWindow(base::Rect(20, 20, 50, 50));
+    Window *w111 = makeWindow(base::Rect(20, 20, 50, 50));
     ASSERT_TRUE(w11->setTransientParent(w1));
     // A non-modal child of the modal does not lift the block.
     ASSERT_TRUE(w111->setTransientParent(w11));
 
-    input.onPointerMotionAbsolute(at(1), QPointF(10, 10));
+    input.onPointerMotionAbsolute(at(1), base::PointF(10, 10));
     input.onPointerButton(at(2), BTN_LEFT, true);
     EXPECT_TRUE(w1->isActive());
     EXPECT_EQ(w1->rootSurface(), seat.pointerGrabSurface());
@@ -2514,7 +2517,7 @@ TEST_F(WmTest, APressOnABlockedParentActivatesTheModalAndIsNotDelivered)
     w11->setModal(true);
     manager.activation()->activate(nullptr);
 
-    input.onPointerMotionAbsolute(at(4), QPointF(12, 12));
+    input.onPointerMotionAbsolute(at(4), base::PointF(12, 12));
     input.onPointerButton(at(5), BTN_LEFT, true);
     EXPECT_TRUE(w11->isActive());
     EXPECT_EQ(nullptr, seat.pointerGrabSurface());
@@ -2523,22 +2526,22 @@ TEST_F(WmTest, APressOnABlockedParentActivatesTheModalAndIsNotDelivered)
 
 TEST_F(WmTest, APressOnTheUncoveredPartOfABlockedParentActivatesTheModal)
 {
-    Window *w1 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w11 = makeWindow(QRect(20, 20, 50, 50));
+    Window *w1 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w11 = makeWindow(base::Rect(20, 20, 50, 50));
     ASSERT_TRUE(w11->setTransientParent(w1));
-    Window *w2 = makeWindow(QRect(0, 0, 50, 50));
+    Window *w2 = makeWindow(base::Rect(0, 0, 50, 50));
     w11->setModal(true);
 
     manager.activation()->activate(w2);
-    input.onPointerMotionAbsolute(at(1), QPointF(90, 90));
+    input.onPointerMotionAbsolute(at(1), base::PointF(90, 90));
     input.onPointerButton(at(2), BTN_LEFT, true);
     EXPECT_TRUE(w11->isActive());
 }
 
 TEST_F(WmTest, OnlyAVisibleModalChildBlocksItsParent)
 {
-    Window *w1 = makeWindow(QRect(0, 0, 100, 100));
-    Window *w2 = makeWindow(QRect(0, 0, 100, 100));
+    Window *w1 = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *w2 = makeWindow(base::Rect(0, 0, 100, 100));
     w2->setModal(true);
     EXPECT_EQ(nullptr, modalTransient(w1));
 
@@ -2554,19 +2557,19 @@ TEST_F(WmTest, OnlyAVisibleModalChildBlocksItsParent)
 
 TEST_F(WmTest, ABlockedParentGetsNoPointerFocus)
 {
-    Window *parent = makeWindow(QRect(0, 0, 400, 400));
-    Window *dialog = makeWindow(QRect(100, 100, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 400, 400));
+    Window *dialog = makeWindow(base::Rect(100, 100, 100, 100));
     ASSERT_TRUE(dialog->setTransientParent(parent));
     dialog->setModal(true);
 
-    input.onPointerMotionAbsolute(at(1), QPointF(150, 150));
+    input.onPointerMotionAbsolute(at(1), base::PointF(150, 150));
     input.onPointerButton(at(2), BTN_LEFT, true);
     EXPECT_EQ(dialog->rootSurface(), seat.pointerGrabSurface());
     input.onPointerButton(at(3), BTN_LEFT, false);
     seat.setCompositorCursorShape(input::CursorShape::Text);
 
     // Over the parent, neither the press nor the cursor shape changes hands.
-    input.onPointerMotionAbsolute(at(4), QPointF(20, 20));
+    input.onPointerMotionAbsolute(at(4), base::PointF(20, 20));
     EXPECT_EQ(input::CursorShape::Text, seat.compositorCursorShape());
     input.onPointerButton(at(5), BTN_LEFT, true);
     EXPECT_EQ(nullptr, seat.pointerGrabSurface());
@@ -2574,7 +2577,7 @@ TEST_F(WmTest, ABlockedParentGetsNoPointerFocus)
     input.onPointerButton(at(6), BTN_LEFT, false);
 
     dialog->setModal(false);
-    input.onPointerMotionAbsolute(at(7), QPointF(21, 21));
+    input.onPointerMotionAbsolute(at(7), base::PointF(21, 21));
     input.onPointerButton(at(8), BTN_LEFT, true);
     EXPECT_EQ(parent->rootSurface(), seat.pointerGrabSurface());
     EXPECT_TRUE(parent->isActive());
@@ -2582,24 +2585,24 @@ TEST_F(WmTest, ABlockedParentGetsNoPointerFocus)
 
 TEST_F(WmTest, AParentlessModalDoesNotStealActivation)
 {
-    Window *other = makeWindow(QRect(0, 0, 100, 100));
+    Window *other = makeWindow(base::Rect(0, 0, 100, 100));
     manager.activation()->activate(other);
-    Window *modal = makeWindow(QRect(0, 0, 100, 100));
+    Window *modal = makeWindow(base::Rect(0, 0, 100, 100));
 
     modal->setModal(true);
     EXPECT_TRUE(other->isActive());
     EXPECT_FALSE(isModalInEffect(modal));
 
-    Window *mapped = manager.createWindow(makeSurface(QSize(50, 50)),
-                                          {.requestedSize = QSize(50, 50), .modal = true});
+    Window *mapped = manager.createWindow(makeSurface(base::Size(50, 50)),
+                                          {.requestedSize = base::Size(50, 50), .modal = true});
     EXPECT_TRUE(mapped->isModal());
     EXPECT_TRUE(other->isActive());
 }
 
 TEST_F(WmTest, AModalThatGainsAParentBlocksIt)
 {
-    Window *parent = makeWindow(QRect(0, 0, 100, 100));
-    Window *modal = makeWindow(QRect(0, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *modal = makeWindow(base::Rect(0, 0, 100, 100));
     modal->setModal(true);
     manager.activation()->activate(parent);
     ASSERT_TRUE(parent->isActive());
@@ -2616,8 +2619,8 @@ TEST_F(WmTest, AModalThatGainsAParentBlocksIt)
 
 TEST_F(WmTest, RestoringAMinimizedModalBlocksItsParentAgain)
 {
-    Window *parent = makeWindow(QRect(0, 0, 100, 100));
-    Window *modal = makeWindow(QRect(0, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *modal = makeWindow(base::Rect(0, 0, 100, 100));
     ASSERT_TRUE(modal->setTransientParent(parent));
     modal->setModal(true);
     ASSERT_TRUE(modal->isActive());
@@ -2634,8 +2637,8 @@ TEST_F(WmTest, RestoringAMinimizedModalBlocksItsParentAgain)
 
 TEST_F(WmTest, AModalLosesItsEffectWithItsParent)
 {
-    Window *parent = makeWindow(QRect(0, 0, 100, 100));
-    Window *modal = makeWindow(QRect(0, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *modal = makeWindow(base::Rect(0, 0, 100, 100));
     ASSERT_TRUE(modal->setTransientParent(parent));
     modal->setModal(true);
 
@@ -2666,8 +2669,8 @@ TEST_F(WmTest, ModalReevaluationNeverActivatesThroughALockedSession)
 {
     LockedGate gate;
     manager.setSessionGate(&gate);
-    Window *parent = makeWindow(QRect(0, 0, 100, 100));
-    Window *modal = makeWindow(QRect(0, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 100, 100));
+    Window *modal = makeWindow(base::Rect(0, 0, 100, 100));
     ASSERT_TRUE(modal->setTransientParent(parent));
     manager.activation()->activate(parent);
     ASSERT_TRUE(parent->isActive());
@@ -2689,34 +2692,34 @@ TEST_F(WmTest, ModalReevaluationNeverActivatesThroughALockedSession)
 
 TEST_F(WmTest, ScrollingOverABlockedParentIsDroppedWithoutActivatingTheModal)
 {
-    Window *parent = makeWindow(QRect(0, 0, 400, 400));
-    Window *modal = makeWindow(QRect(100, 100, 100, 100));
-    Window *other = makeWindow(QRect(500, 0, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 400, 400));
+    Window *modal = makeWindow(base::Rect(100, 100, 100, 100));
+    Window *other = makeWindow(base::Rect(500, 0, 100, 100));
     ASSERT_TRUE(modal->setTransientParent(parent));
     modal->setModal(true);
     manager.activation()->activate(other);
 
-    EXPECT_TRUE(manager.onPointerAxis(at(1), QPointF(20, 20), QPointF(0, 10), false));
-    EXPECT_TRUE(manager.onPointerAxisStop(at(2), QPointF(20, 20)));
+    EXPECT_TRUE(manager.onPointerAxis(at(1), base::PointF(20, 20), base::PointF(0, 10), false));
+    EXPECT_TRUE(manager.onPointerAxisStop(at(2), base::PointF(20, 20)));
     EXPECT_TRUE(other->isActive());
-    EXPECT_FALSE(manager.onPointerAxis(at(3), QPointF(150, 150), QPointF(0, 10), false));
-    EXPECT_FALSE(manager.onPointerAxis(at(4), QPointF(550, 50), QPointF(0, 10), false));
+    EXPECT_FALSE(manager.onPointerAxis(at(3), base::PointF(150, 150), base::PointF(0, 10), false));
+    EXPECT_FALSE(manager.onPointerAxis(at(4), base::PointF(550, 50), base::PointF(0, 10), false));
 }
 
 TEST_F(WmTest, AConsumedPressKeepsItsReleaseForEachButton)
 {
-    Window *parent = makeWindow(QRect(0, 0, 400, 400));
-    Window *modal = makeWindow(QRect(100, 100, 100, 100));
+    Window *parent = makeWindow(base::Rect(0, 0, 400, 400));
+    Window *modal = makeWindow(base::Rect(100, 100, 100, 100));
     ASSERT_TRUE(modal->setTransientParent(parent));
     modal->setModal(true);
 
-    EXPECT_TRUE(manager.onPointerButton(at(1), QPointF(20, 20), BTN_LEFT, true));
-    EXPECT_TRUE(manager.onPointerButton(at(2), QPointF(20, 20), BTN_RIGHT, true));
+    EXPECT_TRUE(manager.onPointerButton(at(1), base::PointF(20, 20), BTN_LEFT, true));
+    EXPECT_TRUE(manager.onPointerButton(at(2), base::PointF(20, 20), BTN_RIGHT, true));
     // The modal is gone before the releases; they stay consumed all the same.
     modal->setModal(false);
-    EXPECT_TRUE(manager.onPointerButton(at(3), QPointF(20, 20), BTN_LEFT, false));
-    EXPECT_TRUE(manager.onPointerButton(at(4), QPointF(20, 20), BTN_RIGHT, false));
+    EXPECT_TRUE(manager.onPointerButton(at(3), base::PointF(20, 20), BTN_LEFT, false));
+    EXPECT_TRUE(manager.onPointerButton(at(4), base::PointF(20, 20), BTN_RIGHT, false));
 
-    EXPECT_FALSE(manager.onPointerButton(at(5), QPointF(20, 20), BTN_LEFT, true));
-    EXPECT_FALSE(manager.onPointerButton(at(6), QPointF(20, 20), BTN_LEFT, false));
+    EXPECT_FALSE(manager.onPointerButton(at(5), base::PointF(20, 20), BTN_LEFT, true));
+    EXPECT_FALSE(manager.onPointerButton(at(6), base::PointF(20, 20), BTN_LEFT, false));
 }

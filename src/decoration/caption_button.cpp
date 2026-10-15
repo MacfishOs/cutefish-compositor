@@ -6,9 +6,9 @@
 
 #include <cmath>
 
-#include <QImage>
-#include <QPainter>
-#include <QPainterPath>
+#include "ui/bitmap.h"
+#include "ui/bitmap_painter.h"
+#include "ui/path.h"
 
 namespace cutefish::decoration {
 
@@ -36,13 +36,13 @@ bool CaptionButton::setPressed(bool pressed)
 Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
                         const render::Color& color)
 {
-    Image image(QSize(size, size));
+    Image image(base::Size(size, size));
     if (size <= 0)
         return image;
 
     // FishUI src/images/light/{close,minimize,maximize,restore}.svg, on its 24px grid.
-    QPainterPath path;
-    path.setFillRule(Qt::WindingFill);
+    ui::Path path;
+    path.setFillRule(ui::Path::FillRule::Winding);
     if (type == CaptionButtonType::Close) {
         path.moveTo(16.2241, 7.13313);
         path.cubicTo(16.4016, 6.95562, 16.6894, 6.95562, 16.8669, 7.13313);
@@ -61,7 +61,7 @@ Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
         path.cubicTo(7.31065, 6.95562, 7.59838, 6.95562, 7.77589, 7.13313);
         path.lineTo(12, 11.3572);
         path.lineTo(16.2241, 7.13313);
-        path.closeSubpath();
+        path.close();
     } else if (type == CaptionButtonType::Minimize) {
         path.moveTo(16.529, 13);
         path.cubicTo(16.7891, 13, 17, 12.7891, 17, 12.529);
@@ -72,14 +72,14 @@ Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
         path.lineTo(7, 12.529);
         path.cubicTo(7, 12.7891, 7.21087, 13, 7.471, 13);
         path.lineTo(16.529, 13);
-        path.closeSubpath();
+        path.close();
     } else if (!restore) {
         path.moveTo(14.5, 16.0002);
         path.lineTo(14.5, 17);
         path.lineTo(9.5, 17);
         path.lineTo(9.5, 16.0002);
         path.lineTo(14.5, 16.0002);
-        path.closeSubpath();
+        path.close();
         path.moveTo(16.0002, 14.5);
         path.lineTo(16.0002, 9.5);
         path.cubicTo(16.0002, 8.67157, 15.3284, 7.99976, 14.5, 7.99976);
@@ -99,7 +99,7 @@ Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
         path.cubicTo(16.8587, 16.016, 15.7946, 17, 14.5, 17);
         path.lineTo(14.5, 16.0002);
         path.cubicTo(15.3284, 16.0002, 16.0002, 15.3284, 16.0002, 14.5);
-        path.closeSubpath();
+        path.close();
     } else {
         path.moveTo(8.53849, 8.67291);
         path.cubicTo(7.68616, 8.67291, 7, 9.41569, 7, 10.3383);
@@ -110,7 +110,7 @@ Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
         path.lineTo(15.4618, 10.3383);
         path.cubicTo(15.4618, 9.41569, 14.7756, 8.67291, 13.9233, 8.67291);
         path.lineTo(8.53849, 8.67291);
-        path.closeSubpath();
+        path.close();
         path.moveTo(8.53849, 10.3383);
         path.lineTo(13.9233, 10.3383);
         path.cubicTo(14.3494, 10.3383, 14.6925, 10.7098, 14.6925, 11.1711);
@@ -120,7 +120,7 @@ Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
         path.cubicTo(8.11235, 16.1673, 7.76926, 15.796, 7.76926, 15.3347);
         path.lineTo(7.76926, 11.1711);
         path.cubicTo(7.76926, 10.7098, 8.11235, 10.3383, 8.53849, 10.3383);
-        path.closeSubpath();
+        path.close();
         path.moveTo(10.0768, 7);
         path.cubicTo(9.50676, 7, 9.01606, 7.33654, 8.75018, 7.83266);
         path.lineTo(14.6923, 7.83266);
@@ -130,20 +130,20 @@ Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
         path.lineTo(17, 9.49818);
         path.cubicTo(17, 8.11422, 15.9708, 7, 14.6923, 7);
         path.lineTo(10.0768, 7);
-        path.closeSubpath();
+        path.close();
     }
 
-    QImage mask(size, size, QImage::Format_ARGB32_Premultiplied);
-    mask.fill(Qt::transparent);
+    ui::Bitmap mask(size, size, ui::Bitmap::Format::Argb32Premultiplied);
+    mask.fill(0);
     {
-        QPainter painter(&mask);
-        painter.setRenderHint(QPainter::Antialiasing);
+        ui::BitmapPainter painter(mask);
+        painter.setAntialiasing(true);
         painter.scale(size / 24.0, size / 24.0);
-        painter.fillPath(path, Qt::white);
+        painter.fillPath(path, ui::Color::rgb(0xFFFFFF));
     }
     for (int y = 0; y < size; ++y) {
         for (int x = 0; x < size; ++x)
-            image.blend(x, y, color, qAlpha(mask.pixel(x, y)) / 255.0f);
+            image.blend(x, y, color, mask.alpha(x, y) / 255.0f);
     }
     return image;
 }
@@ -152,10 +152,10 @@ Image renderButtonHighlight(int buttonSize, const render::Color& color)
 {
     // FishUI RoundImageButton.qml rounds its 10% background margin.
     const int diameter = buttonSize - 2 * static_cast<int>(std::lround(buttonSize * 0.1));
-    Image image(QSize(diameter, diameter));
+    Image image(base::Size(diameter, diameter));
     if (diameter <= 0)
         return image;
-    fillRoundedRect(image, QRectF(0, 0, diameter, diameter), diameter / 2.0, color);
+    fillRoundedRect(image, base::RectF(0, 0, diameter, diameter), diameter / 2.0, color);
     return image;
 }
 

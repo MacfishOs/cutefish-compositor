@@ -5,28 +5,30 @@
 #pragma once
 
 #include "display/callback_native_display_delegate.h"
+#include "base/signal.h"
+#include "base/timer.h"
 #include "display/display_configuration_controller.h"
-#include <QTimer>
 #include <functional>
+#include <memory>
 
 namespace cutefish::display {
 
-class DisplayTopologyCoordinator : public QObject
+class DisplayTopologyCoordinator
 {
-    Q_OBJECT
 public:
     using Probe = std::function<std::optional<HardwareSnapshot>()>;
     DisplayTopologyCoordinator(DisplayManager *manager, CallbackNativeDisplayDelegate *delegate,
                                DisplayConfigurationController *controller, Probe probe,
-                               DisplayPreferences preferences = DisplayPreferences(),
-                               QObject *parent = nullptr);
+                               DisplayPreferences preferences = DisplayPreferences());
+    DisplayTopologyCoordinator(const DisplayTopologyCoordinator &) = delete;
+    DisplayTopologyCoordinator &operator=(const DisplayTopologyCoordinator &) = delete;
     void invalidate();
     // The first reconciliation. Unlike invalidate(), it does not carry over
     // the startup layout, which nobody chose: unsaved displays get defaults.
     void start();
 
-signals:
-    void reconciled(bool succeeded);
+    // Whether the reconciliation succeeded.
+    base::Signal<bool> reconciled;
 
 private:
     void schedule();
@@ -37,11 +39,13 @@ private:
     DisplayConfigurationController *m_controller;
     Probe m_probe;
     DisplayPreferences m_preferences;
-    QTimer m_retry;
+    base::Timer m_retry;
+    base::Subscription m_operationFinished;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
     std::optional<AppliedConfiguration> m_previous;
     bool m_pending = false;
     bool m_running = false;
-    QString m_operationToken;
+    std::string m_operationToken;
     int m_attempts = 0;
     uint64_t m_revision = 0;
 };

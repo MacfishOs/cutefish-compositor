@@ -10,6 +10,7 @@
 
 #include "render/gl_program.h"
 #include "render/renderer.h"
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -24,7 +25,7 @@ public:
 
     // With the renderer's raster scale at 1, so logical units are image pixels,
     // and no rounded clip set.
-    std::unique_ptr<Texture> render(Renderer &renderer, const QSize &size,
+    std::unique_ptr<Texture> render(Renderer &renderer, const base::Size &size,
                                     const std::vector<ShadowLobe> &lobes,
                                     const std::function<void()> &paintCaster);
 
@@ -32,8 +33,8 @@ private:
     // Draws `texture` over `rect`, in pixels of a `viewport` sized pass with
     // rows bottom-up, as every pass here stores them; `extent` is the texture
     // coordinate the far corner samples.
-    void draw(Texture *texture, const QRectF &rect, const QSize &viewport,
-              const QPointF &extent = {1, 1}) const;
+    void draw(Texture *texture, const base::RectF &rect, const base::Size &viewport,
+              const base::PointF &extent = {1, 1}) const;
 
     GlProgram m_program;
 };

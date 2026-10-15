@@ -7,15 +7,16 @@
 namespace cutefish::wayland {
 
 DmaBufScanoutPolicy::DmaBufScanoutPolicy(DmaBufFeedbackManager* manager,
-                                         wm::WindowManager* windowManager, QObject* parent)
-    : QObject(parent)
-    , m_manager(manager)
+                                         wm::WindowManager* windowManager)
+    : m_manager(manager)
     , m_windowManager(windowManager)
 {
-    connect(m_windowManager, &wm::WindowManager::windowAdded, this,
-            &DmaBufScanoutPolicy::onWindowAdded);
-    connect(m_windowManager, &wm::WindowManager::windowRemoved, this,
-            &DmaBufScanoutPolicy::onWindowRemoved);
+    m_windowAdded = m_windowManager->windowAdded.connect([this](wm::Window* window) {
+        onWindowAdded(window);
+    });
+    m_windowRemoved = m_windowManager->windowRemoved.connect([this](wm::Window* window) {
+        onWindowRemoved(window);
+    });
     for (wm::Window* window : m_windowManager->windows())
         onWindowAdded(window);
 }

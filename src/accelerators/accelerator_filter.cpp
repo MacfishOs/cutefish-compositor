@@ -61,15 +61,15 @@ AcceleratorFilter::AcceleratorFilter(AcceleratorController *controller,
                                      const input::XkbTracker *xkb,
                                      wm::WindowManager *windowManager,
                                      wm::WindowCycleController *windowCycle,
-                                     input::EventSink *next, QObject *parent)
-    : QObject(parent)
-    , m_controller(controller)
+                                     input::EventSink *next)
+    : m_controller(controller)
     , m_xkb(xkb)
     , m_windowManager(windowManager)
     , m_windowCycle(windowCycle)
     , m_next(next)
 {
-    connect(&m_repeatTimer, &QTimer::timeout, this, &AcceleratorFilter::onRepeat);
+    m_repeatTimer.setSingleShot(true);
+    m_repeatTimer.onTimeout = [this] { onRepeat(); };
 }
 
 AcceleratorFilter::~AcceleratorFilter() = default;
@@ -119,14 +119,14 @@ void AcceleratorFilter::onRepeat()
         stopRepeat();
 }
 
-bool AcceleratorFilter::onPointerMotion(input::Timestamp timestamp, const QPointF &location)
+bool AcceleratorFilter::onPointerMotion(input::Timestamp timestamp, const base::PointF &location)
 {
     if (m_windowCycle)
         m_windowCycle->onPointerMotion(location);
     return m_next && m_next->onPointerMotion(timestamp, location);
 }
 
-bool AcceleratorFilter::onPointerButton(input::Timestamp timestamp, const QPointF &location,
+bool AcceleratorFilter::onPointerButton(input::Timestamp timestamp, const base::PointF &location,
                                         uint32_t evdevButton, bool pressed)
 {
     m_controller->launcherStateMachine()->onPointerButton(pressed);
@@ -135,25 +135,25 @@ bool AcceleratorFilter::onPointerButton(input::Timestamp timestamp, const QPoint
     return m_next && m_next->onPointerButton(timestamp, location, evdevButton, pressed);
 }
 
-bool AcceleratorFilter::onPointerAxis(input::Timestamp timestamp, const QPointF &location,
-                                      const QPointF &offset, bool discrete)
+bool AcceleratorFilter::onPointerAxis(input::Timestamp timestamp, const base::PointF &location,
+                                      const base::PointF &offset, bool discrete)
 {
     return m_next && m_next->onPointerAxis(timestamp, location, offset, discrete);
 }
 
-bool AcceleratorFilter::onPointerAxisStop(input::Timestamp timestamp, const QPointF &location)
+bool AcceleratorFilter::onPointerAxisStop(input::Timestamp timestamp, const base::PointF &location)
 {
     return m_next && m_next->onPointerAxisStop(timestamp, location);
 }
 
 bool AcceleratorFilter::onTouchDown(input::Timestamp timestamp, int32_t id,
-                                    const QPointF &location)
+                                    const base::PointF &location)
 {
     return m_next && m_next->onTouchDown(timestamp, id, location);
 }
 
 bool AcceleratorFilter::onTouchMotion(input::Timestamp timestamp, int32_t id,
-                                      const QPointF &location)
+                                      const base::PointF &location)
 {
     return m_next && m_next->onTouchMotion(timestamp, id, location);
 }

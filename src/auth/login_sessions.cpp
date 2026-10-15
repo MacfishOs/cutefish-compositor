@@ -4,171 +4,273 @@
 
 #include "auth/login_sessions.h"
 
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QHash>
-#include <QProcess>
-#include <QSet>
-#include <QSettings>
-#include <QStandardPaths>
-
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <map>
 #include <pwd.h>
+#include <set>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
-#include <vector>
+
+#include "base/file.h"
+#include "base/paths.h"
+#include "base/settings.h"
+#include "base/strings.h"
 
 namespace cutefish::auth {
 
 namespace {
 
-const QString kStatePath = QStringLiteral("/var/lib/cutefish-dm/state.conf");
+const std::string kStatePath = "/var/lib/cutefish-dm/state.conf";
 
-QString unescape(const QString &value)
+bool isSpace(char c)
 {
-    QString result;
-    for (qsizetype i = 0; i < value.size(); ++i) {
-        const QChar c = value.at(i);
-        if (c != QLatin1Char('\\') || i + 1 == value.size()) {
-            result.append(c);
-            continue;
-        }
-        const QChar next = value.at(++i);
-        result.append(next == QLatin1Char('s')   ? QChar(QLatin1Char(' '))
-                      : next == QLatin1Char('n') ? QChar(QLatin1Char('\n'))
-                      : next == QLatin1Char('t') ? QChar(QLatin1Char('\t'))
-                                                 : next);
+    return c == ' ' || (c >= '\t' && c <= '\r');
+}
+
+std::string trimmed(std::string_view text)
+{
+    return std::string(base::strings::trimmed(text));
+}
+
+std::vector<std::string> lines(const std::string &contents)
+{
+    std::vector<std::string> result;
+    size_t start = 0;
+    while (start < contents.size()) {
+        size_t end = contents.find('\n', start);
+        if (end == std::string::npos)
+            end = contents.size();
+        result.emplace_back(contents, start, end - start);
+        start = end + 1;
     }
     return result;
 }
 
-bool executableExists(const QString &program)
+std::string unescape(const std::string &value)
 {
-    if (QFileInfo(program).isAbsolute())
-        return QFileInfo(program).isExecutable();
-    return !QStandardPaths::findExecutable(program).isEmpty();
-}
-
-bool readEntry(const QString &path, LoginSession *session)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return false;
-    QHash<QString, QString> keys;
-    bool inEntry = false;
-    while (!file.atEnd()) {
-        const QString line = QString::fromUtf8(file.readLine()).trimmed();
-        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
-            continue;
-        if (line.startsWith(QLatin1Char('['))) {
-            inEntry = line == QLatin1String("[Desktop Entry]");
+    std::string result;
+    for (size_t i = 0; i < value.size(); ++i) {
+        const char c = value[i];
+        if (c != '\\' || i + 1 == value.size()) {
+            result += c;
             continue;
         }
-        const qsizetype equals = line.indexOf(QLatin1Char('='));
-        if (inEntry && equals > 0 && !keys.contains(line.left(equals).trimmed()))
-            keys.insert(line.left(equals).trimmed(), line.mid(equals + 1).trimmed());
+        const char next = value[++i];
+        result += next == 's' ? ' ' : next == 'n' ? '\n' : next == 't' ? '\t' : next;
     }
-    if (keys.value(QStringLiteral("Hidden")) == QLatin1String("true")
-        || keys.value(QStringLiteral("NoDisplay")) == QLatin1String("true"))
-        return false;
-    const QString tryExec = unescape(keys.value(QStringLiteral("TryExec")));
-    if (!tryExec.isEmpty() && !executableExists(tryExec))
-        return false;
+    return result;
+}
 
-    session->id = QFileInfo(path).completeBaseName();
-    session->name = unescape(keys.value(QStringLiteral("Name"), session->id));
+bool executableExists(const std::string &program)
+{
+    if (program.starts_with('/')) {
+        struct stat info;
+        return stat(program.c_str(), &info) == 0 && access(program.c_str(), X_OK) == 0;
+    }
+    return !base::paths::findExecutable(program).empty();
+}
+
+// The file name without its last extension.
+std::string completeBaseName(const std::string &path)
+{
+    std::string name = std::filesystem::path(path).filename().string();
+    const size_t dot = name.rfind('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
+bool readEntry(const std::string &path, LoginSession *session)
+{
+    const std::optional<std::string> contents = base::file::read(path);
+    if (!contents)
+        return false;
+    std::map<std::string, std::string> keys;
+    bool inEntry = false;
+    for (const std::string &raw : lines(*contents)) {
+        const std::string line = trimmed(raw);
+        if (line.empty() || line.starts_with('#'))
+            continue;
+        if (line.starts_with('[')) {
+            inEntry = line == "[Desktop Entry]";
+            continue;
+        }
+        const size_t equals = line.find('=');
+        if (!inEntry || equals == 0 || equals == std::string::npos)
+            continue;
+        // The first of a repeated key counts.
+        keys.emplace(trimmed(std::string_view(line).substr(0, equals)),
+                     trimmed(std::string_view(line).substr(equals + 1)));
+    }
+    const auto value = [&keys](const std::string &key, const std::string &fallback = {}) {
+        const auto found = keys.find(key);
+        return found == keys.end() ? fallback : found->second;
+    };
+
+    if (value("Hidden") == "true" || value("NoDisplay") == "true")
+        return false;
+    const std::string tryExec = unescape(value("TryExec"));
+    if (!tryExec.empty() && !executableExists(tryExec))
+        return false;
+    session->id = completeBaseName(path);
+    session->name = unescape(value("Name", session->id));
     session->command.clear();
-    for (const QString &argument :
-         QProcess::splitCommand(unescape(keys.value(QStringLiteral("Exec"))))) {
-        if (!(argument.size() == 2 && argument.startsWith(QLatin1Char('%'))))
-            session->command.append(argument);
+    for (const std::string &argument : splitCommand(unescape(value("Exec")))) {
+        if (!(argument.size() == 2 && argument.starts_with('%')))
+            session->command.push_back(argument);
     }
-    QStringList desktopNames;
-    for (const QString &name : keys.value(QStringLiteral("DesktopNames")).split(QLatin1Char(';'))) {
-        if (!name.trimmed().isEmpty())
-            desktopNames.append(name.trimmed());
+    std::vector<std::string> desktopNames;
+    for (const std::string_view name : base::strings::splitViews(value("DesktopNames"), ';')) {
+        if (!base::strings::trimmed(name).empty())
+            desktopNames.emplace_back(base::strings::trimmed(name));
     }
-    session->environment = {QStringLiteral("XDG_SESSION_TYPE=wayland"),
-                            QStringLiteral("DESKTOP_SESSION=%1").arg(session->id),
-                            QStringLiteral("XDG_SESSION_DESKTOP=%1")
-                                    .arg(desktopNames.isEmpty() ? session->id : desktopNames.first())};
-    if (!desktopNames.isEmpty())
-        session->environment.append(
-                QStringLiteral("XDG_CURRENT_DESKTOP=%1").arg(desktopNames.join(QLatin1Char(':'))));
-    return !session->command.isEmpty();
+    session->environment = {"XDG_SESSION_TYPE=wayland", "DESKTOP_SESSION=" + session->id,
+                            "XDG_SESSION_DESKTOP="
+                                    + (desktopNames.empty() ? session->id : desktopNames.front())};
+    if (!desktopNames.empty())
+        session->environment.push_back("XDG_CURRENT_DESKTOP="
+                                       + base::strings::join(desktopNames, ":"));
+    return !session->command.empty();
+}
+
+// The directory's visible *.desktop files, sorted by name.
+std::vector<std::string> desktopFiles(const std::string &directory)
+{
+    std::vector<std::string> files;
+    std::error_code error;
+    for (const auto &item : std::filesystem::directory_iterator(directory, error)) {
+        const std::string name = item.path().filename().string();
+        struct stat info;
+        if (name.starts_with('.') || !name.ends_with(".desktop")
+            || stat(item.path().c_str(), &info) != 0 || !S_ISREG(info.st_mode))
+            continue;
+        files.push_back(name);
+    }
+    std::sort(files.begin(), files.end());
+    for (std::string &file : files)
+        file = std::filesystem::absolute(std::filesystem::path(directory) / file).lexically_normal().string();
+    return files;
+}
+
+std::string localName(const char *name)
+{
+    return name ? std::string(name) : std::string();
 }
 
 } // namespace
 
-QList<LoginSession> findLoginSessions(const QStringList &directories)
+std::vector<std::string> splitCommand(std::string_view command)
 {
-    QList<LoginSession> sessions;
-    QSet<QString> seen;
-    for (const QString &directory : directories) {
-        const auto files = QDir(directory).entryInfoList({QStringLiteral("*.desktop")}, QDir::Files,
-                                                         QDir::Name);
-        for (const QFileInfo &file : files) {
-            if (seen.contains(file.completeBaseName()))
+    std::vector<std::string> arguments;
+    std::string argument;
+    int quotes = 0;
+    bool inQuote = false;
+    for (const char c : command) {
+        if (c == '"') {
+            ++quotes;
+            if (quotes == 3) {
+                quotes = 0;
+                argument += c;
+            }
+            continue;
+        }
+        if (quotes) {
+            if (quotes == 1)
+                inQuote = !inQuote;
+            quotes = 0;
+        }
+        if (!inQuote && isSpace(c)) {
+            if (!argument.empty())
+                arguments.push_back(std::exchange(argument, {}));
+        } else {
+            argument += c;
+        }
+    }
+    if (!argument.empty())
+        arguments.push_back(argument);
+    return arguments;
+}
+
+std::vector<LoginSession> findLoginSessions(const std::vector<std::string> &directories)
+{
+    std::vector<LoginSession> sessions;
+    std::set<std::string> seen;
+    for (const std::string &directory : directories) {
+        for (const std::string &file : desktopFiles(directory)) {
+            if (!seen.insert(completeBaseName(file)).second)
                 continue;
-            seen.insert(file.completeBaseName());
             LoginSession session;
-            if (readEntry(file.absoluteFilePath(), &session))
-                sessions.append(session);
+            if (readEntry(file, &session))
+                sessions.push_back(session);
         }
     }
     return sessions;
 }
 
-QStringList loginSessionDirectories()
+namespace {
+
+std::vector<std::string> &testSessionDirectories()
 {
-    const QString overridden = qEnvironmentVariable("CUTEFISH_SESSION_DIRS");
-    if (!overridden.isEmpty())
-        return overridden.split(QLatin1Char(':'), Qt::SkipEmptyParts);
-    return {QStringLiteral("/usr/local/share/wayland-sessions"),
-            QStringLiteral("/usr/share/wayland-sessions")};
+    static std::vector<std::string> directories;
+    return directories;
 }
 
-QStringList findLoginUsers()
+} // namespace
+
+std::vector<std::string> loginSessionDirectories()
+{
+    if (!testSessionDirectories().empty())
+        return testSessionDirectories();
+    return {"/usr/local/share/wayland-sessions", "/usr/share/wayland-sessions"};
+}
+
+void setLoginSessionDirectoriesForTesting(std::vector<std::string> directories)
+{
+    testSessionDirectories() = std::move(directories);
+}
+
+std::vector<std::string> findLoginUsers()
 {
     uid_t minimum = 1000, maximum = 60000;
-    QFile defs(QStringLiteral("/etc/login.defs"));
-    if (defs.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        while (!defs.atEnd()) {
-            const QStringList fields =
-                    QString::fromUtf8(defs.readLine()).simplified().split(QLatin1Char(' '));
-            if (fields.size() == 2 && fields.first() == QLatin1String("UID_MIN"))
-                minimum = fields.last().toUInt();
-            else if (fields.size() == 2 && fields.first() == QLatin1String("UID_MAX"))
-                maximum = fields.last().toUInt();
+    if (const std::optional<std::string> defs = base::file::read("/etc/login.defs")) {
+        for (const std::string &line : lines(*defs)) {
+            const std::vector<std::string> fields = base::strings::splitWhitespace(line);
+            if (fields.size() != 2)
+                continue;
+            // toUInt(): zero for anything that is not a whole number.
+            const uid_t value = base::strings::toNumber<uid_t>(fields[1]).value_or(0);
+            if (fields[0] == "UID_MIN")
+                minimum = value;
+            else if (fields[0] == "UID_MAX")
+                maximum = value;
         }
     }
-    std::vector<std::pair<uid_t, QString>> accounts;
+    std::vector<std::pair<uid_t, std::string>> accounts;
     setpwent();
     while (const passwd *entry = getpwent()) {
-        const QString shell = QString::fromLocal8Bit(entry->pw_shell);
-        if (entry->pw_uid < minimum || entry->pw_uid > maximum
-            || shell.endsWith(QLatin1String("/nologin")) || shell.endsWith(QLatin1String("/false")))
+        const std::string shell = localName(entry->pw_shell);
+        if (entry->pw_uid < minimum || entry->pw_uid > maximum || shell.ends_with("/nologin")
+            || shell.ends_with("/false"))
             continue;
-        accounts.emplace_back(entry->pw_uid, QString::fromLocal8Bit(entry->pw_name));
+        accounts.emplace_back(entry->pw_uid, localName(entry->pw_name));
     }
     endpwent();
     std::sort(accounts.begin(), accounts.end());
-    QStringList users;
+    std::vector<std::string> users;
     for (const auto &account : accounts)
-        users.append(account.second);
+        users.push_back(account.second);
     return users;
 }
 
-QString lastLoginUser()
+std::string lastLoginUser()
 {
-    return QSettings(kStatePath, QSettings::IniFormat).value(QStringLiteral("Last/User")).toString();
+    return base::Settings(kStatePath).stringValue("Last/User");
 }
 
-QString lastLoginSession(const QString &user)
+std::string lastLoginSession(const std::string &user)
 {
-    QSettings settings(kStatePath, QSettings::IniFormat);
-    settings.beginGroup(QStringLiteral("Sessions"));
-    return settings.value(user).toString();
+    return base::Settings(kStatePath).stringValue("Sessions/" + user);
 }
 
 } // namespace cutefish::auth

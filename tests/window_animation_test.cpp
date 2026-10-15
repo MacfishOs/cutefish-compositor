@@ -15,6 +15,7 @@
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
 #include "scene/window_visual_node.h"
+#include "base/region.h"
 
 using namespace cutefish;
 using Animation = scene::WindowAnimation;
@@ -22,10 +23,16 @@ using Type = Animation::Type;
 
 namespace {
 
+int countKind(const testsupport::FakeRenderer &renderer, const char *kind)
+{
+    const auto kinds = renderer.kinds();
+    return int(std::count(kinds.begin(), kinds.end(), kind));
+}
+
 class SnapshotTexture : public render::Texture
 {
 public:
-    explicit SnapshotTexture(QSize size)
+    explicit SnapshotTexture(base::Size size)
         : m_size(size)
     {
         ++live;
@@ -35,55 +42,55 @@ public:
 
     static inline int live = 0;
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 class SnapshotRenderer : public testsupport::FakeRenderer
 {
 public:
     int captures = 0;
-    QRectF lastTarget;
-    QList<render::Texture *> trilinear;
+    base::RectF lastTarget;
+    std::vector<render::Texture *> trilinear;
 
-    void enableTrilinearFiltering(render::Texture *texture) override { trilinear.append(texture); }
+    void enableTrilinearFiltering(render::Texture *texture) override { trilinear.push_back(texture); }
 
-    QList<int> mipmapLevels;
+    std::vector<int> mipmapLevels;
 
-    void limitMipmapLevel(render::Texture *, int level) override { mipmapLevels.append(level); }
+    void limitMipmapLevel(render::Texture *, int level) override { mipmapLevels.push_back(level); }
 
-    QList<render::RoundedShape> clips;
-    QList<float> outlines;
+    std::vector<render::RoundedShape> clips;
+    std::vector<float> outlines;
 
     void pushRoundedClip(const render::RoundedShape &shape) override
     {
-        clips.append(shape);
+        clips.push_back(shape);
         FakeRenderer::pushRoundedClip(shape);
     }
 
     void drawRoundedOutline(const render::RoundedShape &, const render::Color &color,
-                            qreal) override
+                            double) override
     {
-        outlines.append(color.a);
+        outlines.push_back(color.a);
     }
 
     int blurs = 0;
 
-    void drawBackgroundBlur(const QRect &, int, const QRect &, const render::GlassParams &,
-                            const QPainterPath &, uint64_t) override
+    void drawBackgroundBlur(const base::Rect &, int, const base::Rect &, const render::GlassParams &,
+                            const ui::Path &, uint64_t) override
     {
         ++blurs;
     }
 
-    void drawTextureF(render::Texture *texture, const QRectF &target, float alpha) override
+    void drawTextureF(render::Texture *texture, const base::RectF &target, float alpha) override
     {
         lastTarget = target;
         FakeRenderer::drawTextureF(texture, target, alpha);
     }
 
-    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
                          const std::function<void()> &paint) override
     {
         ++captures;
@@ -92,35 +99,35 @@ public:
         return true;
     }
 
-    QRect lastRepaint;
-    QList<QRect> repaintRects;
+    base::Rect lastRepaint;
+    std::vector<base::Rect> repaintRects;
 
-    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
-                         const QRect &repaint, const std::function<void()> &paint) override
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
+                         const base::Rect &repaint, const std::function<void()> &paint) override
     {
         lastRepaint = repaint;
-        repaintRects.append(repaint);
+        repaintRects.push_back(repaint);
         return renderToTexture(texture, bounds, paint);
     }
 
     // The logical part of the output this frame draws again; all of it if unset.
-    std::optional<QRect> repainted;
+    std::optional<base::Rect> repainted;
 
-    bool repaints(const QRect &logical) const override
+    bool repaints(const base::Rect &logical) const override
     {
         return !repainted || repainted->intersects(logical);
     }
 
-    QList<QRect> imageDraws;
+    std::vector<base::Rect> imageDraws;
 
-    QImage renderToImage(const QSize &size, const std::function<void()> &paint) override
+    ui::Bitmap renderToImage(const base::Size &size, const std::function<void()> &paint) override
     {
-        const qsizetype first = calls.size();
+        const auto first = calls.size();
         paint();
-        for (qsizetype index = first; index < calls.size(); ++index)
-            imageDraws.append(calls[index].rect);
-        calls.remove(first, calls.size() - first);
-        QImage image(size, QImage::Format_ARGB32_Premultiplied);
+        for (auto index = first; index < calls.size(); ++index)
+            imageDraws.push_back(calls[index].rect);
+        calls.erase(calls.begin() + first, calls.end());
+        ui::Bitmap image(size, ui::Bitmap::Format::Argb32Premultiplied);
         image.fill(0x80402010);
         return image;
     }
@@ -130,7 +137,7 @@ public:
 
 TEST(WindowAnimation, DockTransitionsSettleSmoothly)
 {
-    const QRect from(100, 50, 800, 600), to(500, 900, 1, 1);
+    const base::Rect from(100, 50, 800, 600), to(500, 900, 1, 1);
     EXPECT_EQ(Animation::duration(Type::Minimize, from, to), 320);
     EXPECT_EQ(Animation::duration(Type::Restore, to, from), 320);
     const auto halfway = Animation::sample(Type::Minimize, from, to, .5);
@@ -145,7 +152,7 @@ TEST(WindowAnimation, DockTransitionsSettleSmoothly)
 
 TEST(WindowAnimation, VisibilityCurvesAreBoundedAndHaveSoftEndpoints)
 {
-    const QRectF from(100, 50, 800, 600), to(500, 900, 48, 40);
+    const base::RectF from(100, 50, 800, 600), to(500, 900, 48, 40);
     for (const auto type : {Type::Open, Type::Close, Type::Minimize, Type::Restore}) {
         EXPECT_EQ(Animation::sample(type, from, to, -1).bounds, from);
         EXPECT_EQ(Animation::sample(type, from, to, 2).bounds, to);
@@ -176,7 +183,7 @@ TEST(WindowAnimation, ChromiumAreaDependentCrossFadeDuration)
 
 TEST(WindowAnimation, OpenScalesFromCenterAndEndsWithoutFurtherFrames)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
@@ -202,7 +209,7 @@ TEST(WindowAnimation, OpenScalesFromCenterAndEndsWithoutFurtherFrames)
 
 TEST(WindowAnimation, APresentationScaleShrinksAboutItsAnchorAndGrowsBack)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
@@ -214,7 +221,7 @@ TEST(WindowAnimation, APresentationScaleShrinksAboutItsAnchorAndGrowsBack)
     // around it, shrinks towards (200, 150).
     node->setPresentationScale(0.5, {100, 50}, false);
     scene.render(renderer);
-    EXPECT_EQ(QRectF(118, 93, 264, 214), renderer.lastTarget);
+    EXPECT_EQ(base::RectF(118, 93, 264, 214), renderer.lastTarget);
 
     int requests = 0;
     scene.root()->setChangeCallback([&] {
@@ -222,14 +229,14 @@ TEST(WindowAnimation, APresentationScaleShrinksAboutItsAnchorAndGrowsBack)
     });
     node->setPresentationScale(1, {100, 50}, true);
     scene.render(renderer);
-    EXPECT_EQ(QRectF(118, 93, 264, 214), renderer.lastTarget);
+    EXPECT_EQ(base::RectF(118, 93, 264, 214), renderer.lastTarget);
     now = 100;
     scene.render(renderer);
     EXPECT_GT(renderer.lastTarget.width(), 264);
     EXPECT_LT(renderer.lastTarget.width(), 528);
     now = 1000;
     scene.render(renderer);
-    EXPECT_EQ(QRectF(36, 36, 528, 428), renderer.lastTarget);
+    EXPECT_EQ(base::RectF(36, 36, 528, 428), renderer.lastTarget);
     EXPECT_DOUBLE_EQ(1, node->presentationScale());
     requests = 0;
     scene.render(renderer);
@@ -238,7 +245,7 @@ TEST(WindowAnimation, APresentationScaleShrinksAboutItsAnchorAndGrowsBack)
 
 TEST(WindowAnimation, StepsOnTheRendererFrameTimeInsteadOfTheClock)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
@@ -284,7 +291,7 @@ TEST(WindowAnimation, ASlowFirstFrameDelaysTheAnimationInsteadOfSkippingAhead)
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>()));
-    const QRect bounds(100, 100, 800, 600), slot(500, 900, 48, 36);
+    const base::Rect bounds(100, 100, 800, 600), slot(500, 900, 48, 36);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
@@ -318,7 +325,7 @@ TEST(WindowAnimation, StepsOnFractionalFrameTimes)
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>()));
-    const QRect bounds(100, 100, 800, 600), slot(500, 900, 48, 36);
+    const base::Rect bounds(100, 100, 800, 600), slot(500, 900, 48, 36);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
@@ -342,7 +349,7 @@ TEST(WindowAnimation, LiveContentInTheSnapshotPassIsPresented)
     class SuspendingRenderer : public SnapshotRenderer
     {
     public:
-        bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
+        bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
                              const std::function<void()> &paint) override
         {
             auto *submission = std::exchange(presentationSubmission, nullptr);
@@ -359,7 +366,7 @@ TEST(WindowAnimation, LiveContentInTheSnapshotPassIsPresented)
                 std::make_shared<render::PresentationContent>();
 
     protected:
-        void paint(render::Renderer &renderer, const QRect &geometry) const override
+        void paint(render::Renderer &renderer, const base::Rect &geometry) const override
         {
             renderer.recordPresentation(content, geometry);
         }
@@ -399,7 +406,7 @@ protected:
                 window->addChild(std::make_unique<scene::SurfaceNode>()));
         surface->setGeometry({0, 0, 400, 300});
         surface->setTexture(std::make_shared<testsupport::FakeTexture>(
-                QSize(400, 300), pixels.data(), 400 * 4, render::PixelFormat::Rgba8888));
+                base::Size(400, 300), pixels.data(), 400 * 4, render::PixelFormat::Rgba8888));
         scene.render(renderer);
         ASSERT_EQ(renderer.captures, 1);
     }
@@ -415,24 +422,24 @@ TEST_F(SnapshotReuse, UnchangedContentIsDrawnFromTheLastSnapshotAndStillPresente
     scene.render(renderer);
     renderer.presentationSubmission = nullptr;
     EXPECT_EQ(renderer.captures, 1);
-    EXPECT_EQ(renderer.kinds().count(QStringLiteral("texture")), 1);
+    EXPECT_EQ(countKind(renderer, "texture"), 1);
     EXPECT_TRUE(submission.contains(content));
 }
 
 TEST_F(SnapshotReuse, DamageRedrawsItsPartAndAWholePixelMoveKeepsTheSnapshot)
 {
     // One more pixel on each side for linear filtering.
-    surface->notifyDamage(QRect(0, 0, 10, 10));
+    surface->notifyDamage(base::Rect(0, 0, 10, 10));
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 2);
-    EXPECT_EQ(renderer.lastRepaint, QRect(100, 100, 11, 11));
+    EXPECT_EQ(renderer.lastRepaint, base::Rect(100, 100, 11, 11));
     // Moved by whole device pixels, the subtree is unchanged in its own space
     // and the snapshot is drawn where the window now is.
     window->setPosition({120, 100});
     renderer.calls.clear();
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 2);
-    EXPECT_EQ(renderer.kinds().count(QStringLiteral("texture")), 1);
+    EXPECT_EQ(countKind(renderer, "texture"), 1);
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 2);
 }
@@ -440,13 +447,13 @@ TEST_F(SnapshotReuse, DamageRedrawsItsPartAndAWholePixelMoveKeepsTheSnapshot)
 TEST_F(SnapshotReuse, ContentChangingEveryFrameSkipsTheSnapshotAllButEveryEighthFrame)
 {
     const auto drawFrames = [&](int count, bool damage) {
-        QList<bool> snapshots;
+        std::vector<bool> snapshots;
         for (int frame = 0; frame < count; ++frame) {
             if (damage)
-                surface->notifyDamage(QRect(0, 0, 400, 300));
+                surface->notifyDamage(base::Rect(0, 0, 400, 300));
             const int before = renderer.captures;
             scene.render(renderer);
-            snapshots.append(renderer.captures > before);
+            snapshots.push_back(renderer.captures > before);
         }
         return snapshots;
     };
@@ -454,15 +461,15 @@ TEST_F(SnapshotReuse, ContentChangingEveryFrameSkipsTheSnapshotAllButEveryEighth
     // A change on its own still goes through the snapshot; from the second
     // frame in a row the window is drawn straight to the output.
     EXPECT_EQ(drawFrames(10, true),
-              QList<bool>({true, false, false, false, false, false, false, false, true, false}));
+              std::vector<bool>({true, false, false, false, false, false, false, false, true, false}));
     // The next frame drawn without a change draws the snapshot again, and then
     // it is kept.
-    EXPECT_EQ(drawFrames(2, false), QList<bool>({true, false}));
+    EXPECT_EQ(drawFrames(2, false), std::vector<bool>({true, false}));
 
     // Blended by the client's opacity, it always goes through the snapshot.
     window->setOpacity(0.5f);
     drawFrames(1, false);
-    EXPECT_EQ(drawFrames(3, true), QList<bool>({true, true, true}));
+    EXPECT_EQ(drawFrames(3, true), std::vector<bool>({true, true, true}));
 }
 
 TEST(WindowAnimation, ChangesFarApartGoThroughTheSnapshot)
@@ -480,11 +487,11 @@ TEST(WindowAnimation, ChangesFarApartGoThroughTheSnapshot)
     surface->setGeometry({0, 0, 400, 300});
     const std::vector<uint8_t> pixels(400 * 300 * 4, 255);
     surface->setTexture(std::make_shared<testsupport::FakeTexture>(
-            QSize(400, 300), pixels.data(), 400 * 4, render::PixelFormat::Rgba8888));
+            base::Size(400, 300), pixels.data(), 400 * 4, render::PixelFormat::Rgba8888));
     const auto drawChangeAt = [&](double time) {
         now = time;
         renderer.frameTime = time;
-        surface->notifyDamage(QRect(0, 0, 400, 300));
+        surface->notifyDamage(base::Rect(0, 0, 400, 300));
         const int before = renderer.captures;
         scene.render(renderer);
         return renderer.captures > before;
@@ -531,19 +538,19 @@ TEST_F(SnapshotReuse, AFractionalPixelMoveRedrawsAll)
 TEST_F(SnapshotReuse, AWindowMovedWhileDrawnDirectlyClosesWhereItWasDrawn)
 {
     scene.render(renderer);
-    const QRectF captured = renderer.lastTarget;
+    const base::RectF captured = renderer.lastTarget;
     // Content changing every frame is drawn directly from the second frame on,
     // and the snapshot stays where it was captured.
     for (int x = 101; x <= 104; ++x) {
         window->setPosition({x, 100});
-        surface->notifyDamage(QRect(0, 0, 400, 300));
+        surface->notifyDamage(base::Rect(0, 0, 400, 300));
         scene.render(renderer);
     }
     ASSERT_EQ(renderer.captures, 2);
     window->close();
     scene.render(renderer);
     // The close has run for the microseconds the real clock moved on.
-    const QRectF expected = captured.translated(4, 0);
+    const base::RectF expected = captured.translated(4, 0);
     EXPECT_NEAR(renderer.lastTarget.x(), expected.x(), 0.01);
     EXPECT_NEAR(renderer.lastTarget.y(), expected.y(), 0.01);
     EXPECT_NEAR(renderer.lastTarget.width(), expected.width(), 0.01);
@@ -555,14 +562,14 @@ TEST_F(SnapshotReuse, APopupChangingEveryFrameIsDrawnThroughItsSnapshot)
     // click: drawn directly, its close would fade out a snapshot frames old.
     window->setStyle(Animation::Style::Popup);
     for (int frame = 0; frame < 4; ++frame) {
-        surface->notifyDamage(QRect(0, 0, 400, 300));
+        surface->notifyDamage(base::Rect(0, 0, 400, 300));
         scene.render(renderer);
         EXPECT_EQ(renderer.captures, frame + 2);
     }
     window->close();
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 5);
-    EXPECT_EQ(renderer.kinds().back(), QStringLiteral("texture"));
+    EXPECT_EQ(renderer.kinds().back(), "texture");
 }
 
 TEST_F(SnapshotReuse, APlanePromotionIsNeverKeptForALaterFrame)
@@ -601,15 +608,15 @@ TEST_F(SnapshotReuse, ClientOpacityBlendsTheKeptSnapshot)
 TEST_F(SnapshotReuse, AnotherOutputDoesNotDrawAnIdleWindow)
 {
     render::OutputRenderContext context;
-    context.outputId = QStringLiteral("right");
-    context.logicalViewport = QRect(1920, 0, 1920, 1080);
+    context.outputId = "right";
+    context.logicalViewport = base::Rect(1920, 0, 1920, 1080);
     context.scale = 2;
     renderer.setOutputContext(context);
     renderer.calls.clear();
-    surface->notifyDamage(QRect(0, 0, 10, 10));
+    surface->notifyDamage(base::Rect(0, 0, 10, 10));
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, 1);
-    EXPECT_EQ(renderer.kinds().count(QStringLiteral("texture")), 0);
+    EXPECT_EQ(countKind(renderer, "texture"), 0);
 }
 
 TEST_F(SnapshotReuse, CapturesShareTheSnapshotButScalesAndAppearanceChangesDrawAgain)
@@ -623,7 +630,7 @@ TEST_F(SnapshotReuse, CapturesShareTheSnapshotButScalesAndAppearanceChangesDrawA
     capture();
     EXPECT_EQ(renderer.captures, 1);
     // Changed content is drawn once, by whichever comes first.
-    surface->notifyDamage(QRect(0, 0, 10, 10));
+    surface->notifyDamage(base::Rect(0, 0, 10, 10));
     capture();
     EXPECT_EQ(renderer.captures, 2);
     scene.render(renderer);
@@ -654,7 +661,7 @@ class BlurredSnapshot : public SnapshotReuse
 {
 protected:
     scene::SurfaceNode *blur = nullptr;
-    QRect sampled;
+    base::Rect sampled;
     int captures = 0;
 
     void SetUp() override
@@ -666,7 +673,7 @@ protected:
         blur->setGeometry({150, 100, 100, 100});
         blur->setBackgroundBlur({0, 0, 100, 100}, 12);
         const int halo = render::kBackdropBlurSupport + 2;
-        sampled = QRect(250, 200, 100, 100).adjusted(-halo, -halo, halo, halo);
+        sampled = base::Rect(250, 200, 100, 100).adjusted(-halo, -halo, halo, halo);
         scene.render(renderer);
         // Idle once, so a change is not the second in a row, drawn directly.
         scene.render(renderer);
@@ -681,11 +688,11 @@ protected:
 
 TEST_F(BlurredSnapshot, IsKeptWhileNothingItsBlurReadsIsDrawnAgain)
 {
-    renderer.repainted = QRect(900, 700, 10, 10);
+    renderer.repainted = base::Rect(900, 700, 10, 10);
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, captures);
     // What the scene draws again there may have changed.
-    renderer.repainted = QRect(160, 110, 10, 10);
+    renderer.repainted = base::Rect(160, 110, 10, 10);
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, captures + 1);
     EXPECT_EQ(renderer.lastRepaint, sampled);
@@ -694,7 +701,7 @@ TEST_F(BlurredSnapshot, IsKeptWhileNothingItsBlurReadsIsDrawnAgain)
 TEST_F(BlurredSnapshot, DrawnWholeItHasTheSceneRepaintWhatItsBlursRead)
 {
     scene::DamageTracker tracker;
-    const QRect viewport = scene.root()->geometry();
+    const base::Rect viewport = scene.root()->geometry();
     const auto kept = [](uint64_t) {
         return true;
     };
@@ -708,7 +715,7 @@ TEST_F(BlurredSnapshot, DrawnWholeItHasTheSceneRepaintWhatItsBlursRead)
     surface->setPromotedToOverlay(false);
     EXPECT_TRUE(redrawn());
     EXPECT_FALSE(tracker.update(*scene.root(), viewport).isEmpty());
-    EXPECT_EQ(tracker.samples(kept), std::vector<QRect> {sampled});
+    EXPECT_EQ(tracker.samples(kept), std::vector<base::Rect> {sampled});
     scene.render(renderer);
     EXPECT_FALSE(redrawn());
 }
@@ -717,9 +724,9 @@ TEST_F(BlurredSnapshot, ABlurDrawnFromWhatTheOutputLeftIsNotKept)
 {
     // Changes on either side of the blur, whose one repaint rectangle crosses
     // it, while the output draws none of what the blur reads again.
-    renderer.repainted = QRect(100, 100, 11, 11);
-    surface->notifyDamage(QRect(0, 0, 10, 10));
-    surface->notifyDamage(QRect(390, 290, 10, 10));
+    renderer.repainted = base::Rect(100, 100, 11, 11);
+    surface->notifyDamage(base::Rect(0, 0, 10, 10));
+    surface->notifyDamage(base::Rect(390, 290, 10, 10));
     scene.render(renderer);
     EXPECT_EQ(renderer.captures, captures + 1);
     EXPECT_TRUE(renderer.lastRepaint.contains(sampled));
@@ -746,7 +753,7 @@ TEST_F(SnapshotReuse, AScaledPresentationDrawsNoBlurs)
 
 TEST(WindowAnimation, CloseRetainsOnlyPixelsAndCollectsAfterCompletion)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
@@ -772,7 +779,7 @@ TEST(WindowAnimation, CloseRetainsOnlyPixelsAndCollectsAfterCompletion)
 
 TEST(WindowAnimation, CloseStartsFromTheSnapshotBoundsNotTheLiveGeometry)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
@@ -781,13 +788,13 @@ TEST(WindowAnimation, CloseStartsFromTheSnapshotBoundsNotTheLiveGeometry)
     node->setGeometry({100, 100, 400, 300});
     node->finish();
     scene.render(renderer);
-    const QRect captured = renderer.calls.back().rect;
+    const base::Rect captured = renderer.calls.back().rect;
     // The frame was dropped, but nothing repainted before the surface went.
     node->setGeometry({100, 130, 400, 270});
     node->close();
     renderer.calls.clear();
     scene.render(renderer);
-    ASSERT_FALSE(renderer.calls.isEmpty());
+    ASSERT_FALSE(renderer.calls.empty());
     EXPECT_EQ(renderer.calls.back().rect, captured);
 }
 
@@ -804,13 +811,13 @@ TEST(WindowAnimation, UnpaintedWindowCanCloseWithoutWaitingForAnAnimation)
 
 TEST(WindowAnimation, HiddenMinimizeUsesSnapshotAndCanReverse)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 400, 300), target(500, 900, 48, 40);
+    const base::Rect bounds(100, 100, 400, 300), target(500, 900, 48, 40);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
@@ -828,9 +835,9 @@ TEST(WindowAnimation, HiddenMinimizeUsesSnapshotAndCanReverse)
     const double sx = sample.bounds.width() / bounds.width();
     const double sy = sample.bounds.height() / bounds.height();
     EXPECT_EQ(previous.rect,
-              QRectF(sample.bounds.x() - 64 * sx, sample.bounds.y() - 64 * sy,
+              base::RectF(sample.bounds.x() - 64 * sx, sample.bounds.y() - 64 * sy,
                      (bounds.width() + 128) * sx, (bounds.height() + 128) * sy)
-                      .toAlignedRect());
+                      .toEnclosingRect());
     node->setVisible(true);
     node->start(Type::Restore, target, bounds);
     scene.render(renderer);
@@ -843,76 +850,77 @@ TEST(WindowAnimation, HiddenMinimizeUsesSnapshotAndCanReverse)
 
 TEST(WindowAnimation, MinimizeExportsPreviewThenTheExactLandingImage)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 800, 400);
+    const base::Rect bounds(100, 100, 800, 400);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
     node->setVisible(false);
-    const QRect slot(500, 900, 48, 24);
+    const base::Rect slot(500, 900, 48, 24);
     node->start(Type::Minimize, bounds, slot);
     node->setHoldAtEnd(true);
-    QList<QImage> snapshots;
+    std::vector<ui::Bitmap> snapshots;
     int landed = 0;
     node->setFinishedCallback([&] {
-        EXPECT_EQ(snapshots.size(), 2);
+        EXPECT_EQ(snapshots.size(), 2u);
         ++landed;
     });
     node->requestSnapshot(
-            [&](const QImage &image) {
-                snapshots.append(image);
+            [&](const ui::Bitmap &image) {
+                snapshots.push_back(image);
             },
             200);
     scene.render(renderer);
     now = 100;
     scene.render(renderer);
-    ASSERT_EQ(snapshots.size(), 1);
-    EXPECT_EQ(snapshots.front().size(), QSize(200, 100));
+    ASSERT_EQ(snapshots.size(), 1u);
+    EXPECT_EQ(snapshots.front().size(), base::Size(200, 100));
     EXPECT_EQ(renderer.captures, 1);
     // The shrinking snapshot and both images read from it are mipmapped.
-    ASSERT_FALSE(renderer.trilinear.isEmpty());
+    ASSERT_FALSE(renderer.trilinear.empty());
     EXPECT_NE(renderer.trilinear.front(), nullptr);
-    EXPECT_EQ(renderer.trilinear.count(renderer.trilinear.front()), renderer.trilinear.size());
+    EXPECT_EQ(std::ranges::count(renderer.trilinear, renderer.trilinear.front()),
+              std::ssize(renderer.trilinear));
     // Cropped to the window: the shadow margins land outside the image.
-    EXPECT_EQ(renderer.imageDraws.back(), QRect(-16, -16, 232, 132));
+    EXPECT_EQ(renderer.imageDraws.back(), base::Rect(-16, -16, 232, 132));
     // Read from the level a quarter of the snapshot's size, 232 pixels across
     // like the image, and never from a smaller one.
-    EXPECT_EQ(renderer.mipmapLevels, QList<int>({2, -1}));
+    EXPECT_EQ(renderer.mipmapLevels, std::vector<int>({2, -1}));
 
     now = Animation::duration(Type::Minimize, bounds, slot);
     scene.render(renderer);
-    ASSERT_EQ(snapshots.size(), 2);
+    ASSERT_EQ(snapshots.size(), 2u);
     EXPECT_EQ(snapshots.back().size(), slot.size());
     // 928 snapshot pixels onto 56: level 4 is 58 across.
-    EXPECT_EQ(renderer.mipmapLevels, QList<int>({2, -1, 4, -1}));
-    EXPECT_EQ(renderer.lastTarget, QRectF(slot));
+    EXPECT_EQ(renderer.mipmapLevels, std::vector<int>({2, -1, 4, -1}));
+    EXPECT_EQ(renderer.lastTarget, base::RectF(slot));
     EXPECT_EQ(landed, 1);
     const auto *texture = dynamic_cast<testsupport::FakeTexture *>(renderer.calls.back().texture);
     ASSERT_NE(texture, nullptr);
-    const QImage rgba = snapshots.back().convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+    const ui::Bitmap rgba = snapshots.back().converted(ui::Bitmap::Format::Rgba8888Premultiplied);
     EXPECT_EQ(texture->pixels(),
               std::vector<uint8_t>(rgba.constBits(), rgba.constBits() + rgba.sizeInBytes()));
     now += 100;
     scene.render(renderer);
-    EXPECT_EQ(snapshots.size(), 2);
+    EXPECT_EQ(snapshots.size(), 2u);
     EXPECT_EQ(renderer.calls.back().texture, texture);
     EXPECT_EQ(landed, 1);
 }
 
 TEST(WindowAnimation, MinimizeFinishesAnInterruptedOpeningFadeBeforeLanding)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
+    const base::Rect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
     node->setGeometry(bounds);
     scene.render(renderer);
     now = 50;
@@ -931,13 +939,13 @@ TEST(WindowAnimation, MinimizeFinishesAnInterruptedOpeningFadeBeforeLanding)
 
 TEST(WindowAnimation, RestoringDuringMinimizeCancelsTheLandingSnapshot)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
+    const base::Rect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
@@ -945,7 +953,7 @@ TEST(WindowAnimation, RestoringDuringMinimizeCancelsTheLandingSnapshot)
     node->start(Type::Minimize, bounds, slot);
     int snapshots = 0;
     node->requestSnapshot(
-            [&](const QImage &) {
+            [&](const ui::Bitmap &) {
                 ++snapshots;
             },
             384);
@@ -963,41 +971,41 @@ TEST(WindowAnimation, RestoringDuringMinimizeCancelsTheLandingSnapshot)
 
 TEST(WindowAnimation, MinimizeWithoutADockKeepsAUsablePreview)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 800, 400), fallback(500, 900, 1, 1);
+    const base::Rect bounds(100, 100, 800, 400), fallback(500, 900, 1, 1);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
     node->setVisible(false);
     node->start(Type::Minimize, bounds, fallback);
-    QList<QImage> snapshots;
+    std::vector<ui::Bitmap> snapshots;
     node->requestSnapshot(
-            [&](const QImage &image) {
-                snapshots.append(image);
+            [&](const ui::Bitmap &image) {
+                snapshots.push_back(image);
             },
             384);
     scene.render(renderer);
     now = Animation::duration(Type::Minimize, bounds, fallback);
     scene.render(renderer);
-    ASSERT_EQ(snapshots.size(), 1);
-    EXPECT_EQ(snapshots.back().size(), QSize(384, 192));
+    ASSERT_EQ(snapshots.size(), 1u);
+    EXPECT_EQ(snapshots.back().size(), base::Size(384, 192));
     EXPECT_EQ(renderer.createdTextures, 0);
 }
 
 TEST(WindowAnimation, DockTransitionsStayOpaqueAndPassOverThePanels)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
+    const base::Rect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
@@ -1030,19 +1038,19 @@ TEST(WindowAnimation, DockTransitionsStayOpaqueAndPassOverThePanels)
     EXPECT_FLOAT_EQ(renderer.calls.back().alpha, 1);
     const double scale = slot.width() / double(bounds.width());
     EXPECT_EQ(renderer.calls.back().rect,
-              QRectF(slot).adjusted(-64 * scale, -64 * scale, 64 * scale, 64 * scale)
-                      .toAlignedRect());
+              base::RectF(slot).adjusted(-64 * scale, -64 * scale, 64 * scale, 64 * scale)
+                      .toEnclosingRect());
 }
 
 TEST(WindowAnimation, MinimizeHoldsOnTheSlotUntilTheDockTakesOver)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
+    const base::Rect bounds(100, 100, 400, 300), slot(500, 900, 48, 36);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
@@ -1073,8 +1081,8 @@ TEST(WindowAnimation, MinimizeHoldsOnTheSlotUntilTheDockTakesOver)
 
     // Still there, and only the body, as long as the dock has not taken over.
     const double scale = slot.width() / double(bounds.width());
-    const QRect landedRect =
-            QRectF(slot).adjusted(-64 * scale, -64 * scale, 64 * scale, 64 * scale).toAlignedRect();
+    const base::Rect landedRect =
+            base::RectF(slot).adjusted(-64 * scale, -64 * scale, 64 * scale, 64 * scale).toEnclosingRect();
     int requests = 0;
     scene.root()->setChangeCallback([&] {
         ++requests;
@@ -1111,14 +1119,14 @@ TEST(WindowAnimation, MinimizeHoldsOnTheSlotUntilTheDockTakesOver)
 
 TEST(WindowAnimation, MovingDockTargetsPreservePositionAndVelocity)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 800, 600);
-    QRect slot(700, 900, 64, 48);
+    const base::Rect bounds(100, 100, 800, 600);
+    base::Rect slot(700, 900, 64, 48);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
@@ -1131,24 +1139,24 @@ TEST(WindowAnimation, MovingDockTargetsPreservePositionAndVelocity)
     node->start(Type::Minimize, bounds, slot);
     scene.render(renderer);
 
-    const auto renderAt = [&](qint64 time) {
+    const auto renderAt = [&](int64_t time) {
         now = time;
         scene.render(renderer);
         return renderer.lastTarget;
     };
-    for (const qint64 time : {100, 180, 280}) {
-        const QRectF before = renderAt(time - 1);
-        const QRectF at = renderAt(time);
+    for (const int64_t time : {100, 180, 280}) {
+        const base::RectF before = renderAt(time - 1);
+        const base::RectF at = renderAt(time);
         slot.translate(-40, 12);
-        slot.setSize(slot.size() + QSize(8, 6));
+        slot.setSize(slot.size() + base::Size(8, 6));
         node->setMinimizeTarget(slot);
-        const QRectF retargeted = renderAt(time);
+        const base::RectF retargeted = renderAt(time);
         EXPECT_NEAR(retargeted.x(), at.x(), 1e-9);
         EXPECT_NEAR(retargeted.y(), at.y(), 1e-9);
         EXPECT_NEAR(retargeted.width(), at.width(), 1e-9);
         EXPECT_NEAR(retargeted.height(), at.height(), 1e-9);
 
-        const QRectF after = renderAt(time + 1);
+        const base::RectF after = renderAt(time + 1);
         EXPECT_NEAR(after.x() - at.x(), at.x() - before.x(), .15);
         EXPECT_NEAR(after.y() - at.y(), at.y() - before.y(), .15);
         EXPECT_NEAR(after.width() - at.width(), at.width() - before.width(), .15);
@@ -1157,26 +1165,28 @@ TEST(WindowAnimation, MovingDockTargetsPreservePositionAndVelocity)
     }
 
     const double scale = slot.width() / double(bounds.width());
-    const QRectF expected = QRectF(slot).adjusted(-64 * scale, -64 * scale, 64 * scale, 64 * scale);
-    EXPECT_EQ(renderAt(Animation::duration(Type::Minimize, bounds, slot)), expected);
+    const base::RectF expected = base::RectF(slot).adjusted(-64 * scale, -64 * scale, 64 * scale, 64 * scale);
+    const base::RectF landedAt = renderAt(Animation::duration(Type::Minimize, bounds, slot));
+    EXPECT_TRUE(base::fuzzyCompare(landedAt, expected)) << landedAt << " " << expected;
     EXPECT_TRUE(node->isHolding());
     EXPECT_EQ(landed, 1);
     // Once handed over, the held image follows the dock's actual displayed slot.
     slot.translate(20, 0);
     node->setMinimizeTarget(slot);
-    EXPECT_EQ(renderAt(now + 16), expected.translated(20, 0));
+    const base::RectF followed = renderAt(now + 16);
+    EXPECT_TRUE(base::fuzzyCompare(followed, expected.translated(20, 0))) << followed;
     EXPECT_EQ(landed, 1);
 }
 
 TEST(WindowAnimation, CrossFadeKeepsHigherResolutionSnapshotOnTop)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect oldBounds(0, 0, 800, 600), newBounds(100, 100, 400, 300);
+    const base::Rect oldBounds(0, 0, 800, 600), newBounds(100, 100, 400, 300);
     node->setGeometry(oldBounds);
     node->finish();
     scene.render(renderer);
@@ -1194,11 +1204,11 @@ TEST(WindowAnimation, CrossFadeKeepsHigherResolutionSnapshotOnTop)
 
 namespace {
 
-scene::WindowVisualState frameVisual(const QSize &size, bool normal)
+scene::WindowVisualState frameVisual(const base::Size &size, bool normal)
 {
     scene::WindowVisualState state;
     state.mode = scene::WindowVisualMode::ServerFrame;
-    state.shape = {QRectF(QPointF(), size), normal ? 12.0 : 0.0};
+    state.shape = {base::RectF(base::PointF(), size), normal ? 12.0 : 0.0};
     state.clipContent = normal;
     state.drawOutline = normal;
     state.outlineWidthPx = 1;
@@ -1209,14 +1219,14 @@ scene::WindowVisualState frameVisual(const QSize &size, bool normal)
 struct ExteriorMorph {
     scene::Scene scene;
     SnapshotRenderer renderer;
-    qint64 now = 0;
+    int64_t now = 0;
     Animation *node = nullptr;
     render::Texture *oldTexture = nullptr;
     double progress = 0;
-    QRectF bounds;
+    base::RectF bounds;
 
     // Renders the cross-fade from `from` to `to` halfway through.
-    ExteriorMorph(const QRect &from, const QRect &to)
+    ExteriorMorph(const base::Rect &from, const base::Rect &to)
     {
         node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([this] {
             return now;
@@ -1249,7 +1259,7 @@ struct ExteriorMorph {
 
 TEST(WindowAnimation, MaximizeCarriesTheCornersShadowAndOutlineAcross)
 {
-    const QRect normal(100, 100, 400, 300), maximized(0, 0, 800, 600);
+    const base::Rect normal(100, 100, 400, 300), maximized(0, 0, 800, 600);
     ExteriorMorph morph(normal, maximized);
     const double radius = 12 * (1 - morph.progress);
     ASSERT_GT(morph.progress, .2);
@@ -1264,7 +1274,7 @@ TEST(WindowAnimation, MaximizeCarriesTheCornersShadowAndOutlineAcross)
                 radius, 1e-6);
     const auto bodyClip = morph.renderer.clips[1];
     EXPECT_NEAR(bodyClip.radius, radius, 1e-6);
-    EXPECT_EQ(bodyClip.radiusScale, QSizeF(1, 1));
+    EXPECT_EQ(bodyClip.radiusScale, base::SizeF(1, 1));
     EXPECT_EQ(bodyClip.bounds, morph.bounds);
 
     // The old shadow fades out underneath, then the body is drawn inside the
@@ -1282,7 +1292,7 @@ TEST(WindowAnimation, MaximizeCarriesTheCornersShadowAndOutlineAcross)
 
 TEST(WindowAnimation, RestoreFromMaximizedGrowsTheExteriorBack)
 {
-    const QRect maximized(0, 0, 800, 600), normal(100, 100, 400, 300);
+    const base::Rect maximized(0, 0, 800, 600), normal(100, 100, 400, 300);
     ExteriorMorph morph(maximized, normal);
     const double radius = 12 * morph.progress;
 
@@ -1307,14 +1317,14 @@ TEST(WindowAnimation, RestoreFromMaximizedGrowsTheExteriorBack)
 
 TEST(WindowAnimation, ADragCrossFadeChasesTheWindowItDissolvesInto)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect maximized(0, 0, 800, 600);
-    const QRect restored(200, 100, 400, 300);
+    const base::Rect maximized(0, 0, 800, 600);
+    const base::Rect restored(200, 100, 400, 300);
     node->setGeometry(maximized);
     node->finish();
     scene.render(renderer);
@@ -1325,17 +1335,17 @@ TEST(WindowAnimation, ADragCrossFadeChasesTheWindowItDissolvesInto)
     node->setGeometry(restored);
     node->start(Type::DragBounds, maximized, restored);
     scene.render(renderer);
-    EXPECT_NEAR(400, renderer.calls.back().rect.center().x(), 1);
-    EXPECT_NEAR(300, renderer.calls.back().rect.center().y(), 1);
+    EXPECT_NEAR(400, renderer.calls.back().rect.centerF().x(), 1);
+    EXPECT_NEAR(300, renderer.calls.back().rect.centerF().y(), 1);
 
     // The drag keeps going while the cross-fade runs: the window moves 300px
     // right and 200px down, and the dissolve has to come with it.
-    const QRect moved(500, 300, 400, 300);
+    const base::Rect moved(500, 300, 400, 300);
     node->setGeometry(moved);
     node->setDragTarget(moved);
     now = 60;
     scene.render(renderer);
-    const QRectF halfway = renderer.calls.back().rect;
+    const base::RectF halfway = renderer.calls.back().rect;
     EXPECT_NEAR(700, halfway.center().x(), 1);
     // Half way the window is still 600x450 on its way down from 800x600, and
     // it is the top left that stays anchored - as it does upstream, where the
@@ -1347,11 +1357,11 @@ TEST(WindowAnimation, ADragCrossFadeChasesTheWindowItDissolvesInto)
     now = 120;
     scene.render(renderer);
     // And it lands exactly on the window.
-    EXPECT_NEAR(700, renderer.calls.back().rect.center().x(), 1);
-    EXPECT_NEAR(450, renderer.calls.back().rect.center().y(), 1);
+    EXPECT_NEAR(700, renderer.calls.back().rect.centerF().x(), 1);
+    EXPECT_NEAR(450, renderer.calls.back().rect.centerF().y(), 1);
     // The content underneath is drawn at its natural size, plus the 64px halo
     // the snapshot coverage carries on each side.
-    const QRectF content = renderer.calls[renderer.calls.size() - 2].rect;
+    const base::RectF content = renderer.calls[renderer.calls.size() - 2].rect;
     EXPECT_NEAR(double(moved.width()), content.width() - 128, 1);
     EXPECT_NEAR(double(moved.height()), content.height() - 128, 1);
 }
@@ -1379,13 +1389,13 @@ TEST(WindowAnimation, UnsupportedRendererDrawsNormally)
 
 TEST(WindowAnimation, ClosingBeforeResizePaintRetainsPreviousSnapshot)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect from(100, 100, 400, 300), to(0, 0, 800, 600);
+    const base::Rect from(100, 100, 400, 300), to(0, 0, 800, 600);
     node->setGeometry(from);
     node->finish();
     scene.render(renderer);
@@ -1402,7 +1412,7 @@ TEST(WindowAnimation, ClosingBeforeResizePaintRetainsPreviousSnapshot)
 
 TEST(WindowAnimation, FramesDamageOnlyTheAnimatedWindow)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *layer = scene.root()->addChild(std::make_unique<scene::Node>());
@@ -1412,7 +1422,7 @@ TEST(WindowAnimation, FramesDamageOnlyTheAnimatedWindow)
         return now;
     })));
     node->setGeometry({100, 100, 300, 200});
-    const QRect viewport(0, 0, 1000, 800);
+    const base::Rect viewport(0, 0, 1000, 800);
     scene::DamageTracker tracker;
     tracker.update(*scene.root(), viewport);
     do {
@@ -1420,9 +1430,9 @@ TEST(WindowAnimation, FramesDamageOnlyTheAnimatedWindow)
         now += 16;
         // Neither the window layer nor the whole output: the open grows from
         // the window's centre, inside its shadow margin.
-        const QRegion damage = tracker.update(*scene.root(), viewport);
+        const base::Region damage = tracker.update(*scene.root(), viewport);
         EXPECT_FALSE(damage.isEmpty()) << now;
-        EXPECT_TRUE(damage.subtracted(QRect(0, 0, 500, 400)).isEmpty()) << now;
+        EXPECT_TRUE(damage.subtracted(base::Rect(0, 0, 500, 400)).isEmpty()) << now;
         EXPECT_FALSE(damage.intersects(other->geometry())) << now;
     } while (node->isRunning() && now < 2000);
     EXPECT_FALSE(node->isRunning());
@@ -1431,17 +1441,17 @@ TEST(WindowAnimation, FramesDamageOnlyTheAnimatedWindow)
 
 TEST(WindowAnimation, AHiddenMinimizeIsDamagedUntilItsLastFrameIsCleared)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect bounds(100, 100, 400, 300), target(500, 900, 48, 40);
+    const base::Rect bounds(100, 100, 400, 300), target(500, 900, 48, 40);
     node->setGeometry(bounds);
     node->finish();
     scene.render(renderer);
-    const QRect screen(0, 0, 1000, 1000), elsewhere(1000, 0, 1000, 1000);
+    const base::Rect screen(0, 0, 1000, 1000), elsewhere(1000, 0, 1000, 1000);
     scene::DamageTracker tracker, beside;
     tracker.update(*scene.root(), screen);
     beside.update(*scene.root(), elsewhere);
@@ -1452,8 +1462,8 @@ TEST(WindowAnimation, AHiddenMinimizeIsDamagedUntilItsLastFrameIsCleared)
     node->setVisible(false);
     node->start(Type::Minimize, bounds, target);
     EXPECT_EQ(requests, 2);
-    const QRect path = node->absolutePaintBounds();
-    EXPECT_EQ(tracker.update(*scene.root(), screen), QRegion(screen));
+    const base::Rect path = node->absolutePaintBounds();
+    EXPECT_EQ(tracker.update(*scene.root(), screen), base::Region(screen));
     EXPECT_TRUE(beside.update(*scene.root(), elsewhere).isEmpty());
     scene.render(renderer);
     now = Animation::duration(Type::Minimize, bounds, target);
@@ -1461,13 +1471,13 @@ TEST(WindowAnimation, AHiddenMinimizeIsDamagedUntilItsLastFrameIsCleared)
     scene.render(renderer);
     EXPECT_FALSE(node->isRunning());
     EXPECT_EQ(requests, 1);
-    EXPECT_EQ(tracker.update(*scene.root(), screen), QRegion(path));
+    EXPECT_EQ(tracker.update(*scene.root(), screen), base::Region(path));
     EXPECT_TRUE(beside.update(*scene.root(), elsewhere).isEmpty());
 }
 
 TEST(WindowAnimation, FinishedMinimizeStopsRequestingFramesAndShutdownReleasesSnapshots)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
@@ -1497,13 +1507,13 @@ TEST(WindowAnimation, FinishedMinimizeStopsRequestingFramesAndShutdownReleasesSn
 
 TEST(WindowAnimation, RestoreWaitsForResizedCommitBeforeCapturingOrStartingClock)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
-    const QRect maximized(0, 0, 1920, 1080), restored(200, 150, 800, 600);
+    const base::Rect maximized(0, 0, 1920, 1080), restored(200, 150, 800, 600);
     node->setGeometry(maximized);
     auto *client = node->addChild(std::make_unique<scene::ColorNode>(render::Color {1, 1, 1, 1}));
     client->setGeometry({0, 0, 1920, 1080});
@@ -1542,7 +1552,7 @@ TEST(WindowAnimation, ReversingWhileWaitingPreservesPresentedBounds)
 {
     Animation node;
     SnapshotRenderer renderer;
-    const QRect maximized(0, 0, 1920, 1080), restored(200, 150, 800, 600);
+    const base::Rect maximized(0, 0, 1920, 1080), restored(200, 150, 800, 600);
     node.setGeometry(maximized);
     node.finish();
     node.render(renderer);
@@ -1563,12 +1573,12 @@ TEST(WindowAnimation, ReversingWhileWaitingPreservesPresentedBounds)
 TEST(WindowAnimation, InterruptionsContinueFromLastDrawnFrame)
 {
     for (const auto type : {Type::Open, Type::Close, Type::Minimize, Type::Restore, Type::Bounds}) {
-        qint64 now = 0;
+        int64_t now = 0;
         Animation node([&] {
             return now;
         });
         SnapshotRenderer renderer;
-        const QRect bounds(100, 100, 400, 300);
+        const base::Rect bounds(100, 100, 400, 300);
         node.setGeometry(bounds);
         node.render(renderer);
         now = 45;
@@ -1586,12 +1596,12 @@ TEST(WindowAnimation, InterruptionsContinueFromLastDrawnFrame)
 
 TEST(WindowAnimation, ResizeWaitKeepsInterruptedOpeningOpacity)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     Animation node([&] {
         return now;
     });
     SnapshotRenderer renderer;
-    const QRect bounds(100, 100, 400, 300), target(0, 0, 800, 600);
+    const base::Rect bounds(100, 100, 400, 300), target(0, 0, 800, 600);
     node.setGeometry(bounds);
     node.render(renderer);
     now = 45;
@@ -1608,13 +1618,13 @@ TEST(WindowAnimation, ResizeWaitKeepsInterruptedOpeningOpacity)
 
 TEST(WindowAnimation, LauncherFadesThroughASlightZoomAndLandsSoftly)
 {
-    const QRectF screen(0, 0, 1000, 800), zoomed(-25, -20, 1050, 840);
+    const base::RectF screen(0, 0, 1000, 800), zoomed(-25, -20, 1050, 840);
     const auto style = Animation::Style::Launcher;
     EXPECT_EQ(Animation::duration(Type::Open, screen, screen, style), 360);
     EXPECT_EQ(Animation::duration(Type::Close, screen, screen, style), 160);
     for (const auto type : {Type::Open, Type::Close}) {
-        const QRectF from = type == Type::Open ? zoomed : screen;
-        const QRectF to = type == Type::Open ? screen : zoomed;
+        const base::RectF from = type == Type::Open ? zoomed : screen;
+        const base::RectF to = type == Type::Open ? screen : zoomed;
         EXPECT_EQ(Animation::sample(type, from, to, 0, style).bounds, from);
         EXPECT_EQ(Animation::sample(type, from, to, 1, style).bounds, to);
         EXPECT_FLOAT_EQ(Animation::sample(type, from, to, 1, style).opacity,
@@ -1625,7 +1635,8 @@ TEST(WindowAnimation, LauncherFadesThroughASlightZoomAndLandsSoftly)
             const auto value = Animation::sample(type, from, to, frame / 240.0, style);
             EXPECT_LE(std::abs(value.bounds.width() - to.width()),
                       std::abs(lastWidth - to.width()) + 1e-9);
-            EXPECT_EQ(value.bounds.center(), screen.center());
+            EXPECT_TRUE(base::fuzzyCompare(value.bounds.center(), screen.center()))
+                    << value.bounds.center();
             if (type == Type::Open)
                 EXPECT_GE(value.opacity, lastOpacity);
             else
@@ -1645,7 +1656,7 @@ TEST(WindowAnimation, LauncherFadesThroughASlightZoomAndLandsSoftly)
 // still take the same share of the fade, down to the last one.
 TEST(WindowAnimation, LauncherCloseFadesInEvenRefreshSteps)
 {
-    const QRect screen(0, 0, 1000, 800);
+    const base::Rect screen(0, 0, 1000, 800);
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>()));
@@ -1672,7 +1683,7 @@ TEST(WindowAnimation, LauncherCloseFadesInEvenRefreshSteps)
 
 TEST(WindowAnimation, FadeOnlyChangesOpacity)
 {
-    const QRectF desktop(0, 0, 1920, 1080);
+    const base::RectF desktop(0, 0, 1920, 1080);
     const auto style = Animation::Style::Fade;
     EXPECT_EQ(Animation::duration(Type::Open, desktop, desktop, style),
               Animation::duration(Type::Open, desktop, desktop, Animation::Style::Window));
@@ -1690,27 +1701,27 @@ TEST(WindowAnimation, FadeOnlyChangesOpacity)
         EXPECT_FLOAT_EQ(lastOpacity, type == Type::Open ? 1 : 0);
     }
 
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
     node->setStyle(style);
-    node->setGeometry(desktop.toRect());
+    node->setGeometry(desktop.toNearestRect());
     scene.render(renderer);
     now = 100;
     scene.render(renderer);
     EXPECT_TRUE(node->isRunning());
     // Drawn unscaled mid-fade: the 64 px overflow margin stays 64 px.
-    EXPECT_EQ(renderer.calls.back().rect, desktop.toRect().adjusted(-64, -64, 64, 64));
+    EXPECT_EQ(renderer.calls.back().rect, desktop.toNearestRect().adjusted(-64, -64, 64, 64));
     EXPECT_GT(renderer.calls.back().alpha, 0);
     EXPECT_LT(renderer.calls.back().alpha, 1);
 }
 
 TEST(WindowAnimation, PopupFadesInPlaceAndFollowsItsLiveGeometry)
 {
-    const QRectF menu(100, 100, 200, 300);
+    const base::RectF menu(100, 100, 200, 300);
     const auto style = Animation::Style::Popup;
     EXPECT_EQ(Animation::duration(Type::Open, menu, menu, style), 100);
     EXPECT_EQ(Animation::duration(Type::Close, menu, menu, style), 80);
@@ -1733,26 +1744,26 @@ TEST(WindowAnimation, PopupFadesInPlaceAndFollowsItsLiveGeometry)
                   .25);
     }
 
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *popup = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
     popup->setStyle(style);
-    popup->setGeometry(menu.toRect());
+    popup->setGeometry(menu.toNearestRect());
     scene.render(renderer);
     now = 50;
     scene.render(renderer);
     // The snapshot is drawn unscaled: its 64 px overflow margin stays 64 px.
-    const auto drawn = [&](const QRect &geometry) {
+    const auto drawn = [&](const base::Rect &geometry) {
         return geometry.adjusted(-64, -64, 64, 64);
     };
-    EXPECT_EQ(renderer.calls.back().rect, drawn(menu.toRect()));
+    EXPECT_EQ(renderer.calls.back().rect, drawn(menu.toNearestRect()));
     ASSERT_GT(renderer.calls.back().alpha, 0);
     ASSERT_LT(renderer.calls.back().alpha, 1);
     // The client moved the menu: the fade continues at the new place.
-    const QRect moved(150, 120, 200, 300);
+    const base::Rect moved(150, 120, 200, 300);
     popup->setGeometry(moved);
     now = 60;
     scene.render(renderer);
@@ -1776,14 +1787,14 @@ TEST(WindowAnimation, PopupFadesInPlaceAndFollowsItsLiveGeometry)
 
 TEST(WindowAnimation, StyleNoneShowsAndRemovesWithoutAnimating)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto *node = static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>([&] {
         return now;
     })));
     node->setStyle(Animation::Style::None);
-    node->setGeometry(QRect(100, 100, 200, 300));
+    node->setGeometry(base::Rect(100, 100, 200, 300));
     scene.render(renderer);
     EXPECT_FALSE(node->isRunning());
     EXPECT_FLOAT_EQ(renderer.calls.back().alpha, 1);
@@ -1801,13 +1812,13 @@ TEST(WindowAnimation, StyleNoneShowsAndRemovesWithoutAnimating)
 
 TEST(WindowAnimation, ReopeningALauncherReversesItsCloseWithoutStackingFades)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
     auto clock = [&] {
         return now;
     };
-    const QRect screen(0, 0, 1000, 800);
+    const base::Rect screen(0, 0, 1000, 800);
     auto *closing =
             static_cast<Animation *>(scene.root()->addChild(std::make_unique<Animation>(clock)));
     closing->setStyle(Animation::Style::Launcher);
@@ -1845,13 +1856,13 @@ TEST(WindowAnimation, ReopeningALauncherReversesItsCloseWithoutStackingFades)
 
 TEST(WindowAnimation, ALauncherKeepsWhatLiesUnderItWhileItAnimates)
 {
-    qint64 now = 0;
+    int64_t now = 0;
     scene::Scene scene;
     SnapshotRenderer renderer;
-    const QRect screen(0, 0, 1000, 800);
+    const base::Rect screen(0, 0, 1000, 800);
     scene.setSize(screen.size());
     scene::Node *surfaces =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     auto *desktop = static_cast<scene::ColorNode *>(surfaces->addChild(
             std::make_unique<scene::ColorNode>(render::Color {.2f, .3f, .4f, 1})));
     desktop->setGeometry(screen);
@@ -1860,7 +1871,7 @@ TEST(WindowAnimation, ALauncherKeepsWhatLiesUnderItWhileItAnimates)
     launcher->setStyle(Animation::Style::Launcher);
     launcher->setGeometry(screen);
     const auto fills = [&] {
-        return renderer.kinds().count(QStringLiteral("fill"));
+        return countKind(renderer, "fill");
     };
 
     scene.render(renderer);
@@ -1870,7 +1881,7 @@ TEST(WindowAnimation, ALauncherKeepsWhatLiesUnderItWhileItAnimates)
         renderer.calls.clear();
         scene.render(renderer);
         EXPECT_EQ(fills(), 0);
-        EXPECT_GE(renderer.kinds().count(QStringLiteral("texture")), 1);
+        EXPECT_GE(countKind(renderer, "texture"), 1);
     }
     // Opening, what changes under it waits: the launcher covers it by its end.
     auto *window = static_cast<scene::ColorNode *>(surfaces->addChild(
@@ -1887,7 +1898,8 @@ TEST(WindowAnimation, ALauncherKeepsWhatLiesUnderItWhileItAnimates)
     renderer.repaintRects.clear();
     scene.render(renderer);
     EXPECT_EQ(fills(), 2);
-    EXPECT_TRUE(renderer.repaintRects.contains(QRect(100, 100, 200, 100)));
+    EXPECT_TRUE(std::ranges::find(renderer.repaintRects, base::Rect(100, 100, 200, 100))
+                != renderer.repaintRects.end());
     now += 40;
     renderer.calls.clear();
     scene.render(renderer);

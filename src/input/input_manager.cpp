@@ -23,16 +23,16 @@
 #include "input/relative_pointer_delegate.h"
 #include "input/seat.h"
 #include "input/session_gate.h"
+#include "base/event_loop.h"
 #include "scene/node.h"
 
 namespace cutefish::input {
 
-InputManager::InputManager(Seat *seat, QObject *parent)
-    : QObject(parent)
-    , m_seat(seat)
+InputManager::InputManager(Seat *seat)
+    : m_seat(seat)
 {
     m_seat->addObserver(this);
-    m_seat->pointerConstraints()->warp = [this](const QPointF &position) {
+    m_seat->pointerConstraints()->warp = [this](const base::PointF &position) {
         m_pointerPosition = clamp(position);
         dispatchMotion(std::chrono::steady_clock::now());
     };
@@ -44,46 +44,46 @@ InputManager::~InputManager()
     m_seat->removeObserver(this);
 }
 
-void InputManager::setBounds(const QSize &bounds)
+void InputManager::setBounds(const base::Size &bounds)
 {
     m_topology.clear();
     m_bounds = bounds;
     warpPointer(m_pointerPosition);
 }
 
-void InputManager::setTopology(const QList<QRect> &displays, const QRect &primary)
+void InputManager::setTopology(const std::vector<base::Rect> &displays, const base::Rect &primary)
 {
     m_topology.clear();
-    for (const QRect &display : displays) {
+    for (const base::Rect &display : displays) {
         if (display.width() > 0 && display.height() > 0)
-            m_topology.append(display);
+            m_topology.push_back(display);
     }
-    QRect unionBounds;
-    for (const QRect &display : m_topology)
+    base::Rect unionBounds;
+    for (const base::Rect &display : m_topology)
         unionBounds = unionBounds.united(display);
     m_bounds = unionBounds.size();
-    if (m_topology.isEmpty()) {
+    if (m_topology.empty()) {
         warpPointer(m_pointerPosition);
         return;
     }
-    const QList<QRect> previous = std::exchange(m_pointerLayout, m_topology);
+    const std::vector<base::Rect> previous = std::exchange(m_pointerLayout, m_topology);
     if (!m_pointerPlaced) {
         m_pointerPlaced = true;
-        const QRect start = primary.isEmpty() ? m_topology.first() : primary;
-        warpPointer(QRectF(start).center());
+        const base::Rect start = primary.isEmpty() ? m_topology.front() : primary;
+        warpPointer(base::RectF(start).center());
         return;
     }
     // A display that changes scale or mode keeps the pointer at the same spot, as
     // DRM's cursor keeps its native position (ash UpdateMouseLocationAfterDisplayChange).
     if (previous.size() == m_topology.size()) {
-        for (qsizetype index = 0; index < previous.size(); ++index) {
-            const QRectF from = previous.at(index);
+        for (size_t index = 0; index < previous.size(); ++index) {
+            const base::RectF from = previous[index];
             if (m_pointerPosition.x() < from.left() || m_pointerPosition.y() < from.top()
                 || m_pointerPosition.x() >= from.left() + from.width()
                 || m_pointerPosition.y() >= from.top() + from.height())
                 continue;
-            const QRectF to = m_topology.at(index);
-            warpPointer(QPointF(
+            const base::RectF to = m_topology[index];
+            warpPointer(base::PointF(
                     to.left() + (m_pointerPosition.x() - from.left()) * to.width() / from.width(),
                     to.top() + (m_pointerPosition.y() - from.top()) * to.height() / from.height()));
             return;
@@ -92,10 +92,10 @@ void InputManager::setTopology(const QList<QRect> &displays, const QRect &primar
     warpPointer(m_pointerPosition);
 }
 
-QPointF InputManager::clamp(const QPointF &position) const
+base::PointF InputManager::clamp(const base::PointF &position) const
 {
-    if (!m_topology.isEmpty()) {
-        for (const QRect &display : m_topology) {
+    if (!m_topology.empty()) {
+        for (const base::Rect &display : m_topology) {
             if (position.x() >= display.x() && position.y() >= display.y()
                 && position.x() < display.x() + display.width()
                 && position.y() < display.y() + display.height()) {
@@ -103,14 +103,14 @@ QPointF InputManager::clamp(const QPointF &position) const
             }
         }
 
-        QPointF nearest;
+        base::PointF nearest;
         double nearestDistance = std::numeric_limits<double>::max();
-        for (const QRect &display : m_topology) {
-            const QPointF candidate(std::clamp(position.x(), double(display.x()),
+        for (const base::Rect &display : m_topology) {
+            const base::PointF candidate(std::clamp(position.x(), double(display.x()),
                                                double(display.x() + display.width() - 1)),
                                     std::clamp(position.y(), double(display.y()),
                                                double(display.y() + display.height() - 1)));
-            const QPointF delta = position - candidate;
+            const base::PointF delta = position - candidate;
             const double distance = delta.x() * delta.x() + delta.y() * delta.y();
             if (distance < nearestDistance) {
                 nearest = candidate;
@@ -123,15 +123,15 @@ QPointF InputManager::clamp(const QPointF &position) const
         return position;
 
     if (!m_deviceBounds.isEmpty())
-        return QPointF(
+        return base::PointF(
                 std::clamp(position.x(), 0.0, (m_deviceBounds.width() - 1) / m_deviceScale),
                 std::clamp(position.y(), 0.0, (m_deviceBounds.height() - 1) / m_deviceScale));
     // The pointer may sit on the last pixel but not past it.
-    return QPointF(std::clamp(position.x(), 0.0, static_cast<double>(m_bounds.width() - 1)),
+    return base::PointF(std::clamp(position.x(), 0.0, static_cast<double>(m_bounds.width() - 1)),
                    std::clamp(position.y(), 0.0, static_cast<double>(m_bounds.height() - 1)));
 }
 
-void InputManager::warpPointer(const QPointF &position)
+void InputManager::warpPointer(const base::PointF &position)
 {
     m_pointerPosition = clamp(position);
     m_seat->updateCursorPosition(m_pointerPosition);
@@ -142,23 +142,28 @@ void InputManager::synthesizeMotion()
 {
     if (std::exchange(m_synthesizePending, true))
         return;
-    QMetaObject::invokeMethod(
-            this,
-            [this] {
-                m_synthesizePending = false;
-                // A held button or a drag keeps the surface it started on, and a
-                // cursor hidden by touch hovers nothing.
-                if (m_seat->wasShutdown() || m_seat->pressedButtons() != NoButton
-                    || m_seat->drag()->grabsInput() || m_seat->cursorHiddenByTouch())
-                    return;
-                if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput())
-                    return;
-                dispatchMotion(std::chrono::steady_clock::now());
-            },
-            Qt::QueuedConnection);
+    base::EventLoop::current()->post([weak = m_weakFactory.getWeakPtr()] {
+        InputManager *self = weak.get();
+        if (!self)
+            return;
+        self->synthesizePendingMotion();
+    });
 }
 
-void InputManager::setFallbackCursor(scene::Node *node, const QPoint &hotspot)
+void InputManager::synthesizePendingMotion()
+{
+    m_synthesizePending = false;
+    // A held button or a drag keeps the surface it started on, and a
+    // cursor hidden by touch hovers nothing.
+    if (m_seat->wasShutdown() || m_seat->pressedButtons() != NoButton
+        || m_seat->drag()->grabsInput() || m_seat->cursorHiddenByTouch())
+        return;
+    if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput())
+        return;
+    dispatchMotion(std::chrono::steady_clock::now());
+}
+
+void InputManager::setFallbackCursor(scene::Node *node, const base::Point &hotspot)
 {
     m_fallbackCursor = node;
     m_fallbackCursorHotspot = hotspot;
@@ -170,12 +175,13 @@ void InputManager::updateFallbackCursor()
     if (!m_fallbackCursor)
         return;
 
-    m_fallbackCursor->setPosition(QPoint(static_cast<int>(std::lround(m_pointerPosition.x())),
-                                         static_cast<int>(std::lround(m_pointerPosition.y())))
-                                  - m_fallbackCursorHotspot);
+    m_fallbackCursor->setPosition(
+            base::Point(static_cast<int>(std::lround(m_pointerPosition.x())),
+                        static_cast<int>(std::lround(m_pointerPosition.y())))
+            - m_fallbackCursorHotspot);
     const bool visible = !m_seat->hasClientCursorRequest() && !m_seat->cursorHiddenByTouch();
     if (m_fallbackCursor->isVisible() != visible)
-        qCDebug(cfCursorTransitions) << "fallback visible" << visible;
+        CF_DEBUG(cfCursorTransitions) << "fallback visible" << visible;
     m_fallbackCursor->setVisible(visible);
 }
 
@@ -189,7 +195,7 @@ void InputManager::dispatchMotion(Timestamp timestamp, const RelativeMotion *rel
         updateFallbackCursor();
         return;
     }
-    Q_EMIT pointerMoved(m_pointerPosition);
+    pointerMoved(m_pointerPosition);
     // The cursor tracks the physical pointer even while the sink consumes the
     // event; only client dispatch is suppressed.
     m_seat->beginPointerMotion();
@@ -205,7 +211,7 @@ void InputManager::dispatchMotion(Timestamp timestamp, const RelativeMotion *rel
     }
 }
 
-void InputManager::movePointer(Timestamp timestamp, QPointF target, const RelativeMotion &relative)
+void InputManager::movePointer(Timestamp timestamp, base::PointF target, const RelativeMotion &relative)
 {
     const PointerConstraints *constraints = m_seat->pointerConstraints();
     if (constraints->isLocked())
@@ -216,47 +222,47 @@ void InputManager::movePointer(Timestamp timestamp, QPointF target, const Relati
     dispatchMotion(timestamp, &relative);
 }
 
-void InputManager::onPointerMotion(Timestamp timestamp, const QPointF &delta,
-                                   const QPointF &unaccelerated)
+void InputManager::onPointerMotion(Timestamp timestamp, const base::PointF &delta,
+                                   const base::PointF &unaccelerated)
 {
-    emit userActivity();
-    const QPointF logicalDelta = m_topology.isEmpty() ? delta / m_deviceScale : delta;
+    userActivity();
+    const base::PointF logicalDelta = m_topology.empty() ? delta / m_deviceScale : delta;
     movePointer(timestamp, m_pointerPosition + logicalDelta, {logicalDelta, unaccelerated});
 }
 
-void InputManager::moveAbsolute(Timestamp timestamp, const QPointF &target)
+void InputManager::moveAbsolute(Timestamp timestamp, const base::PointF &target)
 {
     // Exo derives relative motion from the location, which is all an absolute
     // device has.
-    const QPointF delta = m_absolutePosition ? target - *m_absolutePosition : QPointF();
+    const base::PointF delta = m_absolutePosition ? target - *m_absolutePosition : base::PointF();
     m_absolutePosition = target;
     movePointer(timestamp, target, {delta, delta});
 }
 
-void InputManager::onPointerMotionAbsolute(Timestamp timestamp, const QPointF &position)
+void InputManager::onPointerMotionAbsolute(Timestamp timestamp, const base::PointF &position)
 {
-    emit userActivity();
+    userActivity();
     moveAbsolute(timestamp, position / m_deviceScale);
 }
 
-void InputManager::onPointerMotionLogical(Timestamp timestamp, const QPointF &position)
+void InputManager::onPointerMotionLogical(Timestamp timestamp, const base::PointF &position)
 {
-    emit userActivity();
-    const QPointF delta = position - m_pointerPosition;
+    userActivity();
+    const base::PointF delta = position - m_pointerPosition;
     movePointer(timestamp, position, {delta, delta});
 }
 
-void InputManager::onPointerMotionNormalized(Timestamp timestamp, const QPointF &position)
+void InputManager::onPointerMotionNormalized(Timestamp timestamp, const base::PointF &position)
 {
-    emit userActivity();
+    userActivity();
     if (m_displayManager) {
         if (m_displayManager->isPublishing() || m_displayManager->desktopBounds().isEmpty())
             return;
         moveAbsolute(timestamp, m_displayManager->normalizedToGlobal(position));
         return;
     }
-    QRect desktop(QPoint(), m_bounds);
-    if (!m_topology.isEmpty()) {
+    base::Rect desktop(base::Point(), m_bounds);
+    if (!m_topology.empty()) {
         desktop = {};
         for (const auto &display : m_topology)
             desktop = desktop.united(display);
@@ -264,13 +270,13 @@ void InputManager::onPointerMotionNormalized(Timestamp timestamp, const QPointF 
     if (desktop.isEmpty())
         return;
     // Absolute devices report a fraction of the current logical desktop, not the startup mode.
-    moveAbsolute(timestamp, QPointF(desktop.x() + position.x() * desktop.width(),
+    moveAbsolute(timestamp, base::PointF(desktop.x() + position.x() * desktop.width(),
                                     desktop.y() + position.y() * desktop.height()));
 }
 
 void InputManager::onPointerButton(Timestamp timestamp, uint32_t evdevButton, bool pressed)
 {
-    emit userActivity();
+    userActivity();
     if (pressed)
         m_heldButtons.insert(evdevButton);
     else
@@ -310,7 +316,7 @@ void InputManager::onPointerButton(Timestamp timestamp, uint32_t evdevButton, bo
         m_seat->onPointerButton(timestamp, m_pointerPosition, evdevButton, pressed);
     else if (!pressed)
         m_seat->releasePointerButton(timestamp, evdevButton);
-    qCDebug(cfInputTransitions) << "input code" << evdevButton << (pressed ? "press" : "release")
+    CF_DEBUG(cfInputTransitions) << "input code" << evdevButton << (pressed ? "press" : "release")
                                 << "position" << m_pointerPosition << "seat-before" << before
                                 << "seat-after" << m_seat->pressedButtons() << "consumer"
                                 << (consumed ? "event-sink" : "seat/client");
@@ -319,7 +325,7 @@ void InputManager::onPointerButton(Timestamp timestamp, uint32_t evdevButton, bo
     updateFallbackCursor();
 }
 
-std::optional<QPointF> InputManager::touchLocation(const QPointF &normalized) const
+std::optional<base::PointF> InputManager::touchLocation(const base::PointF &normalized) const
 {
     if (m_displayManager) {
         if (m_displayManager->isPublishing())
@@ -327,18 +333,18 @@ std::optional<QPointF> InputManager::touchLocation(const QPointF &normalized) co
         return m_displayManager->touchscreenToGlobal(normalized);
     }
     // Without display configuration the panel spans the desktop.
-    QRect desktop(QPoint(), m_bounds);
-    for (const QRect &display : m_topology)
+    base::Rect desktop(base::Point(), m_bounds);
+    for (const base::Rect &display : m_topology)
         desktop = desktop.isEmpty() ? display : desktop.united(display);
     if (desktop.isEmpty())
         return std::nullopt;
-    return QPointF(desktop.x() + normalized.x() * desktop.width(),
+    return base::PointF(desktop.x() + normalized.x() * desktop.width(),
                    desktop.y() + normalized.y() * desktop.height());
 }
 
-void InputManager::onTouchDown(Timestamp timestamp, int32_t id, const QPointF &normalized)
+void InputManager::onTouchDown(Timestamp timestamp, int32_t id, const base::PointF &normalized)
 {
-    emit userActivity();
+    userActivity();
     const auto location = touchLocation(normalized);
     if (!location)
         return;
@@ -366,7 +372,7 @@ void InputManager::onTouchDown(Timestamp timestamp, int32_t id, const QPointF &n
     m_seat->onTouchDown(timestamp, id, *location);
 }
 
-void InputManager::onTouchMotion(Timestamp timestamp, int32_t id, const QPointF &normalized)
+void InputManager::onTouchMotion(Timestamp timestamp, int32_t id, const base::PointF &normalized)
 {
     const auto location = touchLocation(normalized);
     if (!location || !m_touchLocations.contains(id))
@@ -395,7 +401,7 @@ void InputManager::onTouchUp(Timestamp timestamp, int32_t id)
     const auto it = m_touchLocations.find(id);
     if (it == m_touchLocations.end())
         return;
-    const QPointF location = it->second;
+    const base::PointF location = it->second;
     m_touchLocations.erase(it);
     if (m_secureTouch == id) {
         m_secureTouch.reset();
@@ -416,7 +422,7 @@ void InputManager::onTouchUp(Timestamp timestamp, int32_t id)
 void InputManager::onTouchCancel(Timestamp timestamp)
 {
     if (m_secureTouch) {
-        const QPointF location = m_touchLocations[*m_secureTouch];
+        const base::PointF location = m_touchLocations[*m_secureTouch];
         m_secureTouch.reset();
         if (auto *gate = m_seat->sessionGate(); gate && gate->secureInput())
             gate->secureInput()->onPointerButton(timestamp, location, BTN_LEFT, false);
@@ -434,9 +440,9 @@ void InputManager::onTouchFrame(Timestamp)
     m_seat->onTouchFrame();
 }
 
-void InputManager::onPointerAxis(Timestamp timestamp, const QPointF &offset, bool discrete)
+void InputManager::onPointerAxis(Timestamp timestamp, const base::PointF &offset, bool discrete)
 {
-    emit userActivity();
+    userActivity();
     if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput()) {
         if (auto *sink = gate->secureInput())
             sink->onPointerAxis(timestamp, m_pointerPosition, offset, discrete);
@@ -453,7 +459,7 @@ void InputManager::onPointerAxis(Timestamp timestamp, const QPointF &offset, boo
 
 void InputManager::onPointerAxisStop(Timestamp timestamp)
 {
-    emit userActivity();
+    userActivity();
     if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput()) {
         if (auto *sink = gate->secureInput())
             sink->onPointerAxisStop(timestamp, m_pointerPosition);
@@ -467,7 +473,7 @@ void InputManager::onPointerAxisStop(Timestamp timestamp)
 
 void InputManager::onPointerGestureBegin(Timestamp timestamp, GestureType type, uint32_t fingers)
 {
-    emit userActivity();
+    userActivity();
     // Only the begin is gated: a gesture that began is ended by its own pointer
     // when focus leaves its surface, lock screen included.
     if (auto *gate = m_seat->sessionGate(); gate && gate->restrictsInput())
@@ -479,11 +485,11 @@ void InputManager::onPointerGestureBegin(Timestamp timestamp, GestureType type, 
 }
 
 void InputManager::onPointerGestureUpdate(Timestamp timestamp, GestureType type,
-                                          const QPointF &delta, const QPointF &unacceleratedDelta,
+                                          const base::PointF &delta, const base::PointF &unacceleratedDelta,
                                           double scale, double rotation)
 {
-    emit userActivity();
-    const QPointF logicalDelta = m_topology.isEmpty() ? delta / m_deviceScale : delta;
+    userActivity();
+    const base::PointF logicalDelta = m_topology.empty() ? delta / m_deviceScale : delta;
     const GestureUpdate update {logicalDelta, unacceleratedDelta, scale, rotation};
     if (m_gestureClaimed) {
         if (m_gestureFilter)
@@ -495,7 +501,7 @@ void InputManager::onPointerGestureUpdate(Timestamp timestamp, GestureType type,
 
 void InputManager::onPointerGestureEnd(Timestamp timestamp, GestureType type, bool cancelled)
 {
-    emit userActivity();
+    userActivity();
     if (std::exchange(m_gestureClaimed, false)) {
         if (m_gestureFilter)
             m_gestureFilter->onGestureEnd(timestamp, cancelled);
@@ -529,7 +535,7 @@ uint32_t InputManager::positionalKey(uint32_t evdevCode, KeyboardModifierLayout 
 void InputManager::onKey(Timestamp timestamp, uint32_t physicalCode, bool pressed,
                          KeyboardModifierLayout layout)
 {
-    emit userActivity();
+    userActivity();
     uint32_t evdevCode = physicalCode;
     if (pressed) {
         evdevCode = m_positionalKeys.try_emplace(physicalCode, positionalKey(physicalCode, layout))
@@ -551,7 +557,7 @@ void InputManager::onKey(Timestamp timestamp, uint32_t physicalCode, bool presse
             m_secureKeys.insert(evdevCode);
             m_seat->suppressKey(evdevCode);
         } else {
-            m_secureKeys.remove(evdevCode);
+            m_secureKeys.erase(evdevCode);
             // A key held across the lock still ends in the translator, or it
             // stays held there: a Meta held for the lock shortcut would reach
             // every client with the next key. Keys pressed while locked are
@@ -562,7 +568,7 @@ void InputManager::onKey(Timestamp timestamp, uint32_t physicalCode, bool presse
         m_seat->syncKeyboardLocks();
         return;
     }
-    m_secureKeys.remove(evdevCode);
+    m_secureKeys.erase(evdevCode);
     if (m_seat->drag()->key(evdevCode, pressed)) {
         if (pressed)
             m_seat->suppressKey(evdevCode);

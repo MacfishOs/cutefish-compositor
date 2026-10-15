@@ -98,8 +98,8 @@ void setSource(wl_client*, wl_resource* resource, wl_fixed_t x, wl_fixed_t y, wl
                                "source must have nonnegative origin and positive size");
         return;
     }
-    surface->setCrop(QRectF(wl_fixed_to_double(x), wl_fixed_to_double(y), wl_fixed_to_double(width),
-                            wl_fixed_to_double(height)));
+    surface->setCrop(base::RectF(wl_fixed_to_double(x), wl_fixed_to_double(y),
+                                 wl_fixed_to_double(width), wl_fixed_to_double(height)));
 }
 
 void setDestination(wl_client* client, wl_resource* resource, int32_t width, int32_t height)
@@ -118,9 +118,9 @@ void setDestination(wl_client* client, wl_resource* resource, int32_t width, int
     }
     // In the client's surface units; the source stays in buffer units.
     const double scale = clientScale(client);
-    surface->setViewport(scale == 1 ? QSize(width, height)
-                                    : QSize(std::max(1, qRound(width / scale)),
-                                            std::max(1, qRound(height / scale))));
+    surface->setViewport(scale == 1 ? base::Size(width, height)
+                                    : base::Size(std::max(1, base::roundToInt(width / scale)),
+                                                 std::max(1, base::roundToInt(height / scale))));
 }
 
 const struct wp_viewport_interface viewportImplementation = {destroy, setSource, setDestination};

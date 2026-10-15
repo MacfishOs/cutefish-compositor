@@ -12,26 +12,27 @@
 #include "display/display_types.h"
 
 using namespace cutefish::display;
+namespace base = cutefish::base;
 
 namespace {
 
-DisplayMode mode(QSize size = {1920, 1080}, int refresh = 60000)
+DisplayMode mode(base::Size size = {1920, 1080}, int refresh = 60000)
 {
-    return {size, refresh, 148500, 2200, 1125, 0, QStringLiteral("preferred"), true};
+    return {size, refresh, 148500, 2200, 1125, 0, "preferred", true};
 }
 
-DisplaySnapshot snapshot(QString id, QString port)
+DisplaySnapshot snapshot(std::string id, std::string port)
 {
     DisplaySnapshot value;
     value.sessionId = DisplayId(std::move(id));
-    value.persistentKey = QStringLiteral("edid:vendor:model:serial");
+    value.persistentKey = "edid:vendor:model:serial";
     value.portKey = std::move(port);
-    value.connectorName = QStringLiteral("DP-1");
-    value.devicePath = QStringLiteral("/dev/dri/card0");
-    value.physicalSizeMm = QSize(600, 340);
+    value.connectorName = "DP-1";
+    value.devicePath = "/dev/dri/card0";
+    value.physicalSizeMm = base::Size(600, 340);
     value.modes = {mode()};
-    value.currentMode = value.modes.first();
-    value.nativeMode = value.modes.first();
+    value.currentMode = value.modes.front();
+    value.nativeMode = value.modes.front();
     return value;
 }
 
@@ -52,23 +53,23 @@ TEST(DisplayTypes, ModeIdentityRetainsTiming)
 TEST(DisplayTypes, SnapshotRequiresUniqueSessionAndPortIdentity)
 {
     HardwareSnapshot hardware {
-        QStringLiteral("instance"),
-        QStringLiteral("seat0"),
+        "instance",
+        "seat0",
         4,
-        {snapshot(QStringLiteral("session-a"), QStringLiteral("card0-DP-1")),
-         snapshot(QStringLiteral("session-b"), QStringLiteral("card0-DP-2"))}};
+        {snapshot("session-a", "card0-DP-1"),
+         snapshot("session-b", "card0-DP-2")}};
     EXPECT_TRUE(hardware.isValid());
 
     hardware.displays[1].sessionId = hardware.displays[0].sessionId;
     EXPECT_FALSE(hardware.isValid());
-    hardware.displays[1].sessionId = DisplayId(QStringLiteral("session-b"));
+    hardware.displays[1].sessionId = DisplayId("session-b");
     hardware.displays[1].portKey = hardware.displays[0].portKey;
     EXPECT_FALSE(hardware.isValid());
 }
 
 TEST(DisplayTypes, CurrentModeMustComeFromModeList)
 {
-    DisplaySnapshot display = snapshot(QStringLiteral("session-a"), QStringLiteral("card0-DP-1"));
+    DisplaySnapshot display = snapshot("session-a", "card0-DP-1");
     display.currentMode->refreshMilliHz = 59940;
     EXPECT_FALSE(display.isValid());
 }

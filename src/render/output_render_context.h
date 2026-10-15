@@ -12,20 +12,19 @@
 
 #include <cstdint>
 
-#include <QRect>
-#include <QSize>
-#include <QString>
+#include <string>
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
 struct OutputRenderContext {
-    QString outputId;
-    QRect logicalViewport;
-    QSize nativeTargetSize;
+    std::string outputId;
+    base::Rect logicalViewport;
+    base::Size nativeTargetSize;
     double scale = 1;
     uint32_t transform = 0;
     uint64_t frame = 0;
-    QRect nativeContentRect;
+    base::Rect nativeContentRect;
 };
 
 } // namespace cutefish::render

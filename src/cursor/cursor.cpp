@@ -4,32 +4,35 @@
 
 #include "cursor/cursor.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <map>
+#include <string>
 #include <utility>
 
-#include <QImage>
-
+#include "base/timer.h"
 #include "input/seat.h"
+#include "input/types.h"
 
 namespace cutefish::cursor {
 
-class Cursor::ImageNode final : public QObject, public scene::Node
+class Cursor::ImageNode final : public scene::Node
 {
 public:
     explicit ImageNode(int size)
-        : scene::Node(QStringLiteral("system-cursor"))
+        : scene::Node("system-cursor")
         , m_size(size)
     {
         m_timer.setSingleShot(true);
-        connect(&m_timer, &QTimer::timeout, this, [this] {
+        m_timer.onTimeout = [this] {
             m_frame = (m_frame + 1) % m_frames.size();
             if (onFrameChanged)
                 onFrameChanged();
             else
                 notifyChanged();
-            m_timer.start(m_frames[m_frame].delayMs);
-        });
+            startTimer();
+        };
     }
 
     void setDensity(int density)
@@ -43,7 +46,7 @@ public:
 
     int density() const { return m_density; }
 
-    bool setTheme(const QString &theme, int size)
+    bool setTheme(const std::string &theme, int size)
     {
         if (m_theme == theme && m_size == size)
             return false;
@@ -55,11 +58,11 @@ public:
         return true;
     }
 
-    void setPointerPosition(const QPointF &position)
+    void setPointerPosition(const base::PointF &position)
     {
-        const QPoint integral = position.toPoint();
-        const QPointF remainder = position - integral;
-        if (remainder != m_fractionalOffset) {
+        const base::Point integral = position.toPoint();
+        const base::PointF remainder = position - base::PointF(integral);
+        if (!input::fuzzyEqual(remainder, m_fractionalOffset)) {
             m_fractionalOffset = remainder;
             notifyChanged();
         }
@@ -74,8 +77,9 @@ public:
             m_frames = frames(shape);
             m_frame = 0;
             if (!m_frames.empty())
-                setGeometry(QRect(position(),
-                                  (QSizeF(m_frames.front().image.size()) / m_density).toSize()));
+                setGeometry(base::Rect(
+                        position(),
+                        (base::SizeF(m_frames.front().image.size()) / m_density).toSize()));
             notifyChanged();
         }
         m_wantsDisplay = visible;
@@ -83,13 +87,13 @@ public:
         if (!isVisible())
             m_timer.stop();
         else if (m_frames.size() > 1 && !m_timer.isActive())
-            m_timer.start(m_frames[m_frame].delayMs);
+            startTimer();
     }
 
-    QPoint hotspot() const
+    base::Point hotspot() const
     {
-        return m_frames.empty() ? QPoint()
-                                : (QPointF(m_frames.front().hotspot) / m_density).toPoint();
+        return m_frames.empty() ? base::Point()
+                                : (base::PointF(m_frames.front().hotspot) / m_density).toPoint();
     }
 
     const Frame *currentFrame() const
@@ -109,30 +113,30 @@ public:
     }
 
 protected:
-    void paint(render::Renderer &renderer, const QRect &geometry) const override
+    void paint(render::Renderer &renderer, const base::Rect &geometry) const override
     {
         if (m_frames.empty())
             return;
-        const QString key = QStringLiteral("cursor:%1:%2:%3")
-                                    .arg(m_theme, resourceName(m_shape))
-                                    .arg(m_size * m_density);
+        const std::string key = "cursor:" + m_theme + ":" + resourceName(m_shape) + ":"
+                + std::to_string(m_size * m_density);
         const auto &textures = renderer.cachedTextureSet(key, [&] {
             render::Renderer::TextureSet result;
             for (const auto &frame : m_frames) {
-                const auto image =
-                        frame.image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
-                result.push_back(renderer.createTexture(image.size(), image.constBits(),
-                                                        image.bytesPerLine(),
+                const auto image = frame.image.converted(ui::Bitmap::Format::Rgba8888Premultiplied);
+                result.push_back(renderer.createTexture(image.size(),
+                                                        image.constBits(), int(image.stride()),
                                                         render::PixelFormat::Rgba8888));
             }
             return result;
         });
         if (m_frame < textures.size() && textures[m_frame])
             renderer.drawTextureF(textures[m_frame].get(),
-                                  QRectF(geometry).translated(m_fractionalOffset));
+                                  base::RectF(geometry).translated(m_fractionalOffset));
     }
 
 private:
+    void startTimer() { m_timer.start(std::chrono::milliseconds(m_frames[m_frame].delayMs)); }
+
     // A theme is read from disk once per shape and pixel size, as
     // wm::CursorLoader keeps image_cursors_ until the theme or size changes.
     std::vector<Frame> frames(input::CursorShape shape)
@@ -145,15 +149,15 @@ private:
     }
 
     int m_size;
-    QString m_theme = QStringLiteral("default");
+    std::string m_theme = "default";
     std::map<std::pair<input::CursorShape, int>, std::vector<Frame>> m_loaded;
     int m_density = 1;
-    QPointF m_fractionalOffset;
+    base::PointF m_fractionalOffset;
     input::CursorShape m_shape = input::CursorShape::Hidden;
     std::vector<Frame> m_frames;
     size_t m_frame = 0;
     bool m_wantsDisplay = false;
-    QTimer m_timer;
+    base::Timer m_timer;
 };
 
 Cursor::Cursor(input::Seat &seat, scene::Node &container, int size)
@@ -175,14 +179,14 @@ Cursor::~Cursor()
     m_container.removeChild(m_node);
 }
 
-QPoint Cursor::deviceHotspot() const
+base::Point Cursor::deviceHotspot() const
 {
     const Frame *frame = m_node->currentFrame();
     if (!frame)
         return {};
     const double ratio = m_scale / m_node->density();
-    return QPoint(int(std::floor(frame->hotspot.x() * ratio)),
-                  int(std::floor(frame->hotspot.y() * ratio)));
+    return base::Point(int(std::floor(frame->hotspot.x() * ratio)),
+                       int(std::floor(frame->hotspot.y() * ratio)));
 }
 
 void Cursor::setHeld(bool held)
@@ -198,13 +202,13 @@ void Cursor::setHeld(bool held)
     onCursorPositionChanged();
 }
 
-QRectF Cursor::captureBounds() const
+base::RectF Cursor::captureBounds() const
 {
     if (!m_node->wantsDisplay())
         return {};
     const auto *frame = m_node->currentFrame();
-    return QRectF(m_seat.cursorPosition() - QPointF(frame->hotspot) / m_node->density(),
-                  QSizeF(frame->image.size()) / m_node->density());
+    return base::RectF(m_seat.cursorPosition() - base::PointF(frame->hotspot) / m_node->density(),
+                       base::SizeF(frame->image.size()) / m_node->density());
 }
 
 void Cursor::paintForCapture(render::Renderer &renderer) const
@@ -212,14 +216,14 @@ void Cursor::paintForCapture(render::Renderer &renderer) const
     if (!m_node->wantsDisplay())
         return;
     const auto *frame = m_node->currentFrame();
-    const auto image = frame->image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
-    auto texture = renderer.createTexture(image.size(), image.constBits(), image.bytesPerLine(),
-                                          render::PixelFormat::Rgba8888);
+    const auto image = frame->image.converted(ui::Bitmap::Format::Rgba8888Premultiplied);
+    auto texture = renderer.createTexture(image.size(), image.constBits(),
+                                          int(image.stride()), render::PixelFormat::Rgba8888);
     if (texture)
         renderer.drawTextureF(
                 texture.get(),
-                QRectF(m_seat.cursorPosition() - QPointF(frame->hotspot) / m_node->density(),
-                       QSizeF(image.size()) / m_node->density()));
+                base::RectF(m_seat.cursorPosition() - base::PointF(frame->hotspot) / m_node->density(),
+                            base::SizeF(image.size()) / m_node->density()));
 }
 
 void Cursor::setScale(double scale)
@@ -231,11 +235,10 @@ void Cursor::setScale(double scale)
     onCursorChanged();
 }
 
-void Cursor::setTheme(const QString &theme, int size)
+void Cursor::setTheme(const std::string &theme, int size)
 {
     // Preferences reloads on any config write; reprogramming the plane blinks the cursor.
-    if (m_node->setTheme(validThemeName(theme) ? theme : QStringLiteral("default"),
-                         qBound(16, size, 64)))
+    if (m_node->setTheme(validThemeName(theme) ? theme : "default", std::clamp(size, 16, 64)))
         onCursorChanged();
 }
 
@@ -261,18 +264,18 @@ bool Cursor::pushToSink()
     // artwork down (wm::ScaleAndRotateCursorBitmapAndHotpoint, floored). The
     // hotspot then lands within half a device pixel, and the cursor moves on
     // the plane instead of costing a composited frame per motion.
-    QImage image = frame->image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    ui::Bitmap image = frame->image.converted(ui::Bitmap::Format::Argb32Premultiplied);
     const double ratio = m_scale / m_node->density();
-    const QSize deviceSize(int(std::floor(image.width() * ratio)),
-                           int(std::floor(image.height() * ratio)));
+    const base::Size deviceSize(int(std::floor(image.width() * ratio)),
+                                int(std::floor(image.height() * ratio)));
     if (deviceSize.isEmpty())
         return false;
     if (deviceSize != image.size())
-        image = image.scaled(deviceSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        image = image.scaled(deviceSize);
     render::CursorImage cursorImage;
     cursorImage.pixels = image.constBits();
     cursorImage.size = image.size();
-    cursorImage.stride = static_cast<int>(image.bytesPerLine());
+    cursorImage.stride = static_cast<int>(image.stride());
     cursorImage.hotspot = deviceHotspot();
     return m_sink->setCursorImage(cursorImage);
 }
@@ -323,7 +326,6 @@ void Cursor::onCursorChanged()
 
 void Cursor::onCursorPositionChanged()
 {
-    const QPoint position = m_seat.cursorPosition().toPoint();
     if (m_hardware) {
         // The whole point of the plane: motion costs one ioctl, not a frame.
         // The sink maps the logical position onto each output itself.

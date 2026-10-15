@@ -5,28 +5,29 @@
 // Upstream: chromium/src/ui/display/manager/display_configurator.h
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: a serialized Qt callback pipeline validates, tests,
+// Adapted for Cutefish: a serialized callback pipeline validates, tests,
 // and commits one revisioned configuration through NativeDisplayDelegate.
 
 #pragma once
 
 #include <functional>
+#include <memory>
 
-#include <QObject>
+#include "base/signal.h"
 
 #include "display/display_configuration_validator.h"
 #include "display/native_display_delegate.h"
 
 namespace cutefish::display {
 
-class DisplayConfigurator : public QObject
+class DisplayConfigurator
 {
-    Q_OBJECT
-
 public:
     using Completion = std::function<void(ConfigurationResult)>;
 
-    explicit DisplayConfigurator(NativeDisplayDelegate* delegate, QObject* parent = nullptr);
+    explicit DisplayConfigurator(NativeDisplayDelegate* delegate);
+    DisplayConfigurator(const DisplayConfigurator&) = delete;
+    DisplayConfigurator& operator=(const DisplayConfigurator&) = delete;
 
     bool busy() const { return m_busy; }
     void test(const HardwareSnapshot& hardware, uint64_t revision,
@@ -41,6 +42,9 @@ private:
     NativeDisplayDelegate* m_delegate = nullptr;
     bool m_busy = false;
     bool m_invalidated = false;
+    base::Subscription m_hardwareInvalidated;
+    // Completions arriving after this goes are dropped.
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };
 
 } // namespace cutefish::display

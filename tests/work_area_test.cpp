@@ -4,14 +4,16 @@
 
 #include <gtest/gtest.h>
 
+#include "base/geometry.h"
 #include "wm/stacking.h"
 #include "wm/work_area.h"
 
+using namespace cutefish;
 using namespace cutefish::wm;
 
 namespace {
 
-constexpr QRect kOutput(0, 0, 1920, 1080);
+const base::Rect kOutput(0, 0, 1920, 1080);
 
 TEST(ExclusiveZonesTest, NoReservationsLeaveTheOutputAlone)
 {
@@ -27,7 +29,7 @@ TEST(ExclusiveZonesTest, TopAndBottomCompose)
     const int dock = 2;
     EXPECT_TRUE(zones.set(&statusBar, ScreenEdge::Top, 30));
     EXPECT_TRUE(zones.set(&dock, ScreenEdge::Bottom, 70));
-    EXPECT_EQ(QRect(0, 30, 1920, 980), zones.apply(kOutput));
+    EXPECT_EQ(base::Rect(0, 30, 1920, 980), zones.apply(kOutput));
 }
 
 TEST(ExclusiveZonesTest, TheLargestReservationOnAnEdgeWins)
@@ -37,7 +39,7 @@ TEST(ExclusiveZonesTest, TheLargestReservationOnAnEdgeWins)
     const int b = 2;
     zones.set(&a, ScreenEdge::Top, 30);
     zones.set(&b, ScreenEdge::Top, 50);
-    EXPECT_EQ(QRect(0, 50, 1920, 1030), zones.apply(kOutput));
+    EXPECT_EQ(base::Rect(0, 50, 1920, 1030), zones.apply(kOutput));
 }
 
 TEST(ExclusiveZonesTest, SettingTheSameValueTwiceIsNotAChange)
@@ -85,9 +87,9 @@ TEST(ExclusiveZonesTest, ReservationsAreScopedToTheirLogicalOutput)
     const int primaryBar = 1;
     const int externalDock = 2;
     zones.set(&primaryBar, ScreenEdge::Top, 30);
-    zones.set(&externalDock, ScreenEdge::Bottom, 60, QStringLiteral("DP-2"));
-    EXPECT_EQ(zones.apply(kOutput, QStringLiteral("eDP-1"), true), QRect(0, 30, 1920, 1050));
-    EXPECT_EQ(zones.apply(kOutput, QStringLiteral("DP-2"), false), QRect(0, 0, 1920, 1020));
+    zones.set(&externalDock, ScreenEdge::Bottom, 60, "DP-2");
+    EXPECT_EQ(zones.apply(kOutput, "eDP-1", true), base::Rect(0, 30, 1920, 1050));
+    EXPECT_EQ(zones.apply(kOutput, "DP-2", false), base::Rect(0, 0, 1920, 1020));
 }
 
 TEST(StackingTest, RolesMapToTheDocumentedLayerOrder)

@@ -4,9 +4,9 @@
 
 #include "wayland/protocols/xdg_activation.h"
 
-#include <QUuid>
 #include <xdg-activation-v1-server-protocol.h>
 
+#include "base/uuid.h"
 #include "compositor/surface.h"
 #include "input/seat.h"
 #include "wayland/protocols/wl_seat.h"
@@ -162,7 +162,7 @@ std::string WaylandXdgActivation::createToken(wl_client *client, wl_resource *se
                                               wl_resource *surface, bool surfaceWasSet)
 {
     prune();
-    const auto token = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+    const auto token = base::Uuid::generate().toString();
     auto *focused = m_seat->seat->focusedSurface();
     auto *focusedResource = getSurfaceResource(focused);
     if (!seat || waylandSeatFromResource(seat) != m_seat || !focusedResource

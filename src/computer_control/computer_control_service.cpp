@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include "computer_control/computer_control_service.h"
+#include "core/main_loop.h"
 
-#include <QDBusError>
-#include <QDebug>
+#include "base/logging.h"
 #include <utility>
 
 #include "computer_control/controller.h"
@@ -13,59 +13,57 @@
 namespace cutefish::computer_control {
 
 namespace {
-const QString serviceName = QStringLiteral("com.cutefish.ComputerControl1");
-const QString objectPath = QStringLiteral("/com/cutefish/ComputerControl1");
+
+const base::LogCategory &logs()
+{
+    return base::LogCategory::defaultCategory();
+}
+
+const std::string serviceName = "com.cutefish.ComputerControl1";
+const std::string objectPath = "/com/cutefish/ComputerControl1";
 } // namespace
 
-ComputerControlService::ComputerControlService(Controller *controller, QDBusConnection bus)
+ComputerControlService::ComputerControlService(Controller *controller, base::dbus::Connection *bus)
     : m_controller(controller)
-    , m_bus(std::move(bus))
+    , m_bus(bus ? bus : base::dbus::Connection::session(core::mainLoop()))
 {
-    connect(m_controller, &Controller::activeChanged, this,
-            &ComputerControlService::ActiveChanged);
+    m_activeChanged = m_controller->activeChanged.connect([this](bool active) {
+        if (m_object)
+            m_object->emitSignal("ActiveChanged", active);
+    });
 }
 
 ComputerControlService::~ComputerControlService()
 {
-    if (m_registered) {
-        m_bus.unregisterService(serviceName);
-        m_bus.unregisterObject(objectPath);
-    }
+    if (m_registered)
+        m_bus->releaseName(serviceName);
 }
 
 bool ComputerControlService::registerService()
 {
     if (m_registered)
         return true;
-    if (!m_bus.registerObject(objectPath, this,
-                              QDBusConnection::ExportScriptableSlots
-                                      | QDBusConnection::ExportScriptableSignals)) {
-        qWarning() << "Cannot export the computer control service:"
-                   << m_bus.lastError().message();
+    if (!m_bus) {
+        CF_WARNING(logs()) << "Cannot export the computer control service: no session bus";
         return false;
     }
-    if (!m_bus.registerService(serviceName)) {
-        qWarning() << "Cannot own the computer control service:" << m_bus.lastError().message();
-        m_bus.unregisterObject(objectPath);
+    auto object = std::make_unique<base::dbus::Object>(m_bus, objectPath, serviceName);
+    object->addMethod("GetActive", [this] { return m_controller->isActive(); });
+    // The agent's own name for itself; empty while no agent is in control.
+    object->addMethod("GetAgentName", [this] { return m_controller->agentName(); });
+    object->addMethod("Stop", [this] { m_controller->stop(); });
+    object->addSignal("ActiveChanged", "b", {"active"});
+    if (!object->publish()) {
+        CF_WARNING(logs()) << "Cannot export the computer control service";
         return false;
     }
+    if (!m_bus->requestName(serviceName)) {
+        CF_WARNING(logs()) << "Cannot own the computer control service";
+        return false;
+    }
+    m_object = std::move(object);
     m_registered = true;
     return true;
-}
-
-bool ComputerControlService::GetActive() const
-{
-    return m_controller->isActive();
-}
-
-QString ComputerControlService::GetAgentName() const
-{
-    return m_controller->agentName();
-}
-
-void ComputerControlService::Stop()
-{
-    m_controller->stop();
 }
 
 } // namespace cutefish::computer_control

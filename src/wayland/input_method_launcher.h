@@ -6,36 +6,43 @@
 
 #include <wayland-server-core.h>
 
-#include <QElapsedTimer>
-#include <QObject>
-#include <QProcessEnvironment>
-#include <QStringList>
-#include <QTimer>
+#include <memory>
+#include <string>
+#include <vector>
 
+#include "base/elapsed_timer.h"
+#include "base/signal.h"
+#include "base/timer.h"
 #include "core/process_environment.h"
 
-class QProcess;
+namespace cutefish::base {
+class EventLoop;
+class Process;
+} // namespace cutefish::base
 
 namespace cutefish::wayland {
 
 // Runs the selected input method on a Wayland connection the compositor
 // creates, like the Xwayland child; that connection is the only one allowed to
 // act as the input method. A lost connection is restarted with backoff.
-class InputMethodLauncher : public QObject
+class InputMethodLauncher
 {
-    Q_OBJECT
-
 public:
-    explicit InputMethodLauncher(wl_display *display, QObject *parent = nullptr);
-    ~InputMethodLauncher() override;
+    // Runs its processes and timers on `loop`, the main loop when null.
+    explicit InputMethodLauncher(wl_display *display, base::EventLoop *loop = nullptr);
+    ~InputMethodLauncher();
     InputMethodLauncher(const InputMethodLauncher &) = delete;
     InputMethodLauncher &operator=(const InputMethodLauncher &) = delete;
 
     // An empty command stops the input method. Setting the current command
     // again restarts a method that gave up.
-    void setCommand(const QStringList &command);
+    void setCommand(const std::vector<std::string> &command);
 
-    void setEnvironment(const QProcessEnvironment &environment) { m_environment = environment; }
+    // NAME=value entries.
+    void setEnvironment(std::vector<std::string> environment)
+    {
+        m_environment = std::move(environment);
+    }
     // Starts the current command again, with the current environment.
     void restart();
 
@@ -45,28 +52,32 @@ public:
 
     bool isRunning() const { return m_client; }
 
-signals:
-    void runningChanged();
+    base::Signal<> runningChanged;
 
 private:
     struct DestroyListener {
         wl_listener listener;
         InputMethodLauncher *owner;
     };
+    struct Child;
 
     void start();
     void stop();
     void connectionLost();
-    void terminate(QProcess *process);
+    void terminate(Child &child);
+    void forget(base::Process *process);
 
+    base::EventLoop &m_loop;
     wl_display *m_display;
     wl_client *m_client = nullptr;
     DestroyListener m_destroy {};
-    QStringList m_command;
-    QProcessEnvironment m_environment = childEnvironment();
-    QProcess *m_process = nullptr;
-    QTimer m_restartTimer;
-    QElapsedTimer m_uptime;
+    std::vector<std::string> m_command;
+    std::vector<std::string> m_environment = childEnvironment();
+    // Every process started and not yet ended, the current one among them.
+    std::vector<std::unique_ptr<Child>> m_children;
+    base::Process *m_process = nullptr;
+    base::Timer m_restartTimer;
+    base::ElapsedTimer m_uptime;
     int m_restartDelay = 1000;
     int m_failures = 0;
 };

@@ -6,8 +6,6 @@
 
 #include <algorithm>
 
-#include <QTimer>
-
 #include "clipboard/selection.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
@@ -29,10 +27,10 @@ scene::WindowAnimation *animationFor(Window *window)
 
 // The pointer in `window`'s bounds, which the preview shrinks towards and
 // grows back from.
-QPointF grabPoint(WindowManager *manager, Window *window)
+base::PointF grabPoint(WindowManager *manager, Window *window)
 {
     input::Seat *seat = manager->seat();
-    return seat ? seat->pointerLocation() - QPointF(window->bounds().topLeft()) : QPointF();
+    return seat ? seat->pointerLocation() - base::PointF(window->bounds().topLeft()) : base::PointF();
 }
 
 double previewScale(Window *window)
@@ -55,11 +53,16 @@ ToplevelDrag::ToplevelDrag(WindowManager *manager, std::shared_ptr<clipboard::Da
     , m_source(std::move(source))
 {
     if (input::Seat *seat = m_manager->seat()) {
-        connect(seat->drag(), &input::DragController::started, this,
-                &ToplevelDrag::onDragStarted);
+        m_dragStarted = seat->drag()->started.connect([this] {
+            onDragStarted();
+        });
     }
-    connect(m_manager, &WindowManager::windowAdded, this, &ToplevelDrag::onWindowAdded);
-    connect(m_manager, &WindowManager::windowRemoved, this, &ToplevelDrag::onWindowRemoved);
+    m_windowAdded = m_manager->windowAdded.connect([this](Window *window) {
+        onWindowAdded(window);
+    });
+    m_windowRemoved = m_manager->windowRemoved.connect([this](Window *window) {
+        onWindowRemoved(window);
+    });
 }
 
 ToplevelDrag::~ToplevelDrag()
@@ -75,7 +78,7 @@ ToplevelDrag::~ToplevelDrag()
     detach();
 }
 
-void ToplevelDrag::attach(compositor::Surface *surface, const QPoint &offset)
+void ToplevelDrag::attach(compositor::Surface *surface, const base::Point &offset)
 {
     detach();
     m_surface = surface;
@@ -108,7 +111,7 @@ void ToplevelDrag::onWindowAdded(Window *window)
         animation->setStyle(scene::WindowAnimation::Style::None);
     }
     if (input::Seat *seat = m_manager->seat()) {
-        const QPoint origin = seat->pointerLocation().toPoint() - m_offset;
+        const base::Point origin = seat->pointerLocation().toPoint() - m_offset;
         window->setBounds(window->bounds().translated(origin - window->contentBounds().topLeft()));
     }
     if (m_dragging) {
@@ -150,7 +153,7 @@ void ToplevelDrag::startMove(Window *window)
         return;
     stopMove();
     if (!m_manager->eventHandler()->beginMove(window, seat->pointerLocation())) {
-        qCDebug(cfCompositor) << "toplevel drag could not move" << window;
+        CF_DEBUG(cfCompositor) << "toplevel drag could not move" << window;
         return;
     }
     m_moving = window;
@@ -170,7 +173,7 @@ void ToplevelDrag::stopMove()
         handler->completeDrag(ToplevelEventHandler::DragResult::Revert);
 }
 
-void ToplevelDrag::dragMoved(const QPointF &location)
+void ToplevelDrag::dragMoved(const base::PointF &location)
 {
     ToplevelEventHandler *handler = m_manager->eventHandler();
     if (m_moving && handler->draggedWindow() == m_moving)
@@ -236,7 +239,8 @@ void ToplevelDrag::dragEnded(bool released)
             preview->activate();
         } else {
             preview->setOpacity(0);
-            QTimer::singleShot(kSettleDelayMs, m_manager, [manager = m_manager, id = preview->id()] {
+            m_manager->runLater(std::chrono::milliseconds(kSettleDelayMs),
+                                [manager = m_manager, id = preview->id()] {
                 if (Window *kept = manager->windowById(id))
                     settlePreview(manager, kept);
             });
@@ -246,7 +250,7 @@ void ToplevelDrag::dragEnded(bool released)
     // Looked up while the dragged window still takes no part in the hit test.
     if (window && released) {
         if (input::Seat *seat = m_manager->seat()) {
-            QPointF local;
+            base::PointF local;
             Window *below = m_manager->windowForSurface(input::findTargetSurface(
                     m_manager->compositor(), seat->pointerLocation(), &local));
             if (below && below != window && below->processId() > 0

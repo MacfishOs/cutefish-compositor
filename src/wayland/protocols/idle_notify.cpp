@@ -13,6 +13,7 @@
 #include "input/input_manager.h"
 #include "wayland/idle_inhibition.h"
 #include "wayland/protocols/wl_seat.h"
+#include "base/signal.h"
 
 namespace cutefish::wayland {
 namespace {
@@ -20,8 +21,8 @@ namespace {
 struct Notification {
     wl_resource *resource;
     wl_event_source *timer = nullptr;
-    QMetaObject::Connection activity;
-    QMetaObject::Connection inhibitionChanged;
+    base::Subscription activity;
+    base::Subscription inhibitionChanged;
     IdleInhibition *inhibition;
     uint32_t timeout;
     bool idle = false;
@@ -29,8 +30,8 @@ struct Notification {
 
     ~Notification()
     {
-        QObject::disconnect(activity);
-        QObject::disconnect(inhibitionChanged);
+        activity.reset();
+        inhibitionChanged.reset();
         if (timer)
             wl_event_source_remove(timer);
     }
@@ -100,14 +101,13 @@ void getNotification(wl_client *client, wl_resource *manager, uint32_t id, uint3
         return;
     }
     auto *input = inhibition->input;
-    notification->inhibitionChanged =
-            QObject::connect(inhibition, &IdleInhibition::inhibitedChanged, input, [notification] {
+    notification->inhibitionChanged = inhibition->inhibitedChanged.connect(
+            [notification] {
                 notification->reset();
             });
-    notification->activity =
-            QObject::connect(input, &input::InputManager::userActivity, input, [notification] {
-                notification->reset();
-            });
+    notification->activity = input->userActivity.connect([notification] {
+        notification->reset();
+    });
     notification->reset();
 }
 

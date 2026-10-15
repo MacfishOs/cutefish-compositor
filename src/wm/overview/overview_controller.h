@@ -9,10 +9,9 @@
 #include <set>
 #include <vector>
 
-#include <QMetaObject>
-#include <QPointF>
-#include <QRectF>
 
+#include "base/geometry.h"
+#include "base/signal.h"
 #include "input/event_sink.h"
 #include "scene/overview_node.h"
 #include "wm/activation.h"
@@ -126,12 +125,12 @@ public:
         int index = -1;
         int bar = -1;
     };
-    Hit hitTest(const QPointF &location) const;
+    Hit hitTest(const base::PointF &location) const;
 
     // The windows shown, in drawing order, and where each goes.
     struct Item {
         Window *window = nullptr;
-        QRectF bounds;
+        base::RectF bounds;
     };
     const std::vector<Item> &items() const { return m_items; }
     const std::vector<scene::OverviewDeskBarNode::Bar> &bars() const { return m_bars; }
@@ -139,16 +138,16 @@ public:
     int selected() const { return m_selected; }
 
     // --- input::EventSink ---
-    bool onPointerMotion(input::Timestamp timestamp, const QPointF &location) override;
-    bool onPointerButton(input::Timestamp timestamp, const QPointF &location, uint32_t evdevButton,
+    bool onPointerMotion(input::Timestamp timestamp, const base::PointF &location) override;
+    bool onPointerButton(input::Timestamp timestamp, const base::PointF &location, uint32_t evdevButton,
                          bool pressed) override;
-    bool onPointerAxis(input::Timestamp timestamp, const QPointF &location, const QPointF &offset,
+    bool onPointerAxis(input::Timestamp timestamp, const base::PointF &location, const base::PointF &offset,
                        bool discrete) override;
-    bool onPointerAxisStop(input::Timestamp timestamp, const QPointF &location) override;
+    bool onPointerAxisStop(input::Timestamp timestamp, const base::PointF &location) override;
     bool onKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
     bool onSecureKey(input::Timestamp timestamp, uint32_t evdevCode, bool pressed) override;
-    bool onTouchDown(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
-    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const QPointF &location) override;
+    bool onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
+    bool onTouchMotion(input::Timestamp timestamp, int32_t id, const base::PointF &location) override;
     bool onTouchUp(input::Timestamp timestamp, int32_t id) override;
     void onTouchCancel(input::Timestamp timestamp) override;
 
@@ -166,7 +165,7 @@ public:
 private:
     struct Press {
         Hit hit;
-        QPointF location;
+        base::PointF location;
         // The touch point pressing, or none for the pointer.
         std::optional<int32_t> touch;
     };
@@ -183,10 +182,10 @@ private:
     // Where the dragged item is drawn with the pointer at `location`: shrunk
     // on its way to the desk bar, as Ash's OverviewWindowDragController does,
     // and held where it was grabbed.
-    QRectF draggedBounds(const QPointF &location) const;
+    base::RectF draggedBounds(const base::PointF &location) const;
     void updateNodes(bool animate);
     void updateChrome();
-    QString deskName(int index) const;
+    std::string deskName(int index) const;
     // Whether the desks in the bar can be removed with their close buttons.
     bool canCloseDesks() const;
 
@@ -206,11 +205,11 @@ private:
     void finish();
     void onNodeFinished(double target);
 
-    void press(const Hit &hit, const QPointF &location, std::optional<int32_t> touch);
-    void move(const QPointF &location);
-    void release(const QPointF &location);
+    void press(const Hit &hit, const base::PointF &location, std::optional<int32_t> touch);
+    void move(const base::PointF &location);
+    void release(const base::PointF &location);
     void cancelPress();
-    void drop(const QPointF &location);
+    void drop(const base::PointF &location);
     void activateItem(int index);
     void moveSelection(int dx, int dy);
     void setHover(const Hit &hit);
@@ -232,8 +231,8 @@ private:
     Hit m_barHover;
     std::optional<Press> m_press;
     int m_dragged = -1;
-    QPointF m_dragOffset;
-    QPointF m_pointer;
+    base::PointF m_dragOffset;
+    base::PointF m_pointer;
     bool m_pointerTaken = false;
     // The cursor is the default one from the overview's first frame to its
     // last, whatever the windows under it ask for.
@@ -245,11 +244,11 @@ private:
     std::set<uint32_t> m_buttons;
     std::set<uint32_t> m_keys;
     std::set<int32_t> m_touches;
-    QPointF m_touchLocation;
+    base::PointF m_touchLocation;
 
-    QMetaObject::Connection m_addedConnection;
-    QMetaObject::Connection m_removedConnection;
-    QMetaObject::Connection m_outputsConnection;
+    base::Subscription m_windowAdded;
+    base::Subscription m_windowRemoved;
+    base::Subscription m_outputsChanged;
 };
 
 } // namespace cutefish::wm

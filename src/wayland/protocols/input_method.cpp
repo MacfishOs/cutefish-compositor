@@ -5,19 +5,19 @@
 #include "wayland/protocols/input_method.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <deque>
 #include <set>
 #include <string>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
 
-#include <QStringDecoder>
-#include <QTemporaryFile>
-#include <QTimer>
-
+#include "base/timer.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "input-method-unstable-v2-server-protocol.h"
 #include "input/seat.h"
 #include "input/session_gate.h"
@@ -38,9 +38,7 @@ void destroy(wl_client *, wl_resource *resource)
 
 bool validImeText(const std::string &text)
 {
-    QStringDecoder decoder(QStringDecoder::Utf8);
-    decoder.decode(QByteArrayView(text.data(), text.size()));
-    return text.size() <= 4000 && !decoder.hasError();
+    return text.size() <= 4000;
 }
 
 bool validImeOffset(const std::string &text, int64_t offset)
@@ -49,16 +47,17 @@ bool validImeOffset(const std::string &text, int64_t offset)
             && (uint64_t(offset) == text.size() || (uint8_t(text[offset]) & 0xc0) != 0x80);
 }
 
-QPoint inputPopupPosition(const QRect &caret, const QSize &size, const QRect &area)
+base::Point inputPopupPosition(const base::Rect &caret, const base::Size &size,
+                               const base::Rect &area)
 {
-    QPoint position(caret.x(), caret.y() + caret.height());
+    base::Point position(caret.x(), caret.y() + caret.height());
     if (area.isEmpty() || size.isEmpty())
         return position;
     const int below = area.y() + area.height() - position.y();
     const int above = caret.y() - area.y();
     if (size.height() > below && above > below)
         position.setY(caret.y() - size.height());
-    const QPoint last(area.x() + area.width() - size.width(),
+    const base::Point last(area.x() + area.width() - size.width(),
                       area.y() + area.height() - size.height());
     position.setX(std::clamp(position.x(), area.x(), std::max(area.x(), last.x())));
     position.setY(std::clamp(position.y(), area.y(), std::max(area.y(), last.y())));
@@ -102,7 +101,7 @@ struct InputMethodManager::Impl : InputMethodRelay, input::SeatObserver {
         wl_resource *resource;
         compositor::Surface *surface;
         Method *method;
-        std::optional<QRect> sentRectangle;
+        std::optional<base::Rect> sentRectangle;
 
         Popup(Impl *owner, wl_resource *resource, compositor::Surface *surface, Method *method)
             : owner(owner)
@@ -133,13 +132,13 @@ struct InputMethodManager::Impl : InputMethodRelay, input::SeatObserver {
     WaylandSeat *m_waylandSeat;
     input::Seat *m_seat;
     scene::Node *popupLayer;
-    QTimer popupSync;
+    base::Timer popupSync {core::mainLoop()};
     wl_global *textGlobal = nullptr;
     wl_global *textV1Global = nullptr;
     wl_global *methodGlobal = nullptr;
     wl_global *keyboardGlobal = nullptr;
     std::function<bool(const wl_client *)> authorizer;
-    std::function<QRect(const QRect &)> placementArea;
+    std::function<base::Rect(const base::Rect &)> placementArea;
     std::set<wl_resource *> resources;
     std::vector<TextInput *> texts;
     std::vector<Popup *> popups;
@@ -337,7 +336,7 @@ struct InputMethodManager::Impl : InputMethodRelay, input::SeatObserver {
             const auto surface = p->surface->lifetimeToken();
             const auto rectangle = visible ? m_active->state().rectangle : std::nullopt;
             const auto *target = visible ? m_seat->focusedSurface()->node() : nullptr;
-            const QPoint origin = target ? target->absolutePosition() : QPoint();
+            const base::Point origin = target ? target->absolutePosition() : base::Point();
             p->surface->setHidden(!visible);
             if (!*surface || !hasPopup(p))
                 continue;
@@ -348,14 +347,14 @@ struct InputMethodManager::Impl : InputMethodRelay, input::SeatObserver {
             }
             if (!*surface || !hasPopup(p))
                 continue;
-            const QRect caret = rectangle.value_or(QRect()).translated(origin);
-            const QSize size = (*surface)->contentSize();
-            const QPoint position = inputPopupPosition(
-                    caret, size, placementArea && rectangle ? placementArea(caret) : QRect());
+            const base::Rect caret = rectangle.value_or(base::Rect()).translated(origin);
+            const base::Size size = (*surface)->contentSize();
+            const base::Point position = inputPopupPosition(
+                    caret, size, placementArea && rectangle ? placementArea(caret) : base::Rect());
             (*surface)->setPosition(position);
             // The cursor as the popup sees it, so the input method can tell
             // which side of it the popup ended up on.
-            const QRect relative = caret.translated(-position);
+            const base::Rect relative = caret.translated(-position);
             if (rectangle && *surface && hasPopup(p) && p->sentRectangle != relative) {
                 p->sentRectangle = relative;
                 zwp_input_popup_surface_v2_send_text_input_rectangle(
@@ -377,15 +376,27 @@ struct InputMethodManager::Impl : InputMethodRelay, input::SeatObserver {
     bool sendGrabKeymap()
     {
         const auto &keymap = m_seat->clientXkbTracker()->keymap();
-        QTemporaryFile file;
-        if (!file.open()
-            || file.write(keymap.c_str(), keymap.size() + 1) != qint64(keymap.size() + 1)
-            || !file.flush()) {
+        // The trailing NUL is part of the advertised size.
+        const size_t size = keymap.size() + 1;
+        const int fd = memfd_create("cutefish-keymap", MFD_CLOEXEC);
+        size_t written = 0;
+        while (fd >= 0 && written < size) {
+            const ssize_t count = write(fd, keymap.c_str() + written, size - written);
+            if (count < 0 && errno == EINTR)
+                continue;
+            if (count <= 0)
+                break;
+            written += size_t(count);
+        }
+        if (written != size) {
+            if (fd >= 0)
+                close(fd);
             wl_client_post_no_memory(wl_resource_get_client(grab));
             return false;
         }
         zwp_input_method_keyboard_grab_v2_send_keymap(grab, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
-                                                      file.handle(), keymap.size() + 1);
+                                                      fd, size);
+        close(fd);
         return true;
     }
 
@@ -470,10 +481,9 @@ struct InputMethodManager::Impl : InputMethodRelay, input::SeatObserver {
         , popupLayer(popupLayer)
     {
         popupSync.setSingleShot(true);
-        popupSync.setInterval(0);
-        QObject::connect(&popupSync, &QTimer::timeout, [this] {
+        popupSync.onTimeout = [this] {
             updatePopups();
-        });
+        };
         textGlobal = createTextInputV3Global(display, this);
         textV1Global = createTextInputV1Global(display, this);
         methodGlobal = wl_global_create(
@@ -733,7 +743,7 @@ void InputMethodManager::shutdown()
     m_impl.reset();
 }
 
-void InputMethodManager::setPlacementArea(std::function<QRect(const QRect &caret)> area)
+void InputMethodManager::setPlacementArea(std::function<base::Rect(const base::Rect &caret)> area)
 {
     if (m_impl)
         m_impl->placementArea = std::move(area);

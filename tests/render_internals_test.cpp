@@ -7,12 +7,21 @@
 #include <fcntl.h>
 #include <gbm.h>
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "egl_test_util.h"
+#include "pixel_test_util.h"
 #include "render/gl_program.h"
+#include "base/region.h"
+#include "base/strings.h"
+#include "ui/geometry_conversions.h"
 
+using namespace cutefish;
 using namespace cutefish::render;
 
 namespace {
@@ -34,8 +43,8 @@ protected:
                 eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
         ASSERT_NE(surface, EGL_NO_SURFACE);
         target = std::make_unique<EglRenderTarget>(renderer->eglDisplay(), surface, nullptr,
-                                                   QSize(32, 32));
-        renderer->setOutputContext({"test", QRect(10, 20, 32, 32), {32, 32}, 1, 0, 1});
+                                                   base::Size(32, 32));
+        renderer->setOutputContext({"test", base::Rect(10, 20, 32, 32), {32, 32}, 1, 0, 1});
         ASSERT_TRUE(renderer->beginFrame(target.get()));
     }
 
@@ -109,8 +118,8 @@ TEST(ProgramInitialization, BlurShaderFailureStillGivesARenderer)
     const auto surface =
             eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attributes);
     ASSERT_NE(surface, EGL_NO_SURFACE);
-    EglRenderTarget target(renderer->eglDisplay(), surface, nullptr, QSize(16, 16));
-    renderer->setOutputContext({"test", QRect(0, 0, 16, 16), {16, 16}, 1, 0, 1});
+    EglRenderTarget target(renderer->eglDisplay(), surface, nullptr, base::Size(16, 16));
+    renderer->setOutputContext({"test", base::Rect(0, 0, 16, 16), {16, 16}, 1, 0, 1});
     ASSERT_TRUE(renderer->beginFrame(&target));
     const auto image = renderer->captureFrame([&] {
         renderer->clear({0, 1, 0, 1});
@@ -118,7 +127,7 @@ TEST(ProgramInitialization, BlurShaderFailureStillGivesARenderer)
     });
     renderer->releaseTarget(&target);
     ASSERT_FALSE(image.isNull());
-    EXPECT_EQ(image.pixelColor(0, 0), QColor(Qt::green));
+    EXPECT_EQ(image.pixel(0, 0), test::kGreen);
 }
 
 TEST(ProgramInitialization, InvalidConfigDoesNotPreventLaterInitialization)
@@ -137,7 +146,7 @@ TEST_F(RenderInternals, FailedReplacementPreservesDrawingAndOptionalSamplerCanFa
         renderer->clear({0, 1, 0, 1});
     });
     ASSERT_FALSE(image.isNull());
-    EXPECT_EQ(image.pixelColor(0, 0), QColor(Qt::green));
+    EXPECT_EQ(image.pixel(0, 0), test::kGreen);
     ASSERT_TRUE(EglRendererTestAccess::initialize(*renderer, nullptr, invalid));
     EXPECT_FALSE(EglRendererTestAccess::hasExternalProgram(*renderer));
     const uint8_t pixel[] = {255, 0, 0, 255};
@@ -148,7 +157,7 @@ TEST_F(RenderInternals, FailedReplacementPreservesDrawingAndOptionalSamplerCanFa
         renderer->drawTexture(texture.get(), {10, 20, 32, 32}, 1);
     });
     ASSERT_FALSE(image.isNull());
-    EXPECT_EQ(image.pixelColor(16, 16), QColor(Qt::red));
+    EXPECT_EQ(image.pixel(16, 16), test::kRed);
     EXPECT_FALSE(renderer->importDmaBuf({}));
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
@@ -159,15 +168,15 @@ TEST_F(RenderInternals, RenderToImageReadsUprightPixelsAndKeepsTheFrame)
     auto texture = renderer->createTexture({2, 1}, pixels);
     ASSERT_TRUE(texture);
     const auto image = renderer->renderToImage({8, 4}, [&] {
-        renderer->drawTextureF(texture.get(), QRectF(0, 0, 8, 2), 1);
+        renderer->drawTextureF(texture.get(), base::RectF(0, 0, 8, 2), 1);
     });
-    ASSERT_EQ(image.size(), QSize(8, 4));
-    EXPECT_EQ(image.format(), QImage::Format_ARGB32_Premultiplied);
-    EXPECT_EQ(image.pixelColor(1, 0), QColor(Qt::red));
-    EXPECT_EQ(image.pixelColor(6, 1), QColor(Qt::blue));
-    EXPECT_EQ(image.pixelColor(6, 3).alpha(), 0);
-    EXPECT_EQ(renderer->outputContext().logicalViewport, QRect(10, 20, 32, 32));
-    EXPECT_EQ(renderer->viewportSize(), QSize(32, 32));
+    ASSERT_EQ(image.size(), base::Size(8, 4));
+    EXPECT_EQ(image.format(), ui::Bitmap::Format::Argb32Premultiplied);
+    EXPECT_EQ(image.pixel(1, 0), test::kRed);
+    EXPECT_EQ(image.pixel(6, 1), test::kBlue);
+    EXPECT_EQ(test::alpha(image.pixel(6, 3)), 0);
+    EXPECT_EQ(renderer->outputContext().logicalViewport, base::Rect(10, 20, 32, 32));
+    EXPECT_EQ(renderer->viewportSize(), base::Size(32, 32));
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
@@ -184,17 +193,16 @@ TEST_F(RenderInternals, APartialUploadTakesOnlyItsDamageFromPaddedRows)
     }
     auto texture = renderer->createTexture({8, 4}, red.data(), stride, PixelFormat::Rgba8888);
     ASSERT_TRUE(texture);
-    const QRegion damage = QRegion(QRect(2, 1, 3, 2)) + QRect(7, 3, 1, 1);
+    const base::Region damage = base::Region(base::Rect(2, 1, 3, 2)) + base::Rect(7, 3, 1, 1);
     ASSERT_TRUE(renderer->updateTexture(texture.get(), blue.data(), stride, PixelFormat::Rgba8888,
                                         damage));
     const auto image = renderer->renderToImage({8, 4}, [&] {
-        renderer->drawTextureF(texture.get(), QRectF(0, 0, 8, 4), 1);
+        renderer->drawTextureF(texture.get(), base::RectF(0, 0, 8, 4), 1);
     });
-    ASSERT_EQ(image.size(), QSize(8, 4));
+    ASSERT_EQ(image.size(), base::Size(8, 4));
     for (int y = 0; y < 4; ++y) {
         for (int x = 0; x < 8; ++x) {
-            EXPECT_EQ(image.pixelColor(x, y),
-                      QColor(damage.contains(QPoint(x, y)) ? Qt::blue : Qt::red))
+            EXPECT_EQ(image.pixel(x, y), damage.contains(base::Point(x, y)) ? test::kBlue : test::kRed)
                     << x << "," << y;
         }
     }
@@ -206,11 +214,11 @@ TEST_F(RenderInternals, TransformedTextureKeepsAFrameUprightAcrossOutputRotation
     const uint8_t pixels[] = {255, 0, 0, 255, 0, 0, 255, 255};
     auto texture = renderer->createTexture({2, 1}, pixels);
     ASSERT_TRUE(texture);
-    const QRectF viewport(10, 20, 32, 32);
+    const base::RectF viewport(10, 20, 32, 32);
     // A frame captured unrotated, turned by the difference as ScreenTransitionNode does.
     for (const auto &[transform, degrees] : {std::pair {1u, 90}, {2u, -180}, {3u, -90}}) {
-        renderer->setOutputContext({"test", QRect(10, 20, 32, 32), {32, 32}, 1, transform, 1});
-        QTransform turn;
+        renderer->setOutputContext({"test", base::Rect(10, 20, 32, 32), {32, 32}, 1, transform, 1});
+        base::AffineTransform turn;
         turn.translate(viewport.center().x(), viewport.center().y());
         turn.rotate(degrees);
         turn.translate(-viewport.center().x(), -viewport.center().y());
@@ -219,15 +227,15 @@ TEST_F(RenderInternals, TransformedTextureKeepsAFrameUprightAcrossOutputRotation
             renderer->drawTextureTransformed(texture.get(), viewport, turn, 1);
         });
         ASSERT_FALSE(image.isNull());
-        EXPECT_EQ(image.pixelColor(4, 16), QColor(Qt::red)) << transform;
-        EXPECT_EQ(image.pixelColor(28, 16), QColor(Qt::blue)) << transform;
+        EXPECT_EQ(image.pixel(4, 16), test::kRed) << transform;
+        EXPECT_EQ(image.pixel(28, 16), test::kBlue) << transform;
     }
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
 TEST_F(RenderInternals, BackdropSamplesWhatIsUnderItOnARotatedOutput)
 {
-    const QRect layout(0, 0, 48, 32);
+    const base::Rect layout(0, 0, 48, 32);
     const auto paint = [&](const GlassParams &glass) {
         renderer->clear({0, 0, 0, 1});
         renderer->fillRect({0, 0, 24, 16}, {1, 0, 0, 1});
@@ -244,7 +252,7 @@ TEST_F(RenderInternals, BackdropSamplesWhatIsUnderItOnARotatedOutput)
                                                     [&] { paint(params); });
         ASSERT_FALSE(upright.isNull());
         for (const uint32_t transform : {1u, 2u, 3u}) {
-            const QSize physical = transform % 2 ? layout.size().transposed() : layout.size();
+            const base::Size physical = transform % 2 ? layout.size().transposed() : layout.size();
             renderer->setOutputContext({"test", layout, physical, 1, transform, 1});
             const auto turned = renderer->captureImage(renderer->outputContext(), physical,
                                                        [&] { paint(params); });
@@ -252,16 +260,16 @@ TEST_F(RenderInternals, BackdropSamplesWhatIsUnderItOnARotatedOutput)
             int worst = 0;
             for (int y = 0; y < layout.height(); ++y) {
                 for (int x = 0; x < layout.width(); ++x) {
-                    const QPoint at = transform == 1
-                            ? QPoint(y, layout.width() - 1 - x)
+                    const base::Point at = transform == 1
+                            ? base::Point(y, layout.width() - 1 - x)
                             : transform == 2
-                            ? QPoint(layout.width() - 1 - x, layout.height() - 1 - y)
-                            : QPoint(layout.height() - 1 - y, x);
-                    const QColor expected = upright.pixelColor(x, y);
-                    const QColor actual = turned.pixelColor(at);
-                    worst = std::max({worst, std::abs(expected.red() - actual.red()),
-                                      std::abs(expected.green() - actual.green()),
-                                      std::abs(expected.blue() - actual.blue())});
+                            ? base::Point(layout.width() - 1 - x, layout.height() - 1 - y)
+                            : base::Point(layout.height() - 1 - y, x);
+                    const uint32_t expected = upright.pixel(x, y);
+                    const uint32_t actual = test::pixelAt(turned, at);
+                    worst = std::max({worst, std::abs(test::red(expected) - test::red(actual)),
+                                      std::abs(test::green(expected) - test::green(actual)),
+                                      std::abs(test::blue(expected) - test::blue(actual))});
                 }
             }
             EXPECT_LE(worst, 2) << "transform " << transform << " glass " << params.enabled;
@@ -272,7 +280,7 @@ TEST_F(RenderInternals, BackdropSamplesWhatIsUnderItOnARotatedOutput)
 
 TEST_F(RenderInternals, CachedBackdropMasksAndScratchMatchAFreshDraw)
 {
-    const QRect layout(0, 0, 64, 48);
+    const base::Rect layout(0, 0, 64, 48);
     const OutputRenderContext context {"test", layout, {80, 60}, 1.25, 0, 1};
     GlassParams glass;
     glass.enabled = true;
@@ -281,15 +289,15 @@ TEST_F(RenderInternals, CachedBackdropMasksAndScratchMatchAFreshDraw)
             renderer->clear({0, 0, 0, 1});
             renderer->fillRect({0, 0, 32, 24}, {1, 0, 0, 1});
             renderer->fillRect({32, 24, 32, 24}, {0, 0, 1, 1});
-            QPainterPath ellipse;
-            const QRect lens(4 + shift, 6 + shift, 22, 16);
-            ellipse.addEllipse(lens);
+            ui::Path ellipse;
+            const base::Rect lens(4 + shift, 6 + shift, 22, 16);
+            ellipse.addEllipse(ui::fromBase(base::RectF(lens)));
             renderer->drawBackgroundBlur(lens, 0, layout, {}, ellipse);
-            QPainterPath triangle;
+            ui::Path triangle;
             triangle.moveTo(36, 30);
             triangle.lineTo(60, 30);
             triangle.lineTo(48, 46);
-            triangle.closeSubpath();
+            triangle.close();
             renderer->drawBackgroundBlur({36, 30, 24, 16}, 0, layout, glass, triangle);
         });
     };
@@ -299,8 +307,8 @@ TEST_F(RenderInternals, CachedBackdropMasksAndScratchMatchAFreshDraw)
         return frame(shift);
     };
     renderer->setOutputContext(context);
-    const QImage still = fresh(0);
-    const QImage moved = fresh(3);
+    const ui::Bitmap still = fresh(0);
+    const ui::Bitmap moved = fresh(3);
     ASSERT_FALSE(still.isNull());
     ASSERT_NE(still, moved);
     for (const int shift : {0, 3, 0, 3, 0})
@@ -311,12 +319,12 @@ TEST_F(RenderInternals, CachedBackdropMasksAndScratchMatchAFreshDraw)
 TEST_F(RenderInternals, APartialPassRedrawsOnlyItsRectAndKeepsTheRest)
 {
     std::unique_ptr<Texture> texture;
-    const QRect bounds(10, 20, 16, 8);
+    const base::Rect bounds(10, 20, 16, 8);
     ASSERT_TRUE(renderer->renderToTexture(texture, bounds, [&] {
         renderer->fillRect(bounds, {1, 0, 0, 1});
     }));
     // The top right quarter only, which also pins the bottom-up row order.
-    ASSERT_TRUE(renderer->renderToTexture(texture, bounds, QRect(18, 20, 8, 4), [&] {
+    ASSERT_TRUE(renderer->renderToTexture(texture, bounds, base::Rect(18, 20, 8, 4), [&] {
         renderer->fillRect(bounds, {0, 0, 1, 1});
     }));
     const auto image = renderer->captureFrame([&] {
@@ -324,10 +332,10 @@ TEST_F(RenderInternals, APartialPassRedrawsOnlyItsRectAndKeepsTheRest)
         renderer->drawTexture(texture.get(), bounds, 1);
     });
     ASSERT_FALSE(image.isNull());
-    EXPECT_EQ(image.pixelColor(12, 1), QColor(Qt::blue));
-    EXPECT_EQ(image.pixelColor(12, 6), QColor(Qt::red));
-    EXPECT_EQ(image.pixelColor(2, 1), QColor(Qt::red));
-    EXPECT_EQ(image.pixelColor(2, 6), QColor(Qt::red));
+    EXPECT_EQ(image.pixel(12, 1), test::kBlue);
+    EXPECT_EQ(image.pixel(12, 6), test::kRed);
+    EXPECT_EQ(image.pixel(2, 1), test::kRed);
+    EXPECT_EQ(image.pixel(2, 6), test::kRed);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
@@ -346,7 +354,7 @@ TEST_F(RenderInternals, NestedPassAndExceptionRestoreGeometryPresentationAndTarg
     glScissor(4, 5, 6, 7);
 
     const auto check = [&] {
-        EXPECT_EQ(renderer->viewportSize(), QSize(32, 32));
+        EXPECT_EQ(renderer->viewportSize(), base::Size(32, 32));
         EXPECT_EQ(renderer->outputContext().logicalViewport, context.logicalViewport);
         EXPECT_EQ(renderer->rasterScale(), 1.25);
         EXPECT_EQ(renderer->presentationSubmission, &submission);
@@ -369,7 +377,7 @@ TEST_F(RenderInternals, NestedPassAndExceptionRestoreGeometryPresentationAndTarg
     std::unique_ptr<Texture> outer, inner;
     ASSERT_TRUE(renderer->renderToTexture(outer, {11, 21, 12, 12}, [&] {
         EXPECT_EQ(renderer->presentationSubmission, nullptr);
-        const QSize viewport = renderer->viewportSize();
+        const base::Size viewport = renderer->viewportSize();
         GLint framebuffer;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
         ASSERT_TRUE(renderer->renderToTexture(inner, {12, 22, 4, 4}, [&] {
@@ -403,7 +411,7 @@ TEST_F(RenderInternals, NestedPassAndExceptionRestoreGeometryPresentationAndTarg
 // buffer and attributes beyond GlProgram::kAttributeCount are never touched.
 TEST_F(RenderInternals, ReadbackUnbindsTransferBuffersAndKeepsForeignState)
 {
-    if (!renderer->glesVersion().startsWith("OpenGL ES 3"))
+    if (!renderer->glesVersion().starts_with("OpenGL ES 3"))
         GTEST_SKIP() << "ES3 transfer-buffer state requires an ES3 context";
     const uint8_t pixel[] = {255, 0, 0, 255};
     auto texture = renderer->createTexture({1, 1}, pixel);
@@ -426,8 +434,8 @@ TEST_F(RenderInternals, ReadbackUnbindsTransferBuffersAndKeepsForeignState)
     auto image = renderer->captureFrame([&] {
         renderer->clear({0, 1, 0, 1});
     });
-    ASSERT_EQ(image.size(), QSize(32, 32));
-    EXPECT_EQ(image.pixelColor(16, 16), QColor(Qt::green));
+    ASSERT_EQ(image.size(), base::Size(32, 32));
+    EXPECT_EQ(image.pixel(16, 16), test::kGreen);
     GLint value = 0;
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &value);
     EXPECT_EQ(GLuint(value), readFramebuffer);
@@ -458,7 +466,7 @@ TEST_F(RenderInternals, IncompleteAndOversizedTargetsRestoreStateWithoutPainting
     renderer->presentationSubmission = &submission;
     glEnable(GL_SCISSOR_TEST);
     glScissor(1, 2, 3, 4);
-    std::unique_ptr<Texture> texture = std::make_unique<GlTexture>(0, QSize(8, 8));
+    std::unique_ptr<Texture> texture = std::make_unique<GlTexture>(0, base::Size(8, 8));
     bool painted = false;
     EXPECT_FALSE(renderer->renderToTexture(texture, {0, 0, 8, 8}, [&] {
         painted = true;
@@ -470,7 +478,7 @@ TEST_F(RenderInternals, IncompleteAndOversizedTargetsRestoreStateWithoutPainting
     }));
     EXPECT_FALSE(painted);
     EXPECT_EQ(renderer->presentationSubmission, &submission);
-    EXPECT_EQ(renderer->viewportSize(), QSize(32, 32));
+    EXPECT_EQ(renderer->viewportSize(), base::Size(32, 32));
     GLint framebuffer = -1, scissor[4];
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
     EXPECT_EQ(framebuffer, 0);
@@ -571,18 +579,20 @@ TEST_F(RenderInternals, AMarkTellsWhenTheGpuGotPastTheFrame)
 
 TEST(EglNativeFence, AcquirePreservesDescriptorsAndReleaseRequiresAFrame)
 {
-    const auto path = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-    if (path.isEmpty())
+    const char *path = std::getenv("CUTEFISH_TEST_DRM_DEVICE");
+    if (!path || !*path)
         GTEST_SKIP() << "Set CUTEFISH_TEST_DRM_DEVICE to test native EGL fences";
-    cutefish::ScopedFd fd(open(path.constData(), O_RDWR | O_CLOEXEC));
+    cutefish::ScopedFd fd(open(path, O_RDWR | O_CLOEXEC));
     ASSERT_TRUE(fd.isValid());
     std::unique_ptr<gbm_device, decltype(&gbm_device_destroy)> device(gbm_create_device(fd.get()),
                                                                       gbm_device_destroy);
     ASSERT_TRUE(device);
     auto renderer = EglRenderer::create(device.get(), DRM_FORMAT_XRGB8888);
     ASSERT_TRUE(renderer);
-    const QByteArray extensions(eglQueryString(renderer->eglDisplay(), EGL_EXTENSIONS));
-    if (!extensions.split(' ').contains("EGL_ANDROID_native_fence_sync"))
+    const auto extensions =
+            base::strings::split(eglQueryString(renderer->eglDisplay(), EGL_EXTENSIONS), ' ');
+    if (std::find(extensions.begin(), extensions.end(), "EGL_ANDROID_native_fence_sync")
+        == extensions.end())
         GTEST_SKIP() << "EGL native fences are unavailable";
     std::unique_ptr<gbm_surface, decltype(&gbm_surface_destroy)> surface(
             gbm_surface_create(device.get(), 32, 32, DRM_FORMAT_XRGB8888, GBM_BO_USE_RENDERING),
@@ -616,17 +626,18 @@ TEST(EglExtensions, WholeNamesOnlyAsTheSplitListWould)
     auto context = EglContext::createSurfaceless();
     ASSERT_TRUE(context);
     ASSERT_TRUE(context->makeCurrent());
-    const QByteArray list(reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS)));
-    const QList<QByteArray> names = list.split(' ');
-    ASSERT_GT(names.size(), 5);
-    for (const QByteArray &name : names) {
-        if (name.isEmpty())
+    const std::vector<std::string> names =
+            base::strings::split(reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS)), ' ');
+    ASSERT_GT(names.size(), 5u);
+    for (const std::string &name : names) {
+        if (name.empty())
             continue;
-        EXPECT_TRUE(context->supportsGl(name.constData())) << name.constData();
+        EXPECT_TRUE(context->supportsGl(name.c_str())) << name;
         // A prefix of a name is not that name, unless it is one itself.
-        const QByteArray prefix = name.left(name.size() - 1);
-        EXPECT_EQ(names.contains(prefix), context->supportsGl(prefix.constData()))
-                << prefix.constData();
+        const std::string prefix = name.substr(0, name.size() - 1);
+        EXPECT_EQ(std::find(names.begin(), names.end(), prefix) != names.end(),
+                  context->supportsGl(prefix.c_str()))
+                << prefix;
     }
     EXPECT_FALSE(context->supportsGl(""));
     EXPECT_FALSE(context->supportsGl("GL_CUTEFISH_not_an_extension"));

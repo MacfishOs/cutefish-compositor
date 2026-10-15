@@ -71,14 +71,14 @@ ShmPool::~ShmPool()
 std::shared_ptr<ShmPool> ShmPool::create(int fd, int32_t size)
 {
     if (size <= 0) {
-        qCWarning(cfCompositor) << "Rejecting a shm pool of size" << size;
+        CF_WARNING(cfCompositor) << "Rejecting a shm pool of size" << size;
         close(fd);
         return nullptr;
     }
 
     if (!fileBacks(fd, static_cast<size_t>(size))) {
-        qCWarning(cfCompositor) << "Rejecting a shm pool of" << size
-                                << "bytes whose file is smaller than that";
+        CF_WARNING(cfCompositor) << "Rejecting a shm pool of" << size
+                                 << "bytes whose file is smaller than that";
         close(fd);
         return nullptr;
     }
@@ -86,12 +86,13 @@ std::shared_ptr<ShmPool> ShmPool::create(int fd, int32_t size)
     // Only ever read from; the client keeps writing to the same pages.
     void *data = mmap(nullptr, static_cast<size_t>(size), PROT_READ, MAP_SHARED, fd, 0);
     if (data == MAP_FAILED) {
-        qCWarning(cfCompositor, "Failed to map a shm pool of %d bytes: %s", size, strerror(errno));
+        CF_WARNING(cfCompositor).printf(
+                "Failed to map a shm pool of %d bytes: %s", size, strerror(errno));
         close(fd);
         return nullptr;
     }
 
-    qCDebug(cfCompositor) << "Created shm pool of" << size << "bytes";
+    CF_DEBUG(cfCompositor) << "Created shm pool of" << size << "bytes";
     return std::shared_ptr<ShmPool>(new ShmPool(fd, data, static_cast<size_t>(size)));
 }
 
@@ -105,15 +106,15 @@ bool ShmPool::resize(int32_t newSize)
         return false;
 
     if (!fileBacks(m_fd, static_cast<size_t>(newSize))) {
-        qCWarning(cfCompositor) << "Refusing to grow a shm pool to" << newSize
-                                << "bytes: its file is smaller than that";
+        CF_WARNING(cfCompositor) << "Refusing to grow a shm pool to" << newSize
+                                 << "bytes: its file is smaller than that";
         return false;
     }
 
     void *data = mremap(m_data, m_size, static_cast<size_t>(newSize), MREMAP_MAYMOVE);
     if (data == MAP_FAILED) {
-        qCWarning(cfCompositor, "Failed to grow a shm pool to %d bytes: %s", newSize,
-                  strerror(errno));
+        CF_WARNING(cfCompositor).printf(
+                "Failed to grow a shm pool to %d bytes: %s", newSize, strerror(errno));
         return false;
     }
 
@@ -122,8 +123,9 @@ bool ShmPool::resize(int32_t newSize)
     return true;
 }
 
-std::shared_ptr<ShmBuffer> ShmPool::createBuffer(const QSize &size, int32_t offset, int32_t stride,
-                                                 render::PixelFormat format, ShmBufferError *error)
+std::shared_ptr<ShmBuffer> ShmPool::createBuffer(const base::Size &size, int32_t offset,
+                                                 int32_t stride, render::PixelFormat format,
+                                                 ShmBufferError *error)
 {
     const auto fail = [error](ShmBufferError code) {
         if (error)
@@ -149,8 +151,9 @@ std::shared_ptr<ShmBuffer> ShmPool::createBuffer(const QSize &size, int32_t offs
     if (last > static_cast<int64_t>(m_size))
         return fail(ShmBufferError::InvalidStride);
 
-    qCDebug(cfCompositor, "Created shm buffer %dx%d stride %d offset %d format %d", size.width(),
-            size.height(), stride, offset, static_cast<int>(format));
+    CF_DEBUG(cfCompositor).printf(
+            "Created shm buffer %dx%d stride %d offset %d format %d", size.width(), size.height(),
+            stride, offset, static_cast<int>(format));
 
     return std::make_shared<ShmBuffer>(shared_from_this(), size, offset, stride, format);
 }

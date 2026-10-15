@@ -18,19 +18,17 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
-#include <QPainterPath>
-#include <QPoint>
-#include <QRect>
-#include <QRegion>
-#include <QSize>
-#include <QString>
-#include <QTransform>
+#include "base/geometry.h"
+#include "base/region.h"
+#include "base/transform.h"
 
 #include "compositor/buffer.h"
 #include "render/glass.h"
 #include "render/presentation.h"
+#include "ui/path.h"
 
 namespace cutefish::render {
 
@@ -104,15 +102,15 @@ public:
     bool serverResize() const { return m_serverResize; }
     void setServerResize(bool enabled) { m_serverResize = enabled; }
     // Read when the window maps and unmaps; see set_restore_id.
-    const QString &restoreId() const { return m_restoreId; }
-    void setRestoreId(const QString &id) { m_restoreId = id; }
+    const std::string &restoreId() const { return m_restoreId; }
+    void setRestoreId(const std::string &id) { m_restoreId = id; }
     // Read when the window maps maximized or fullscreen; see set_restore_size.
-    const QSize &restoreSize() const { return m_restoreSize; }
-    void setRestoreSize(const QSize &size) { m_restoreSize = size; }
+    const base::Size &restoreSize() const { return m_restoreSize; }
+    void setRestoreSize(const base::Size &size) { m_restoreSize = size; }
 
     struct MenuAddress {
-        QString service;
-        QString path;
+        std::string service;
+        std::string path;
         bool operator==(const MenuAddress &) const = default;
     };
 
@@ -125,28 +123,28 @@ public:
 
     // --- Requests. All of these are pending until commit(). ---
 
-    void attach(const std::shared_ptr<Buffer> &buffer, const QPoint &offset);
-    void damage(const QRect &rect);
-    void damageBuffer(const QRect &rect);
+    void attach(const std::shared_ptr<Buffer> &buffer, const base::Point &offset);
+    void damage(const base::Rect &rect);
+    void damageBuffer(const base::Rect &rect);
     void requestFrameCallback(FrameCallback callback);
     void requestPresentationCallback(render::PresentationContent::Callback callback);
     void abandonUnsubmittedPresentation(const render::PresentationSubmission &submission);
 
-    void setBackgroundBlur(const QRect &rect, int radius);
+    void setBackgroundBlur(const base::Rect &rect, int radius);
 
-    QRect backgroundBlurRect() const { return m_state.basicState.blurRect; }
+    base::Rect backgroundBlurRect() const { return m_state.basicState.blurRect; }
 
     int backgroundBlurRadius() const { return m_state.basicState.blurRadius; }
 
     // Surface-local; empty for the rounded rectangle.
-    void setBackgroundBlurShape(const QPainterPath &shape)
+    void setBackgroundBlurShape(const ui::Path &shape)
     {
         m_pending.basicState.blurShape = shape;
     }
 
     // The committed shape clipped to the blur rectangle; empty when there is
     // none, no rectangle, or glass.
-    QPainterPath backgroundBlurShape() const;
+    ui::Path backgroundBlurShape() const;
 
     void setGlass(const render::GlassParams &glass) { m_pending.basicState.glass = glass; }
 
@@ -156,17 +154,20 @@ public:
 
     const render::GlassParams &glass() const { return m_state.basicState.glass; }
 
-    void setOpaqueRegion(const QRegion &region);
-    void setInputRegion(const QRegion &region);
+    void setOpaqueRegion(const base::Region &region);
+    void setInputRegion(const base::Region &region);
     void resetInputRegion();
 
-    void setCrop(std::optional<QRectF> crop) { m_pending.basicState.crop = crop; }
+    void setCrop(std::optional<base::RectF> crop) { m_pending.basicState.crop = crop; }
 
-    void setViewport(std::optional<QSize> viewport) { m_pending.basicState.viewport = viewport; }
+    void setViewport(std::optional<base::Size> viewport)
+    {
+        m_pending.basicState.viewport = viewport;
+    }
 
-    std::optional<QRectF> crop() const { return m_state.basicState.crop; }
+    std::optional<base::RectF> crop() const { return m_state.basicState.crop; }
 
-    std::optional<QSize> viewport() const { return m_state.basicState.viewport; }
+    std::optional<base::Size> viewport() const { return m_state.basicState.viewport; }
 
     uint32_t preferredScale() const;
     void notifyOutputScaleChanged();
@@ -184,8 +185,8 @@ public:
         OutOfBuffer
     };
     ViewportError cachedViewportError() const;
-    QTransform surfaceToBuffer() const;
-    QTransform textureMapping() const;
+    base::AffineTransform surfaceToBuffer() const;
+    base::AffineTransform textureMapping() const;
 
     void setBufferScale(int scale);
     // Pending state, applied at the next commit. See State::clientScale.
@@ -254,45 +255,49 @@ public:
     // Subsurfaces in stacking order, bottom to top, with their positions
     // relative to this surface. The entry whose surface is `this` is the
     // sentinel marking where the parent's own content sits in the stack.
-    const std::vector<std::pair<Surface *, QPoint>> &subSurfaceStack() const
+    const std::vector<std::pair<Surface *, base::Point>> &subSurfaceStack() const
     {
         return m_subSurfaceStack;
     }
 
     // This surface's own input region, clipped to its content. Does not include
     // subsurfaces.
-    bool hitTest(const QPoint &point) const { return m_localHitTestRegion.contains(point); }
+    bool hitTest(const base::Point &point) const { return m_localHitTestRegion.contains(point); }
 
-    QRegion localHitTestRegion() const { return m_localHitTestRegion; }
+    base::Region localHitTestRegion() const { return m_localHitTestRegion; }
 
     // The input region of this surface and all its subsurfaces, in
     // surface-local coordinates. Matches Exo's Surface::hit_test_region_.
-    QRegion hitTestRegion() const { return m_hitTestRegion; }
+    base::Region hitTestRegion() const { return m_hitTestRegion; }
 
     // --- Pending state, for tests and diagnostics. ---
 
     bool hasPendingAttachedBuffer() const;
 
-    QRegion pendingDamage() const { return m_pending.damage; }
+    base::Region pendingDamage() const { return m_pending.damage; }
 
-    QRegion pendingBufferDamage() const { return m_pending.bufferDamage; }
+    base::Region pendingBufferDamage() const { return m_pending.bufferDamage; }
 
     int pendingBufferScale() const { return m_pending.basicState.bufferScale; }
 
     Transform pendingBufferTransform() const { return m_pending.basicState.bufferTransform; }
 
-    QRegion pendingOpaqueRegion() const { return m_pending.basicState.opaqueRegion; }
+    base::Region pendingOpaqueRegion() const { return m_pending.basicState.opaqueRegion; }
 
-    std::optional<QRegion> pendingInputRegion() const { return m_pending.basicState.inputRegion; }
+    std::optional<base::Region> pendingInputRegion() const
+    {
+        return m_pending.basicState.inputRegion;
+    }
 
     size_t pendingFrameCallbackCount() const { return m_pending.frameCallbacks.size(); }
 
     // --- Committed state. ---
 
     std::shared_ptr<Buffer> buffer() const;
-    QSize bufferSize() const;
+    // -1x-1 without a buffer.
+    base::Size bufferSize() const;
 
-    QPoint offset() const { return m_state.basicState.offset; }
+    base::Point offset() const { return m_state.basicState.offset; }
 
     int bufferScale() const { return m_state.basicState.bufferScale; }
 
@@ -300,16 +305,17 @@ public:
 
     Transform bufferTransform() const { return m_state.basicState.bufferTransform; }
 
-    QRegion opaqueRegion() const { return m_state.basicState.opaqueRegion; }
+    base::Region opaqueRegion() const { return m_state.basicState.opaqueRegion; }
 
-    std::optional<QRegion> inputRegion() const { return m_state.basicState.inputRegion; }
+    std::optional<base::Region> inputRegion() const { return m_state.basicState.inputRegion; }
 
     // Committed damage in surface-local coordinates. Buffer damage is folded in
     // through the buffer scale and transform.
-    QRegion damageRegion() const;
+    base::Region damageRegion() const;
 
-    // Buffer size mapped through the buffer scale and transform.
-    QSize contentSize() const;
+    // Buffer size mapped through the buffer scale and transform; -1x-1 without
+    // a buffer.
+    base::Size contentSize() const;
 
     bool hasContents() const { return !bufferSize().isEmpty(); }
 
@@ -332,11 +338,11 @@ public:
 
     // --- Scene and rendering. ---
 
-    void setExternalInputRegion(std::optional<QRegion> region);
+    void setExternalInputRegion(std::optional<base::Region> region);
 
     scene::SurfaceNode *node() const { return m_node; }
 
-    QPoint position() const { return m_position; }
+    base::Point position() const { return m_position; }
 
     // Hidden by the window manager (a minimized window). Independent of
     // mapping: the surface keeps its buffer, its state and its role, it is
@@ -345,7 +351,7 @@ public:
 
     void setHidden(bool hidden);
 
-    void setPosition(const QPoint &position);
+    void setPosition(const base::Point &position);
 
     // Moves this surface's scene node under `newParent`, or detaches it from
     // the scene entirely when `newParent` is null. Used by the pointer to lift
@@ -382,7 +388,7 @@ private:
     void applyReadyCommits();
     Surface *rootSurface();
     Surface *oldestHeldCommit();
-    void setSubSurfacePosition(Surface *child, const QPoint &position);
+    void setSubSurfacePosition(Surface *child, const base::Point &position);
     bool placeSubSurface(Surface *child, Surface *reference, bool above);
     void applyCachedState();
     void updateSubSurfaceStacking();
@@ -392,7 +398,7 @@ private:
 
     struct SubSurfaceEntry {
         Surface *surface;
-        QPoint position;
+        base::Point position;
     };
 
     using SubSurfaceList = std::list<SubSurfaceEntry>;
@@ -409,23 +415,23 @@ private:
     bool m_needsCommitSurface = false;
 
     struct State {
-        std::optional<QRectF> crop;
-        std::optional<QSize> viewport;
-        QRect blurRect;
+        std::optional<base::RectF> crop;
+        std::optional<base::Size> viewport;
+        base::Rect blurRect;
         int blurRadius = 0;
-        QPainterPath blurShape;
+        ui::Path blurShape;
         render::GlassParams glass;
-        QRegion opaqueRegion;
+        base::Region opaqueRegion;
         // Unset means "the whole surface accepts input", which is the default
         // and is not the same as an empty region.
-        std::optional<QRegion> inputRegion;
+        std::optional<base::Region> inputRegion;
         int bufferScale = 1;
         // How many of the client's surface units make one logical unit. Only
         // Xwayland has one: it draws at device resolution, and a buffer of
         // scale 1 maps onto size / clientScale logical units.
         double clientScale = 1;
         Transform bufferTransform = Transform::Normal;
-        QPoint offset;
+        base::Point offset;
     };
 
     // Exo keeps a weak reference plus the size, so that a client destroying its
@@ -433,7 +439,7 @@ private:
     // how large its content is.
     struct BufferAttachment {
         std::weak_ptr<Buffer> buffer;
-        QSize size;
+        base::Size size;
     };
 
     struct ExtendedState {
@@ -442,8 +448,8 @@ private:
         // was not called since the last commit.
         std::optional<BufferAttachment> buffer;
         // Not persisted between commits.
-        QRegion damage;
-        QRegion bufferDamage;
+        base::Region damage;
+        base::Region bufferDamage;
         bool fullDamage = false;
         std::vector<FrameCallback> frameCallbacks;
         // Not persisted between commits, and never copied: they belong to
@@ -455,14 +461,14 @@ private:
         std::shared_ptr<BufferRelease> release;
     };
 
-    QRect bufferRectToSurface(const QRect &rect) const;
-    QRect surfaceRectToBuffer(const QRect &rect) const;
+    base::Rect bufferRectToSurface(const base::Rect &rect) const;
+    base::Rect surfaceRectToBuffer(const base::Rect &rect) const;
 
     Compositor *m_compositor = nullptr;
     // Owned by its parent in the scene tree; detached in the destructor.
     scene::SurfaceNode *m_node = nullptr;
-    std::optional<QRegion> m_externalInputRegion;
-    QPoint m_position;
+    std::optional<base::Region> m_externalInputRegion;
+    base::Point m_position;
     bool m_hidden = false;
 
     std::shared_ptr<render::PresentationContent> m_pendingPresentation;
@@ -477,7 +483,7 @@ private:
     bool m_textureDirty = false;
     // What the buffer changed since the texture was last uploaded, in buffer
     // pixels, unless a new mapping leaves only a whole upload.
-    QRegion m_uploadDamage;
+    base::Region m_uploadDamage;
     bool m_uploadAll = true;
     bool m_lastCommitAttachedBuffer = false;
     bool m_lastCommitBufferSupportsExplicitSync = false;
@@ -488,7 +494,7 @@ private:
     uint64_t m_frameGeneration = 0;
 
     struct Placement {
-        QRect bounds;
+        base::Rect bounds;
         bool shown = false;
 
         bool operator==(const Placement &) const = default;
@@ -503,15 +509,16 @@ private:
     bool m_alwaysOnTop = false;
     ResizeAnchor m_resizeAnchor = ResizeAnchor::TopLeft;
     bool m_serverResize = false;
-    QString m_restoreId;
-    QSize m_restoreSize;
+    std::string m_restoreId;
+    // -1x-1 until the client sets one.
+    base::Size m_restoreSize {-1, -1};
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 
     // Committed input geometry, refreshed by commitSurfaceHierarchy().
-    QRegion m_localHitTestRegion;
-    QRegion m_hitTestRegion;
-    std::vector<std::pair<Surface *, QPoint>> m_subSurfaceStack;
+    base::Region m_localHitTestRegion;
+    base::Region m_hitTestRegion;
+    std::vector<std::pair<Surface *, base::Point>> m_subSurfaceStack;
 
     std::vector<SurfaceObserver *> m_observers;
 

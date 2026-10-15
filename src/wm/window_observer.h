@@ -5,8 +5,7 @@
 #ifndef CUTEFISH_WM_WINDOW_OBSERVER_H_
 #define CUTEFISH_WM_WINDOW_OBSERVER_H_
 
-#include <QRect>
-
+#include "base/geometry.h"
 #include "wm/types.h"
 
 namespace cutefish::wm {
@@ -19,7 +18,7 @@ class WindowObserver
 public:
     virtual ~WindowObserver() = default;
 
-    virtual void onWindowBoundsChanged(Window* window, const QRect& oldBounds) { }
+    virtual void onWindowBoundsChanged(Window* window, const base::Rect& oldBounds) { }
     virtual void onWindowStateTypeChanged(Window* window, WindowStateType oldType) { }
     virtual void onWindowActivationChanged(Window* window, bool active) { }
     virtual void onWindowResizingChanged(Window* window, bool resizing) { }

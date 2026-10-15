@@ -762,6 +762,7 @@ TEST_F(SchedulerTest, SuspendCancelsWakeupAndOldCompletionCannotCompleteNewFrame
 struct ScheduledSceneTest : SchedulerTest {
     cutefish::scene::Node root;
     cutefish::compositor::Compositor compositor {&root};
+    cutefish::base::Subscription repaintNeeded;
     cutefish::testsupport::FakeRenderer renderer;
     std::shared_ptr<cutefish::compositor::ShmPool> pool = cutefish::testsupport::makePool(4096);
 
@@ -770,7 +771,7 @@ struct ScheduledSceneTest : SchedulerTest {
         root.setChangeCallback([this] {
             scheduler.request(Reason::Scene);
         });
-        QObject::connect(&compositor, &cutefish::compositor::Compositor::repaintNeeded, [&] {
+        repaintNeeded = compositor.repaintNeeded.connect([this](bool) {
             scheduler.request(Reason::Surface);
         });
     }
@@ -949,7 +950,7 @@ TEST_F(ScheduledSceneTest, AnOutputOwesAFrameOnlyToSurfacesItShows)
     present(draw());
     s->requestFrameCallback([](auto) {});
     s->commit();
-    const QRect bounds = s->node()->absoluteGeometry();
+    const cutefish::base::Rect bounds = s->node()->absoluteGeometry();
     EXPECT_TRUE(compositor.awaitsFrame(bounds));
     EXPECT_FALSE(compositor.awaitsFrame(bounds.translated(bounds.width() + 1000, 0)));
     draw();

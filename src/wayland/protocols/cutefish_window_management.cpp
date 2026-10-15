@@ -14,8 +14,7 @@
 #include <algorithm>
 #include <cerrno>
 
-#include <QImage>
-
+#include "base/strings.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
 #include "input/seat.h"
@@ -39,7 +38,7 @@ namespace {
 // window manager while a stale pointer cannot.
 struct WindowResourceData {
     WaylandCutefishWindowManagement* management = nullptr;
-    quint64 windowId = 0;
+    uint64_t windowId = 0;
 };
 
 wm::Window* resolve(wl_resource* resource)
@@ -51,9 +50,9 @@ wm::Window* resolve(wl_resource* resource)
 }
 
 // A sealed memfd holding `image` as wl_shm argb8888 rows, or -1.
-int thumbnailFile(const QImage& image)
+int thumbnailFile(const ui::Bitmap& image)
 {
-    const QImage pixels = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    const ui::Bitmap pixels = image.converted(ui::Bitmap::Format::Argb32Premultiplied);
     const size_t row = size_t(pixels.width()) * 4;
     const size_t size = row * pixels.height();
     int fd = memfd_create("cutefish-window-thumbnail", MFD_CLOEXEC | MFD_ALLOW_SEALING);
@@ -82,12 +81,12 @@ int thumbnailFile(const QImage& image)
     return fd;
 }
 
-uint32_t idHigh(quint64 id)
+uint32_t idHigh(uint64_t id)
 {
     return static_cast<uint32_t>(id >> 32);
 }
 
-uint32_t idLow(quint64 id)
+uint32_t idLow(uint64_t id)
 {
     return static_cast<uint32_t>(id & 0xffffffffu);
 }
@@ -170,7 +169,7 @@ void windowSetMinimizedGeometry(wl_client*, wl_resource* resource, wl_resource* 
     }
 
     if (width == 0 || height == 0) {
-        window->setMinimizedGeometry(QRect());
+        window->setMinimizedGeometry(base::Rect());
         return;
     }
 
@@ -179,7 +178,7 @@ void windowSetMinimizedGeometry(wl_client*, wl_resource* resource, wl_resource* 
     if (!panelWindow) {
         // The dock's own window is not mapped yet; the shell will send this
         // again once it is.
-        window->setMinimizedGeometry(QRect());
+        window->setMinimizedGeometry(base::Rect());
         return;
     }
 
@@ -306,7 +305,7 @@ void managementHideOtherApplications(wl_client*, wl_resource* resource, wl_resou
 void managementPick(wl_client*, wl_resource* resource, uint32_t serial, int32_t x, int32_t y)
 {
     if (auto* management = getUserDataAs<WaylandCutefishWindowManagement>(resource))
-        management->pick(resource, serial, QPoint(x, y));
+        management->pick(resource, serial, base::Point(x, y));
 }
 
 wm::DesksController* desksOf(wl_resource* resource)
@@ -349,7 +348,7 @@ void managementSetDeskName(wl_client*, wl_resource* resource, uint32_t deskId, c
     if (!desks)
         return;
     if (wm::Desk* desk = desks->deskById(deskId))
-        desks->setDeskName(desk, QString::fromUtf8(name));
+        desks->setDeskName(desk, base::strings::sanitizedUtf8(name));
 }
 
 void managementCreateSurfaceCaptureSource(wl_client* client, wl_resource* resource, uint32_t id,
@@ -411,18 +410,20 @@ void bindManagement(wl_client* client, void* data, uint32_t version, uint32_t id
 } // namespace
 
 WaylandCutefishWindowManagement::WaylandCutefishWindowManagement(wm::WindowManager* windowManager,
-                                                                 PrivilegedClients* privileged,
-                                                                 QObject* parent)
-    : QObject(parent)
-    , m_windowManager(windowManager)
+                                                                 PrivilegedClients* privileged)
+    : m_windowManager(windowManager)
     , m_privileged(privileged)
 {
-    connect(m_windowManager, &wm::WindowManager::windowAdded, this,
-            &WaylandCutefishWindowManagement::onWindowAdded);
-    connect(m_windowManager, &wm::WindowManager::windowRemoved, this,
-            &WaylandCutefishWindowManagement::onWindowRemoved);
-    connect(m_windowManager, &wm::WindowManager::activeWindowChanged, this,
-            &WaylandCutefishWindowManagement::onActiveWindowChanged);
+    m_windowManagerSignals.push_back(m_windowManager->windowAdded.connect([this](wm::Window* window) {
+        onWindowAdded(window);
+    }));
+    m_windowManagerSignals.push_back(m_windowManager->windowRemoved.connect([this](wm::Window* window) {
+        onWindowRemoved(window);
+    }));
+    m_windowManagerSignals.push_back(
+            m_windowManager->activeWindowChanged.connect([this](wm::Window* window) {
+                onActiveWindowChanged(window);
+            }));
 
     m_windowManager->desks()->addObserver(this);
     m_windowManager->setNotRespondingPrompt([this](wm::Window* window) {
@@ -527,7 +528,7 @@ void WaylandCutefishWindowManagement::closeWindowResources(wm::Window* window)
 
 void WaylandCutefishWindowManagement::onActiveWindowChanged(wm::Window* window)
 {
-    std::erase_if(m_applicationHistory, [this](quint64 id) {
+    std::erase_if(m_applicationHistory, [this](uint64_t id) {
         return !m_windowResources.count(m_windowManager->windowById(id));
     });
     // A sheet speaks for the window it hangs from.
@@ -539,7 +540,7 @@ void WaylandCutefishWindowManagement::onActiveWindowChanged(wm::Window* window)
         std::erase(m_applicationHistory, window->id());
         m_applicationHistory.insert(m_applicationHistory.begin(), window->id());
     }
-    const quint64 id = m_applicationHistory.empty() ? 0 : m_applicationHistory.front();
+    const uint64_t id = m_applicationHistory.empty() ? 0 : m_applicationHistory.front();
     if (id == m_activeWindowId)
         return;
     m_activeWindowId = id;
@@ -606,10 +607,10 @@ void WaylandCutefishWindowManagement::sendInitialState(wl_resource* manager)
 }
 
 void WaylandCutefishWindowManagement::pick(wl_resource* manager, uint32_t serial,
-                                           const QPoint& position)
+                                           const base::Point& position)
 {
     uint32_t kind = CUTEFISH_WINDOW_MANAGEMENT_V1_PICKED_KIND_NONE;
-    quint64 id = 0;
+    uint64_t id = 0;
     if (wm::Window* window = m_windowManager->capturableWindowAt(position)) {
         switch (window->role()) {
         case wm::WindowRole::Normal:
@@ -645,10 +646,10 @@ void WaylandCutefishWindowManagement::sendState(wl_resource* resource, wm::Windo
     cutefish_window_v1_send_skip_taskbar(resource, window->skipTaskbar());
     const auto menu = window->rootSurface() ? window->rootSurface()->menuAddress()
                                             : compositor::Surface::MenuAddress{};
-    cutefish_window_v1_send_application_menu(resource, menu.service.toUtf8().constData(),
-                                            menu.path.toUtf8().constData());
-    cutefish_window_v1_send_title(resource, window->title().toUtf8().constData());
-    cutefish_window_v1_send_app_id(resource, window->applicationId().toUtf8().constData());
+    cutefish_window_v1_send_application_menu(resource, menu.service.c_str(),
+                                            menu.path.c_str());
+    cutefish_window_v1_send_title(resource, window->title().c_str());
+    cutefish_window_v1_send_app_id(resource, window->applicationId().c_str());
     cutefish_window_v1_send_pid(resource, static_cast<uint32_t>(window->processId()));
     sendParent(resource, window);
     sendDesk(resource, window);
@@ -661,7 +662,7 @@ void WaylandCutefishWindowManagement::sendState(wl_resource* resource, wm::Windo
                                   window->isHidden() ? 1 : 0);
     cutefish_window_v1_send_responsive(resource, window->isResponsive() ? 1 : 0);
 
-    const QRect bounds = window->bounds();
+    const base::Rect bounds = window->bounds();
     cutefish_window_v1_send_geometry(resource, bounds.x(), bounds.y(), bounds.width(),
                                      bounds.height());
     cutefish_window_v1_send_done(resource);
@@ -674,7 +675,7 @@ void WaylandCutefishWindowManagement::sendDesks(wl_resource* manager)
         cutefish_window_management_v1_send_desk(manager, desk->id());
         if (desk->isNameSetByUser())
             cutefish_window_management_v1_send_desk_name(manager, desk->id(),
-                                                         desk->name().toUtf8().constData());
+                                                         desk->name().c_str());
     }
     cutefish_window_management_v1_send_active_desk(manager, desks->activeDesk()->id());
 }
@@ -706,9 +707,9 @@ void WaylandCutefishWindowManagement::onDeskActivationChanged(const wm::Desk* ac
 
 void WaylandCutefishWindowManagement::onDeskNameChanged(const wm::Desk* desk)
 {
-    const QByteArray name = desk->isNameSetByUser() ? desk->name().toUtf8() : QByteArray();
+    const std::string name = desk->isNameSetByUser() ? desk->name() : std::string();
     for (wl_resource* manager : std::vector<wl_resource*>(m_managers))
-        cutefish_window_management_v1_send_desk_name(manager, desk->id(), name.constData());
+        cutefish_window_management_v1_send_desk_name(manager, desk->id(), name.c_str());
 }
 
 void WaylandCutefishWindowManagement::onWindowDeskChanged(wm::Window* window)
@@ -721,18 +722,19 @@ void WaylandCutefishWindowManagement::onWindowDeskChanged(wm::Window* window)
 
 void WaylandCutefishWindowManagement::sendParent(wl_resource* resource, wm::Window* window)
 {
-    const quint64 parent = window->transientParent() ? window->transientParent()->id() : 0;
+    const uint64_t parent = window->transientParent() ? window->transientParent()->id() : 0;
     cutefish_window_v1_send_parent(resource, idHigh(parent), idLow(parent));
 }
 
 void WaylandCutefishWindowManagement::sendThumbnail(wl_resource* resource, wm::Window* window)
 {
-    const QImage& snapshot = window->minimizedSnapshot();
-    if (snapshot.isNull() || !window->state()->isMinimized())
+    if (window->minimizedSnapshot().isNull() || !window->state()->isMinimized())
         return;
+    const ui::Bitmap& snapshot = window->minimizedSnapshot();
     const int fd = thumbnailFile(snapshot);
     if (fd < 0) {
-        qCWarning(cfCompositor) << "cannot share the minimized thumbnail of" << window->title();
+        CF_WARNING(cfCompositor) << "cannot share the minimized thumbnail of"
+                                 << window->title();
         return;
     }
     // libwayland duplicates the descriptor into the message.
@@ -757,8 +759,8 @@ void WaylandCutefishWindowManagement::onSurfaceMenuChanged(compositor::Surface* 
         return;
     const auto& menu = surface->menuAddress();
     for (auto* resource : resourcesFor(window)) {
-        cutefish_window_v1_send_application_menu(resource, menu.service.toUtf8().constData(),
-                                                menu.path.toUtf8().constData());
+        cutefish_window_v1_send_application_menu(resource, menu.service.c_str(),
+                                                menu.path.c_str());
         cutefish_window_v1_send_done(resource);
     }
 }
@@ -771,7 +773,7 @@ void WaylandCutefishWindowManagement::onSurfaceDestroying(compositor::Surface* s
 void WaylandCutefishWindowManagement::onWindowTitleChanged(wm::Window* window)
 {
     for (wl_resource* resource : resourcesFor(window)) {
-        cutefish_window_v1_send_title(resource, window->title().toUtf8().constData());
+        cutefish_window_v1_send_title(resource, window->title().c_str());
         cutefish_window_v1_send_done(resource);
     }
 }
@@ -784,16 +786,16 @@ void WaylandCutefishWindowManagement::onWindowApplicationIdChanged(wm::Window* w
         announceWindow(window);
     } else {
         for (wl_resource* resource : resourcesFor(window)) {
-            cutefish_window_v1_send_app_id(resource, window->applicationId().toUtf8().constData());
+            cutefish_window_v1_send_app_id(resource, window->applicationId().c_str());
             cutefish_window_v1_send_done(resource);
         }
     }
     onActiveWindowChanged(m_windowManager->activation()->activeWindow());
 }
 
-void WaylandCutefishWindowManagement::onWindowBoundsChanged(wm::Window* window, const QRect&)
+void WaylandCutefishWindowManagement::onWindowBoundsChanged(wm::Window* window, const base::Rect&)
 {
-    const QRect bounds = window->bounds();
+    const base::Rect bounds = window->bounds();
     for (wl_resource* resource : resourcesFor(window)) {
         cutefish_window_v1_send_geometry(resource, bounds.x(), bounds.y(), bounds.width(),
                                          bounds.height());
@@ -842,10 +844,10 @@ void WaylandCutefishWindowManagement::onWindowMinimizedSnapshotChanged(wm::Windo
     if (window->minimizedSnapshot().isNull())
         return;
     // One file for every resource: each send duplicates the descriptor.
-    const int fd = thumbnailFile(window->minimizedSnapshot());
+    const ui::Bitmap& snapshot = window->minimizedSnapshot();
+    const int fd = thumbnailFile(snapshot);
     if (fd < 0)
         return;
-    const QImage& snapshot = window->minimizedSnapshot();
     for (wl_resource* resource : resourcesFor(window)) {
         cutefish_window_v1_send_thumbnail(resource, fd, uint32_t(snapshot.width()),
                                           uint32_t(snapshot.height()));

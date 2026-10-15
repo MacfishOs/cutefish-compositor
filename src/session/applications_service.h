@@ -4,11 +4,9 @@
 
 #pragma once
 
-#include <QDBusConnection>
-#include <QDBusContext>
-#include <QDBusMessage>
-#include <QObject>
+#include "base/dbus.h"
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace cutefish::wm {
@@ -19,30 +17,31 @@ namespace cutefish::session {
 
 // com.cutefish.Applications1, which the session asks to quit every application
 // before it logs out, restarts or shuts down.
-class ApplicationsService : public QObject, protected QDBusContext
+class ApplicationsService
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.Applications1")
 public:
     // `setEnding` puts the docks and panels away while applications quit, and
-    // brings them back if one keeps the session from ending.
+    // brings them back if one keeps the session from ending. The session bus
+    // when no connection is given.
     ApplicationsService(wm::QuitAll *quitAll, std::function<void(bool)> setEnding,
-                        QDBusConnection bus = QDBusConnection::sessionBus());
-    ~ApplicationsService() override;
+                        base::dbus::Connection *bus = nullptr);
+    ApplicationsService(const ApplicationsService &) = delete;
+    ApplicationsService &operator=(const ApplicationsService &) = delete;
+    ~ApplicationsService();
 
     bool registerService();
 
-public slots:
-    // Replies once every application has quit, "quit", or once one has kept
-    // the session from ending, "cancelled" or "unresponsive" with its id.
-    // Concurrent callers share the answer.
-    Q_SCRIPTABLE QString QuitAll(QString &applicationId);
-
 private:
+    // QuitAll replies once every application has quit, "quit", or once one
+    // has kept the session from ending, "cancelled" or "unresponsive" with
+    // its id. Concurrent callers share the answer.
+    void quitAll(base::dbus::MethodCall &call);
+
     wm::QuitAll *m_quitAll;
     std::function<void(bool)> m_setEnding;
-    QDBusConnection m_bus;
-    std::vector<QDBusMessage> m_pending;
+    base::dbus::Connection *m_bus;
+    std::unique_ptr<base::dbus::Object> m_object;
+    std::vector<base::dbus::MethodCall> m_pending;
     bool m_registered = false;
 };
 

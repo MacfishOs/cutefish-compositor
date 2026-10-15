@@ -13,11 +13,12 @@
 #include <cmath>
 
 #include "scene/motion.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
-SlideOutNode::SlideOutNode(std::function<qint64()> clock)
-    : Node(QStringLiteral("window-move-to-desk"))
+SlideOutNode::SlideOutNode(std::function<int64_t()> clock)
+    : Node("window-move-to-desk")
     , m_now(clock ? std::move(clock) : [] {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now().time_since_epoch())
@@ -26,14 +27,14 @@ SlideOutNode::SlideOutNode(std::function<qint64()> clock)
 {
 }
 
-void SlideOutNode::slideOut(DeskSwitchNode::Frames frames, const QRect &window,
-                            const QRect &output, bool goingLeft)
+void SlideOutNode::slideOut(DeskSwitchNode::Frames frames, const base::Rect &window,
+                            const base::Rect &output, bool goingLeft)
 {
     if (frames.empty())
         return;
     // Upstream GetWindowEndTransform: just past the edge on the target's side.
-    const int distance = goingLeft ? -(window.right() + 1 - output.left())
-                                   : output.right() + 1 - window.left();
+    const int distance = goingLeft ? -(window.right() - output.left())
+                                   : output.right() - window.left();
     m_slides.push_back({std::move(frames), distance, m_now()});
     notifyChanged();
 }
@@ -42,9 +43,9 @@ void SlideOutNode::render(render::Renderer &renderer) const
 {
     if (m_slides.empty() || !isVisible())
         return;
-    const qint64 now = m_now();
+    const int64_t now = m_now();
     const auto &context = renderer.outputContext();
-    const QRect viewport =
+    const base::Rect viewport =
             context.logicalViewport.isEmpty() ? absoluteGeometry() : context.logicalViewport;
     const double duration = std::max(1.0, kDurationMs * motion::durationScale());
     for (const Slide &slide : m_slides) {
@@ -55,7 +56,7 @@ void SlideOutNode::render(render::Renderer &renderer) const
         // gfx::Tween::EASE_IN.
         const double offset = slide.distance * t * t;
         renderer.drawTextureF(frame->second.get(),
-                              QRectF(viewport.x() + offset, viewport.y(), viewport.width(),
+                              base::RectF(viewport.x() + offset, viewport.y(), viewport.width(),
                                      viewport.height()));
     }
     if (renderer.capturing)

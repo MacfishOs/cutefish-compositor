@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "decoration/decoration_theme.h"
+
 #include "render/rounded_shape.h"
 
 #include <algorithm>
@@ -71,10 +72,10 @@ void Theme::setDarkMode(bool dark)
     notifyObservers();
 }
 
-void Theme::setCaptionPointSize(qreal points)
+void Theme::setCaptionPointSize(double points)
 {
     // Points to logical pixels the way Qt does on Wayland (a fixed 96 dpi).
-    const int pixels = std::clamp(qRound(points * 96.0 / 72.0), 1, 128);
+    const int pixels = std::clamp(base::roundToInt(points * 96.0 / 72.0), 1, 128);
     if (pixels == m_metrics.textPixelSize)
         return;
     m_metrics.textPixelSize = pixels;
@@ -123,7 +124,7 @@ WindowVisualStyle Theme::visualStyle() const
     return WindowVisualStyle(m_darkMode, m_accentColor);
 }
 
-render::Texture* Theme::texture(render::Renderer& renderer, const QString& key,
+render::Texture* Theme::texture(render::Renderer& renderer, const std::string& key,
                                 const std::function<Image()>& make)
 {
     if (m_renderer != &renderer) {

@@ -8,10 +8,10 @@
 #include "wm/desks/desk_preferences.h"
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
-#include <QScopedValueRollback>
-#include <QStringList>
-
+#include "base/auto_reset.h"
 #include "core/preferences.h"
 #include "wm/desks/desk.h"
 
@@ -19,18 +19,22 @@ namespace cutefish::wm {
 
 namespace {
 
-const QString kCount = QStringLiteral("Count");
-const QString kActive = QStringLiteral("Active");
+const char kCount[] = "Desks/Count";
+const char kActive[] = "Desks/Active";
 // One entry per desk, empty for a desk with its default name.
-const QString kNames = QStringLiteral("Names");
+const char kNames[] = "Desks/Names";
 
 } // namespace
 
 DeskPreferences::DeskPreferences(DesksController *desks)
-    : m_desks(desks)
-    , m_settings(preferencesFile(QStringLiteral("compositor")), QSettings::IniFormat)
+    : DeskPreferences(desks, preferencesFile("compositor"))
 {
-    m_settings.beginGroup(QStringLiteral("Desks"));
+}
+
+DeskPreferences::DeskPreferences(DesksController *desks, const std::string &file)
+    : m_desks(desks)
+    , m_settings(file)
+{
     restore();
     m_desks->addObserver(this);
 }
@@ -42,17 +46,16 @@ DeskPreferences::~DeskPreferences()
 
 void DeskPreferences::restore()
 {
-    const QScopedValueRollback restoring(m_restoring, true);
-    const int count =
-            std::clamp(m_settings.value(kCount, 1).toInt(), 1, DesksController::kMaxDesks);
-    const QStringList names = m_settings.value(kNames).toStringList();
+    const base::AutoReset restoring(m_restoring, true);
+    const int count = std::clamp(int(m_settings.intValue(kCount, 1)), 1, DesksController::kMaxDesks);
+    const std::vector<std::string> names = m_settings.stringListValue(kNames);
     while (int(m_desks->desks().size()) < count)
         m_desks->newDesk(DesksCreationRemovalSource::DesksRestore);
-    for (int index = 0; index < count && index < names.size(); ++index) {
-        if (!names.at(index).isEmpty())
-            m_desks->setDeskName(m_desks->deskAt(index), names.at(index));
+    for (int index = 0; index < count && index < int(names.size()); ++index) {
+        if (!names[index].empty())
+            m_desks->setDeskName(m_desks->deskAt(index), names[index]);
     }
-    if (Desk *active = m_desks->deskAt(m_settings.value(kActive, 0).toInt()))
+    if (Desk *active = m_desks->deskAt(int(m_settings.intValue(kActive, 0))))
         m_desks->activateDesk(active, DesksSwitchSource::DeskRestored);
 }
 
@@ -60,12 +63,13 @@ void DeskPreferences::save()
 {
     if (m_restoring)
         return;
-    QStringList names;
+    std::vector<std::string> names;
     for (const auto &desk : m_desks->desks())
-        names.append(desk->isNameSetByUser() ? desk->name() : QString());
+        names.push_back(desk->isNameSetByUser() ? desk->name() : std::string());
     m_settings.setValue(kCount, int(m_desks->desks().size()));
     m_settings.setValue(kActive, m_desks->activeDeskIndex());
     m_settings.setValue(kNames, names);
+    m_settings.sync();
 }
 
 } // namespace cutefish::wm

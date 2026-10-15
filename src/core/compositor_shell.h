@@ -6,16 +6,16 @@
 #define CUTEFISH_CORE_COMPOSITOR_SHELL_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
-#include <QPointer>
-#include <QString>
-#include <QTimer>
-
 #include "auth/auth_ui.h"
+#include "base/signal.h"
+#include "base/timer.h"
 #include "compositor/compositor.h"
 #include "compositor/output.h"
 #include "core/compositor_options.h"
+#include "core/main_loop.h"
 #include "cursor/cursor.h"
 #include "cursor/output_cursor_router.h"
 #include "cursor/preferences.h"
@@ -137,7 +137,7 @@ public:
     // Stops accepting clients ahead of the event loop returning.
     void stop();
 
-    QString socketName() const;
+    std::string socketName() const;
 
     // Tells the session the compositor is up, closing the descriptor it passed.
     bool notifyReady();
@@ -154,7 +154,7 @@ private:
     bool initDrm();
     bool initDisplay();
     void initXwayland();
-    QList<compositor::Output *> outputModels() const;
+    std::vector<compositor::Output *> outputModels() const;
     void publishDisplayState();
     void probeCursor();
     void releaseCursor();
@@ -188,7 +188,7 @@ private:
         void onSessionStateChanged(session::SessionState state) override;
 
     private:
-        QPointer<wayland::IdleInhibition> m_inhibition;
+        base::WeakPtr<wayland::IdleInhibition> m_inhibition;
         bool m_blocked = false;
     };
 
@@ -248,6 +248,7 @@ private:
     input::InputManager m_inputManager;
     wm::WindowManager m_windowManager;
     display::DisplayManager m_displayManager;
+    base::Subscription m_secureOutputsUpdate;
     // Declared after the backend, so its textures are freed while the GL
     // context is still alive.
     decoration::Theme m_decorationTheme;
@@ -267,9 +268,11 @@ private:
     IdleInhibitionPolicy m_idleInhibitionPolicy;
     ComputerControlPolicy m_computerControlPolicy;
     auth::AuthUi m_authUi;
+    base::Subscription m_authCursor;
     session::ScreenSaverService m_screenSaver;
     session::SleepLock m_sleepLock;
     input::KeyboardSettings m_keyboardSettings;
+    std::vector<base::Subscription> m_inputSubscriptions;
     std::unique_ptr<wm::DemoController> m_demoController;
     // Drawn inside the surface container, above the desks' windows.
     scene::DeskSwitchNode *m_deskSwitchNode = nullptr;
@@ -290,6 +293,9 @@ private:
     // The settings go first, and with them the connections feeding the corners.
     std::unique_ptr<accelerators::HotCornerController> m_hotCorners;
     std::unique_ptr<accelerators::HotCornerSettings> m_hotCornerSettings;
+    std::vector<base::Subscription> m_windowManagerSignals;
+    base::Subscription m_hotCornerBindings;
+    base::Subscription m_hotCornerPointer;
     // In front of the whole chain, so the key reaches neither a shortcut nor a client.
     std::unique_ptr<session::PowerButton> m_powerButton;
     // How the session quits every application before it ends.
@@ -311,15 +317,15 @@ private:
     // pointer takes it over once the displays settle.
     struct ProbedCursor {
         display::DisplayId destination;
-        QPoint topLeft;
+        base::Point topLeft;
     };
     std::optional<ProbedCursor> m_probedCursor;
     bool m_cursorProbed = false;
     bool m_cursorHeld = false;
     // Releases the cursor should the displays never settle.
-    QTimer m_cursorRelease;
-    QTimer m_sceneSync;
-    QString m_compositorInstanceId;
+    base::Timer m_cursorRelease {mainLoop()};
+    base::Timer m_sceneSync {mainLoop()};
+    std::string m_compositorInstanceId;
 
     std::unique_ptr<wayland::ExecutableSecurityDelegate> m_security;
 
@@ -332,6 +338,7 @@ private:
     std::unique_ptr<wayland::Server> m_server;
     std::unique_ptr<wayland::LinuxDmabufGlobal> m_dmabufGlobal;
     std::unique_ptr<wayland::DmaBufScanoutPolicy> m_scanoutPolicy;
+    base::Subscription m_scanoutTranchesUpdate;
     wl_global *m_syncobjGlobal = nullptr;
     std::unique_ptr<wayland::ProtocolGlobals> m_globals;
     std::unique_ptr<xwayland::XwaylandServer> m_xwayland;
@@ -340,6 +347,12 @@ private:
 
     std::unique_ptr<display::DisplayRuntime> m_displayRuntime;
     std::unique_ptr<display::DisplayTopologyCoordinator> m_topologyCoordinator;
+    // On the backends' and the topology coordinator's signals; they go first.
+    std::vector<base::Subscription> m_backendSubscriptions;
+
+    // Last, so they go before any receiver they call.
+    base::Subscription m_computerControlDrawn;
+    std::vector<base::Subscription> m_compositorSubscriptions;
 };
 
 } // namespace core

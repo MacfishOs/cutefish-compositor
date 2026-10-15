@@ -3,12 +3,19 @@
 // found in the LICENSE file.
 
 #include <sys/stat.h>
+#include <unistd.h>
 
-#include <QProcess>
-#include <QTemporaryDir>
+#include <chrono>
+#include <cstdlib>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "base/process.h"
 
 #include "clipboard_test_util.h"
 #include "ext-data-control-v1-client-protocol.h"
+#include "temporary_directory.h"
 #include "wayland/privileged_client.h"
 #include "wayland/protocols/data_control.h"
 #include "wayland/protocols/wl_shm.h"
@@ -309,15 +316,16 @@ TEST(DataControl, UsedSourceAndLateMimeAreProtocolErrors)
 
 TEST(DataControl, ClipboardServicePreservesBytesAfterSourceExitWithExtAndWlr)
 {
-    const auto helper = qEnvironmentVariable("CUTEFISH_CLIPBOARD_TEST_HELPER");
-    if (helper.isEmpty())
+    const char* helper = std::getenv("CUTEFISH_CLIPBOARD_TEST_HELPER");
+    if (!helper || !*helper)
         GTEST_SKIP() << "Set CUTEFISH_CLIPBOARD_TEST_HELPER to the standalone clipboard helper";
     for (bool ext : {true, false}) {
-        QTemporaryDir runtime;
+        cutefish::test::TemporaryDirectory runtime;
         ASSERT_TRUE(runtime.isValid());
-        chmod(runtime.path().toLocal8Bit().constData(), 0700);
-        const auto previousRuntime = qgetenv("XDG_RUNTIME_DIR");
-        qputenv("XDG_RUNTIME_DIR", runtime.path().toLocal8Bit());
+        chmod(runtime.path().c_str(), 0700);
+        const char* runtimeVariable = std::getenv("XDG_RUNTIME_DIR");
+        const std::string previousRuntime = runtimeVariable ? runtimeVariable : "";
+        setenv("XDG_RUNTIME_DIR", runtime.path().c_str(), 1);
         Harness h;
         wayland::PrivilegedClients privileges(h.server.display());
         wayland::DataControlManager manager(h.server.display(), &h.waylandSeat,
@@ -344,21 +352,25 @@ TEST(DataControl, ClipboardServicePreservesBytesAfterSourceExitWithExtAndWlr)
             {"text/uri-list", "file:///not-opened\r\n"},
             {"application/x-empty", ""}};
         h.publish(a, bytes);
-        QProcess child;
-        auto env = QProcessEnvironment::systemEnvironment();
-        env.insert("QT_QPA_PLATFORM", "wayland");
-        env.insert("WAYLAND_DISPLAY", "clipboard-test");
-        env.remove("WAYLAND_SOCKET");
-        child.setProcessEnvironment(env);
-        child.start(helper);
-        ASSERT_TRUE(child.waitForStarted());
+        cutefish::base::Process child;
+        std::vector<std::string> env;
+        for (char** entry = environ; *entry; ++entry) {
+            const std::string_view variable(*entry);
+            if (!variable.starts_with("QT_QPA_PLATFORM=") && !variable.starts_with("WAYLAND_DISPLAY=")
+                && !variable.starts_with("WAYLAND_SOCKET="))
+                env.emplace_back(variable);
+        }
+        env.emplace_back("QT_QPA_PLATFORM=wayland");
+        env.emplace_back("WAYLAND_DISPLAY=clipboard-test");
+        child.setEnvironment(env);
+        ASSERT_TRUE(child.start(helper));
         EXPECT_TRUE(h.until(
             [&] {
                 auto source = h.seat.selection()->source();
                 return source && source->supports("application/x-cutefish-clipboard");
             },
             10000))
-            << child.readAllStandardError().constData();
+            << child.standardError();
         h.clients.erase(h.clients.begin());
         h.focus(b);
         ASSERT_NE(nullptr, b.selection);
@@ -369,18 +381,11 @@ TEST(DataControl, ClipboardServicePreservesBytesAfterSourceExitWithExtAndWlr)
             h.pump();
         EXPECT_EQ(generation, h.seat.selection()->generation());
         child.terminate();
-        if (!child.waitForFinished(2000)) {
+        if (!child.waitForFinished(std::chrono::seconds(2))) {
             child.kill();
-            child.waitForFinished();
+            child.waitForFinished(std::chrono::seconds(30));
         }
         wl_display_destroy_clients(h.server.display());
-        qputenv("XDG_RUNTIME_DIR", previousRuntime);
+        setenv("XDG_RUNTIME_DIR", previousRuntime.c_str(), 1);
     }
-}
-
-int main(int argc, char** argv)
-{
-    QCoreApplication app(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

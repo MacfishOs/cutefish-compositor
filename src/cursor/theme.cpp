@@ -6,19 +6,22 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <limits>
+#include <map>
+#include <set>
+#include <sys/stat.h>
 
-#include <QDataStream>
-#include <QDir>
-#include <QFile>
-#include <QPainter>
-#include <QSet>
-#include <QSettings>
-#include <QStandardPaths>
+#include "base/byte_stream.h"
+#include "base/file.h"
+#include "base/paths.h"
+#include "base/settings.h"
+#include "base/strings.h"
+#include "ui/bitmap_painter.h"
 
 namespace cutefish::cursor {
 
-QString resourceName(input::CursorShape shape)
+std::string resourceName(input::CursorShape shape)
 {
     static constexpr std::array names = {"",
                                          "default",
@@ -56,124 +59,157 @@ QString resourceName(input::CursorShape shape)
                                          "zoom-in",
                                          "zoom-out"};
     const auto index = static_cast<size_t>(shape);
-    return QString::fromLatin1(names[index < names.size() ? index : 1]);
+    return names[index < names.size() ? index : 1];
 }
 
-std::vector<Frame> readXCursor(const QByteArray &bytes, int size)
+std::vector<Frame> readXCursor(std::string_view bytes, int size)
 {
-    QDataStream in(bytes);
-    in.setByteOrder(QDataStream::LittleEndian);
-    quint32 magic, header, version, count;
-    in >> magic >> header >> version >> count;
-    if (in.status() != QDataStream::Ok || magic != 0x72756358 || header < 16 || count > 4096
-        || quint64(header) + quint64(count) * 12 > quint64(bytes.size()))
+    base::ByteReader in(bytes, std::endian::little);
+    const uint32_t magic = in.read<uint32_t>();
+    const uint32_t header = in.read<uint32_t>();
+    in.read<uint32_t>(); // version
+    const uint32_t count = in.read<uint32_t>();
+    if (!in.ok() || magic != 0x72756358 || header < 16 || count > 4096
+        || uint64_t(header) + uint64_t(count) * 12 > uint64_t(bytes.size()))
         return {};
-    in.device()->seek(header);
+    in.seek(header);
 
     struct Entry {
-        quint32 size;
-        quint32 offset;
+        uint32_t size;
+        uint32_t offset;
     };
 
     std::vector<Entry> entries;
-    quint32 bestSize = 0;
-    qint64 bestDistance = std::numeric_limits<qint64>::max();
-    for (quint32 i = 0; i < count; ++i) {
-        quint32 type, nominal, offset;
-        in >> type >> nominal >> offset;
+    uint32_t bestSize = 0;
+    int64_t bestDistance = std::numeric_limits<int64_t>::max();
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t type = in.read<uint32_t>();
+        const uint32_t nominal = in.read<uint32_t>();
+        const uint32_t offset = in.read<uint32_t>();
         if (type != 0xfffd0002)
             continue;
         entries.push_back({nominal, offset});
-        const auto distance = std::abs(qint64(nominal) - size);
+        const auto distance = std::abs(int64_t(nominal) - size);
         if (distance < bestDistance || (distance == bestDistance && nominal > bestSize)) {
             bestDistance = distance;
             bestSize = nominal;
         }
     }
     std::vector<Frame> result;
-    quint64 totalPixels = 0;
+    uint64_t totalPixels = 0;
     for (const auto &entry : entries) {
         if (entry.size != bestSize)
             continue;
-        if (quint64(entry.offset) + 36 > quint64(bytes.size()))
+        if (uint64_t(entry.offset) + 36 > uint64_t(bytes.size()))
             return {};
-        in.device()->seek(entry.offset);
-        quint32 chunkHeader, type, nominal, chunkVersion, width, height, xhot, yhot, delay;
-        in >> chunkHeader >> type >> nominal >> chunkVersion >> width >> height >> xhot >> yhot
-                >> delay;
-        totalPixels += quint64(width) * height;
+        in.seek(entry.offset);
+        const uint32_t chunkHeader = in.read<uint32_t>();
+        const uint32_t type = in.read<uint32_t>();
+        const uint32_t nominal = in.read<uint32_t>();
+        in.read<uint32_t>(); // version
+        const uint32_t width = in.read<uint32_t>();
+        const uint32_t height = in.read<uint32_t>();
+        const uint32_t xhot = in.read<uint32_t>();
+        const uint32_t yhot = in.read<uint32_t>();
+        const uint32_t delay = in.read<uint32_t>();
+        totalPixels += uint64_t(width) * height;
         if (chunkHeader < 36 || type != 0xfffd0002 || nominal != bestSize || !width || !height
             || width > 256 || height > 256 || xhot >= width || yhot >= height
             || totalPixels > 16 * 1024 * 1024
-            || quint64(entry.offset) + chunkHeader + quint64(width) * height * 4
-                    > quint64(bytes.size()))
+            || uint64_t(entry.offset) + chunkHeader + uint64_t(width) * height * 4
+                    > uint64_t(bytes.size()))
             return {};
-        in.device()->seek(quint64(entry.offset) + chunkHeader);
-        QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
+        in.seek(uint64_t(entry.offset) + chunkHeader);
+        ui::Bitmap image(int(width), int(height), ui::Bitmap::Format::Argb32Premultiplied);
         if (image.isNull())
             return {};
-        for (quint32 y = 0; y < height; ++y) {
-            auto *row = reinterpret_cast<quint32 *>(image.scanLine(y));
-            for (quint32 x = 0; x < width; ++x)
-                in >> row[x];
+        for (uint32_t y = 0; y < height; ++y) {
+            auto *row = reinterpret_cast<uint32_t *>(image.scanLine(int(y)));
+            for (uint32_t x = 0; x < width; ++x)
+                row[x] = in.read<uint32_t>();
         }
-        if (in.status() != QDataStream::Ok)
+        if (!in.ok())
             return {};
-        result.push_back(
-                {std::move(image), QPoint(xhot, yhot), int(std::clamp(delay, 1u, 60000u))});
+        result.push_back({std::move(image), base::Point(int(xhot), int(yhot)),
+                          int(std::clamp(delay, 1u, 60000u))});
     }
     return result;
 }
 
-bool validThemeName(const QString &theme)
+bool validThemeName(std::string_view theme)
 {
-    return !theme.isEmpty() && theme.size() <= 255 && theme != "." && theme != ".."
-            && !theme.contains('/') && !theme.contains('\\') && !theme.contains(QChar::Null);
+    return !theme.empty() && base::strings::utf16Length(theme) <= 255 && theme != "."
+            && theme != ".." && theme.find_first_of(std::string_view("/\\\0", 3))
+            == std::string_view::npos;
 }
 
-QStringList themePaths()
+static std::vector<std::string> &testThemePaths()
 {
-    QStringList paths = qEnvironmentVariable("XCURSOR_PATH").split(':', Qt::SkipEmptyParts);
-    if (paths.isEmpty()) {
-        paths.append(QDir::homePath() + QStringLiteral("/.icons"));
-        for (const auto &path :
-             QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation))
-            paths.append(path + QStringLiteral("/icons"));
-        paths.append(QStringLiteral("/usr/share/pixmaps"));
-    }
-    for (auto &path : paths) {
-        if (path.startsWith(QStringLiteral("~/")))
-            path.replace(0, 1, QDir::homePath());
-    }
-
-    paths.removeDuplicates();
+    static std::vector<std::string> paths;
     return paths;
 }
 
-std::vector<Frame> load(input::CursorShape shape, int size, const QString &theme)
+void setThemePathsForTesting(std::vector<std::string> paths)
+{
+    testThemePaths() = std::move(paths);
+}
+
+std::vector<std::string> themePaths()
+{
+    std::vector<std::string> paths = testThemePaths();
+    if (paths.empty()) {
+        paths.push_back(base::paths::home() + "/.icons");
+        paths.push_back(base::paths::dataHome() + "/icons");
+        for (const auto &path : base::paths::dataDirectories())
+            paths.push_back(path + "/icons");
+        paths.push_back("/usr/share/pixmaps");
+    }
+    for (auto &path : paths) {
+        if (path.starts_with("~/"))
+            path.replace(0, 1, base::paths::home());
+    }
+
+    std::vector<std::string> unique;
+    for (auto &path : paths) {
+        if (std::find(unique.begin(), unique.end(), path) == unique.end())
+            unique.push_back(std::move(path));
+    }
+    return unique;
+}
+
+// Up to 64 MiB of the file; nothing when it cannot be read.
+static std::optional<std::string> readCursorFile(const std::string &path)
+{
+    struct stat info;
+    if (stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode) || info.st_size > 64 * 1024 * 1024)
+        return std::nullopt;
+    return base::file::read(path);
+}
+
+std::vector<Frame> load(input::CursorShape shape, int size, const std::string &theme)
 {
     if (shape == input::CursorShape::Hidden)
         return {};
     const auto paths = themePaths();
-    QStringList themes;
-    QSet<QString> visited;
-    const auto collect = [&](auto &&self, const QString &name) -> void {
+    std::vector<std::string> themes;
+    std::set<std::string> visited;
+    const auto collect = [&](auto &&self, const std::string &name) -> void {
         if (!validThemeName(name) || visited.contains(name) || visited.size() >= 64)
             return;
         visited.insert(name);
-        themes.append(name);
+        themes.push_back(name);
         for (const auto &path : paths) {
-            QSettings index(QDir(path).filePath(name + "/index.theme"), QSettings::IniFormat);
-            const auto parents = index.value("Icon Theme/Inherits").toStringList();
+            base::Settings index(path + "/" + name + "/index.theme");
+            const auto parents = index.stringListValue("Icon Theme/Inherits");
             for (const auto &parent : parents)
-                self(self, parent.trimmed());
+                self(self, std::string(base::strings::trimmed(parent)));
         }
     };
     collect(collect, theme);
-    collect(collect, QStringLiteral("default"));
-    collect(collect, QStringLiteral("Adwaita"));
-    QStringList names {resourceName(shape)};
-    static const QHash<QString, QStringList> aliases {
+    collect(collect, "default");
+    collect(collect, "Adwaita");
+    std::vector<std::string> names {resourceName(shape)};
+    static const std::map<std::string, std::vector<std::string>> aliases {
             {"default", {"left_ptr", "arrow"}},
             {"pointer", {"hand2", "hand1"}},
             {"text", {"xterm"}},
@@ -196,15 +232,16 @@ std::vector<Frame> load(input::CursorShape shape, int size, const QString &theme
             {"sw-resize", {"bottom_left_corner"}},
             {"grab", {"openhand"}},
             {"grabbing", {"closedhand"}}};
-    names.append(aliases.value(names.front()));
-    const auto find = [&](const QStringList &candidates) -> std::vector<Frame> {
+    if (const auto alias = aliases.find(names.front()); alias != aliases.end())
+        names.insert(names.end(), alias->second.begin(), alias->second.end());
+    const auto find = [&](const std::vector<std::string> &candidates) -> std::vector<Frame> {
         for (const auto &themeName : themes) {
             for (const auto &name : candidates) {
                 for (const auto &path : paths) {
-                    QFile file(QDir(path).filePath(themeName + "/cursors/" + name));
-                    if (!file.open(QIODevice::ReadOnly) || file.size() > 64 * 1024 * 1024)
+                    const auto bytes = readCursorFile(path + "/" + themeName + "/cursors/" + name);
+                    if (!bytes)
                         continue;
-                    auto frames = readXCursor(file.readAll(), size);
+                    auto frames = readXCursor(*bytes, size);
                     if (!frames.empty())
                         return frames;
                 }
@@ -214,29 +251,26 @@ std::vector<Frame> load(input::CursorShape shape, int size, const QString &theme
     };
     auto frames = find(names);
     if (frames.empty())
-        frames = find({QStringLiteral("default"), QStringLiteral("left_ptr")});
+        frames = find({"default", "left_ptr"});
     if (!frames.empty())
         return frames;
     // Keep the pointer visible even when no usable cursor theme is installed.
     const int pixels = std::clamp(size, 16, 256);
-    QImage image(pixels, pixels, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
+    ui::Bitmap image(pixels, pixels, ui::Bitmap::Format::Argb32Premultiplied);
     {
-        QPainter painter(&image);
+        ui::BitmapPainter painter(image);
+        painter.setAntialiasing(false);
         painter.scale(pixels / 24.0, pixels / 24.0);
-        painter.setPen(QPen(Qt::white, 1));
-        painter.setBrush(Qt::black);
-        painter.drawPolygon(
-                QPolygonF {{1, 1}, {1, 20}, {6, 15}, {10, 23}, {13, 21}, {9, 14}, {17, 14}});
+        painter.drawPolygon({{1, 1}, {1, 20}, {6, 15}, {10, 23}, {13, 21}, {9, 14}, {17, 14}},
+                            ui::Color::rgb(0x000000), ui::Color::rgb(0xffffff), 1,
+                            ui::LineJoin::Bevel);
     }
-    return {{image, QPoint(pixels / 24, pixels / 24), 0}};
+    return {{image, base::Point(pixels / 24, pixels / 24), 0}};
 }
 
 int defaultSize()
 {
-    bool ok = false;
-    const int size = qEnvironmentVariableIntValue("XCURSOR_SIZE", &ok);
-    return ok && size >= 16 && size <= 64 ? size : 24;
+    return 24;
 }
 
 } // namespace cutefish::cursor

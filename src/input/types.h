@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <tuple>
 
+#include "base/geometry.h"
+
 namespace cutefish::input {
 
 // libinput timestamps come from CLOCK_MONOTONIC, which is what steady_clock
@@ -107,6 +109,15 @@ inline bool operator==(const KeyRepeatSettings& lhs, const KeyRepeatSettings& rh
 {
     return std::tie(lhs.enabled, lhs.delay, lhs.interval)
         == std::tie(rhs.enabled, rhs.delay, rhs.interval);
+}
+
+// Equal up to rounding error, as input locations have always been compared.
+inline bool fuzzyEqual(const base::PointF &a, const base::PointF &b)
+{
+    const auto equal = [](double x, double y) {
+        return x == 0 || y == 0 ? base::fuzzyIsNull(x - y) : base::fuzzyCompare(x, y);
+    };
+    return equal(a.x(), b.x()) && equal(a.y(), b.y());
 }
 
 } // namespace cutefish::input

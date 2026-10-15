@@ -4,192 +4,192 @@
 
 #include "auth/auth_controller.h"
 #include "fake_backend.h"
+#include "temporary_directory.h"
 
-#include <QFile>
-#include <QSignalSpy>
-#include <QTemporaryDir>
-#include <QTest>
+#include <algorithm>
+#include <cstdlib>
+
+#include <gtest/gtest.h>
 
 using namespace cutefish::auth;
+using cutefish::test::TemporaryDirectory;
 
 // What these defend is the property the whole design rests on: the only thing
 // that can unlock a session is a backend that said the credential was correct,
 // and it can do it once.
-class AuthControllerTest : public QObject
-{
-    Q_OBJECT
 
-private Q_SLOTS:
-    void bothModesShareOneController();
-    void failureNeverAccepts();
-    void failureResetsAndClears();
-    void successAcceptsExactlyOnce();
-    void successIsNotUndoneByALateFailure();
-    void resetAfterSuccessIsRefused();
-    void authenticateWhileBusyIsIgnored();
-    void loginStartsTheChosenSession();
-    void loginOffersTheAccountsInsteadOfATypedName();
-    void loginSessionsFollowWaylandSessions();
-};
-
-// The login and lock difference is the backend, and nothing else: the same
-// controller class, driven the same way, produces the same states.
 // The login screen offers every session, prefers Cutefish, and hands the choice
 // to the backend with the attempt that may start it.
-void AuthControllerTest::loginStartsTheChosenSession()
+TEST(AuthControllerTest, LoginStartsTheChosenSession)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Login, &backend);
-    controller.setSessions({{QStringLiteral("gnome"), QStringLiteral("GNOME"), {}, {}},
-                            {QStringLiteral("cutefish-wayland"), QStringLiteral("Cutefish"), {}, {}}});
-    QCOMPARE(controller.sessionNames(), (QStringList {QStringLiteral("GNOME"), QStringLiteral("Cutefish")}));
-    QVERIFY(controller.canSelectSession());
-    QCOMPARE(controller.sessionIndex(), 1);
+    controller.setSessions({{"gnome", "GNOME", {}, {}}, {"cutefish-wayland", "Cutefish", {}, {}}});
+    EXPECT_EQ(controller.sessionNames(), (std::vector<std::string> {"GNOME", "Cutefish"}));
+    EXPECT_TRUE(controller.canSelectSession());
+    EXPECT_EQ(controller.sessionIndex(), 1);
 
     controller.setSessionIndex(5);
-    QCOMPARE(controller.sessionIndex(), 1);
+    EXPECT_EQ(controller.sessionIndex(), 1);
     controller.setSessionIndex(0);
-    QCOMPARE(controller.sessionIndex(), 0);
+    EXPECT_EQ(controller.sessionIndex(), 0);
 
-    controller.authenticate(QStringLiteral("hunter2"));
-    QCOMPARE(backend.lastSession, QStringLiteral("gnome"));
+    controller.authenticate("hunter2");
+    EXPECT_EQ(backend.lastSession, "gnome");
     // Settled while the attempt is in flight.
     controller.setSessionIndex(1);
-    QCOMPARE(controller.sessionIndex(), 0);
+    EXPECT_EQ(controller.sessionIndex(), 0);
 }
 
-void AuthControllerTest::loginOffersTheAccountsInsteadOfATypedName()
+TEST(AuthControllerTest, LoginOffersTheAccountsInsteadOfATypedName)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Login, &backend);
     // The backend's last user is preferred wherever it is listed.
-    controller.setUsers({QStringLiteral("alice"), QStringLiteral("tester")});
-    QCOMPARE(controller.userName(), QStringLiteral("tester"));
-    QCOMPARE(controller.userIndex(), 1);
-    QVERIFY(controller.canPickUser());
-    QVERIFY(!controller.typesUserName());
+    controller.setUsers({"alice", "tester"});
+    EXPECT_EQ(controller.userName(), "tester");
+    EXPECT_EQ(controller.userIndex(), 1);
+    EXPECT_TRUE(controller.canPickUser());
+    EXPECT_FALSE(controller.typesUserName());
 
     controller.setUserIndex(0);
-    QCOMPARE(controller.userName(), QStringLiteral("alice"));
+    EXPECT_EQ(controller.userName(), "alice");
     controller.setUserIndex(7);
-    QCOMPARE(controller.userName(), QStringLiteral("alice"));
+    EXPECT_EQ(controller.userName(), "alice");
 
     // A single account is simply chosen.
-    controller.setUsers({QStringLiteral("bob")});
-    QCOMPARE(controller.userName(), QStringLiteral("bob"));
-    QVERIFY(!controller.canPickUser());
+    controller.setUsers({"bob"});
+    EXPECT_EQ(controller.userName(), "bob");
+    EXPECT_FALSE(controller.canPickUser());
 
     controller.setUsers({});
-    QVERIFY(controller.typesUserName());
+    EXPECT_TRUE(controller.typesUserName());
 
     FakeBackend lockBackend;
     AuthController lock(AuthController::Lock, &lockBackend);
-    QVERIFY(!lock.typesUserName());
-    QVERIFY(!lock.canPickUser());
+    EXPECT_FALSE(lock.typesUserName());
+    EXPECT_FALSE(lock.canPickUser());
 }
 
-void AuthControllerTest::loginSessionsFollowWaylandSessions()
+TEST(AuthControllerTest, LoginSessionsFollowWaylandSessions)
 {
-    QTemporaryDir directory;
-    const auto write = [&](const QString &name, const QByteArray &contents) {
-        QFile file(directory.filePath(name));
-        QVERIFY(file.open(QIODevice::WriteOnly));
-        file.write(contents);
-    };
-    write(QStringLiteral("plasma.desktop"),
-          "[Desktop Entry]\nName=Plasma\nExec=/usr/bin/startplasma-wayland %u\nDesktopNames=KDE\n");
-    write(QStringLiteral("hidden.desktop"), "[Desktop Entry]\nName=Hidden\nExec=/bin/true\nHidden=true\n");
-    write(QStringLiteral("gone.desktop"),
-          "[Desktop Entry]\nName=Gone\nExec=/bin/true\nTryExec=/nonexistent\n");
+    TemporaryDirectory directory;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(directory.write(
+            "plasma.desktop",
+            "[Desktop Entry]\nName=Plasma\nExec=/usr/bin/startplasma-wayland %u\nDesktopNames=KDE\n"));
+    ASSERT_TRUE(directory.write("hidden.desktop",
+                                "[Desktop Entry]\nName=Hidden\nExec=/bin/true\nHidden=true\n"));
+    ASSERT_TRUE(directory.write(
+            "gone.desktop", "[Desktop Entry]\nName=Gone\nExec=/bin/true\nTryExec=/nonexistent\n"));
     const auto sessions = findLoginSessions({directory.path()});
-    QCOMPARE(sessions.size(), 1);
-    QCOMPARE(sessions.first().id, QStringLiteral("plasma"));
-    QCOMPARE(sessions.first().command, QStringList {QStringLiteral("/usr/bin/startplasma-wayland")});
-    QVERIFY(sessions.first().environment.contains(QStringLiteral("XDG_SESSION_TYPE=wayland")));
-    QVERIFY(sessions.first().environment.contains(QStringLiteral("XDG_CURRENT_DESKTOP=KDE")));
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions.front().id, "plasma");
+    EXPECT_EQ(sessions.front().command, std::vector<std::string> {"/usr/bin/startplasma-wayland"});
+    const auto &environment = sessions.front().environment;
+    EXPECT_NE(std::find(environment.begin(), environment.end(), "XDG_SESSION_TYPE=wayland"),
+              environment.end());
+    EXPECT_NE(std::find(environment.begin(), environment.end(), "XDG_CURRENT_DESKTOP=KDE"),
+              environment.end());
 
-    qputenv("CUTEFISH_SESSION_DIRS", directory.path().toUtf8());
+    setLoginSessionDirectoriesForTesting({directory.path()});
     FakeBackend backend;
     AuthController controller(AuthController::Login, &backend);
-    QCOMPARE(controller.sessionNames(), QStringList {QStringLiteral("Plasma")});
-    QVERIFY(!controller.canSelectSession());
-    QCOMPARE(controller.sessionIndex(), 0);
-    qunsetenv("CUTEFISH_SESSION_DIRS");
+    EXPECT_EQ(controller.sessionNames(), std::vector<std::string> {"Plasma"});
+    EXPECT_FALSE(controller.canSelectSession());
+    EXPECT_EQ(controller.sessionIndex(), 0);
+    setLoginSessionDirectoriesForTesting({});
 }
 
-void AuthControllerTest::bothModesShareOneController()
+// Exec lines split as Qt's QProcess::splitCommand() splits them.
+TEST(AuthControllerTest, SplitsCommandsAsQtDoes)
+{
+    EXPECT_EQ(splitCommand("  a  b\tc "), (std::vector<std::string> {"a", "b", "c"}));
+    EXPECT_EQ(splitCommand("run \"two words\" x"),
+              (std::vector<std::string> {"run", "two words", "x"}));
+    EXPECT_EQ(splitCommand("say \"\"\"quoted\"\"\""), (std::vector<std::string> {"say", "\"quoted\""}));
+    EXPECT_EQ(splitCommand("a\"b c\"d"), (std::vector<std::string> {"ab cd"}));
+    EXPECT_TRUE(splitCommand("").empty());
+}
+
+// The login and lock difference is the backend, and nothing else: the same
+// controller class, driven the same way, produces the same states.
+TEST(AuthControllerTest, BothModesShareOneController)
 {
     for (auto mode : {AuthController::Login, AuthController::Lock}) {
         FakeBackend backend;
         AuthController controller(mode, &backend);
         controller.start();
 
-        QCOMPARE(controller.mode(), mode);
-        QCOMPARE(controller.state(), AuthController::Idle);
-        QCOMPARE(backend.startCount, 1);
+        EXPECT_EQ(controller.mode(), mode);
+        EXPECT_EQ(controller.state(), AuthController::Idle);
+        EXPECT_EQ(backend.startCount, 1);
 
-        controller.authenticate(QStringLiteral("hunter2"));
-        QCOMPARE(controller.state(), AuthController::Authenticating);
-        QCOMPARE(backend.authenticateCount, 1);
-        QCOMPARE(backend.lastSecret, QStringLiteral("hunter2"));
+        controller.authenticate("hunter2");
+        EXPECT_EQ(controller.state(), AuthController::Authenticating);
+        EXPECT_EQ(backend.authenticateCount, 1);
+        EXPECT_EQ(backend.lastSecret, "hunter2");
 
         backend.succeed();
-        QCOMPARE(controller.state(), AuthController::Succeeded);
-        QCOMPARE(backend.acceptCount, 1);
+        EXPECT_EQ(controller.state(), AuthController::Succeeded);
+        EXPECT_EQ(backend.acceptCount, 1);
     }
 }
 
-void AuthControllerTest::failureNeverAccepts()
+TEST(AuthControllerTest, FailureNeverAccepts)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Lock, &backend);
-    QSignalSpy failedSpy(&controller, &AuthController::authenticationFailed);
-    QSignalSpy succeededSpy(&controller, &AuthController::authenticationSucceeded);
+    int failures = 0;
+    int successes = 0;
+    auto failed = controller.authenticationFailed.connect([&] { ++failures; });
+    auto succeeded = controller.authenticationSucceeded.connect([&] { ++successes; });
 
     for (int attempt = 0; attempt < 5; ++attempt) {
-        controller.authenticate(QStringLiteral("wrong"));
+        controller.authenticate("wrong");
         backend.reject();
     }
 
-    QCOMPARE(failedSpy.count(), 5);
-    QCOMPARE(succeededSpy.count(), 0);
+    EXPECT_EQ(failures, 5);
+    EXPECT_EQ(successes, 0);
     // The one that matters: no number of rejections is an unlock.
-    QCOMPARE(backend.acceptCount, 0);
+    EXPECT_EQ(backend.acceptCount, 0);
 }
 
-void AuthControllerTest::failureResetsAndClears()
+TEST(AuthControllerTest, FailureResetsAndClears)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Lock, &backend);
 
-    controller.authenticate(QStringLiteral("wrong"));
-    backend.reject(QStringLiteral("Incorrect password"));
+    controller.authenticate("wrong");
+    backend.reject("Incorrect password");
 
-    QCOMPARE(controller.state(), AuthController::Failed);
-    QCOMPARE(controller.errorMessage(), QStringLiteral("Incorrect password"));
-    QVERIFY(!controller.busy());
+    EXPECT_EQ(controller.state(), AuthController::Failed);
+    EXPECT_EQ(controller.errorMessage(), "Incorrect password");
+    EXPECT_FALSE(controller.busy());
 
     controller.reset();
 
-    QCOMPARE(controller.state(), AuthController::Idle);
-    QVERIFY(controller.errorMessage().isEmpty());
-    QCOMPARE(backend.resetCount, 1);
+    EXPECT_EQ(controller.state(), AuthController::Idle);
+    EXPECT_TRUE(controller.errorMessage().empty());
+    EXPECT_EQ(backend.resetCount, 1);
 
     // And the screen still works afterwards, which is the part a stuck error
     // state would break.
-    controller.authenticate(QStringLiteral("right"));
+    controller.authenticate("right");
     backend.succeed();
-    QCOMPARE(controller.state(), AuthController::Succeeded);
-    QCOMPARE(backend.acceptCount, 1);
+    EXPECT_EQ(controller.state(), AuthController::Succeeded);
+    EXPECT_EQ(backend.acceptCount, 1);
 }
 
-void AuthControllerTest::successAcceptsExactlyOnce()
+TEST(AuthControllerTest, SuccessAcceptsExactlyOnce)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Lock, &backend);
-    QSignalSpy succeededSpy(&controller, &AuthController::authenticationSucceeded);
+    int successes = 0;
+    auto succeeded = controller.authenticationSucceeded.connect([&] { ++successes; });
 
-    controller.authenticate(QStringLiteral("right"));
+    controller.authenticate("right");
 
     // A backend that reports success more than once - a duplicated greetd
     // response, a racing PAM verdict - still unlocks one session.
@@ -197,47 +197,44 @@ void AuthControllerTest::successAcceptsExactlyOnce()
     backend.succeed();
     backend.succeed();
 
-    QCOMPARE(succeededSpy.count(), 1);
-    QCOMPARE(backend.acceptCount, 1);
+    EXPECT_EQ(successes, 1);
+    EXPECT_EQ(backend.acceptCount, 1);
 }
 
-void AuthControllerTest::successIsNotUndoneByALateFailure()
+TEST(AuthControllerTest, SuccessIsNotUndoneByALateFailure)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Lock, &backend);
 
-    controller.authenticate(QStringLiteral("right"));
+    controller.authenticate("right");
     backend.succeed();
     backend.reject();
 
-    QCOMPARE(controller.state(), AuthController::Succeeded);
-    QCOMPARE(backend.acceptCount, 1);
+    EXPECT_EQ(controller.state(), AuthController::Succeeded);
+    EXPECT_EQ(backend.acceptCount, 1);
 }
 
-void AuthControllerTest::resetAfterSuccessIsRefused()
+TEST(AuthControllerTest, ResetAfterSuccessIsRefused)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Lock, &backend);
 
-    controller.authenticate(QStringLiteral("right"));
+    controller.authenticate("right");
     backend.succeed();
     controller.reset();
 
-    QCOMPARE(controller.state(), AuthController::Succeeded);
-    QCOMPARE(backend.resetCount, 0);
+    EXPECT_EQ(controller.state(), AuthController::Succeeded);
+    EXPECT_EQ(backend.resetCount, 0);
 }
 
-void AuthControllerTest::authenticateWhileBusyIsIgnored()
+TEST(AuthControllerTest, AuthenticateWhileBusyIsIgnored)
 {
     FakeBackend backend;
     AuthController controller(AuthController::Lock, &backend);
 
-    controller.authenticate(QStringLiteral("first"));
-    controller.authenticate(QStringLiteral("second"));
+    controller.authenticate("first");
+    controller.authenticate("second");
 
-    QCOMPARE(backend.authenticateCount, 1);
-    QCOMPARE(backend.lastSecret, QStringLiteral("first"));
+    EXPECT_EQ(backend.authenticateCount, 1);
+    EXPECT_EQ(backend.lastSecret, "first");
 }
-
-QTEST_MAIN(AuthControllerTest)
-#include "auth_controller_test.moc"

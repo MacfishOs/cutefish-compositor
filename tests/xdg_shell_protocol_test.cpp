@@ -10,6 +10,7 @@
 // Adapted for Cutefish: exercises the corresponding behavior with native
 // compositor test doubles and APIs.
 
+#include "base/geometry.h"
 #include "wayland/protocols/xdg_activation.h"
 #include <algorithm>
 #include <atomic>
@@ -30,12 +31,12 @@
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-dialog-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
-#include <QCoreApplication>
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
+#include "loop_test_util.h"
 #include "scene/node.h"
 #include "scene/scene.h"
 #include "scene/surface_node.h"
@@ -64,7 +65,7 @@ input::Timestamp at(int ms)
     return input::Timestamp(std::chrono::milliseconds(ms));
 }
 
-constexpr QRect kOutput(0, 0, 800, 600);
+const base::Rect kOutput(0, 0, 800, 600);
 
 struct ToplevelConfigure {
     int32_t width = 0;
@@ -102,7 +103,7 @@ struct XdgWindow {
     std::vector<uint32_t> repositioned;
     int closes = 0;
     int popupDones = 0;
-    std::vector<QSize> bounds;
+    std::vector<base::Size> bounds;
     std::vector<std::vector<uint32_t>> capabilities;
     // Every xdg_toplevel event in order, to check what precedes a configure.
     std::vector<std::string> toplevelEvents;
@@ -181,7 +182,7 @@ struct Client {
     int axisStops = 0;
     int motions = 0;
     wl_surface *pointerFocus = nullptr;
-    QPointF pointerPosition;
+    base::PointF pointerPosition;
 
     std::vector<std::unique_ptr<XdgWindow>> windows;
 
@@ -275,7 +276,7 @@ struct Client {
                     static_cast<Client *>(data)->lastEnterSerial = serial;
                     static_cast<Client *>(data)->pointerFocus = surface;
                     static_cast<Client *>(data)->pointerPosition =
-                            QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+                            base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
                 },
                 [](void *data, wl_pointer *, uint32_t, wl_surface *) {
                     static_cast<Client *>(data)->pointerFocus = nullptr;
@@ -283,7 +284,7 @@ struct Client {
                 [](void *data, wl_pointer *, uint32_t, wl_fixed_t x, wl_fixed_t y) {
                     ++static_cast<Client *>(data)->motions;
                     static_cast<Client *>(data)->pointerPosition =
-                            QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+                            base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
                 },
                 [](void *data, wl_pointer *, uint32_t serial, uint32_t, uint32_t, uint32_t state) {
                     auto *client = static_cast<Client *>(data);
@@ -310,7 +311,7 @@ struct Client {
         sync();
     }
 
-    wl_buffer *makeBuffer(const QSize &size)
+    wl_buffer *makeBuffer(const base::Size &size)
     {
         const int stride = size.width() * 4;
         const size_t bytes = static_cast<size_t>(stride) * size.height();
@@ -344,7 +345,7 @@ struct Client {
     }
 
     // Runs the whole handshake and leaves the toplevel mapped.
-    XdgWindow *makeMappedToplevel(const QSize &size)
+    XdgWindow *makeMappedToplevel(const base::Size &size)
     {
         XdgWindow *window = makeToplevel();
         wl_surface_commit(window->surface);
@@ -354,7 +355,7 @@ struct Client {
         return window;
     }
 
-    void ackAndAttach(XdgWindow *window, const QSize &size)
+    void ackAndAttach(XdgWindow *window, const base::Size &size)
     {
         xdg_surface_ack_configure(window->xdgSurface, window->lastSerial());
         if (!window->buffer)
@@ -412,9 +413,9 @@ class XdgShellProtocolTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node *cursorContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("cursor")));
+            scene.root()->addChild(std::make_unique<scene::Node>("cursor"));
     compositor::Compositor compositor {surfaceContainer};
     input::Seat seat {&compositor};
     input::InputManager manager {&seat};
@@ -596,12 +597,12 @@ TEST_F(XdgShellProtocolTest, TheFirstCommitProducesAnInitialConfigure)
 TEST_F(XdgShellProtocolTest, AckingAndAttachingMapsAWindow)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         check([&] {
             wm::Window *managed = onlyWindow();
             ASSERT_NE(nullptr, managed);
-            EXPECT_EQ(QSize(300, 200), managed->bounds().size());
+            EXPECT_EQ(base::Size(300, 200), managed->bounds().size());
             EXPECT_TRUE(managed->isActive());
         });
         // Mapping activates the window, which the client is told about.
@@ -625,7 +626,7 @@ TEST_F(XdgShellProtocolTest, AnUnknownAckConfigureSerialIsAProtocolError)
 TEST_F(XdgShellProtocolTest, AStaleAckConfigureSerialIsAProtocolError)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         c.sync();
         const uint32_t stale = window->surfaceConfigures.front();
 
@@ -646,7 +647,7 @@ TEST_F(XdgShellProtocolTest, AStaleAckConfigureSerialIsAProtocolError)
 TEST_F(XdgShellProtocolTest, MaximizeAndRestoreAreConfiguredWithTheirStates)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         xdg_toplevel_set_maximized(window->toplevel);
         c.sync();
@@ -667,7 +668,7 @@ TEST_F(XdgShellProtocolTest, MaximizeAndRestoreAreConfiguredWithTheirStates)
 TEST_F(XdgShellProtocolTest, FullscreenKeepsTheMaximizedStateItCameFrom)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         xdg_toplevel_set_maximized(window->toplevel);
         xdg_toplevel_set_fullscreen(window->toplevel, nullptr);
@@ -686,7 +687,7 @@ TEST_F(XdgShellProtocolTest, FullscreenKeepsTheMaximizedStateItCameFrom)
 TEST_F(XdgShellProtocolTest, MinimizeHidesAndSuspendsTheWindow)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         xdg_toplevel_set_minimized(window->toplevel);
         c.sync();
@@ -711,7 +712,7 @@ TEST_F(XdgShellProtocolTest, MinimizeHidesAndSuspendsTheWindow)
 TEST_F(XdgShellProtocolTest, AShellHiddenWindowIsSuspended)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         EXPECT_FALSE(window->lastToplevel().has(XDG_TOPLEVEL_STATE_SUSPENDED));
 
         check([&] {
@@ -747,7 +748,7 @@ TEST_F(XdgShellProtocolTest, CapabilitiesAndBoundsPrecedeTheFirstConfigure)
         EXPECT_EQ(kOutput.size(), window->bounds[0]);
 
         // Capabilities are only repeated when they change.
-        c.ackAndAttach(window, QSize(300, 200));
+        c.ackAndAttach(window, base::Size(300, 200));
         check([&] {
             onlyWindow()->maximize();
         });
@@ -760,7 +761,7 @@ TEST_F(XdgShellProtocolTest, CapabilitiesAndBoundsPrecedeTheFirstConfigure)
 TEST_F(XdgShellProtocolTest, AFixedSizeWindowIsNotOfferedMaximize)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         ASSERT_EQ(1u, window->capabilities.size());
 
         xdg_toplevel_set_min_size(window->toplevel, 300, 200);
@@ -785,8 +786,8 @@ TEST_F(XdgShellProtocolTest, AFixedSizeWindowIsNotOfferedMaximize)
 TEST_F(XdgShellProtocolTest, ActivationMovesTheActivatedStateBetweenToplevels)
 {
     run([&](Client &c) {
-        XdgWindow *first = c.makeMappedToplevel(QSize(300, 200));
-        XdgWindow *second = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *first = c.makeMappedToplevel(base::Size(300, 200));
+        XdgWindow *second = c.makeMappedToplevel(base::Size(300, 200));
         c.sync();
         ASSERT_TRUE(second->lastToplevel().has(XDG_TOPLEVEL_STATE_ACTIVATED));
         ASSERT_FALSE(first->lastToplevel().has(XDG_TOPLEVEL_STATE_ACTIVATED));
@@ -808,10 +809,10 @@ TEST_F(XdgShellProtocolTest, APressOnAWindowPingsItsClient)
 {
     run([&](Client &c) {
         c.bindSeat();
-        c.makeMappedToplevel(QSize(300, 200));
+        c.makeMappedToplevel(base::Size(300, 200));
         check([&] {
-            onlyWindow()->setBounds(QRect(100, 100, 300, 200));
-            manager.onPointerMotionAbsolute(at(1), QPointF(150, 150));
+            onlyWindow()->setBounds(base::Rect(100, 100, 300, 200));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(150, 150));
             manager.onPointerButton(at(2), BTN_LEFT, true);
             manager.onPointerButton(at(3), BTN_LEFT, false);
         });
@@ -826,7 +827,7 @@ TEST_F(XdgShellProtocolTest, AnUnansweredPingMakesTheWindowUnresponsiveUntilTheP
     pingTimeoutMs = 20;
     run([&](Client &c) {
         c.answerPings = false;
-        c.makeMappedToplevel(QSize(300, 200));
+        c.makeMappedToplevel(base::Size(300, 200));
         check([&] {
             EXPECT_TRUE(onlyWindow()->isResponsive());
             onlyWindow()->ping();
@@ -858,7 +859,7 @@ TEST_F(XdgShellProtocolTest, ClosingAnUnresponsiveWindowNoLongerAsksTheClient)
     pingTimeoutMs = 20;
     run([&](Client &c) {
         c.answerPings = false;
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         check([&] {
             onlyWindow()->requestClose();
         });
@@ -880,14 +881,14 @@ TEST_F(XdgShellProtocolTest, ClosingAnUnresponsiveWindowNoLongerAsksTheClient)
 TEST_F(XdgShellProtocolTest, TitleAndAppIdReachTheWindow)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         xdg_toplevel_set_title(window->toplevel, "Notes");
         xdg_toplevel_set_app_id(window->toplevel, "org.cutefish.Notes");
         c.sync();
 
         check([&] {
-            EXPECT_EQ(QStringLiteral("Notes"), onlyWindow()->title());
-            EXPECT_EQ(QStringLiteral("org.cutefish.Notes"), onlyWindow()->applicationId());
+            EXPECT_EQ("Notes", onlyWindow()->title());
+            EXPECT_EQ("org.cutefish.Notes", onlyWindow()->applicationId());
         });
     });
 }
@@ -895,15 +896,15 @@ TEST_F(XdgShellProtocolTest, TitleAndAppIdReachTheWindow)
 TEST_F(XdgShellProtocolTest, MinAndMaxSizeReachTheWindowOnCommit)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         xdg_toplevel_set_min_size(window->toplevel, 150, 100);
         xdg_toplevel_set_max_size(window->toplevel, 600, 500);
         wl_surface_commit(window->surface);
         c.sync();
 
         check([&] {
-            EXPECT_EQ(QSize(150, 100), onlyWindow()->minimumSize());
-            EXPECT_EQ(QSize(600, 500), onlyWindow()->maximumSize());
+            EXPECT_EQ(base::Size(150, 100), onlyWindow()->minimumSize());
+            EXPECT_EQ(base::Size(600, 500), onlyWindow()->maximumSize());
             EXPECT_TRUE(onlyWindow()->isResizable());
         });
     });
@@ -912,7 +913,7 @@ TEST_F(XdgShellProtocolTest, MinAndMaxSizeReachTheWindowOnCommit)
 TEST_F(XdgShellProtocolTest, ANegativeMinSizeIsAProtocolError)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         xdg_toplevel_set_min_size(window->toplevel, -1, 100);
         EXPECT_EQ(uint32_t(XDG_TOPLEVEL_ERROR_INVALID_SIZE), c.syncExpectingError());
     });
@@ -921,8 +922,8 @@ TEST_F(XdgShellProtocolTest, ANegativeMinSizeIsAProtocolError)
 TEST_F(XdgShellProtocolTest, SetParentMapsOntoTheTransientRelationship)
 {
     run([&](Client &c) {
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
-        XdgWindow *child = c.makeMappedToplevel(QSize(200, 150));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
+        XdgWindow *child = c.makeMappedToplevel(base::Size(200, 150));
         xdg_toplevel_set_parent(child->toplevel, parent->toplevel);
         c.sync();
 
@@ -939,14 +940,14 @@ TEST_F(XdgShellProtocolTest, AModalDialogIsCenteredOverAndBlocksItsParent)
 {
     run([&](Client &c) {
         ASSERT_TRUE(c.dialogManager);
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         XdgWindow *child = c.makeToplevel();
         xdg_toplevel_set_parent(child->toplevel, parent->toplevel);
         xdg_dialog_v1 *dialog = xdg_wm_dialog_v1_get_xdg_dialog(c.dialogManager, child->toplevel);
         xdg_dialog_v1_set_modal(dialog);
         wl_surface_commit(child->surface);
         c.sync();
-        c.ackAndAttach(child, QSize(200, 100));
+        c.ackAndAttach(child, base::Size(200, 100));
 
         wm::Window *parentWindow = nullptr;
         wm::Window *childWindow = nullptr;
@@ -956,7 +957,7 @@ TEST_F(XdgShellProtocolTest, AModalDialogIsCenteredOverAndBlocksItsParent)
             childWindow = windowManager.windows()[1];
             EXPECT_TRUE(childWindow->isModal());
             EXPECT_EQ(childWindow, wm::modalTransient(parentWindow));
-            EXPECT_EQ(parentWindow->bounds().center(), childWindow->bounds().center());
+            EXPECT_EQ(wm::centerPixel(parentWindow->bounds()), wm::centerPixel(childWindow->bounds()));
             EXPECT_TRUE(childWindow->isActive());
             windowManager.activation()->activate(parentWindow);
             EXPECT_TRUE(childWindow->isActive());
@@ -1003,7 +1004,7 @@ TEST_F(XdgShellProtocolTest, ASecondDialogObjectIsAProtocolError)
 TEST_F(XdgShellProtocolTest, ADialogOutlivingItsToplevelIsInert)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(200, 100));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(200, 100));
         xdg_dialog_v1 *dialog = xdg_wm_dialog_v1_get_xdg_dialog(c.dialogManager, window->toplevel);
         xdg_toplevel_destroy(window->toplevel);
         window->toplevel = nullptr;
@@ -1016,9 +1017,9 @@ TEST_F(XdgShellProtocolTest, ADialogOutlivingItsToplevelIsInert)
 TEST_F(XdgShellProtocolTest, UnmappingAParentHandsItsDialogToTheGrandparent)
 {
     run([&](Client &c) {
-        XdgWindow *root = c.makeMappedToplevel(QSize(400, 300));
-        XdgWindow *parent = c.makeMappedToplevel(QSize(300, 200));
-        XdgWindow *child = c.makeMappedToplevel(QSize(200, 100));
+        XdgWindow *root = c.makeMappedToplevel(base::Size(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(300, 200));
+        XdgWindow *child = c.makeMappedToplevel(base::Size(200, 100));
         xdg_toplevel_set_parent(parent->toplevel, root->toplevel);
         xdg_toplevel_set_parent(child->toplevel, parent->toplevel);
         c.sync();
@@ -1031,7 +1032,7 @@ TEST_F(XdgShellProtocolTest, UnmappingAParentHandsItsDialogToTheGrandparent)
             wm::Window *rootWindow = nullptr;
             wm::Window *childWindow = nullptr;
             for (wm::Window *window : windowManager.windows()) {
-                if (window->contentBounds().size() == QSize(400, 300))
+                if (window->contentBounds().size() == base::Size(400, 300))
                     rootWindow = window;
                 else
                     childWindow = window;
@@ -1041,17 +1042,17 @@ TEST_F(XdgShellProtocolTest, UnmappingAParentHandsItsDialogToTheGrandparent)
         });
 
         // An unmapped toplevel is no parent, and remapping restores nothing.
-        XdgWindow *orphan = c.makeMappedToplevel(QSize(150, 100));
+        XdgWindow *orphan = c.makeMappedToplevel(base::Size(150, 100));
         xdg_toplevel_set_parent(orphan->toplevel, parent->toplevel);
         wl_surface_commit(parent->surface);
         c.sync();
-        c.ackAndAttach(parent, QSize(300, 200));
+        c.ackAndAttach(parent, base::Size(300, 200));
         check([&] {
             for (wm::Window *window : windowManager.windows()) {
-                if (window->contentBounds().size() == QSize(150, 100))
+                if (window->contentBounds().size() == base::Size(150, 100))
                     EXPECT_EQ(nullptr, window->transientParent());
-                if (window->contentBounds().size() == QSize(200, 100))
-                    EXPECT_EQ(QSize(400, 300), window->transientParent()->contentBounds().size());
+                if (window->contentBounds().size() == base::Size(200, 100))
+                    EXPECT_EQ(base::Size(400, 300), window->transientParent()->contentBounds().size());
             }
         });
     });
@@ -1064,9 +1065,9 @@ TEST_F(XdgShellProtocolTest, APressAModalBlocksKeepsItsReleaseForEveryButton)
 {
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         check([&] {
-            onlyWindow()->setBounds(QRect(0, 0, 400, 300));
+            onlyWindow()->setBounds(base::Rect(0, 0, 400, 300));
         });
         XdgWindow *child = c.makeToplevel();
         xdg_toplevel_set_parent(child->toplevel, parent->toplevel);
@@ -1074,17 +1075,17 @@ TEST_F(XdgShellProtocolTest, APressAModalBlocksKeepsItsReleaseForEveryButton)
         xdg_dialog_v1_set_modal(dialog);
         wl_surface_commit(child->surface);
         c.sync();
-        c.ackAndAttach(child, QSize(100, 80));
+        c.ackAndAttach(child, base::Size(100, 80));
 
         check([&] {
-            manager.onPointerMotionAbsolute(at(1), QPointF(10, 10));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(10, 10));
             manager.onPointerButton(at(2), BTN_LEFT, true);
             manager.onPointerButton(at(3), BTN_RIGHT, true);
             manager.onPointerButton(at(4), BTN_LEFT, false);
             manager.onPointerButton(at(5), BTN_RIGHT, false);
             // Scrolling reaches nothing and activates nothing.
             windowManager.activation()->activate(nullptr);
-            manager.onPointerAxis(at(6), QPointF(0, 10), false);
+            manager.onPointerAxis(at(6), base::PointF(0, 10), false);
             manager.onPointerAxisStop(at(7));
             EXPECT_EQ(nullptr, windowManager.activation()->activeWindow());
         });
@@ -1099,7 +1100,7 @@ TEST_F(XdgShellProtocolTest, APressAModalBlocksKeepsItsReleaseForEveryButton)
         xdg_dialog_v1_destroy(dialog);
         c.sync();
         check([&] {
-            manager.onPointerMotionAbsolute(at(8), QPointF(12, 12));
+            manager.onPointerMotionAbsolute(at(8), base::PointF(12, 12));
             manager.onPointerButton(at(9), BTN_LEFT, true);
             manager.onPointerButton(at(10), BTN_LEFT, false);
         });
@@ -1114,10 +1115,10 @@ TEST_F(XdgShellProtocolTest, ThePressThatDismissesAPopupKeepsItsRelease)
 {
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         check([&] {
-            onlyWindow()->setBounds(QRect(0, 0, 400, 300));
-            manager.onPointerMotionAbsolute(at(1), QPointF(20, 30));
+            onlyWindow()->setBounds(base::Rect(0, 0, 400, 300));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(20, 30));
         });
         c.sync();
 
@@ -1130,13 +1131,13 @@ TEST_F(XdgShellProtocolTest, ThePressThatDismissesAPopupKeepsItsRelease)
         xdg_popup_grab(popup->popup, c.seat, c.lastEnterSerial);
         xdg_positioner_destroy(positioner);
         c.sync();
-        c.ackAndAttach(popup, QSize(100, 80));
+        c.ackAndAttach(popup, base::Size(100, 80));
 
         const int presses = c.buttonPresses;
         const int releases = c.buttonReleases;
         check([&] {
             // Over the parent, but outside the popup.
-            manager.onPointerMotionAbsolute(at(2), QPointF(350, 250));
+            manager.onPointerMotionAbsolute(at(2), base::PointF(350, 250));
             manager.onPointerButton(at(3), BTN_LEFT, true);
         });
         c.sync();
@@ -1152,59 +1153,60 @@ TEST_F(XdgShellProtocolTest, ThePressThatDismissesAPopupKeepsItsRelease)
 
 TEST_F(XdgShellProtocolTest, AStillPointerIsMovedWhenTheResizedContentLandsUnderIt)
 {
-    QObject::connect(&windowManager, &wm::WindowManager::pointerTargetsChanged, &manager,
-                     &input::InputManager::synthesizeMotion);
+    const base::Subscription synthesize = windowManager.pointerTargetsChanged.connect([this] {
+        manager.synthesizeMotion();
+    });
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *window = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(400, 300));
         check([&] {
-            onlyWindow()->setBounds(QRect(200, 100, 400, 300));
-            manager.onPointerMotionAbsolute(at(1), QPointF(250, 120));
-            QCoreApplication::processEvents();
+            onlyWindow()->setBounds(base::Rect(200, 100, 400, 300));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(250, 120));
+            test::runFor(std::chrono::milliseconds(1));
         });
         c.sync();
         ASSERT_EQ(window->surface, c.pointerFocus);
-        EXPECT_EQ(QPointF(50, 20), c.pointerPosition);
+        EXPECT_EQ(base::PointF(50, 20), c.pointerPosition);
         const int motions = c.motions;
 
         // The old contents stay where they were until the client draws the new
         // size, so the pointer is still over the same point of them.
         check([&] {
             onlyWindow()->maximize();
-            QCoreApplication::processEvents();
+            test::runFor(std::chrono::milliseconds(1));
         });
         c.sync();
         EXPECT_EQ(motions, c.motions);
-        EXPECT_EQ(QPointF(50, 20), c.pointerPosition);
+        EXPECT_EQ(base::PointF(50, 20), c.pointerPosition);
 
         wl_buffer_destroy(window->buffer);
         window->buffer = nullptr;
-        c.ackAndAttach(window, QSize(window->lastToplevel().width, window->lastToplevel().height));
+        c.ackAndAttach(window, base::Size(window->lastToplevel().width, window->lastToplevel().height));
         check([&] {
             EXPECT_EQ(kOutput, onlyWindow()->bounds());
-            QCoreApplication::processEvents();
+            test::runFor(std::chrono::milliseconds(1));
         });
         c.sync();
         EXPECT_EQ(motions + 1, c.motions);
-        EXPECT_EQ(QPointF(250, 120), c.pointerPosition);
+        EXPECT_EQ(base::PointF(250, 120), c.pointerPosition);
 
         check([&] {
             onlyWindow()->restore();
-            QCoreApplication::processEvents();
+            test::runFor(std::chrono::milliseconds(1));
         });
         c.sync();
         EXPECT_EQ(motions + 1, c.motions);
 
         wl_buffer_destroy(window->buffer);
         window->buffer = nullptr;
-        c.ackAndAttach(window, QSize(window->lastToplevel().width, window->lastToplevel().height));
+        c.ackAndAttach(window, base::Size(window->lastToplevel().width, window->lastToplevel().height));
         check([&] {
-            EXPECT_EQ(QRect(200, 100, 400, 300), onlyWindow()->bounds());
-            QCoreApplication::processEvents();
+            EXPECT_EQ(base::Rect(200, 100, 400, 300), onlyWindow()->bounds());
+            test::runFor(std::chrono::milliseconds(1));
         });
         c.sync();
         EXPECT_EQ(motions + 2, c.motions);
-        EXPECT_EQ(QPointF(50, 20), c.pointerPosition);
+        EXPECT_EQ(base::PointF(50, 20), c.pointerPosition);
         EXPECT_EQ(window->surface, c.pointerFocus);
     });
 }
@@ -1220,12 +1222,12 @@ TEST_F(XdgShellProtocolTest, ToplevelsOfOneApplicationCascade)
             xdg_toplevel_set_app_id(window->toplevel, "org.cutefish.test");
             wl_surface_commit(window->surface);
             c.sync();
-            c.ackAndAttach(window, QSize(300, 200));
+            c.ackAndAttach(window, base::Size(300, 200));
         }
         check([&] {
             ASSERT_EQ(2u, windowManager.windows().size());
-            const QRect first = windowManager.windows()[0]->bounds();
-            EXPECT_EQ(QRect(250, 200, 300, 200), first);
+            const base::Rect first = windowManager.windows()[0]->bounds();
+            EXPECT_EQ(base::Rect(250, 200, 300, 200), first);
             EXPECT_EQ(first.translated(32, 32), windowManager.windows()[1]->bounds());
         });
     });
@@ -1238,7 +1240,7 @@ TEST_F(XdgShellProtocolTest, ANewToplevelIsConfiguredMaximizedAfterAMaximizedOne
         xdg_toplevel_set_app_id(first->toplevel, "org.cutefish.test");
         wl_surface_commit(first->surface);
         c.sync();
-        c.ackAndAttach(first, QSize(300, 200));
+        c.ackAndAttach(first, base::Size(300, 200));
         xdg_toplevel_set_maximized(first->toplevel);
         c.sync();
 
@@ -1278,13 +1280,13 @@ TEST_F(XdgShellProtocolTest, WindowGeometryDecidesTheWindowSizeAndSurfaceOrigin)
 
         // A CSD client with a 10px shadow all round.
         xdg_surface_set_window_geometry(window->xdgSurface, 10, 10, 300, 200);
-        c.ackAndAttach(window, QSize(320, 220));
+        c.ackAndAttach(window, base::Size(320, 220));
 
         check([&] {
             wm::Window *managed = onlyWindow();
             ASSERT_NE(nullptr, managed);
-            EXPECT_EQ(QSize(300, 200), managed->bounds().size());
-            EXPECT_EQ(QPoint(-10, -10), managed->surfaceOrigin());
+            EXPECT_EQ(base::Size(300, 200), managed->bounds().size());
+            EXPECT_EQ(base::Point(-10, -10), managed->surfaceOrigin());
         });
     });
 }
@@ -1292,7 +1294,7 @@ TEST_F(XdgShellProtocolTest, WindowGeometryDecidesTheWindowSizeAndSurfaceOrigin)
 TEST_F(XdgShellProtocolTest, ANegativeWindowGeometrySizeIsAProtocolError)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         xdg_surface_set_window_geometry(window->xdgSurface, 0, 0, -1, 200);
         EXPECT_EQ(uint32_t(XDG_SURFACE_ERROR_INVALID_SIZE), c.syncExpectingError());
     });
@@ -1304,7 +1306,7 @@ TEST_F(XdgShellProtocolTest, ANegativeWindowGeometrySizeIsAProtocolError)
 TEST_F(XdgShellProtocolTest, MoveWithASerialThatIsNotAPointerPressIsIgnored)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         xdg_toplevel_move(window->toplevel, c.seat, 0xabcdef);
         c.sync();
@@ -1319,10 +1321,10 @@ TEST_F(XdgShellProtocolTest, MoveWithAPointerPressSerialStartsADrag)
 {
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         check([&] {
-            onlyWindow()->setBounds(QRect(100, 100, 300, 200));
-            manager.onPointerMotionAbsolute(at(1), QPointF(150, 150));
+            onlyWindow()->setBounds(base::Rect(100, 100, 300, 200));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(150, 150));
             manager.onPointerButton(at(2), BTN_LEFT, true);
         });
         c.sync();
@@ -1334,8 +1336,8 @@ TEST_F(XdgShellProtocolTest, MoveWithAPointerPressSerialStartsADrag)
         check([&] {
             EXPECT_TRUE(windowManager.eventHandler()->isDragging());
             EXPECT_EQ(wm::ResizeEdge::None, windowManager.eventHandler()->draggedEdge());
-            manager.onPointerMotionAbsolute(at(3), QPointF(200, 180));
-            EXPECT_EQ(QRect(150, 130, 300, 200), onlyWindow()->bounds());
+            manager.onPointerMotionAbsolute(at(3), base::PointF(200, 180));
+            EXPECT_EQ(base::Rect(150, 130, 300, 200), onlyWindow()->bounds());
             manager.onPointerButton(at(4), BTN_LEFT, false);
             EXPECT_FALSE(windowManager.eventHandler()->isDragging());
             EXPECT_EQ(input::NoButton, seat.pressedButtons());
@@ -1351,16 +1353,16 @@ TEST_F(XdgShellProtocolTest, MoveWithAPointerPressSerialStartsADrag)
 
 TEST_F(XdgShellProtocolTest, MoveWithATouchDownSerialFollowsTheFinger)
 {
-    const auto normalized = [](const QPointF &location) {
-        return QPointF(location.x() / kOutput.width(), location.y() / kOutput.height());
+    const auto normalized = [](const base::PointF &location) {
+        return base::PointF(location.x() / kOutput.width(), location.y() / kOutput.height());
     };
     run([&](Client &c) {
         c.bindSeat();
         c.bindTouch();
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         check([&] {
-            onlyWindow()->setBounds(QRect(100, 100, 300, 200));
-            manager.onTouchDown(at(1), 4, normalized(QPointF(150, 150)));
+            onlyWindow()->setBounds(base::Rect(100, 100, 300, 200));
+            manager.onTouchDown(at(1), 4, normalized(base::PointF(150, 150)));
             manager.onTouchFrame(at(1));
         });
         c.sync();
@@ -1372,9 +1374,9 @@ TEST_F(XdgShellProtocolTest, MoveWithATouchDownSerialFollowsTheFinger)
 
         check([&] {
             EXPECT_TRUE(windowManager.eventHandler()->isTouchDrag());
-            manager.onTouchMotion(at(2), 4, normalized(QPointF(200, 180)));
+            manager.onTouchMotion(at(2), 4, normalized(base::PointF(200, 180)));
             manager.onTouchFrame(at(2));
-            EXPECT_EQ(QRect(150, 130, 300, 200), onlyWindow()->bounds());
+            EXPECT_EQ(base::Rect(150, 130, 300, 200), onlyWindow()->bounds());
             manager.onTouchUp(at(3), 4);
             manager.onTouchFrame(at(3));
             EXPECT_FALSE(windowManager.eventHandler()->isDragging());
@@ -1393,18 +1395,18 @@ TEST_F(XdgShellProtocolTest, DragToRestoreLeavesClientPointerFocusBeforeResizing
 {
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *window = c.makeMappedToplevel(QSize(420, 300));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(420, 300));
         xdg_toplevel_set_maximized(window->toplevel);
         c.sync();
         c.ackAndAttach(window, kOutput.size());
         check([&] {
             ASSERT_EQ(nullptr, onlyWindow()->frame());
-            manager.onPointerMotionAbsolute(at(1), QPointF(400, 15));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(400, 15));
             manager.onPointerButton(at(2), BTN_LEFT, true);
         });
         c.sync();
         ASSERT_EQ(window->surface, c.pointerFocus);
-        ASSERT_EQ(QPointF(400, 15), c.pointerPosition);
+        ASSERT_EQ(base::PointF(400, 15), c.pointerPosition);
         ASSERT_EQ(1, c.buttonPresses);
 
         xdg_toplevel_move(window->toplevel, c.seat, c.lastButtonSerial);
@@ -1412,16 +1414,16 @@ TEST_F(XdgShellProtocolTest, DragToRestoreLeavesClientPointerFocusBeforeResizing
         EXPECT_EQ(nullptr, c.pointerFocus);
         check([&] {
             EXPECT_EQ(input::LeftButton, seat.pressedButtons());
-            manager.onPointerMotionAbsolute(at(3), QPointF(400, 115));
+            manager.onPointerMotionAbsolute(at(3), base::PointF(400, 115));
             EXPECT_TRUE(onlyWindow()->isRestoringFromDrag());
         });
         c.sync();
         EXPECT_EQ(nullptr, c.pointerFocus);
-        c.ackAndAttach(window, QSize(420, 300));
+        c.ackAndAttach(window, base::Size(420, 300));
 
         // Scrolling must not re-enter the resized client during the move grab.
         check([&] {
-            manager.onPointerAxis(at(4), QPointF(0, 10), false);
+            manager.onPointerAxis(at(4), base::PointF(0, 10), false);
             manager.onPointerAxisStop(at(5));
         });
         c.sync();
@@ -1440,11 +1442,11 @@ TEST_F(XdgShellProtocolTest, DragToRestoreLeavesClientPointerFocusBeforeResizing
         EXPECT_EQ(1, c.buttonPresses);
         EXPECT_EQ(0, c.buttonReleases);
         check([&] {
-            manager.onPointerMotionAbsolute(at(7), QPointF(401, 115));
+            manager.onPointerMotionAbsolute(at(7), base::PointF(401, 115));
         });
         c.sync();
         EXPECT_EQ(window->surface, c.pointerFocus);
-        EXPECT_EQ(QPointF(211, 15), c.pointerPosition);
+        EXPECT_EQ(base::PointF(211, 15), c.pointerPosition);
         check([&] {
             manager.onPointerButton(at(8), BTN_LEFT, true);
             manager.onPointerButton(at(9), BTN_LEFT, false);
@@ -1459,10 +1461,10 @@ TEST_F(XdgShellProtocolTest, ResizeMapsTheXdgEdgeOntoTheWindowManagerEdge)
 {
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         check([&] {
-            onlyWindow()->setBounds(QRect(100, 100, 300, 200));
-            manager.onPointerMotionAbsolute(at(1), QPointF(200, 200));
+            onlyWindow()->setBounds(base::Rect(100, 100, 300, 200));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(200, 200));
             manager.onPointerButton(at(2), BTN_LEFT, true);
         });
         c.sync();
@@ -1489,7 +1491,7 @@ TEST_F(XdgShellProtocolTest, ResizeMapsTheXdgEdgeOntoTheWindowManagerEdge)
 TEST_F(XdgShellProtocolTest, AnInvalidResizeEdgeIsAProtocolError)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
         xdg_toplevel_resize(window->toplevel, c.seat, 1, 3 /* not a valid edge */);
         EXPECT_EQ(uint32_t(XDG_TOPLEVEL_ERROR_INVALID_RESIZE_EDGE), c.syncExpectingError());
     });
@@ -1501,9 +1503,9 @@ TEST_F(XdgShellProtocolTest, AnInvalidResizeEdgeIsAProtocolError)
 TEST_F(XdgShellProtocolTest, APopupIsConfiguredRelativeToItsParent)
 {
     run([&](Client &c) {
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         check([&] {
-            onlyWindow()->setBounds(QRect(100, 100, 400, 300));
+            onlyWindow()->setBounds(base::Rect(100, 100, 400, 300));
         });
         c.sync();
 
@@ -1524,13 +1526,13 @@ TEST_F(XdgShellProtocolTest, APopupIsConfiguredRelativeToItsParent)
         EXPECT_EQ(120, popup->popupConfigures.front().width);
         ASSERT_EQ(1u, popup->surfaceConfigures.size());
 
-        c.ackAndAttach(popup, QSize(120, 90));
+        c.ackAndAttach(popup, base::Size(120, 90));
 
         check([&] {
             EXPECT_EQ(2u, windowManager.windows().size());
             ASSERT_EQ(2u, compositor.surfaces().size());
             compositor::Surface *popupSurface = compositor.surfaces()[1];
-            EXPECT_EQ(QPoint(120, 141), popupSurface->node()->absolutePosition());
+            EXPECT_EQ(base::Point(120, 141), popupSurface->node()->absolutePosition());
             auto *popupWindow = windowManager.windowForSurface(popupSurface);
             ASSERT_NE(nullptr, popupWindow);
             EXPECT_TRUE(popupWindow->isPopup());
@@ -1543,9 +1545,9 @@ TEST_F(XdgShellProtocolTest, APopupWithAGrabIsDismissedByAPressOutsideIt)
 {
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         check([&] {
-            onlyWindow()->setBounds(QRect(0, 0, 400, 300));
+            onlyWindow()->setBounds(base::Rect(0, 0, 400, 300));
         });
         c.sync();
 
@@ -1558,7 +1560,7 @@ TEST_F(XdgShellProtocolTest, APopupWithAGrabIsDismissedByAPressOutsideIt)
         xdg_popup_grab(popup->popup, c.seat, c.lastEnterSerial);
         xdg_positioner_destroy(positioner);
         c.sync();
-        c.ackAndAttach(popup, QSize(100, 80));
+        c.ackAndAttach(popup, base::Size(100, 80));
 
         check([&] {
             EXPECT_EQ(1u, windowManager.popupGrabs().size());
@@ -1566,7 +1568,7 @@ TEST_F(XdgShellProtocolTest, APopupWithAGrabIsDismissedByAPressOutsideIt)
             EXPECT_EQ(compositor.surfaces()[0], seat.focusedSurface());
             EXPECT_FALSE(seat.focusIsBorrowed());
             // Well outside the popup, and outside the parent too.
-            manager.onPointerMotionAbsolute(at(1), QPointF(700, 500));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(700, 500));
             manager.onPointerButton(at(2), BTN_LEFT, true);
         });
         c.sync();
@@ -1582,8 +1584,8 @@ TEST_F(XdgShellProtocolTest, AStatusBarPopupBorrowsTheKeyboardAndLeavesTheBarIts
 {
     run([&](Client &c) {
         c.bindSeat();
-        XdgWindow *application = c.makeMappedToplevel(QSize(400, 300));
-        XdgWindow *bar = c.makeMappedToplevel(QSize(800, 30));
+        XdgWindow *application = c.makeMappedToplevel(base::Size(400, 300));
+        XdgWindow *bar = c.makeMappedToplevel(base::Size(800, 30));
         wm::Window *applicationWindow = nullptr;
         compositor::Surface *applicationSurface = nullptr;
         compositor::Surface *barSurface = nullptr;
@@ -1593,8 +1595,8 @@ TEST_F(XdgShellProtocolTest, AStatusBarPopupBorrowsTheKeyboardAndLeavesTheBarIts
             barSurface = compositor.surfaces()[1];
             applicationWindow = windowManager.windowForSurface(applicationSurface);
             wm::Window *barWindow = windowManager.windowForSurface(compositor.surfaces()[1]);
-            applicationWindow->setBounds(QRect(100, 100, 400, 300));
-            barWindow->setBounds(QRect(0, 0, 800, 30));
+            applicationWindow->setBounds(base::Rect(100, 100, 400, 300));
+            barWindow->setBounds(base::Rect(0, 0, 800, 30));
             barWindow->setRole(wm::WindowRole::Panel);
             barWindow->setFocusPolicy(wm::FocusPolicy::NoFocus);
             windowManager.activation()->activate(applicationWindow);
@@ -1616,7 +1618,7 @@ TEST_F(XdgShellProtocolTest, AStatusBarPopupBorrowsTheKeyboardAndLeavesTheBarIts
             EXPECT_EQ(barSurface, seat.focusedSurface());
             EXPECT_TRUE(seat.focusIsBorrowed());
         });
-        c.ackAndAttach(popup, QSize(100, 80));
+        c.ackAndAttach(popup, base::Size(100, 80));
 
         const int pressesBefore = c.buttonPresses;
         check([&] {
@@ -1624,7 +1626,7 @@ TEST_F(XdgShellProtocolTest, AStatusBarPopupBorrowsTheKeyboardAndLeavesTheBarIts
             EXPECT_EQ(applicationWindow, windowManager.activation()->activeWindow());
 
             // On the bar, beside the popup: the bar gets it, the popup stays.
-            manager.onPointerMotionAbsolute(at(1), QPointF(100, 10));
+            manager.onPointerMotionAbsolute(at(1), base::PointF(100, 10));
             manager.onPointerButton(at(2), BTN_LEFT, true);
             manager.onPointerButton(at(3), BTN_LEFT, false);
         });
@@ -1637,7 +1639,7 @@ TEST_F(XdgShellProtocolTest, AStatusBarPopupBorrowsTheKeyboardAndLeavesTheBarIts
             EXPECT_EQ(barSurface, seat.focusedSurface());
 
             // Anywhere else the press only dismisses the popup.
-            manager.onPointerMotionAbsolute(at(4), QPointF(300, 250));
+            manager.onPointerMotionAbsolute(at(4), base::PointF(300, 250));
             manager.onPointerButton(at(5), BTN_LEFT, true);
             manager.onPointerButton(at(6), BTN_LEFT, false);
         });
@@ -1658,7 +1660,7 @@ TEST_F(XdgShellProtocolTest, AStatusBarPopupBorrowsTheKeyboardAndLeavesTheBarIts
 TEST_F(XdgShellProtocolTest, RepositionAnnouncesTheTokenAndConfiguresAgain)
 {
     run([&](Client &c) {
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         XdgWindow *popup = c.makeXdgSurface();
         xdg_positioner *positioner = xdg_wm_base_create_positioner(c.wmBase);
         xdg_positioner_set_size(positioner, 100, 80);
@@ -1668,7 +1670,7 @@ TEST_F(XdgShellProtocolTest, RepositionAnnouncesTheTokenAndConfiguresAgain)
         popup->popup = xdg_surface_get_popup(popup->xdgSurface, parent->xdgSurface, positioner);
         xdg_popup_add_listener(popup->popup, &popupListener, popup);
         c.sync();
-        c.ackAndAttach(popup, QSize(100, 80));
+        c.ackAndAttach(popup, base::Size(100, 80));
 
         xdg_positioner_set_anchor_rect(positioner, 50, 60, 1, 1);
         xdg_popup_reposition(popup->popup, positioner, 77);
@@ -1685,7 +1687,7 @@ TEST_F(XdgShellProtocolTest, RepositionAnnouncesTheTokenAndConfiguresAgain)
 TEST_F(XdgShellProtocolTest, APopupWithoutAPositionerSizeIsAProtocolError)
 {
     run([&](Client &c) {
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         XdgWindow *popup = c.makeXdgSurface();
         xdg_positioner *positioner = xdg_wm_base_create_positioner(c.wmBase);
         popup->popup = xdg_surface_get_popup(popup->xdgSurface, parent->xdgSurface, positioner);
@@ -1697,7 +1699,7 @@ TEST_F(XdgShellProtocolTest, APopupWithoutAPositionerSizeIsAProtocolError)
 TEST_F(XdgShellProtocolTest, DestroyingThePopupParentLeavesTheCompositorStanding)
 {
     run([&](Client &c) {
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
         XdgWindow *popup = c.makeXdgSurface();
         xdg_positioner *positioner = xdg_wm_base_create_positioner(c.wmBase);
         xdg_positioner_set_size(positioner, 100, 80);
@@ -1706,7 +1708,7 @@ TEST_F(XdgShellProtocolTest, DestroyingThePopupParentLeavesTheCompositorStanding
         xdg_popup_add_listener(popup->popup, &popupListener, popup);
         xdg_positioner_destroy(positioner);
         c.sync();
-        c.ackAndAttach(popup, QSize(100, 80));
+        c.ackAndAttach(popup, base::Size(100, 80));
 
         // The parent goes first, which the protocol forbids but a crashing
         // toolkit still manages.
@@ -1728,7 +1730,7 @@ TEST_F(XdgShellProtocolTest, DestroyingThePopupParentLeavesTheCompositorStanding
 TEST_F(XdgShellProtocolTest, ANullBufferCommitUnmapsAndACommitAfterItRemaps)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         wl_surface_attach(window->surface, nullptr, 0, 0);
         wl_surface_commit(window->surface);
@@ -1741,7 +1743,7 @@ TEST_F(XdgShellProtocolTest, ANullBufferCommitUnmapsAndACommitAfterItRemaps)
         wl_surface_commit(window->surface);
         c.sync();
         ASSERT_GT(window->surfaceConfigures.size(), before);
-        c.ackAndAttach(window, QSize(300, 200));
+        c.ackAndAttach(window, base::Size(300, 200));
 
         check([&] {
             EXPECT_EQ(1u, windowManager.windows().size());
@@ -1752,7 +1754,7 @@ TEST_F(XdgShellProtocolTest, ANullBufferCommitUnmapsAndACommitAfterItRemaps)
 TEST_F(XdgShellProtocolTest, APopupSurfaceThatKeptItsBufferCanTakeANewPopup)
 {
     run([&](Client &c) {
-        XdgWindow *parent = c.makeMappedToplevel(QSize(400, 300));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
 
         auto givePopup = [&](XdgWindow *window) {
             xdg_positioner *positioner = xdg_wm_base_create_positioner(c.wmBase);
@@ -1768,7 +1770,7 @@ TEST_F(XdgShellProtocolTest, APopupSurfaceThatKeptItsBufferCanTakeANewPopup)
 
         XdgWindow *popup = c.makeXdgSurface();
         givePopup(popup);
-        c.ackAndAttach(popup, QSize(120, 90));
+        c.ackAndAttach(popup, base::Size(120, 90));
 
         // Qt strips a child popup of its role this way and leaves the buffer
         // on the wl_surface.
@@ -1786,7 +1788,7 @@ TEST_F(XdgShellProtocolTest, APopupSurfaceThatKeptItsBufferCanTakeANewPopup)
         EXPECT_EQ(0u, c.syncExpectingError());
         ASSERT_FALSE(popup->surfaceConfigures.empty());
 
-        c.ackAndAttach(popup, QSize(120, 90));
+        c.ackAndAttach(popup, base::Size(120, 90));
         check([&] {
             EXPECT_EQ(2u, windowManager.windows().size());
         });
@@ -1796,7 +1798,7 @@ TEST_F(XdgShellProtocolTest, APopupSurfaceThatKeptItsBufferCanTakeANewPopup)
 TEST_F(XdgShellProtocolTest, DestroyingTheWlSurfaceFirstIsRefusedButLeavesNoWindow)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         wl_surface_destroy(window->surface);
         window->surface = nullptr;
@@ -1813,7 +1815,7 @@ TEST_F(XdgShellProtocolTest, DestroyingTheWlSurfaceFirstIsRefusedButLeavesNoWind
 TEST_F(XdgShellProtocolTest, DestroyingTheToplevelKeepsTheXdgSurfaceUsable)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(300, 200));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(300, 200));
 
         xdg_toplevel_destroy(window->toplevel);
         window->toplevel = nullptr;
@@ -1839,7 +1841,7 @@ TEST_F(XdgShellProtocolTest, AToplevelClosedOnRequestLeavesNothingBehind)
 {
     run([&](Client &c) {
         for (bool onRequest : {false, true}) {
-            XdgWindow *window = c.makeMappedToplevel(QSize(256, 256));
+            XdgWindow *window = c.makeMappedToplevel(base::Size(256, 256));
             if (onRequest) {
                 check([&] {
                     ASSERT_NE(nullptr, onlyWindow());
@@ -1862,7 +1864,7 @@ TEST_F(XdgShellProtocolTest, AToplevelClosedOnRequestLeavesNothingBehind)
 TEST_F(XdgShellProtocolTest, DestroyingTheWmBaseBeforeItsSurfacesIsAnError)
 {
     run([&](Client &c) {
-        c.makeMappedToplevel(QSize(100, 100));
+        c.makeMappedToplevel(base::Size(100, 100));
         xdg_wm_base_destroy(c.wmBase);
         c.wmBase = nullptr;
         EXPECT_EQ(uint32_t(XDG_WM_BASE_ERROR_DEFUNCT_SURFACES), c.syncExpectingError());
@@ -1872,7 +1874,7 @@ TEST_F(XdgShellProtocolTest, DestroyingTheWmBaseBeforeItsSurfacesIsAnError)
 TEST_F(XdgShellProtocolTest, DestroyingTheWmBaseAfterItsSurfacesIsAllowed)
 {
     run([&](Client &c) {
-        XdgWindow *window = c.makeMappedToplevel(QSize(100, 100));
+        XdgWindow *window = c.makeMappedToplevel(base::Size(100, 100));
         c.destroyWindowObjects(window);
         xdg_wm_base_destroy(c.wmBase);
         c.wmBase = nullptr;
@@ -1886,7 +1888,7 @@ TEST_F(XdgShellProtocolTest, DestroyingARoleSurfaceBeforeItsFirstCommit)
 {
     run([&](Client &c) {
         XdgWindow *window = c.makeToplevel();
-        window->buffer = c.makeBuffer(QSize(256, 256));
+        window->buffer = c.makeBuffer(base::Size(256, 256));
         wl_surface_attach(window->surface, window->buffer, 0, 0);
         c.sync();
         check([&] {
@@ -1905,8 +1907,8 @@ TEST_F(XdgShellProtocolTest, DestroyingARoleSurfaceBeforeItsFirstCommit)
 TEST_F(XdgShellProtocolTest, DisconnectingWithAnActiveToplevelLeavesNothingBehind)
 {
     run([&](Client &c) {
-        c.makeMappedToplevel(QSize(300, 200));
-        c.makeMappedToplevel(QSize(200, 150));
+        c.makeMappedToplevel(base::Size(300, 200));
+        c.makeMappedToplevel(base::Size(200, 150));
         check([&] {
             EXPECT_EQ(2u, windowManager.windows().size());
             EXPECT_NE(nullptr, windowManager.activation()->activeWindow());
@@ -1921,14 +1923,14 @@ TEST_F(XdgShellProtocolTest, DisconnectingWithAnActiveToplevelLeavesNothingBehin
 TEST_F(XdgShellProtocolTest, DesktopPopupRespectsPanelAndDockExclusiveZones)
 {
     run([&](Client &c) {
-        XdgWindow *parent = c.makeMappedToplevel(QSize(800, 600));
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(800, 600));
         check([&] {
             onlyWindow()->setRole(wm::WindowRole::Desktop);
-            onlyWindow()->setBounds(QRect(0, 0, 800, 600));
+            onlyWindow()->setBounds(base::Rect(0, 0, 800, 600));
             windowManager.setExclusiveZone(&compositor, wm::ScreenEdge::Top, 28);
             windowManager.setExclusiveZone(&windowManager, wm::ScreenEdge::Bottom, 60);
-            EXPECT_EQ(QRect(0, 28, 800, 512), windowManager.workAreaFor(nullptr));
-            EXPECT_EQ(QRect(0, 0, 800, 600), windowManager.workAreaFor(onlyWindow()));
+            EXPECT_EQ(base::Rect(0, 28, 800, 512), windowManager.workAreaFor(nullptr));
+            EXPECT_EQ(base::Rect(0, 0, 800, 600), windowManager.workAreaFor(onlyWindow()));
         });
         c.sync();
         XdgWindow *popup = c.makeXdgSurface();

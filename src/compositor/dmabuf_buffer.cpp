@@ -29,10 +29,10 @@ std::unique_ptr<DmaBufBuffer> DmaBufBuffer::create(render::DmaBufDevice* device,
     // as params.failed rather than turning up as a blank window later.
     std::shared_ptr<render::Texture> texture = device->importDmaBuf(attributes);
     if (!texture) {
-        qCWarning(cfCompositor,
-                  "Failed to import a %dx%d DMA-BUF, format 0x%08x modifier 0x%016llx",
-                  attributes.size.width(), attributes.size.height(), attributes.format,
-                  static_cast<unsigned long long>(attributes.modifier));
+        CF_WARNING(cfCompositor).printf(
+                "Failed to import a %dx%d DMA-BUF, format 0x%08x modifier 0x%016llx",
+                attributes.size.width(), attributes.size.height(), attributes.format,
+                static_cast<unsigned long long>(attributes.modifier));
         return nullptr;
     }
 

@@ -4,11 +4,13 @@
 
 #include <gtest/gtest.h>
 
-#include <QStringList>
+#include <string>
+#include <vector>
 
 #include "fake_renderer.h"
 #include "render/renderer.h"
 #include "scene/scene.h"
+#include "base/geometry.h"
 
 using namespace cutefish;
 using namespace cutefish::scene;
@@ -21,17 +23,17 @@ class NamedNode : public Node
 {
 public:
     using Node::Node;
-    mutable QStringList* log = nullptr;
+    mutable std::vector<std::string>* log = nullptr;
 
 protected:
-    void paint(render::Renderer&, const QRect&) const override
+    void paint(render::Renderer&, const base::Rect&) const override
     {
         if (log)
-            log->append(name());
+            log->push_back(name());
     }
 };
 
-NamedNode* addNamed(Node* parent, const QString& name, QStringList* log)
+NamedNode* addNamed(Node* parent, const std::string& name, std::vector<std::string>* log)
 {
     auto node = std::make_unique<NamedNode>(name);
     node->log = log;
@@ -43,13 +45,13 @@ NamedNode* addNamed(Node* parent, const QString& name, QStringList* log)
 TEST(SceneNode, TracksParentAndChildren)
 {
     Node root;
-    Node* child = root.addChild(std::make_unique<Node>(QStringLiteral("child")));
+    Node* child = root.addChild(std::make_unique<Node>("child"));
 
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->parent(), &root);
     EXPECT_EQ(root.children().size(), 1u);
     EXPECT_EQ(root.children().front(), child);
-    EXPECT_EQ(child->name(), QStringLiteral("child"));
+    EXPECT_EQ(child->name(), "child");
 }
 
 TEST(SceneNode, RemoveChildTransfersOwnership)
@@ -67,25 +69,25 @@ TEST(SceneNode, RemoveChildTransfersOwnership)
 TEST(SceneNode, AbsoluteGeometryAccumulatesAncestorOffsets)
 {
     Node root;
-    root.setGeometry(QRect(0, 0, 1920, 1080));
+    root.setGeometry(base::Rect(0, 0, 1920, 1080));
 
     Node* parent = root.addChild(std::make_unique<Node>());
-    parent->setGeometry(QRect(100, 50, 800, 600));
+    parent->setGeometry(base::Rect(100, 50, 800, 600));
 
     Node* child = parent->addChild(std::make_unique<Node>());
-    child->setGeometry(QRect(10, 20, 100, 200));
+    child->setGeometry(base::Rect(10, 20, 100, 200));
 
-    EXPECT_EQ(child->absolutePosition(), QPoint(110, 70));
-    EXPECT_EQ(child->absoluteGeometry(), QRect(110, 70, 100, 200));
-    EXPECT_EQ(parent->absoluteGeometry(), QRect(100, 50, 800, 600));
+    EXPECT_EQ(child->absolutePosition(), base::Point(110, 70));
+    EXPECT_EQ(child->absoluteGeometry(), base::Rect(110, 70, 100, 200));
+    EXPECT_EQ(parent->absoluteGeometry(), base::Rect(100, 50, 800, 600));
 }
 
 TEST(SceneNode, SetPositionKeepsSize)
 {
     Node node;
-    node.setGeometry(QRect(0, 0, 640, 480));
-    node.setPosition(QPoint(5, 7));
-    EXPECT_EQ(node.geometry(), QRect(5, 7, 640, 480));
+    node.setGeometry(base::Rect(0, 0, 640, 480));
+    node.setPosition(base::Point(5, 7));
+    EXPECT_EQ(node.geometry(), base::Rect(5, 7, 640, 480));
 }
 
 TEST(SceneNode, EffectiveVisibilityFollowsAncestors)
@@ -102,26 +104,26 @@ TEST(SceneNode, EffectiveVisibilityFollowsAncestors)
 
 TEST(SceneNode, PaintsChildrenBackToFrontAfterTheParent)
 {
-    QStringList log;
+    std::vector<std::string> log;
     Node root;
-    NamedNode* first = addNamed(&root, QStringLiteral("first"), &log);
-    addNamed(&root, QStringLiteral("second"), &log);
-    addNamed(first, QStringLiteral("first-child"), &log);
+    NamedNode* first = addNamed(&root, "first", &log);
+    addNamed(&root, "second", &log);
+    addNamed(first, "first-child", &log);
 
     RecordingRenderer renderer;
     root.render(renderer);
 
-    EXPECT_EQ(log, QStringList({QStringLiteral("first"), QStringLiteral("first-child"),
-                                QStringLiteral("second")}));
+    EXPECT_EQ(log, std::vector<std::string>({"first", "first-child",
+                                "second"}));
 }
 
 TEST(SceneNode, RaiseAndLowerReorderSiblings)
 {
-    QStringList log;
+    std::vector<std::string> log;
     Node root;
-    NamedNode* a = addNamed(&root, QStringLiteral("a"), &log);
-    NamedNode* b = addNamed(&root, QStringLiteral("b"), &log);
-    NamedNode* c = addNamed(&root, QStringLiteral("c"), &log);
+    NamedNode* a = addNamed(&root, "a", &log);
+    NamedNode* b = addNamed(&root, "b", &log);
+    NamedNode* c = addNamed(&root, "c", &log);
 
     root.raise(a);
     EXPECT_EQ(root.children(), std::vector<Node*>({b, c, a}));
@@ -131,7 +133,7 @@ TEST(SceneNode, RaiseAndLowerReorderSiblings)
 
     RecordingRenderer renderer;
     root.render(renderer);
-    EXPECT_EQ(log, QStringList({QStringLiteral("c"), QStringLiteral("b"), QStringLiteral("a")}));
+    EXPECT_EQ(log, std::vector<std::string>({"c", "b", "a"}));
 }
 
 TEST(SceneNode, ReorderingMovesOnlyWhatIsOutOfPlace)
@@ -182,60 +184,60 @@ TEST(SceneNode, ReorderingAnUnrelatedNodeIsANoOp)
 
 TEST(SceneNode, InvisibleSubtreesAreSkipped)
 {
-    QStringList log;
+    std::vector<std::string> log;
     Node root;
-    NamedNode* hidden = addNamed(&root, QStringLiteral("hidden"), &log);
-    addNamed(hidden, QStringLiteral("hidden-child"), &log);
-    addNamed(&root, QStringLiteral("shown"), &log);
+    NamedNode* hidden = addNamed(&root, "hidden", &log);
+    addNamed(hidden, "hidden-child", &log);
+    addNamed(&root, "shown", &log);
     hidden->setVisible(false);
 
     RecordingRenderer renderer;
     root.render(renderer);
 
-    EXPECT_EQ(log, QStringList({QStringLiteral("shown")}));
+    EXPECT_EQ(log, std::vector<std::string>({"shown"}));
 }
 
 TEST(SceneNode, ACaptureLeavesOutChildrenExcludedFromCapture)
 {
-    QStringList log;
-    NamedNode root(QStringLiteral("root"));
+    std::vector<std::string> log;
+    NamedNode root("root");
     root.log = &log;
     root.setChildrenBelowParent(1);
-    addNamed(&root, QStringLiteral("below"), &log);
-    NamedNode* overlay = addNamed(&root, QStringLiteral("overlay"), &log);
-    addNamed(overlay, QStringLiteral("overlay-child"), &log);
-    addNamed(&root, QStringLiteral("above"), &log);
+    addNamed(&root, "below", &log);
+    NamedNode* overlay = addNamed(&root, "overlay", &log);
+    addNamed(overlay, "overlay-child", &log);
+    addNamed(&root, "above", &log);
     overlay->setExcludedFromCapture(true);
 
     RecordingRenderer renderer;
     root.render(renderer);
-    EXPECT_EQ(log, QStringList({QStringLiteral("below"), QStringLiteral("root"),
-                                QStringLiteral("overlay"), QStringLiteral("overlay-child"),
-                                QStringLiteral("above")}));
+    EXPECT_EQ(log, std::vector<std::string>({"below", "root",
+                                "overlay", "overlay-child",
+                                "above"}));
 
     log.clear();
     root.renderForCapture(renderer);
-    EXPECT_EQ(log, QStringList({QStringLiteral("below"), QStringLiteral("root"),
-                                QStringLiteral("above")}));
+    EXPECT_EQ(log, std::vector<std::string>({"below", "root",
+                                "above"}));
 }
 
 TEST(SceneNode, ColorNodeFillsItsAbsoluteGeometry)
 {
     Node root;
-    root.setGeometry(QRect(0, 0, 800, 600));
+    root.setGeometry(base::Rect(0, 0, 800, 600));
     Node* parent = root.addChild(std::make_unique<Node>());
-    parent->setGeometry(QRect(30, 40, 400, 300));
+    parent->setGeometry(base::Rect(30, 40, 400, 300));
 
     auto* color = static_cast<ColorNode*>(parent->addChild(
         std::make_unique<ColorNode>(render::Color{1.0f, 0.5f, 0.25f, 1.0f})));
-    color->setGeometry(QRect(5, 5, 100, 100));
+    color->setGeometry(base::Rect(5, 5, 100, 100));
 
     RecordingRenderer renderer;
     root.render(renderer);
 
     ASSERT_EQ(renderer.calls.size(), 1);
-    EXPECT_EQ(renderer.calls.at(0).kind, QStringLiteral("fill"));
-    EXPECT_EQ(renderer.calls.at(0).rect, QRect(35, 45, 100, 100));
+    EXPECT_EQ(renderer.calls.at(0).kind, "fill");
+    EXPECT_EQ(renderer.calls.at(0).rect, base::Rect(35, 45, 100, 100));
     EXPECT_FLOAT_EQ(renderer.calls.at(0).color.g, 0.5f);
 }
 
@@ -244,11 +246,11 @@ TEST(SceneNode, EmptyGeometryDrawsNothing)
     Node root;
     auto* color = static_cast<ColorNode*>(
         root.addChild(std::make_unique<ColorNode>(render::Color{})));
-    color->setGeometry(QRect(10, 10, 0, 50));
+    color->setGeometry(base::Rect(10, 10, 0, 50));
 
     RecordingRenderer renderer;
     root.render(renderer);
-    EXPECT_TRUE(renderer.calls.isEmpty());
+    EXPECT_TRUE(renderer.calls.empty());
 }
 
 TEST(SceneNode, TextureNodeDrawsWithAlpha)
@@ -259,16 +261,16 @@ TEST(SceneNode, TextureNodeDrawsWithAlpha)
     Node root;
     auto* node = static_cast<TextureNode*>(
         root.addChild(std::make_unique<TextureNode>(handle)));
-    node->setGeometry(QRect(4, 8, 64, 64));
+    node->setGeometry(base::Rect(4, 8, 64, 64));
     node->setAlpha(0.5f);
 
     RecordingRenderer renderer;
     root.render(renderer);
 
     ASSERT_EQ(renderer.calls.size(), 1);
-    EXPECT_EQ(renderer.calls.at(0).kind, QStringLiteral("texture"));
+    EXPECT_EQ(renderer.calls.at(0).kind, "texture");
     EXPECT_EQ(renderer.calls.at(0).texture, handle);
-    EXPECT_EQ(renderer.calls.at(0).rect, QRect(4, 8, 64, 64));
+    EXPECT_EQ(renderer.calls.at(0).rect, base::Rect(4, 8, 64, 64));
     EXPECT_FLOAT_EQ(renderer.calls.at(0).alpha, 0.5f);
 }
 
@@ -277,34 +279,37 @@ TEST(SceneNode, TextureNodeWithoutATextureDrawsNothing)
     Node root;
     auto* node = static_cast<TextureNode*>(
         root.addChild(std::make_unique<TextureNode>(nullptr)));
-    node->setGeometry(QRect(0, 0, 10, 10));
+    node->setGeometry(base::Rect(0, 0, 10, 10));
 
     RecordingRenderer renderer;
     root.render(renderer);
-    EXPECT_TRUE(renderer.calls.isEmpty());
+    EXPECT_TRUE(renderer.calls.empty());
 }
 
 TEST(Scene, SizeIsTheRootGeometry)
 {
     Scene scene;
-    scene.setSize(QSize(1920, 1080));
-    EXPECT_EQ(scene.size(), QSize(1920, 1080));
-    EXPECT_EQ(scene.root()->geometry(), QRect(0, 0, 1920, 1080));
+    scene.setSize(base::Size(1920, 1080));
+    EXPECT_EQ(scene.size(), base::Size(1920, 1080));
+    EXPECT_EQ(scene.root()->geometry(), base::Rect(0, 0, 1920, 1080));
 }
 
 TEST(Scene, ClearsBeforePaintingTheTree)
 {
     Scene scene;
-    scene.setSize(QSize(640, 480));
+    scene.setSize(base::Size(640, 480));
     scene.setBackground(render::Color{0.1f, 0.2f, 0.3f, 1.0f});
 
     auto* color = static_cast<ColorNode*>(scene.root()->addChild(
         std::make_unique<ColorNode>(render::Color{1.0f, 1.0f, 1.0f, 1.0f})));
-    color->setGeometry(QRect(0, 0, 640, 480));
+    color->setGeometry(base::Rect(0, 0, 640, 480));
 
     RecordingRenderer renderer;
     scene.render(renderer);
 
-    EXPECT_EQ(renderer.kinds(), QStringList({QStringLiteral("clear"), QStringLiteral("fill")}));
+    const auto kinds = renderer.kinds();
+    ASSERT_EQ(2, kinds.size());
+    EXPECT_EQ(kinds.at(0), "clear");
+    EXPECT_EQ(kinds.at(1), "fill");
     EXPECT_FLOAT_EQ(renderer.calls.at(0).color.b, 0.3f);
 }

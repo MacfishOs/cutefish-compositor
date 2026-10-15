@@ -48,7 +48,7 @@ bool isFullscreenOrOverFullscreen(const Window *window)
 
 // A dock lies long along its edge and thin across it, so the nearest edge in
 // the thin direction is the one it belongs to.
-ScreenEdge edgeFor(const QRect &bounds, const QRect &output)
+ScreenEdge edgeFor(const base::Rect &bounds, const base::Rect &output)
 {
     if (bounds.width() >= bounds.height()) {
         return bounds.top() - output.top() < output.bottom() - bounds.bottom() ? ScreenEdge::Top
@@ -59,44 +59,44 @@ ScreenEdge edgeFor(const QRect &bounds, const QRect &output)
 }
 
 // Where the dock is drawn relative to bounds() once it has left the output.
-QPoint hiddenOffset(const QRect &bounds, const QRect &output, ScreenEdge edge)
+base::Point hiddenOffset(const base::Rect &bounds, const base::Rect &output, ScreenEdge edge)
 {
     switch (edge) {
     case ScreenEdge::Top:
-        return QPoint(0, output.top() - bounds.bottom() - 1);
+        return base::Point(0, output.top() - bounds.bottom());
     case ScreenEdge::Bottom:
-        return QPoint(0, output.bottom() + 1 - bounds.top());
+        return base::Point(0, output.bottom() - bounds.top());
     case ScreenEdge::Left:
-        return QPoint(output.left() - bounds.right() - 1, 0);
+        return base::Point(output.left() - bounds.right(), 0);
     case ScreenEdge::Right:
-        return QPoint(output.right() + 1 - bounds.left(), 0);
+        return base::Point(output.right() - bounds.left(), 0);
     }
-    return QPoint();
+    return base::Point();
 }
 
-QRect revealStrip(const QRect &output, ScreenEdge edge)
+base::Rect revealStrip(const base::Rect &output, ScreenEdge edge)
 {
     const int px = DockLayoutManager::kRevealStripPx;
     switch (edge) {
     case ScreenEdge::Top:
-        return QRect(output.left(), output.top(), output.width(), px);
+        return base::Rect(output.left(), output.top(), output.width(), px);
     case ScreenEdge::Bottom:
-        return QRect(output.left(), output.bottom() - px + 1, output.width(), px);
+        return base::Rect(output.left(), output.bottom() - px, output.width(), px);
     case ScreenEdge::Left:
-        return QRect(output.left(), output.top(), px, output.height());
+        return base::Rect(output.left(), output.top(), px, output.height());
     case ScreenEdge::Right:
-        return QRect(output.right() - px + 1, output.top(), px, output.height());
+        return base::Rect(output.right() - px, output.top(), px, output.height());
     }
-    return QRect();
+    return base::Rect();
 }
 
 // The dock plus the gap between it and its edge: crossing that gap on the way
 // in or out must not toggle the dock. Upstream keeps the shelf shown while the
 // cursor is anywhere in its bounds; the gap is a Cutefish addition, since the
 // dock floats a few pixels off the edge.
-QRect shownRegion(const QRect &bounds, const QRect &output, ScreenEdge edge)
+base::Rect shownRegion(const base::Rect &bounds, const base::Rect &output, ScreenEdge edge)
 {
-    QRect region = bounds;
+    base::Rect region = bounds;
     switch (edge) {
     case ScreenEdge::Top:
         region.setTop(output.top());
@@ -122,14 +122,21 @@ double easeOut(double t)
 
 } // namespace
 
-DockLayoutManager::DockLayoutManager(WindowManager *manager, QObject *parent)
-    : QObject(parent)
-    , m_manager(manager)
+DockLayoutManager::DockLayoutManager(WindowManager *manager)
+    : m_manager(manager)
 {
-    connect(m_manager, &WindowManager::windowAdded, this, &DockLayoutManager::onWindowAdded);
-    connect(m_manager, &WindowManager::windowRemoved, this, &DockLayoutManager::onWindowRemoved);
-    connect(m_manager, &WindowManager::activeWindowChanged, this, &DockLayoutManager::update);
-    connect(m_manager, &WindowManager::pointerMoved, this, &DockLayoutManager::onPointerMoved);
+    m_managerSignals.push_back(m_manager->windowAdded.connect([this](Window *window) {
+        onWindowAdded(window);
+    }));
+    m_managerSignals.push_back(m_manager->windowRemoved.connect([this](Window *window) {
+        onWindowRemoved(window);
+    }));
+    m_managerSignals.push_back(m_manager->activeWindowChanged.connect([this](Window *) {
+        update();
+    }));
+    m_managerSignals.push_back(m_manager->pointerMoved.connect([this](const base::PointF &location) {
+        onPointerMoved(location);
+    }));
     if (input::Seat *seat = m_manager->seat())
         m_pointer = seat->pointerLocation();
     for (Window *window : m_manager->windows())
@@ -200,7 +207,7 @@ const DockLayoutManager::Dock *DockLayoutManager::dockFor(const Window *window) 
 
 // Upstream: WorkspaceController::GetWindowState. The active window decides
 // fullscreen when it is on this output; otherwise the topmost window there.
-WorkspaceState DockLayoutManager::workspaceStateFor(const QRect &output) const
+WorkspaceState DockLayoutManager::workspaceStateFor(const base::Rect &output) const
 {
     const auto &windows = m_manager->windows();
     auto onOutput = [&](const Window *window) {
@@ -227,7 +234,7 @@ WorkspaceState DockLayoutManager::workspaceStateFor(const QRect &output) const
     return WorkspaceState::Default;
 }
 
-bool DockLayoutManager::hasVisibleWindow(const QRect &output) const
+bool DockLayoutManager::hasVisibleWindow(const base::Rect &output) const
 {
     const auto &windows = m_manager->windows();
     return std::any_of(windows.begin(), windows.end(), [&](const Window *window) {
@@ -235,7 +242,7 @@ bool DockLayoutManager::hasVisibleWindow(const QRect &output) const
     });
 }
 
-bool DockLayoutManager::isLauncherShowing(const QRect &output) const
+bool DockLayoutManager::isLauncherShowing(const base::Rect &output) const
 {
     const auto &windows = m_manager->windows();
     return std::any_of(windows.begin(), windows.end(), [&](const Window *window) {
@@ -249,7 +256,7 @@ bool DockLayoutManager::isLauncherShowing(const QRect &output) const
 // comes back from the edge, so the dock is never out of reach. A panel has no
 // setting: fullscreen is the only thing that moves it.
 DockVisibilityState DockLayoutManager::computeVisibility(const Window *dock,
-                                                         const QRect &output) const
+                                                         const base::Rect &output) const
 {
     const WorkspaceState workspace = workspaceStateFor(output);
     if (isAwayForSession() || workspace == WorkspaceState::Fullscreen)
@@ -270,7 +277,7 @@ DockVisibilityState DockLayoutManager::computeVisibility(const Window *dock,
 
 // Upstream: ShelfLayoutManager::CalculateAutoHideState.
 DockAutoHideState DockLayoutManager::computeAutoHideState(const Window *dock, const Dock &entry,
-                                                          const QRect &output, bool revealing) const
+                                                          const base::Rect &output, bool revealing) const
 {
     if (entry.visibility != DockVisibilityState::AutoHide)
         return DockAutoHideState::Shown;
@@ -294,7 +301,7 @@ DockAutoHideState DockLayoutManager::computeAutoHideState(const Window *dock, co
         return DockAutoHideState::Shown;
 
     if (m_pointer) {
-        const QRect region = shownRegion(dock->bounds(), output, entry.edge);
+        const base::Rect region = shownRegion(dock->bounds(), output, entry.edge);
         if (revealing && region.contains(m_pointer->toPoint()))
             return DockAutoHideState::Shown;
         if (revealStrip(output, entry.edge).contains(m_pointer->toPoint()))
@@ -313,10 +320,10 @@ void DockLayoutManager::update()
         if (!entry) {
             entry = std::make_unique<Dock>();
             entry->revealTimer.setSingleShot(true);
-            entry->revealTimer.setInterval(kRevealDelayMs);
-            connect(&entry->revealTimer, &QTimer::timeout, this, [this, window] {
+            entry->revealTimer.setInterval(std::chrono::milliseconds(kRevealDelayMs));
+            entry->revealTimer.onTimeout = [this, window] {
                 revealNow(window);
-            });
+            };
             enter(window, *entry);
         }
         updateDock(window, *entry);
@@ -325,7 +332,7 @@ void DockLayoutManager::update()
 
 void DockLayoutManager::enter(Window *dock, Dock &entry)
 {
-    const QRect output = m_manager->outputBoundsFor(dock);
+    const base::Rect output = m_manager->outputBoundsFor(dock);
     if (output.isEmpty())
         return;
     entry.edge = edgeFor(dock->bounds(), output);
@@ -335,7 +342,7 @@ void DockLayoutManager::enter(Window *dock, Dock &entry)
     entry.parked = true;
     present(dock, entry);
     if (entry.autoHide == DockAutoHideState::Shown)
-        slideTo(dock, entry, QPoint());
+        slideTo(dock, entry, base::Point());
 }
 
 // Upstream: ShelfLayoutManager::UpdateAutoHideStateNow.
@@ -344,7 +351,7 @@ void DockLayoutManager::revealNow(Window *dock)
     Dock *entry = dockFor(dock);
     if (!entry || !m_manager->hasWindow(dock))
         return;
-    const QRect output = m_manager->outputBoundsFor(dock);
+    const base::Rect output = m_manager->outputBoundsFor(dock);
     if (output.isEmpty())
         return;
     const DockAutoHideState autoHide = computeAutoHideState(dock, *entry, output, true);
@@ -355,7 +362,7 @@ void DockLayoutManager::revealNow(Window *dock)
 // Upstream: ShelfLayoutManager::UpdateVisibilityState and UpdateAutoHideState.
 void DockLayoutManager::updateDock(Window *dock, Dock &entry)
 {
-    const QRect output = m_manager->outputBoundsFor(dock);
+    const base::Rect output = m_manager->outputBoundsFor(dock);
     if (output.isEmpty())
         return;
     entry.edge = edgeFor(dock->bounds(), output);
@@ -386,13 +393,13 @@ void DockLayoutManager::updateDock(Window *dock, Dock &entry)
 void DockLayoutManager::applyAutoHideState(Window *dock, Dock &entry, DockAutoHideState state)
 {
     entry.autoHide = state;
-    const QRect output = m_manager->outputBoundsFor(dock);
+    const base::Rect output = m_manager->outputBoundsFor(dock);
     slideTo(dock, entry,
             state == DockAutoHideState::Hidden ? hiddenOffset(dock->bounds(), output, entry.edge)
-                                               : QPoint());
+                                               : base::Point());
 }
 
-void DockLayoutManager::slideTo(Window *dock, Dock &entry, const QPoint &offset)
+void DockLayoutManager::slideTo(Window *dock, Dock &entry, const base::Point &offset)
 {
     if (entry.sliding ? offset == entry.slideTo : offset == entry.offset)
         return;
@@ -409,12 +416,12 @@ void DockLayoutManager::slideTo(Window *dock, Dock &entry, const QPoint &offset)
 
 void DockLayoutManager::present(Window *dock, const Dock &entry)
 {
-    QPoint offset = entry.offset;
+    base::Point offset = entry.offset;
     bool hidden = entry.parked;
     if (dock->role() == WindowRole::Panel && m_overviewProgress > 0) {
-        const QPoint away =
+        const base::Point away =
                 hiddenOffset(dock->bounds(), m_manager->outputBoundsFor(dock), entry.edge);
-        offset += (QPointF(away - offset) * m_overviewProgress).toPoint();
+        offset += (base::PointF(away - offset) * m_overviewProgress).toPoint();
         hidden = hidden || m_overviewProgress >= 1;
     }
     dock->setPresentationOffset(offset);
@@ -436,7 +443,7 @@ void DockLayoutManager::advance(double frameTimeMs)
         if (entry->slideStarted < 0)
             entry->slideStarted = frameTimeMs;
         const double progress = easeOut((frameTimeMs - entry->slideStarted) / kSlideDurationMs);
-        const QPointF travel = entry->slideTo - entry->slideFrom;
+        const base::PointF travel = entry->slideTo - entry->slideFrom;
         entry->offset = entry->slideFrom + (travel * progress).toPoint();
         if (progress >= 1) {
             entry->sliding = false;
@@ -470,13 +477,13 @@ void DockLayoutManager::onWindowRemoved(Window *window)
     update();
 }
 
-void DockLayoutManager::onPointerMoved(const QPointF &location)
+void DockLayoutManager::onPointerMoved(const base::PointF &location)
 {
     m_pointer = location;
     update();
 }
 
-void DockLayoutManager::onWindowBoundsChanged(Window *, const QRect &)
+void DockLayoutManager::onWindowBoundsChanged(Window *, const base::Rect &)
 {
     update();
 }

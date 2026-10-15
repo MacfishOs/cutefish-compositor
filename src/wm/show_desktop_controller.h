@@ -7,9 +7,8 @@
 
 #include <vector>
 
-#include <QObject>
-#include <QPoint>
-
+#include "base/geometry.h"
+#include "base/signal.h"
 #include "wm/activation.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/window_observer.h"
@@ -25,13 +24,10 @@ class WindowManager;
 // clients and popups stay where they are, and input follows the drawn window,
 // so a sliver can be clicked. Activating any application window brings them
 // all back; the desktop takes the keyboard meanwhile.
-class ShowDesktopController : public QObject,
-                              public ActivationObserver,
+class ShowDesktopController : public ActivationObserver,
                               public DesksObserver,
                               public WindowObserver
 {
-    Q_OBJECT
-
 public:
     static constexpr double kSlideDurationMs = 250;
     // What stays on screen of a window moved aside, in logical pixels.
@@ -65,13 +61,13 @@ public:
     void onDeskSwitchAnimationLaunching() override;
 
     // --- WindowObserver ---
-    void onWindowBoundsChanged(Window *window, const QRect &oldBounds) override;
+    void onWindowBoundsChanged(Window *window, const base::Rect &oldBounds) override;
     void onWindowVisibilityChanged(Window *window, bool visible) override;
     void onWindowDestroying(Window *window) override;
 
 private:
     // Where `window` is drawn from its bounds once fully aside.
-    QPoint awayOffset(const Window *window) const;
+    base::Point awayOffset(const Window *window) const;
     void slideTo(double target);
     void present();
     void release(Window *window);
@@ -87,6 +83,7 @@ private:
     double m_slideTo = 0;
     double m_slideStarted = -1;
     bool m_sliding = false;
+    base::Subscription m_frameStarted;
 };
 
 } // namespace cutefish::wm

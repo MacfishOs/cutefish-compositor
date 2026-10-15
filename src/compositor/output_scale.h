@@ -4,15 +4,14 @@
 
 #pragma once
 
+#include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
-#include <QPointF>
-#include <QRectF>
-#include <QRegularExpression>
-#include <QSize>
-#include <QString>
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 
@@ -28,14 +27,24 @@ public:
         return OutputScale(value);
     }
 
-    static std::optional<OutputScale> parse(const QString& text)
+    // Digits with an optional fraction; one trailing newline is tolerated.
+    static std::optional<OutputScale> parse(std::string_view text)
     {
-        static const QRegularExpression decimal(QStringLiteral("^[0-9]+(?:\\.[0-9]+)?$"));
-        if (!decimal.match(text).hasMatch())
+        if (text.ends_with('\n'))
+            text.remove_suffix(1);
+        const auto digits = [](std::string_view part) {
+            return !part.empty() && std::all_of(part.begin(), part.end(), [](char c) {
+                return c >= '0' && c <= '9';
+            });
+        };
+        const size_t point = text.find('.');
+        if (!digits(text.substr(0, point))
+            || (point != std::string_view::npos && !digits(text.substr(point + 1))))
             return std::nullopt;
-        bool valid = false;
-        const double value = text.toDouble(&valid);
-        if (!valid || !std::isfinite(value) || value < 1 || value > 4)
+        double value = 0;
+        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (error != std::errc() || end != text.data() + text.size() || !std::isfinite(value)
+            || value < 1 || value > 4)
             return std::nullopt;
         return fromNumerator(static_cast<uint32_t>(std::lround(value * denominator)));
     }
@@ -48,22 +57,22 @@ public:
 
     int integerScale() const { return (m_numerator + denominator - 1) / denominator; }
 
-    QSize logicalSize(const QSize& native) const
+    base::Size logicalSize(const base::Size& native) const
     {
         // Cover the native target; the fractional last logical pixel is clipped.
         const auto extent = [this](int pixels) {
             return int((int64_t(pixels) * denominator + m_numerator - 1) / m_numerator);
         };
-        return QSize(extent(native.width()), extent(native.height()));
+        return base::Size(extent(native.width()), extent(native.height()));
     }
 
-    QPointF toDevice(const QPointF& logical) const { return logical * value(); }
+    base::PointF toDevice(const base::PointF& logical) const { return logical * value(); }
 
-    QPointF toLogical(const QPointF& device) const { return device / value(); }
+    base::PointF toLogical(const base::PointF& device) const { return device / value(); }
 
-    QRect deviceCoverage(const QRectF& logical) const
+    base::Rect deviceCoverage(const base::RectF& logical) const
     {
-        return QRectF(toDevice(logical.topLeft()), logical.size() * value()).toAlignedRect();
+        return base::RectF(toDevice(logical.topLeft()), logical.size() * value()).toEnclosingRect();
     }
 
     bool operator==(const OutputScale& other) const { return m_numerator == other.m_numerator; }

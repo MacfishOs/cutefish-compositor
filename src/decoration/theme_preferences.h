@@ -4,9 +4,11 @@
 
 #pragma once
 
-#include <QFileSystemWatcher>
-#include <QObject>
-#include <QSettings>
+#include <vector>
+
+#include "base/dbus.h"
+#include "base/file_watcher.h"
+#include "base/settings.h"
 
 namespace cutefish::decoration {
 class Theme;
@@ -15,24 +17,27 @@ class Theme;
 // server-side frame and window silhouettes: the shared `cutefish/theme`
 // settings file, and the Appearance service's signals for the changes
 // themselves, since the service writes the file lazily.
-class ThemePreferences : public QObject
+class ThemePreferences
 {
-    Q_OBJECT
 public:
     explicit ThemePreferences(Theme &theme);
+    ThemePreferences(const ThemePreferences &) = delete;
+    ThemePreferences &operator=(const ThemePreferences &) = delete;
 
-public slots:
     void reload();
     void setDarkMode(bool dark);
     void setContinuousCorners(bool continuous);
     void setAccentColor(int index);
-    void setCaptionPointSize(qreal points);
+    void setCaptionPointSize(double points);
     // The font size signal carries no value, so it is read back from the service.
     void reloadCaptionPointSize();
 
 private:
     Theme &m_theme;
-    QSettings m_settings;
-    QFileSystemWatcher m_watcher;
+    base::Settings m_settings;
+    base::FileWatch m_watch;
+    base::dbus::Proxy m_appearance;
+    std::vector<base::dbus::Match> m_signals;
 };
+
 } // namespace cutefish::decoration

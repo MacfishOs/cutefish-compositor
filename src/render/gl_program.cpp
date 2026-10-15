@@ -26,7 +26,7 @@ GLuint compileShader(GLenum type, const char *source)
     if (status != GL_TRUE) {
         char log[512] = {};
         glGetShaderInfoLog(shader, sizeof(log) - 1, nullptr, log);
-        qCCritical(cfRender, "Shader compilation failed: %s", log);
+        CF_CRITICAL(cfRender).printf("Shader compilation failed: %s", log);
         glDeleteShader(shader);
         return 0;
     }
@@ -65,7 +65,7 @@ GLuint linkProgram(const char *vertexSource, const char *fragmentSource)
     if (status != GL_TRUE) {
         char log[512] = {};
         glGetProgramInfoLog(program, sizeof(log) - 1, nullptr, log);
-        qCCritical(cfRender, "Program link failed: %s", log);
+        CF_CRITICAL(cfRender).printf("Program link failed: %s", log);
         glDeleteProgram(program);
         return 0;
     }
@@ -127,9 +127,9 @@ GLint GlProgram::attribute(const char *name) const
     return m_attributes.emplace(name, glGetAttribLocation(m_name, name)).first->second;
 }
 
-QByteArray clippedFragment(const char *body, const char *extensions)
+std::string clippedFragment(const char *body, const char *extensions)
 {
-    return QByteArray(extensions) + "\n" + shaders::clipped_precision + shaders::rounded_clip + body
+    return std::string(extensions) + "\n" + shaders::clipped_precision + shaders::rounded_clip + body
             + shaders::clipped_main;
 }
 

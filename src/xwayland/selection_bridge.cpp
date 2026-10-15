@@ -7,9 +7,10 @@
 
 #include "selection_bridge.h"
 
-#include <QByteArray>
-#include <QSocketNotifier>
-#include <QTimer>
+#include "base/strings.h"
+#include "base/timer.h"
+#include "core/main_loop.h"
+#include "xwayland/fd_watch.h"
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -22,6 +23,19 @@ namespace cutefish::xwayland {
 namespace {
 constexpr uint32_t chunkSize = 64 * 1024;
 constexpr size_t transferLimit = 64;
+// How long a transfer may stall before it is given up.
+constexpr std::chrono::milliseconds kTransferTimeout(10000);
+
+// A stalled transfer's end, started.
+std::unique_ptr<base::Timer> transferTimeout(std::function<void()> expired)
+{
+    auto timer = std::make_unique<base::Timer>(core::mainLoop());
+    timer->setSingleShot(true);
+    timer->onTimeout = std::move(expired);
+    timer->start(kTransferTimeout);
+    return timer;
+}
+
 } // namespace
 
 struct SelectionBridge::Save {
@@ -33,10 +47,10 @@ struct SelectionBridge::Save {
     size_t index = 0;
     size_t total = 0;
     int fd = -1;
-    QByteArray data;
+    std::string data;
     bool installing = false, received = false;
-    std::unique_ptr<QSocketNotifier> notifier;
-    QTimer timeout;
+    std::unique_ptr<FdWatch> notifier;
+    base::Timer timeout {core::mainLoop()};
 
     ~Save()
     {
@@ -46,7 +60,7 @@ struct SelectionBridge::Save {
 };
 
 struct SelectionBridge::Source : clipboard::DataSource {
-    QPointer<SelectionBridge> bridge;
+    base::WeakPtr<SelectionBridge> bridge;
     uint64_t generation;
     std::map<std::string, xcb_atom_t> targets;
 
@@ -72,12 +86,12 @@ struct SelectionBridge::Transfer {
     bool more = false;
     uint32_t propertyOffset = 0;
     uint64_t generation = 0;
-    QByteArray data;
-    qsizetype offset = 0;
+    std::string data;
+    size_t offset = 0;
     xcb_atom_t target = 0;
     xcb_selection_request_event_t request {};
-    std::unique_ptr<QSocketNotifier> notifier;
-    std::unique_ptr<QTimer> timer;
+    std::unique_ptr<FdWatch> notifier;
+    std::unique_ptr<base::Timer> timer;
 
     ~Transfer()
     {
@@ -92,7 +106,7 @@ SelectionBridge::SelectionBridge(xcb_connection_t *connection, xcb_window_t root
     : m_kind(kind)
     , m_connection(connection)
     , m_root(root)
-    , m_controller(controller)
+    , m_controller(controller ? controller->weakPtr() : nullptr)
     , m_reply(std::move(reply))
 {
 }
@@ -101,7 +115,7 @@ SelectionBridge::~SelectionBridge()
 {
     finishSave(false);
     if (m_controller) {
-        disconnect(m_controller, nullptr, this, nullptr);
+        m_selectionChanged.reset();
         m_controller->sourceDestroyed(m_source.get());
     }
     while (!m_transfers.empty()) {
@@ -115,7 +129,7 @@ SelectionBridge::~SelectionBridge()
 void SelectionBridge::poll(unsigned sequence, std::function<void(void *)> callback)
 {
     m_reply(sequence,
-            [self = QPointer<SelectionBridge>(this), callback = std::move(callback)](void *p) {
+            [self = m_weakFactory.getWeakPtr(), callback = std::move(callback)](void *p) {
                 if (self)
                     callback(p);
             });
@@ -179,8 +193,9 @@ void SelectionBridge::start(uint8_t eventBase)
             xcb_set_selection_owner(m_connection, m_window, atom("CLIPBOARD_MANAGER"),
                                     XCB_CURRENT_TIME);
         }
-        connect(m_controller, &clipboard::SelectionController::selectionChanged, this,
-                &SelectionBridge::changed);
+        m_selectionChanged = m_controller->selectionChanged.connect([this] {
+            changed();
+        });
         changed();
         xcb_flush(m_connection);
     });
@@ -248,18 +263,13 @@ void SelectionBridge::discover(xcb_timestamp_t time)
     transfer->incoming = true;
     transfer->generation = m_generation;
     transfer->target = atom("TARGETS");
-    transfer->timer = std::make_unique<QTimer>();
-    transfer->timer->setSingleShot(true);
-    connect(transfer->timer.get(), &QTimer::timeout, this, [this, window] {
-        finish(window);
-    });
-    transfer->timer->start(10000);
+    transfer->timer = transferTimeout([this, window] { finish(window); });
     m_transfers[{window, XCB_ATOM_NONE}] = std::move(transfer);
     // A unique requestor prevents delayed conversions from matching a newer owner.
     xcb_convert_selection(m_connection, window, selection(), atom("TARGETS"),
                           atom("_CUTEFISH_SELECTION"), time);
     auto source = std::make_shared<Source>();
-    source->bridge = this;
+    source->bridge = m_weakFactory.getWeakPtr();
     source->generation = generation;
     m_source = source;
     xcb_flush(m_connection);
@@ -280,17 +290,10 @@ void SelectionBridge::receive(xcb_atom_t target, int fd, uint64_t generation,
     transfer->incoming = true;
     transfer->generation = m_generation;
     transfer->target = target;
-    transfer->notifier = std::make_unique<QSocketNotifier>(fd, QSocketNotifier::Write);
-    transfer->notifier->setEnabled(false);
-    connect(transfer->notifier.get(), &QSocketNotifier::activated, this, [this, window] {
+    transfer->notifier = std::make_unique<FdWatch>(fd, EPOLLOUT, [this, window] {
         writePipe(window);
     });
-    transfer->timer = std::make_unique<QTimer>();
-    transfer->timer->setSingleShot(true);
-    connect(transfer->timer.get(), &QTimer::timeout, this, [this, window] {
-        finish(window);
-    });
-    transfer->timer->start(10000);
+    transfer->timer = transferTimeout([this, window] { finish(window); });
     m_transfers[{window, XCB_ATOM_NONE}] = std::move(transfer);
     xcb_convert_selection(m_connection, window, selection(), target, atom("_CUTEFISH_SELECTION"),
                           time ? time : m_timestamp);
@@ -316,7 +319,7 @@ void SelectionBridge::finish(xcb_window_t window, xcb_atom_t property, bool succ
 void SelectionBridge::readProperty(xcb_window_t window)
 {
     auto it = m_transfers.find({window, XCB_ATOM_NONE});
-    if (it == m_transfers.end() || it->second->pending || !it->second->data.isEmpty())
+    if (it == m_transfers.end() || it->second->pending || !it->second->data.empty())
         return;
     it->second->pending = true;
     const auto generation = it->second->generation;
@@ -335,7 +338,7 @@ void SelectionBridge::readProperty(xcb_window_t window)
                  finish(window);
                  return;
              }
-             t.timer->start(10000);
+             t.timer->start(kTransferTimeout);
              if (t.target == atom("TARGETS")) {
                  auto source = m_source;
                  if (generation != m_generation || !source || r->type != XCB_ATOM_ATOM
@@ -393,14 +396,14 @@ void SelectionBridge::readProperty(xcb_window_t window)
                  finish(window);
                  return;
              }
-             t.data = QByteArray(static_cast<const char *>(xcb_get_property_value(r)),
-                                 xcb_get_property_value_length(r));
+             t.data.assign(static_cast<const char *>(xcb_get_property_value(r)),
+                           size_t(xcb_get_property_value_length(r)));
              t.offset = 0;
              t.more = r->bytes_after != 0;
              t.propertyOffset += (t.data.size() + 3) / 4;
              if (t.target == atom("TEXT") && r->type == XCB_ATOM_STRING)
-                 t.data = QString::fromLatin1(t.data).toUtf8();
-             if (t.incremental && t.data.isEmpty()) {
+                 t.data = base::strings::latin1ToUtf8(t.data);
+             if (t.incremental && t.data.empty()) {
                  finish(window, XCB_ATOM_NONE, true);
                  return;
              }
@@ -415,7 +418,7 @@ void SelectionBridge::writePipe(xcb_window_t window)
         return;
     auto &t = *it->second;
     while (t.offset < t.data.size()) {
-        auto count = write(t.fd, t.data.constData() + t.offset, t.data.size() - t.offset);
+        auto count = write(t.fd, t.data.data() + t.offset, t.data.size() - t.offset);
         if (count < 0 && errno == EINTR)
             continue;
         if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -426,8 +429,8 @@ void SelectionBridge::writePipe(xcb_window_t window)
             finish(window);
             return;
         }
-        t.offset += count;
-        t.timer->start(10000);
+        t.offset += size_t(count);
+        t.timer->start(kTransferTimeout);
     }
     t.notifier->setEnabled(false);
     t.data.clear();
@@ -502,8 +505,8 @@ void SelectionBridge::saveNext()
         return;
     }
     save.fd = fds[0];
-    save.notifier = std::make_unique<QSocketNotifier>(fds[0], QSocketNotifier::Read);
-    connect(save.notifier.get(), &QSocketNotifier::activated, this, &SelectionBridge::readSave);
+    save.notifier = std::make_unique<FdWatch>(fds[0], EPOLLIN, [this] { readSave(); });
+    save.notifier->setEnabled(true);
     save.received = false;
     receive(save.source->targets.at(save.formats[save.index]), fds[1], save.source->generation,
             [this, source = save.source, index = save.index](bool success) {
@@ -525,9 +528,9 @@ void SelectionBridge::readSave()
         finishSave(false);
         return;
     }
-    save.timeout.start(10000);
+    save.timeout.start(kTransferTimeout);
     if (count > 0) {
-        save.data.append(data, count);
+        save.data.append(data, size_t(count));
         save.total += count;
         return;
     }
@@ -571,10 +574,8 @@ void SelectionBridge::request(xcb_selection_request_event_t r)
             m_save = std::make_unique<Save>();
             m_save->request = r;
             m_save->timeout.setSingleShot(true);
-            connect(&m_save->timeout, &QTimer::timeout, this, [this] {
-                finishSave(false);
-            });
-            m_save->timeout.start(10000);
+            m_save->timeout.onTimeout = [this] { finishSave(false); };
+            m_save->timeout.start(kTransferTimeout);
             poll(xcb_get_property(m_connection, 0, r.requestor, r.property, XCB_ATOM_ATOM, 0, 128)
                          .sequence,
                  [this, r](void *p) {
@@ -632,17 +633,10 @@ void SelectionBridge::request(xcb_selection_request_event_t r)
         t->fd = fds[0];
         t->request = r;
         t->target = r.target == atom("TEXT") ? atom("UTF8_STRING") : r.target;
-        t->notifier = std::make_unique<QSocketNotifier>(fds[0], QSocketNotifier::Read);
-        t->notifier->setEnabled(false);
-        connect(t->notifier.get(), &QSocketNotifier::activated, this, [this, r] {
+        t->notifier = std::make_unique<FdWatch>(fds[0], EPOLLIN, [this, r] {
             readPipe(r.requestor, r.property);
         });
-        t->timer = std::make_unique<QTimer>();
-        t->timer->setSingleShot(true);
-        connect(t->timer.get(), &QTimer::timeout, this, [this, r] {
-            finish(r.requestor, r.property);
-        });
-        t->timer->start(10000);
+        t->timer = transferTimeout([this, r] { finish(r.requestor, r.property); });
         m_transfers[{r.requestor, r.property}] = std::move(t);
         // Preserve this connection's existing subscriptions on managed windows.
         poll(xcb_get_window_attributes(m_connection, r.requestor).sequence, [this, r](void *p) {
@@ -686,8 +680,8 @@ void SelectionBridge::readPipe(xcb_window_t window, xcb_atom_t property)
         if (!count)
             t.eof = true;
         else
-            t.data.append(data, count);
-        t.timer->start(10000);
+            t.data.append(data, size_t(count));
+        t.timer->start(kTransferTimeout);
     }
     if (!t.incremental && !t.eof) {
         t.incremental = true;
@@ -698,8 +692,8 @@ void SelectionBridge::readPipe(xcb_window_t window, xcb_atom_t property)
         notify(t.request, true);
     } else {
         xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, window, property, t.target, 8,
-                            t.data.size(), t.data.constData());
-        const bool done = t.eof && (t.data.isEmpty() || !t.incremental);
+                            t.data.size(), t.data.data());
+        const bool done = t.eof && (t.data.empty() || !t.incremental);
         t.data.clear();
         if (!t.notified) {
             t.notified = true;

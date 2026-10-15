@@ -5,7 +5,6 @@
 #pragma once
 
 #include <GLES3/gl3.h>
-#include <QByteArray>
 #include <map>
 #include <string>
 #include <string_view>
@@ -41,6 +40,6 @@ private:
     mutable std::map<std::string, GLint, std::less<>> m_attributes;
 };
 
-QByteArray clippedFragment(const char *body, const char *extensions = "");
+std::string clippedFragment(const char *body, const char *extensions = "");
 
 } // namespace cutefish::render

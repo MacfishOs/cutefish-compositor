@@ -12,10 +12,10 @@ using namespace std::chrono_literals;
 namespace {
 
 // A 116 x 61 mm clickpad; the presses below were recorded on it.
-const QSizeF kPad(116.2, 60.9);
+const cutefish::base::SizeF kPad(116.2, 60.9);
 const Timestamp kPress = Timestamp(10s);
 
-TouchpadContact finger(QPointF position, std::chrono::milliseconds age)
+TouchpadContact finger(cutefish::base::PointF position, std::chrono::milliseconds age)
 {
     return {position, position, kPress - age};
 }
@@ -56,7 +56,7 @@ TEST(TouchpadClick, IgnoresARestingThumb)
 
     // One that moved across the pad was pointing, not resting.
     TouchpadContact moved = thumb;
-    moved.origin = QPointF(60.0, 30.0);
+    moved.origin = cutefish::base::PointF(60.0, 30.0);
     EXPECT_TRUE(isTwoFingerClick(moved, finger({50.0, 40.0}, 150ms), kPress, kPad));
 
     // Stacked under a finger that came later, it is a thumb however new.
@@ -67,6 +67,6 @@ TEST(TouchpadClick, IgnoresARestingThumb)
 TEST(TouchpadClick, IgnoresAFingerFromThePalmEdge)
 {
     TouchpadContact palm = finger({30.0, 30.0}, 60ms);
-    palm.origin = QPointF(3.0, 30.0);
+    palm.origin = cutefish::base::PointF(3.0, 30.0);
     EXPECT_FALSE(isTwoFingerClick(palm, finger({45.0, 25.0}, 60ms), kPress, kPad));
 }

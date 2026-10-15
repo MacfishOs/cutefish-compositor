@@ -233,7 +233,7 @@ wl_resource* create_buffer(wl_client* client, wl_resource* resource, uint32_t bu
     params->used = true;
 
     render::DmaBufAttributes attributes;
-    attributes.size = QSize(width, height);
+    attributes.size = base::Size(width, height);
     attributes.format = format;
     attributes.modifier = params->planes[0].modifier;
     attributes.yInvert = (flags & ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_Y_INVERT) != 0;
@@ -376,7 +376,7 @@ std::unique_ptr<LinuxDmabufGlobal> LinuxDmabufGlobal::create(wl_display* display
 
     auto manager = std::make_unique<DmaBufFeedbackManager>(compositor, device);
     if (manager->formatsAndModifiers().empty()) {
-        qCWarning(cfWayland) << "No importable DMA-BUF format; not advertising linux-dmabuf";
+        CF_WARNING(cfWayland) << "No importable DMA-BUF format; not advertising linux-dmabuf";
         return nullptr;
     }
 

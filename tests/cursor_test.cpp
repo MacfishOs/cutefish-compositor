@@ -4,18 +4,17 @@
 
 #include <gtest/gtest.h>
 
-#include <QCoreApplication>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
 
+#include "base/byte_stream.h"
 #include "compositor/compositor.h"
 #include "cursor/cursor.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
+#include "input_test_util.h"
 #include "scene/scene.h"
-
-#include <QDataStream>
-#include <QDir>
-#include <QFile>
-#include <QTemporaryDir>
 
 using namespace cutefish;
 
@@ -31,11 +30,12 @@ TEST(CursorTheme, EveryStandardShapeLoadsWithPremultipliedPixels)
                 bool visible = false;
                 for (int y = 0; y < frame.image.height(); ++y) {
                     for (int x = 0; x < frame.image.width(); ++x) {
-                        const auto pixel = frame.image.pixel(x, y);
-                        EXPECT_LE(qRed(pixel), qAlpha(pixel));
-                        EXPECT_LE(qGreen(pixel), qAlpha(pixel));
-                        EXPECT_LE(qBlue(pixel), qAlpha(pixel));
-                        visible |= qAlpha(pixel) != 0;
+                        const uint32_t pixel = frame.image.pixel(x, y);
+                        const uint32_t alpha = pixel >> 24;
+                        EXPECT_LE((pixel >> 16) & 0xff, alpha);
+                        EXPECT_LE((pixel >> 8) & 0xff, alpha);
+                        EXPECT_LE(pixel & 0xff, alpha);
+                        visible |= alpha != 0;
                     }
                 }
                 EXPECT_TRUE(visible);
@@ -46,34 +46,41 @@ TEST(CursorTheme, EveryStandardShapeLoadsWithPremultipliedPixels)
 }
 
 namespace {
-QByteArray cursorFile()
+std::string cursorFile()
 {
-    QByteArray bytes;
-    QDataStream out(&bytes, QIODevice::WriteOnly);
-    out.setByteOrder(QDataStream::LittleEndian);
-    out << quint32(0x72756358) << quint32(16) << quint32(1) << quint32(1);
-    out << quint32(0xfffd0002) << quint32(24) << quint32(28);
-    out << quint32(36) << quint32(0xfffd0002) << quint32(24) << quint32(1);
-    out << quint32(2) << quint32(1) << quint32(1) << quint32(0) << quint32(37);
-    out << quint32(0xff123456) << quint32(0xffabcdef);
-    return bytes;
+    base::ByteWriter out(std::endian::little);
+    for (const uint32_t value : {0x72756358u, 16u, 1u, 1u, 0xfffd0002u, 24u, 28u, 36u, 0xfffd0002u,
+                                 24u, 1u, 2u, 1u, 1u, 0u, 37u, 0xff123456u, 0xffabcdefu})
+        out.write(value);
+    return out.bytes();
 }
 
 class CursorSearchTest : public testing::Test
 {
 protected:
-    void SetUp() override { qputenv("XCURSOR_PATH", directory.path().toUtf8()); }
+    void SetUp() override { cursor::setThemePathsForTesting({directory.path()}); }
 
-    void TearDown() override
+    void TearDown() override { cursor::setThemePathsForTesting({}); }
+
+    input_test::TemporaryDirectory directory;
+};
+
+// A cursor sink that keeps a copy of the last image.
+class CopyingSink : public render::CursorSink
+{
+public:
+    bool setCursorImage(const render::CursorImage &frame) override
     {
-        if (previous.isNull())
-            qunsetenv("XCURSOR_PATH");
-        else
-            qputenv("XCURSOR_PATH", previous);
+        image = ui::Bitmap::copyOf(frame.pixels, frame.size.width(), frame.size.height(),
+                                   size_t(frame.stride), ui::Bitmap::Format::Argb32Premultiplied);
+        return true;
     }
 
-    QByteArray previous = qgetenv("XCURSOR_PATH");
-    QTemporaryDir directory;
+    void hideCursor() override { }
+
+    void moveCursor(const base::PointF &) override { }
+
+    ui::Bitmap image;
 };
 } // namespace
 
@@ -81,18 +88,18 @@ TEST(CursorTheme, ReadsPixelsHotspotAndDelay)
 {
     const auto frames = cursor::readXCursor(cursorFile(), 24);
     ASSERT_EQ(frames.size(), 1u);
-    EXPECT_EQ(frames[0].image.size(), QSize(2, 1));
+    EXPECT_EQ(frames[0].image.size(), base::Size(2, 1));
     EXPECT_EQ(frames[0].image.pixel(0, 0), 0xff123456u);
     EXPECT_EQ(frames[0].image.pixel(1, 0), 0xffabcdefu);
-    EXPECT_EQ(frames[0].hotspot, QPoint(1, 0));
+    EXPECT_EQ(frames[0].hotspot, base::Point(1, 0));
     EXPECT_EQ(frames[0].delayMs, 37);
 }
 
 TEST(CursorTheme, RejectsTruncatedAndOversizedFiles)
 {
     const auto bytes = cursorFile();
-    for (int size = 0; size < bytes.size(); ++size)
-        EXPECT_TRUE(cursor::readXCursor(bytes.left(size), 24).empty());
+    for (size_t size = 0; size < bytes.size(); ++size)
+        EXPECT_TRUE(cursor::readXCursor(bytes.substr(0, size), 24).empty());
     auto corrupt = bytes;
     corrupt[12] = char(0xff);
     corrupt[13] = char(0xff);
@@ -105,11 +112,7 @@ TEST(CursorTheme, RejectsTruncatedAndOversizedFiles)
 TEST_F(CursorSearchTest, LoadsAdwaitaFromSearchPathAndFallsBackToPointer)
 {
     ASSERT_TRUE(directory.isValid());
-    ASSERT_TRUE(QDir(directory.path()).mkpath("Adwaita/cursors"));
-    QFile file(directory.filePath("Adwaita/cursors/left_ptr"));
-    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
-    ASSERT_EQ(file.write(cursorFile()), cursorFile().size());
-    file.close();
+    ASSERT_TRUE(input_test::writeFile(directory.filePath("Adwaita/cursors/left_ptr"), cursorFile()));
     const auto frames = cursor::load(input::CursorShape::Wait, 24);
     ASSERT_EQ(frames.size(), 1u);
     EXPECT_EQ(frames[0].image.pixel(0, 0), 0xff123456u);
@@ -120,37 +123,26 @@ TEST_F(CursorSearchTest, MissingThemeKeepsPointerVisible)
 {
     const auto frames = cursor::load(input::CursorShape::Default, 24);
     ASSERT_EQ(frames.size(), 1u);
-    EXPECT_EQ(frames.front().image.size(), QSize(24, 24));
+    EXPECT_EQ(frames.front().image.size(), base::Size(24, 24));
     EXPECT_FALSE(frames.front().image.isNull());
 }
 
 TEST_F(CursorSearchTest, ResolvesInheritanceAndLegacyShapeAliases)
 {
-    ASSERT_TRUE(QDir(directory.path()).mkpath("Parent/cursors"));
-    ASSERT_TRUE(QDir(directory.path()).mkpath("Child"));
-    QFile index(directory.filePath("Child/index.theme"));
-    ASSERT_TRUE(index.open(QIODevice::WriteOnly));
-    index.write("[Icon Theme]\nInherits=Parent\n");
-    index.close();
-    QFile file(directory.filePath("Parent/cursors/hand2"));
-    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
-    file.write(cursorFile());
-    file.close();
-    const auto frames = cursor::load(input::CursorShape::Pointer, 24, QStringLiteral("Child"));
+    ASSERT_TRUE(input_test::writeFile(directory.filePath("Child/index.theme"),
+                                      "[Icon Theme]\nInherits=Parent\n"));
+    ASSERT_TRUE(input_test::writeFile(directory.filePath("Parent/cursors/hand2"), cursorFile()));
+    const auto frames = cursor::load(input::CursorShape::Pointer, 24, "Child");
     ASSERT_EQ(frames.size(), 1u);
     EXPECT_EQ(frames[0].image.pixel(0, 0), 0xff123456u);
 }
 
 TEST_F(CursorSearchTest, CyclicInheritanceAndInvalidNamesFallBack)
 {
-    ASSERT_TRUE(QDir(directory.path()).mkpath("Loop"));
-    QFile index(directory.filePath("Loop/index.theme"));
-    ASSERT_TRUE(index.open(QIODevice::WriteOnly));
-    index.write("[Icon Theme]\nInherits=Loop\n");
-    index.close();
-    EXPECT_FALSE(cursor::load(input::CursorShape::Default, 24, QStringLiteral("Loop")).empty());
-    for (const auto &name :
-         {QStringLiteral("../escape"), QStringLiteral("/absolute"), QStringLiteral("..")}) {
+    ASSERT_TRUE(input_test::writeFile(directory.filePath("Loop/index.theme"),
+                                      "[Icon Theme]\nInherits=Loop\n"));
+    EXPECT_FALSE(cursor::load(input::CursorShape::Default, 24, "Loop").empty());
+    for (const std::string name : {"../escape", "/absolute", ".."}) {
         EXPECT_FALSE(cursor::validThemeName(name));
         EXPECT_FALSE(cursor::load(input::CursorShape::Default, 24, name).empty());
     }
@@ -158,10 +150,6 @@ TEST_F(CursorSearchTest, CyclicInheritanceAndInvalidNamesFallBack)
 
 TEST(CursorScene, PhysicalPositionAndOverrideUseIndependentClientLayer)
 {
-    int argc = 1;
-    char name[] = "cursor-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     scene::Scene scene;
     auto *clients = scene.root()->addChild(std::make_unique<scene::Node>());
     compositor::Compositor compositor(nullptr);
@@ -172,7 +160,7 @@ TEST(CursorScene, PhysicalPositionAndOverrideUseIndependentClientLayer)
     auto *node = scene.root()->children().back();
     input.warpPointer({100, 90});
     EXPECT_EQ(node->position(),
-              QPoint(100, 90) - cursor::load(input::CursorShape::Default, 24).front().hotspot);
+              base::Point(100, 90) - cursor::load(input::CursorShape::Default, 24).front().hotspot);
     EXPECT_TRUE(node->isVisible());
     seat.setCompositorCursorShape(input::CursorShape::Hidden);
     EXPECT_FALSE(node->isVisible());
@@ -188,10 +176,6 @@ TEST(CursorScene, AHeldCursorLeavesThePlaneAloneUntilReleased)
 {
     // A compositor starting up keeps off the plane, where the previous one's
     // cursor still is, until its displays settle; then it takes it over once.
-    int argc = 1;
-    char name[] = "cursor-held-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
     class Sink : public render::CursorSink
     {
     public:
@@ -204,12 +188,15 @@ TEST(CursorScene, AHeldCursorLeavesThePlaneAloneUntilReleased)
 
         void hideCursor() override { ++hides; }
 
-        void moveCursor(const QPointF &position) override { moves.push_back(position); }
+        void moveCursor(const base::PointF &position) override
+        {
+            moves.push_back(position);
+        }
 
         int images = 0;
         int hides = 0;
-        QPoint hotspot;
-        std::vector<QPointF> moves;
+        base::Point hotspot;
+        std::vector<base::PointF> moves;
     } sink;
     scene::Scene scene;
     compositor::Compositor compositor(nullptr);
@@ -233,44 +220,21 @@ TEST(CursorScene, AHeldCursorLeavesThePlaneAloneUntilReleased)
     // What the takeover adds to the old image's corner is what the plane takes off.
     EXPECT_EQ(cursor.deviceHotspot(), sink.hotspot);
     ASSERT_FALSE(sink.moves.empty());
-    EXPECT_EQ(sink.moves.back(), QPointF(100, 90));
+    EXPECT_TRUE(base::fuzzyCompare(sink.moves.back(), base::PointF(100, 90)));
     EXPECT_TRUE(cursor.isHardware());
     EXPECT_FALSE(node->isVisible());
 }
 
 TEST_F(CursorSearchTest, SwitchingThemeRefreshesHardwareImageWithoutPointerMotion)
 {
-    int argc = 1;
-    char name[] = "cursor-theme-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
-    for (const auto &theme : {QStringLiteral("First"), QStringLiteral("Second")}) {
-        ASSERT_TRUE(QDir(directory.path()).mkpath(theme + "/cursors"));
-        QFile file(directory.filePath(theme + "/cursors/left_ptr"));
-        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    for (const std::string theme : {"First", "Second"}) {
         auto bytes = cursorFile();
         if (theme == "Second")
             bytes[bytes.size() - 8] = char(0x78);
-        file.write(bytes);
+        ASSERT_TRUE(input_test::writeFile(directory.filePath(theme + "/cursors/left_ptr"), bytes));
     }
 
-    class Sink : public render::CursorSink
-    {
-    public:
-        bool setCursorImage(const render::CursorImage &frame) override
-        {
-            image = QImage(frame.pixels, frame.size.width(), frame.size.height(), frame.stride,
-                           QImage::Format_ARGB32_Premultiplied)
-                            .copy();
-            return true;
-        }
-
-        void hideCursor() override { }
-
-        void moveCursor(const QPointF &) override { }
-
-        QImage image;
-    } sink;
+    CopyingSink sink;
 
     scene::Scene scene;
     compositor::Compositor compositor(nullptr);
@@ -285,43 +249,20 @@ TEST_F(CursorSearchTest, SwitchingThemeRefreshesHardwareImageWithoutPointerMotio
     cursor.setTheme("First", 24);
     EXPECT_EQ(sink.image.pixel(0, 0), 0xff123456u);
     cursor.setTheme("Missing", 48);
-    EXPECT_EQ(sink.image.size(), QSize(48, 48));
+    EXPECT_EQ(sink.image.size(), base::Size(48, 48));
 }
 
 TEST_F(CursorSearchTest, AShapeIsReadOncePerThemeAndSize)
 {
-    int argc = 1;
-    char name[] = "cursor-cache-test";
-    char *argv[] = {name, nullptr};
-    QCoreApplication app(argc, argv);
-    const auto write = [&](const QString &theme, char blue) {
-        ASSERT_TRUE(QDir(directory.path()).mkpath(theme + "/cursors"));
-        QFile file(directory.filePath(theme + "/cursors/left_ptr"));
-        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    const auto write = [&](const std::string &theme, char blue) {
         auto bytes = cursorFile();
         bytes[bytes.size() - 8] = blue;
-        file.write(bytes);
+        ASSERT_TRUE(input_test::writeFile(directory.filePath(theme + "/cursors/left_ptr"), bytes));
     };
     write("First", char(0x56));
     write("Second", char(0x78));
 
-    class Sink : public render::CursorSink
-    {
-    public:
-        bool setCursorImage(const render::CursorImage &frame) override
-        {
-            image = QImage(frame.pixels, frame.size.width(), frame.size.height(), frame.stride,
-                           QImage::Format_ARGB32_Premultiplied)
-                            .copy();
-            return true;
-        }
-
-        void hideCursor() override { }
-
-        void moveCursor(const QPointF &) override { }
-
-        QImage image;
-    } sink;
+    CopyingSink sink;
 
     scene::Scene scene;
     compositor::Compositor compositor(nullptr);

@@ -16,6 +16,7 @@
 #include <pointer-constraints-unstable-v1-server-protocol.h>
 #include <wayland-server-protocol.h>
 
+#include "base/region.h"
 #include "compositor/surface.h"
 #include "compositor/surface_observer.h"
 #include "input/pointer_constraint_delegate.h"
@@ -33,8 +34,8 @@ class WaylandPointerConstraintDelegate : public input::PointerConstraintDelegate
 {
 public:
     WaylandPointerConstraintDelegate(wl_resource *resource, Kind kind, input::Seat *seat,
-                                     compositor::Surface *surface, std::optional<QRegion> region,
-                                     bool persistent)
+                                     compositor::Surface *surface,
+                                     std::optional<base::Region> region, bool persistent)
         : m_resource(resource)
         , m_kind(kind)
         , m_seat(seat)
@@ -52,9 +53,12 @@ public:
             m_surface->removeSurfaceObserver(this);
     }
 
-    void setPendingRegion(std::optional<QRegion> region) { m_pendingRegion = std::move(region); }
+    void setPendingRegion(std::optional<base::Region> region)
+    {
+        m_pendingRegion = std::move(region);
+    }
 
-    void setPendingHint(const QPointF &hint) { m_pendingHint = hint; }
+    void setPendingHint(const base::PointF &hint) { m_pendingHint = hint; }
 
     // input::PointerConstraintDelegate:
     Kind kind() const override { return m_kind; }
@@ -89,9 +93,15 @@ public:
 
     compositor::Surface *constrainedSurface() const override { return m_surface; }
 
-    std::optional<QRegion> region() const override { return m_region; }
+    std::optional<base::Region> region() const override
+    {
+        return m_region;
+    }
 
-    std::optional<QPointF> cursorPositionHint() const override { return m_hint; }
+    std::optional<base::PointF> cursorPositionHint() const override
+    {
+        return m_hint;
+    }
 
     // compositor::SurfaceObserver:
     void onSurfaceDestroying(compositor::Surface *surface) override
@@ -124,21 +134,21 @@ private:
     const Kind m_kind;
     input::Seat *const m_seat;
     compositor::Surface *m_surface;
-    std::optional<QRegion> m_region;
-    std::optional<QPointF> m_hint;
+    std::optional<base::Region> m_region;
+    std::optional<base::PointF> m_hint;
     // Set means a region, possibly null, was requested since the last commit.
-    std::optional<std::optional<QRegion>> m_pendingRegion;
-    std::optional<QPointF> m_pendingHint;
+    std::optional<std::optional<base::Region>> m_pendingRegion;
+    std::optional<base::PointF> m_pendingHint;
     const bool m_persistent;
 };
 
-std::optional<QRegion> regionFromResource(wl_client *client, wl_resource *region)
+std::optional<base::Region> regionFromResource(wl_client *client, wl_resource *region)
 {
     if (!region)
         return std::nullopt;
     const double scale = clientScale(client);
-    QRegion result;
-    for (const QRect &rect : *getUserDataAs<QRegion>(region))
+    base::Region result;
+    for (const base::Rect &rect : *getUserDataAs<base::Region>(region))
         result += clientToLogical(rect, scale);
     return result;
 }
@@ -156,7 +166,7 @@ void locked_pointer_set_cursor_position_hint(wl_client *client, wl_resource *res
 {
     const double scale = clientScale(client);
     getUserDataAs<WaylandPointerConstraintDelegate>(resource)->setPendingHint(
-            QPointF(wl_fixed_to_double(surfaceX), wl_fixed_to_double(surfaceY)) / scale);
+            base::PointF(wl_fixed_to_double(surfaceX), wl_fixed_to_double(surfaceY)) / scale);
 }
 
 void locked_pointer_set_region(wl_client *client, wl_resource *resource,

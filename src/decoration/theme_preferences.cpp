@@ -3,73 +3,78 @@
 // found in the LICENSE file.
 
 #include "decoration/theme_preferences.h"
+#include "core/main_loop.h"
 #include "core/preferences.h"
 #include "decoration/decoration_theme.h"
-
-#include <QDBusConnection>
-#include <QDBusInterface>
-#include <QDir>
-#include <QFileInfo>
+#include <filesystem>
 
 namespace cutefish::decoration {
+
 ThemePreferences::ThemePreferences(Theme &theme)
     : m_theme(theme)
-    , m_settings(preferencesFile(QStringLiteral("services")), QSettings::IniFormat)
+    , m_settings(preferencesFile("services"))
+    , m_appearance(base::dbus::Connection::session(core::mainLoop()), "com.cutefish.Services",
+                   "/com/cutefish/Services/Appearance", "com.cutefish.Services.Appearance")
 {
-    m_settings.beginGroup(QStringLiteral("Appearance"));
-    const auto directory = QFileInfo(m_settings.fileName()).absolutePath();
-    QDir().mkpath(directory);
-    m_watcher.addPath(directory);
-    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, &ThemePreferences::reload);
-    connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, &ThemePreferences::reload);
-    QDBusConnection::sessionBus().connect(
-            QStringLiteral("com.cutefish.Services"),
-            QStringLiteral("/com/cutefish/Services/Appearance"),
-            QStringLiteral("com.cutefish.Services.Appearance"), QStringLiteral("darkModeChanged"),
-            this, SLOT(setDarkMode(bool)));
-    QDBusConnection::sessionBus().connect(
-            QStringLiteral("com.cutefish.Services"),
-            QStringLiteral("/com/cutefish/Services/Appearance"),
-            QStringLiteral("com.cutefish.Services.Appearance"),
-            QStringLiteral("continuousCornersChanged"), this, SLOT(setContinuousCorners(bool)));
-    QDBusConnection::sessionBus().connect(
-            QStringLiteral("com.cutefish.Services"),
-            QStringLiteral("/com/cutefish/Services/Appearance"),
-            QStringLiteral("com.cutefish.Services.Appearance"),
-            QStringLiteral("accentColorChanged"), this, SLOT(setAccentColor(int)));
-    QDBusConnection::sessionBus().connect(
-            QStringLiteral("com.cutefish.Services"),
-            QStringLiteral("/com/cutefish/Services/Appearance"),
-            QStringLiteral("com.cutefish.Services.Appearance"),
-            QStringLiteral("systemFontPointSizeChanged"), this, SLOT(reloadCaptionPointSize()));
+    std::error_code error;
+    std::filesystem::create_directories(std::filesystem::path(m_settings.path()).parent_path(),
+                                        error);
+    // The directory is what is watched, so a file replaced by a rename is
+    // followed as well.
+    m_watch = base::FileWatch::file(m_settings.path(), [this] { reload(); }, core::mainLoop());
+    if (m_appearance.isValid()) {
+        const auto readBool = [](const base::dbus::Message &message) {
+            bool value = false;
+            message.read(value);
+            return value;
+        };
+        m_signals.push_back(m_appearance.onSignal(
+                "darkModeChanged", [this, readBool](const base::dbus::Message &message) {
+                    setDarkMode(readBool(message));
+                }));
+        m_signals.push_back(m_appearance.onSignal(
+                "continuousCornersChanged", [this, readBool](const base::dbus::Message &message) {
+                    setContinuousCorners(readBool(message));
+                }));
+        m_signals.push_back(m_appearance.onSignal(
+                "accentColorChanged", [this](const base::dbus::Message &message) {
+                    int32_t index = 0;
+                    if (message.read(index))
+                        setAccentColor(index);
+                }));
+        m_signals.push_back(m_appearance.onSignal(
+                "systemFontPointSizeChanged",
+                [this](const base::dbus::Message &) { reloadCaptionPointSize(); }));
+    }
     reload();
 }
 
 void ThemePreferences::reload()
 {
-    m_settings.sync();
-    if (!m_watcher.files().contains(m_settings.fileName())
-        && QFileInfo::exists(m_settings.fileName()))
-        m_watcher.addPath(m_settings.fileName());
-    setDarkMode(m_settings.value(QStringLiteral("DarkMode"), false).toBool());
-    setContinuousCorners(m_settings.value(QStringLiteral("ContinuousCorners"), true).toBool());
-    setAccentColor(m_settings.value(QStringLiteral("AccentColor"), 0).toInt());
-    setCaptionPointSize(m_settings.value(QStringLiteral("FontSize"), 9).toReal());
+    m_settings.reload();
+    setDarkMode(m_settings.boolValue("Appearance/DarkMode", false));
+    setContinuousCorners(m_settings.boolValue("Appearance/ContinuousCorners", true));
+    setAccentColor(int(m_settings.intValue("Appearance/AccentColor", 0)));
+    setCaptionPointSize(m_settings.doubleValue("Appearance/FontSize", 9));
 }
 
 void ThemePreferences::reloadCaptionPointSize()
 {
-    QDBusInterface appearance(QStringLiteral("com.cutefish.Services"),
-                              QStringLiteral("/com/cutefish/Services/Appearance"),
-                              QStringLiteral("com.cutefish.Services.Appearance"));
-    const QVariant points = appearance.property("systemFontPointSize");
-    if (points.isValid())
-        setCaptionPointSize(points.toReal());
+    const std::optional<base::dbus::Variant> points =
+            m_appearance.getProperty("systemFontPointSize").value<base::dbus::Variant>();
+    if (!points) {
+        reload();
+        return;
+    }
+    if (const std::optional<double> value = points->get<double>())
+        setCaptionPointSize(*value);
+    else if (const std::optional<int32_t> whole = points->get<int32_t>())
+        setCaptionPointSize(*whole);
     else
         reload();
 }
 
-void ThemePreferences::setCaptionPointSize(qreal points)
+void ThemePreferences::setCaptionPointSize(double points)
 {
     if (points > 0)
         m_theme.setCaptionPointSize(points);
@@ -89,4 +94,5 @@ void ThemePreferences::setDarkMode(bool dark)
 {
     m_theme.setDarkMode(dark);
 }
+
 } // namespace cutefish::decoration

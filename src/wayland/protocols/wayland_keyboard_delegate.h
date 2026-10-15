@@ -50,7 +50,7 @@ private:
 
     wl_resource* const m_keyboardResource;
     SerialTracker* const m_serialTracker;
-    QPointer<clipboard::SelectionController> m_selection;
+    base::WeakPtr<clipboard::SelectionController> m_selection;
 
     input::KeyboardModifiers m_currentModifiers;
 };

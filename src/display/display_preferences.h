@@ -11,8 +11,8 @@
 #pragma once
 
 #include <optional>
-
-#include <QString>
+#include <string>
+#include <vector>
 
 #include "display/display_types.h"
 
@@ -21,20 +21,20 @@ namespace cutefish::display {
 class DisplayPreferences
 {
 public:
-    explicit DisplayPreferences(QString path = {});
+    explicit DisplayPreferences(std::string path = {});
 
-    const QString &path() const { return m_path; }
+    const std::string &path() const { return m_path; }
 
     bool save(const HardwareSnapshot &hardware, const DisplayConfiguration &configuration,
               DisplayError *error = nullptr) const;
     std::optional<DisplayConfiguration> restore(const HardwareSnapshot &hardware,
                                                 uint64_t appliedRevision,
                                                 DisplayError *error = nullptr) const;
-    QStringList persistentKeys() const;
-    static QString topologyKey(const HardwareSnapshot &hardware);
+    std::vector<std::string> persistentKeys() const;
+    static std::string topologyKey(const HardwareSnapshot &hardware);
 
 private:
-    QString m_path;
+    std::string m_path;
 };
 
 } // namespace cutefish::display

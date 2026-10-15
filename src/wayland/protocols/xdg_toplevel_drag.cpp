@@ -44,7 +44,7 @@ void drag_attach(wl_client *, wl_resource *resource, wl_resource *toplevel, int3
     wm::ShellSurface *shellSurface = shellSurfaceForToplevel(toplevel);
     if (shellSurface && shellSurface->rootSurface()) {
         shellSurface->dropInheritedState();
-        drag->attach(shellSurface->rootSurface(), QPoint(x, y));
+        drag->attach(shellSurface->rootSurface(), base::Point(x, y));
     }
 }
 

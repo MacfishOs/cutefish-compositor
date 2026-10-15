@@ -15,9 +15,8 @@
 #define CUTEFISH_WM_DESKS_DESK_H_
 
 #include <cstdint>
+#include <string>
 #include <vector>
-
-#include <QString>
 
 namespace cutefish::wm {
 
@@ -42,9 +41,9 @@ public:
     bool contains(const Window *window) const;
 
     // Empty while the desk has its default name, which the shell words itself.
-    const QString &name() const { return m_name; }
+    const std::string &name() const { return m_name; }
     bool isNameSetByUser() const { return m_nameSetByUser; }
-    void setName(const QString &name, bool setByUser);
+    void setName(const std::string &name, bool setByUser);
 
     bool isActive() const { return m_active; }
 
@@ -75,7 +74,7 @@ private:
     DesksController *m_controller = nullptr;
     const uint32_t m_id;
     std::vector<Window *> m_windows;
-    QString m_name;
+    std::string m_name;
     bool m_nameSetByUser = false;
     bool m_active = false;
     bool m_beingRemoved = false;

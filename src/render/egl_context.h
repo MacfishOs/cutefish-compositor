@@ -5,9 +5,10 @@
 #pragma once
 
 #include <EGL/egl.h>
-#include <QByteArray>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <string_view>
 
 struct gbm_device;
 
@@ -15,6 +16,10 @@ namespace cutefish::render {
 
 class EglRenderTarget;
 class EglDisplay;
+
+// Whether the space-separated `list` names `extension` whole. Asked on every
+// render pass, so without splitting the list into allocations each time.
+bool hasExtension(std::string_view list, std::string_view extension);
 
 class EglContext
 {
@@ -34,13 +39,13 @@ public:
     bool supports(const char *extension) const;
     bool supportsGl(const char *extension) const;
 
-    const QByteArray &vendor() const { return m_eglVendor; }
+    const std::string &vendor() const { return m_eglVendor; }
 
-    const QByteArray &version() const { return m_eglVersion; }
+    const std::string &version() const { return m_eglVersion; }
 
-    const QByteArray &renderer() const { return m_glesRenderer; }
+    const std::string &renderer() const { return m_glesRenderer; }
 
-    const QByteArray &glVersion() const { return m_glesVersion; }
+    const std::string &glVersion() const { return m_glesVersion; }
 
 private:
     EglContext() = default;
@@ -50,12 +55,12 @@ private:
     EGLConfig m_config = nullptr;
     EGLContext m_context = EGL_NO_CONTEXT;
     std::unique_ptr<EglRenderTarget> m_retirementTarget;
-    QByteArray m_extensions;
-    QByteArray m_glExtensions;
-    QByteArray m_eglVendor;
-    QByteArray m_eglVersion;
-    QByteArray m_glesRenderer;
-    QByteArray m_glesVersion;
+    std::string m_extensions;
+    std::string m_glExtensions;
+    std::string m_eglVendor;
+    std::string m_eglVersion;
+    std::string m_glesRenderer;
+    std::string m_glesVersion;
 };
 
 class ScopedEglCurrent

@@ -269,7 +269,7 @@ struct Endpoint {
 
 struct ImeHarness : Harness {
     scene::Node *popupLayer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("input-method")));
+            scene.root()->addChild(std::make_unique<scene::Node>("input-method"));
     wayland::InputMethodManager manager {server.display(), &waylandSeat, popupLayer};
 };
 } // namespace
@@ -523,7 +523,7 @@ TEST(InputMethodProtocol, PopupPositionHideAndSurfaceDestruction)
     app.enable();
     h.sync(ime.client);
     auto *window = h.seat.focusedSurface()->node();
-    window->setPosition(QPoint(100, 50));
+    window->setPosition(base::Point(100, 50));
     auto *surface = wl_compositor_create_surface(ime.client.compositor);
     auto *popup = zwp_input_method_v2_get_input_popup_surface(ime.method, surface);
     int rectangles = 0;
@@ -544,13 +544,13 @@ TEST(InputMethodProtocol, PopupPositionHideAndSurfaceDestruction)
     ASSERT_NE(nullptr, s);
     // In the popup layer rather than inside the window, so application popups cannot cover it.
     EXPECT_EQ(h.popupLayer, s->node()->parent());
-    EXPECT_EQ(QPoint(110, 85), s->node()->absolutePosition());
+    EXPECT_EQ(base::Point(110, 85), s->node()->absolutePosition());
     EXPECT_EQ(1, rectangles);
 
-    window->setPosition(QPoint(300, 200));
+    window->setPosition(base::Point(300, 200));
     h.manager.sceneChanged();
     ASSERT_TRUE(h.until([&] {
-        return s->node()->absolutePosition() == QPoint(310, 235);
+        return s->node()->absolutePosition() == base::Point(310, 235);
     }));
     h.sync(ime.client);
     EXPECT_EQ(1, rectangles);
@@ -568,27 +568,31 @@ TEST(InputMethodProtocol, PopupPositionHideAndSurfaceDestruction)
 
 TEST(InputMethodProtocol, PopupPositionKeepsInsideTheAreaAndFlipsAboveTheCaret)
 {
-    const QRect area(0, 0, 1000, 800);
-    const QSize size(300, 120);
+    const base::Rect area(0, 0, 1000, 800);
+    const base::Size size(300, 120);
     // Below the caret while it fits.
-    EXPECT_EQ(QPoint(100, 115), wayland::inputPopupPosition({100, 100, 2, 15}, size, area));
+    EXPECT_EQ(base::Point(100, 115), wayland::inputPopupPosition({100, 100, 2, 15}, size, area));
     // Above it at the bottom edge.
-    EXPECT_EQ(QPoint(100, 580), wayland::inputPopupPosition({100, 700, 2, 15}, size, area));
+    EXPECT_EQ(base::Point(100, 580), wayland::inputPopupPosition({100, 700, 2, 15}, size, area));
     // Pushed back in from the right edge, still below.
-    EXPECT_EQ(QPoint(700, 115), wayland::inputPopupPosition({900, 100, 2, 15}, size, area));
+    EXPECT_EQ(base::Point(700, 115), wayland::inputPopupPosition({900, 100, 2, 15}, size, area));
     // Too tall for either side: the roomier one, pushed back into the area.
-    EXPECT_EQ(QPoint(100, 300), wayland::inputPopupPosition({100, 300, 2, 15}, {300, 500}, area));
-    EXPECT_EQ(QPoint(100, 0), wayland::inputPopupPosition({100, 400, 2, 15}, {300, 500}, area));
+    EXPECT_EQ(base::Point(100, 300),
+              wayland::inputPopupPosition({100, 300, 2, 15}, {300, 500}, area));
+    EXPECT_EQ(base::Point(100, 0),
+              wayland::inputPopupPosition({100, 400, 2, 15}, {300, 500}, area));
     // No area or no content yet: just below the caret.
-    EXPECT_EQ(QPoint(900, 815), wayland::inputPopupPosition({900, 800, 2, 15}, size, QRect()));
-    EXPECT_EQ(QPoint(900, 815), wayland::inputPopupPosition({900, 800, 2, 15}, QSize(), area));
+    EXPECT_EQ(base::Point(900, 815),
+              wayland::inputPopupPosition({900, 800, 2, 15}, size, base::Rect()));
+    EXPECT_EQ(base::Point(900, 815),
+              wayland::inputPopupPosition({900, 800, 2, 15}, base::Size(), area));
 }
 
 TEST(InputMethodProtocol, PopupFlipsAboveTheCaretAndTellsTheInputMethod)
 {
     ImeHarness h;
-    h.manager.setPlacementArea([](const QRect &) {
-        return QRect(0, 0, 400, 120);
+    h.manager.setPlacementArea([](const base::Rect &) {
+        return base::Rect(0, 0, 400, 120);
     });
     Endpoint app(h, h.addClient()), ime(h, h.addClient());
     app.addText();
@@ -596,14 +600,14 @@ TEST(InputMethodProtocol, PopupFlipsAboveTheCaretAndTellsTheInputMethod)
     h.focus(app.client);
     app.enable();
     h.sync(ime.client);
-    h.seat.focusedSurface()->node()->setPosition(QPoint(100, 50));
+    h.seat.focusedSurface()->node()->setPosition(base::Point(100, 50));
     auto *surface = wl_compositor_create_surface(ime.client.compositor);
     auto *popup = zwp_input_method_v2_get_input_popup_surface(ime.method, surface);
-    QRect rectangle;
+    base::Rect rectangle;
     static const zwp_input_popup_surface_v2_listener listener = {
             [](void *data, zwp_input_popup_surface_v2 *, int32_t x, int32_t y, int32_t w,
                int32_t h) {
-                *static_cast<QRect *>(data) = QRect(x, y, w, h);
+                *static_cast<base::Rect *>(data) = base::Rect(x, y, w, h);
             }};
     zwp_input_popup_surface_v2_add_listener(popup, &listener, &rectangle);
     h.sync(ime.client);
@@ -612,17 +616,17 @@ TEST(InputMethodProtocol, PopupFlipsAboveTheCaretAndTellsTheInputMethod)
     auto *s = wayland::surfaceFromResource(resource);
     ASSERT_NE(nullptr, s);
     // Nothing drawn yet: under the caret at (110, 70).
-    EXPECT_EQ(QPoint(110, 85), s->node()->absolutePosition());
+    EXPECT_EQ(base::Point(110, 85), s->node()->absolutePosition());
 
     // 60 high does not fit the 35 below the caret, so it goes above.
     auto pool = testsupport::makePool(1 << 16);
     s->attach(pool->createBuffer({100, 60}, 0, 400, render::PixelFormat::Bgrx8888, nullptr), {});
     s->commit();
-    EXPECT_EQ(QPoint(110, 10), s->node()->absolutePosition());
+    EXPECT_EQ(base::Point(110, 10), s->node()->absolutePosition());
     h.sync(ime.client);
-    EXPECT_EQ(QRect(0, 60, 2, 15), rectangle);
+    EXPECT_EQ(base::Rect(0, 60, 2, 15), rectangle);
     // Candidates are picked with the pointer: the popup keeps its input region.
-    EXPECT_TRUE(s->hitTest(QPoint(50, 30)));
+    EXPECT_TRUE(s->hitTest(base::Point(50, 30)));
 
     wl_surface_destroy(surface);
     h.sync(ime.client);
@@ -865,11 +869,4 @@ TEST(InputMethodProtocol, AuthorizerRestrictsInputMethodBinds)
     if (bound)
         zwp_input_method_manager_v2_destroy(bound);
     wl_registry_destroy(registry);
-}
-
-int main(int argc, char **argv)
-{
-    QCoreApplication app(argc, argv);
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

@@ -10,8 +10,7 @@
 
 #pragma once
 
-#include <QHash>
-#include <QRect>
+#include <map>
 
 #include "display/display_layout.h"
 #include "display/display_types.h"
@@ -25,7 +24,7 @@ public:
         bool succeeded = false;
         DisplayError error;
         DisplayConfiguration normalized;
-        QHash<DisplayId, QRect> logicalBounds;
+        std::map<DisplayId, base::Rect> logicalBounds;
     };
 
     static Result validateExtended(const HardwareSnapshot& hardware, uint64_t appliedRevision,

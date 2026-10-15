@@ -42,7 +42,7 @@ namespace cutefish {
 
 namespace {
 
-constexpr QSize kOutputSize {1920, 1080};
+constexpr base::Size kOutputSize {1920, 1080};
 constexpr uint32_t kCrtcId = 7;
 constexpr uint32_t kConnectorId = 3;
 constexpr uint32_t kPrimaryPlaneId = 10;
@@ -130,7 +130,7 @@ backend::ScanoutController::Config makeConfig(size_t overlayCount = 2)
 class TestBuffer final : public render::ScanoutBuffer
 {
 public:
-    explicit TestBuffer(const QSize &size, uint32_t format = DRM_FORMAT_XRGB8888,
+    explicit TestBuffer(const base::Size &size, uint32_t format = DRM_FORMAT_XRGB8888,
                         uint64_t modifier = DRM_FORMAT_MOD_LINEAR)
     {
         m_attributes.size = size;
@@ -156,12 +156,12 @@ private:
 };
 
 scene::OverlayCandidate makeCandidate(const std::shared_ptr<TestBuffer> &buffer,
-                                      const QRect &displayRect, int zOrder, bool opaque = true)
+                                      const base::Rect &displayRect, int zOrder, bool opaque = true)
 {
     scene::OverlayCandidate candidate;
     candidate.buffer = buffer;
     candidate.displayRect = displayRect;
-    candidate.sourceRect = QRect(QPoint(0, 0), buffer->scanoutAttributes().size);
+    candidate.sourceRect = base::Rect(buffer->scanoutAttributes().size);
     candidate.opaque = opaque;
     candidate.zOrder = zOrder;
     return candidate;
@@ -175,8 +175,8 @@ backend::PlaneContent compositedContent(uint32_t framebufferId = 55)
     content.framebufferId = framebufferId;
     content.format = DRM_FORMAT_XRGB8888;
     content.modifier = DRM_FORMAT_MOD_LINEAR;
-    content.displayRect = QRect(QPoint(0, 0), kOutputSize);
-    content.sourceRect = QRect(QPoint(0, 0), kOutputSize);
+    content.displayRect = {0, 0, kOutputSize.width(), kOutputSize.height()};
+    content.sourceRect = {0, 0, kOutputSize.width(), kOutputSize.height()};
     return content;
 }
 
@@ -228,7 +228,7 @@ TEST_F(ScanoutTest, AFullscreenClientBufferTakesThePrimaryPlane)
 {
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -243,9 +243,9 @@ TEST_F(ScanoutTest, AFullscreenClientBufferTakesThePrimaryPlane)
 
 TEST_F(ScanoutTest, TheImportPreservesTheClientsFormatModifierAndLayout)
 {
-    auto buffer = std::make_shared<TestBuffer>(QSize(640, 480), DRM_FORMAT_ARGB8888, kTiled);
+    auto buffer = std::make_shared<TestBuffer>(base::Size(640, 480), DRM_FORMAT_ARGB8888, kTiled);
     scene::OverlayPlan plan;
-    plan.overlays.push_back(makeCandidate(buffer, QRect(100, 50, 640, 480), 1));
+    plan.overlays.push_back(makeCandidate(buffer, base::Rect(100, 50, 640, 480), 1));
 
     m_controller->validate(plan, compositedContent(), 0);
 
@@ -264,7 +264,7 @@ TEST_F(ScanoutTest, AnUnsupportedFormatIsNeverEvenTested)
 {
     auto buffer = std::make_shared<TestBuffer>(kOutputSize, DRM_FORMAT_NV12);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -278,7 +278,7 @@ TEST_F(ScanoutTest, AnUnsupportedModifierIsNeverEvenTested)
 {
     auto buffer = std::make_shared<TestBuffer>(kOutputSize, DRM_FORMAT_XRGB8888, kTiled);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -292,7 +292,7 @@ TEST_F(ScanoutTest, ABufferThatCannotBeImportedFallsBackToComposition)
     m_device->primeFails = true;
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -306,13 +306,13 @@ TEST_F(ScanoutTest, AFailedImportIsNotRetriedEveryFrame)
     m_device->primeFails = true;
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan first;
-    first.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    first.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     m_controller->validate(first, compositedContent(), 0);
     const size_t attempts = m_device->addFramebufferCalls.size();
 
     m_device->primeFails = false;
     scene::OverlayPlan second;
-    second.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    second.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     m_controller->validate(second, compositedContent(), 0);
 
     // The failure is a property of the buffer; retrying it costs an ioctl a
@@ -325,7 +325,7 @@ TEST_F(ScanoutTest, ABufferIsImportedOnceAndTheFramebufferReused)
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     for (int frame = 0; frame < 3; ++frame) {
         scene::OverlayPlan plan;
-        plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+        plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
         ASSERT_TRUE(m_controller->validate(plan, compositedContent(), 0)[0].isDirectScanout());
     }
 
@@ -338,7 +338,7 @@ TEST_F(ScanoutTest, TheFramebufferAndItsHandleDieWithTheClientBuffer)
     {
         auto buffer = std::make_shared<TestBuffer>(kOutputSize);
         scene::OverlayPlan plan;
-        plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+        plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
         ASSERT_TRUE(m_controller->validate(plan, compositedContent(), 0)[0].isDirectScanout());
         EXPECT_EQ(m_device->liveFramebuffers.size(), 1u);
         EXPECT_EQ(m_device->openHandles.size(), 1u);
@@ -358,7 +358,7 @@ TEST_F(ScanoutTest, AFailedAtomicTestFallsBackToComposition)
     };
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -381,11 +381,11 @@ TEST_F(ScanoutTest, TheTopmostOverlayIsDroppedUntilTheConfigurationPasses)
         return planeCount <= 2;
     };
 
-    auto first = std::make_shared<TestBuffer>(QSize(320, 240));
-    auto second = std::make_shared<TestBuffer>(QSize(320, 240));
+    auto first = std::make_shared<TestBuffer>(base::Size(320, 240));
+    auto second = std::make_shared<TestBuffer>(base::Size(320, 240));
     scene::OverlayPlan plan;
-    plan.overlays.push_back(makeCandidate(first, QRect(0, 0, 320, 240), 1));
-    plan.overlays.push_back(makeCandidate(second, QRect(400, 0, 320, 240), 2));
+    plan.overlays.push_back(makeCandidate(first, base::Rect(0, 0, 320, 240), 1));
+    plan.overlays.push_back(makeCandidate(second, base::Rect(400, 0, 320, 240), 2));
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -409,10 +409,10 @@ TEST_F(ScanoutTest, DirectScanoutSurvivesAnOverlayThatCouldNotBeValidated)
     };
 
     auto fullscreen = std::make_shared<TestBuffer>(kOutputSize);
-    auto small = std::make_shared<TestBuffer>(QSize(320, 240));
+    auto small = std::make_shared<TestBuffer>(base::Size(320, 240));
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(fullscreen, QRect(QPoint(0, 0), kOutputSize), 0);
-    plan.overlays.push_back(makeCandidate(small, QRect(0, 0, 320, 240), 1));
+    plan.primary = makeCandidate(fullscreen, base::Rect(base::Point(0, 0), kOutputSize), 0);
+    plan.overlays.push_back(makeCandidate(small, base::Rect(0, 0, 320, 240), 1));
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -425,9 +425,9 @@ TEST_F(ScanoutTest, DirectScanoutSurvivesAnOverlayThatCouldNotBeValidated)
 TEST_F(ScanoutTest, WithoutOverlayPlanesNothingIsPromotedAboveThePrimary)
 {
     reset(/*overlayCount=*/0);
-    auto buffer = std::make_shared<TestBuffer>(QSize(320, 240));
+    auto buffer = std::make_shared<TestBuffer>(base::Size(320, 240));
     scene::OverlayPlan plan;
-    plan.overlays.push_back(makeCandidate(buffer, QRect(0, 0, 320, 240), 1));
+    plan.overlays.push_back(makeCandidate(buffer, base::Rect(0, 0, 320, 240), 1));
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
 
@@ -438,9 +438,9 @@ TEST_F(ScanoutTest, WithoutOverlayPlanesNothingIsPromotedAboveThePrimary)
 TEST_F(ScanoutTest, WithoutAComposedFrameOverlaysAreNotAttempted)
 {
     // The very first frame has nothing on the primary plane to test against.
-    auto buffer = std::make_shared<TestBuffer>(QSize(320, 240));
+    auto buffer = std::make_shared<TestBuffer>(base::Size(320, 240));
     scene::OverlayPlan plan;
-    plan.overlays.push_back(makeCandidate(buffer, QRect(0, 0, 320, 240), 1));
+    plan.overlays.push_back(makeCandidate(buffer, base::Rect(0, 0, 320, 240), 1));
 
     const auto planes = m_controller->validate(plan, backend::PlaneContent(), 0);
 
@@ -450,9 +450,9 @@ TEST_F(ScanoutTest, WithoutAComposedFrameOverlaysAreNotAttempted)
 
 TEST_F(ScanoutTest, TheCommitProgramsTheGeometryTheCandidateAskedFor)
 {
-    auto buffer = std::make_shared<TestBuffer>(QSize(640, 480));
+    auto buffer = std::make_shared<TestBuffer>(base::Size(640, 480));
     scene::OverlayPlan plan;
-    plan.overlays.push_back(makeCandidate(buffer, QRect(100, 50, 640, 480), 1));
+    plan.overlays.push_back(makeCandidate(buffer, base::Rect(100, 50, 640, 480), 1));
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
     ASSERT_EQ(planes.size(), 2u);
 
@@ -477,7 +477,7 @@ TEST_F(ScanoutTest, AnAcquireFenceIsHandedToKmsRatherThanWaitedOn)
 
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     plan.primary.acquireFence = render::SyncFence(ScopedFd(fds[0]));
 
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
@@ -504,7 +504,7 @@ TEST_F(ScanoutTest, WithoutAnAcquireFenceNoInFencePropertyIsSet)
 {
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     const auto planes = m_controller->validate(plan, compositedContent(), 0);
     ASSERT_TRUE(m_controller->commit(planes, false, nullptr, 0, nullptr));
 
@@ -515,9 +515,9 @@ TEST_F(ScanoutTest, WithoutAnAcquireFenceNoInFencePropertyIsSet)
 
 TEST_F(ScanoutTest, APlaneThatFallsOutOfUseIsSwitchedOff)
 {
-    auto buffer = std::make_shared<TestBuffer>(QSize(320, 240));
+    auto buffer = std::make_shared<TestBuffer>(base::Size(320, 240));
     scene::OverlayPlan plan;
-    plan.overlays.push_back(makeCandidate(buffer, QRect(0, 0, 320, 240), 1));
+    plan.overlays.push_back(makeCandidate(buffer, base::Rect(0, 0, 320, 240), 1));
     auto planes = m_controller->validate(plan, compositedContent(), 0);
     ASSERT_EQ(planes.size(), 2u);
     ASSERT_TRUE(m_controller->commit(planes, false, nullptr, 0, nullptr));
@@ -537,7 +537,7 @@ TEST_F(ScanoutTest, ScanoutIsGivenUpAndTakenBackWithoutAStaleBuffer)
 {
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan scanoutPlan;
-    scanoutPlan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    scanoutPlan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     auto planes = m_controller->validate(scanoutPlan, compositedContent(), 0);
     ASSERT_TRUE(planes[0].isDirectScanout());
     ASSERT_TRUE(m_controller->commit(planes, false, nullptr, 0, nullptr));
@@ -550,7 +550,7 @@ TEST_F(ScanoutTest, ScanoutIsGivenUpAndTakenBackWithoutAStaleBuffer)
 
     // And back to scanout, on the framebuffer that was cached all along.
     scene::OverlayPlan again;
-    again.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    again.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     planes = m_controller->validate(again, compositedContent(77), 0);
     ASSERT_TRUE(planes[0].isDirectScanout());
     EXPECT_EQ(planes[0].framebufferId, clientFramebuffer);
@@ -745,7 +745,7 @@ TEST_F(ScanoutTest, APlaneTestCarriesThePendingTint)
     ASSERT_TRUE(m_controller->setColorTransform(kWarm));
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
 
     ASSERT_EQ(m_controller->validate(plan, compositedContent(), 0).size(), 1u);
     const testing::FakeDrmDevice::Commit &test = m_device->commits.back();
@@ -868,7 +868,7 @@ TEST_F(ScanoutTest, ABufferOnAPlaneIsHeldUntilTheFrameRetires)
 {
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     auto planes = m_controller->validate(plan, compositedContent(), 0);
     ASSERT_TRUE(planes[0].isDirectScanout());
 
@@ -938,7 +938,7 @@ TEST_F(ScanoutTest, PresentationWaitsForAcceptedDirectScanoutCompletion)
     scene::SurfaceNode node;
     node.setPresentationContent(feedback);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(), kOutputSize), 0);
     plan.primary.node = &node;
     auto planes = m_controller->validate(plan, compositedContent(), 0);
     ASSERT_EQ(planes.size(), 1u);
@@ -973,7 +973,7 @@ TEST_F(ScanoutTest, RejectedPromotionRetriesCompositionWithoutZeroCopy)
     });
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(), kOutputSize), 0);
     auto planes = m_controller->validate(plan, compositedContent(), 0);
     ASSERT_TRUE(planes[0].isDirectScanout());
     m_device->commitFilter = [](const auto &) {
@@ -1005,11 +1005,11 @@ TEST_F(ScanoutTest, MixedOverlayCompletionAndInitialModesetEventToken)
     promoted->add([&](const auto &result) {
         results.push_back(result);
     });
-    auto buffer = std::make_shared<TestBuffer>(QSize(320, 240));
+    auto buffer = std::make_shared<TestBuffer>(base::Size(320, 240));
     scene::SurfaceNode node;
     node.setPresentationContent(promoted);
     scene::OverlayPlan plan;
-    plan.overlays.push_back(makeCandidate(buffer, QRect(0, 0, 320, 240), 1));
+    plan.overlays.push_back(makeCandidate(buffer, base::Rect(0, 0, 320, 240), 1));
     plan.overlays.back().node = &node;
     auto planes = m_controller->validate(plan, compositedContent(), 0);
     ASSERT_EQ(planes.size(), 2u);
@@ -1036,7 +1036,7 @@ TEST_F(ScanoutTest, ADelayedPageFlipKeepsBothFramesBuffersHeld)
     FrameQueue queue;
 
     scene::OverlayPlan firstPlan;
-    firstPlan.primary = makeCandidate(first, QRect(QPoint(0, 0), kOutputSize), 0);
+    firstPlan.primary = makeCandidate(first, base::Rect(base::Point(0, 0), kOutputSize), 0);
     queue.submit(m_controller->validate(firstPlan, compositedContent(), 0));
     queue.flip();
     EXPECT_EQ(first->scanoutCount, 1);
@@ -1044,7 +1044,7 @@ TEST_F(ScanoutTest, ADelayedPageFlipKeepsBothFramesBuffersHeld)
     // The flip for the second frame has not arrived yet, so the display may
     // still be showing either buffer and neither may go back to its client.
     scene::OverlayPlan secondPlan;
-    secondPlan.primary = makeCandidate(second, QRect(QPoint(0, 0), kOutputSize), 0);
+    secondPlan.primary = makeCandidate(second, base::Rect(base::Point(0, 0), kOutputSize), 0);
     queue.submit(m_controller->validate(secondPlan, compositedContent(), 0));
     EXPECT_EQ(first->scanoutCount, 1);
     EXPECT_EQ(second->scanoutCount, 1);
@@ -1062,7 +1062,7 @@ TEST_F(ScanoutTest, SuspendAndResumeKeepTheScannedOutBufferHeld)
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     FrameQueue queue;
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     queue.submit(m_controller->validate(plan, compositedContent(), 0));
     queue.flip();
 
@@ -1088,7 +1088,7 @@ TEST_F(ScanoutTest, AClientDestroyedMidScanoutLeavesItsBufferOnTheScreen)
     TestBuffer *raw = buffer.get();
     FrameQueue queue;
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(0, 0), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(0, 0), kOutputSize), 0);
     queue.submit(m_controller->validate(plan, compositedContent(), 0));
     queue.flip();
 
@@ -1186,7 +1186,7 @@ TEST(SharedFileScanout, AClientBufferTakesTheRenderersHandleAndNeverClosesIt)
     device.gbm = gbm;
     if (bo) {
         cutefish::render::DmaBufAttributes attributes;
-        attributes.size = QSize(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
+        attributes.size = cutefish::base::Size(gbm_bo_get_width(bo), gbm_bo_get_height(bo));
         attributes.format = gbm_bo_get_format(bo);
         attributes.modifier = gbm_bo_get_modifier(bo);
         for (int plane = 0; plane < gbm_bo_get_plane_count(bo); ++plane)
@@ -1246,7 +1246,7 @@ TEST_F(ScanoutTest, ExplicitAcquireWithoutPlaneFencePropertyFallsBack)
     backend::ScanoutController controller(m_device.get(), std::move(config));
     auto buffer = std::make_shared<TestBuffer>(kOutputSize);
     scene::OverlayPlan plan;
-    plan.primary = makeCandidate(buffer, QRect(QPoint(), kOutputSize), 0);
+    plan.primary = makeCandidate(buffer, base::Rect(base::Point(), kOutputSize), 0);
     plan.primary.acquireFence =
             render::SyncFence(ScopedFd(dup(buffer->scanoutAttributes().planes[0].fd.get())));
     const auto result = controller.validate(plan, compositedContent(), 42);
@@ -1262,7 +1262,7 @@ TEST_F(ScanoutTest, PlaneIdOrderCannotOverrideHardwareStacking)
     backend::ScanoutController controller(m_device.get(), std::move(config));
     scene::OverlayPlan plan;
     plan.overlays.push_back(
-            makeCandidate(std::make_shared<TestBuffer>(QSize(64, 64)), {0, 0, 64, 64}, 1));
+            makeCandidate(std::make_shared<TestBuffer>(base::Size(64, 64)), {0, 0, 64, 64}, 1));
     const auto result = controller.validate(plan, compositedContent(), 42);
     ASSERT_EQ(result.size(), 1u);
     EXPECT_FALSE(result.front().isDirectScanout());
@@ -1271,13 +1271,13 @@ TEST_F(ScanoutTest, PlaneIdOrderCannotOverrideHardwareStacking)
 
 TEST_F(ScanoutTest, NonIdentityPlaneStateFallsBackEvenIfKernelWouldAccept)
 {
-    for (const auto &property : {QByteArray("rotation"), QByteArray("alpha")}) {
+    for (const auto &property : {std::string("rotation"), std::string("alpha")}) {
         auto config = makeConfig();
         config.planes.front().properties.insert(property, 100, 0);
         backend::ScanoutController controller(m_device.get(), std::move(config));
         scene::OverlayPlan plan;
         plan.primary = makeCandidate(std::make_shared<TestBuffer>(kOutputSize),
-                                     QRect(QPoint(), kOutputSize), 0);
+                                     base::Rect(base::Point(), kOutputSize), 0);
         const auto result = controller.validate(plan, compositedContent(), 42);
         ASSERT_EQ(result.size(), 1u);
         EXPECT_FALSE(result.front().isDirectScanout());
@@ -1293,7 +1293,7 @@ TEST_F(ScanoutTest, YuvNeedsColorStateEvenWhenAdvertisedByThePlane)
     backend::ScanoutController controller(m_device.get(), std::move(config));
     scene::OverlayPlan plan;
     plan.primary = makeCandidate(std::make_shared<TestBuffer>(kOutputSize, DRM_FORMAT_NV12),
-                                 QRect(QPoint(), kOutputSize), 0);
+                                 base::Rect(base::Point(), kOutputSize), 0);
     const auto result = controller.validate(plan, compositedContent(), 42);
     ASSERT_EQ(result.size(), 1u);
     EXPECT_FALSE(result.front().isDirectScanout());
@@ -1327,7 +1327,7 @@ TEST_F(ScanoutTest, ASecureCommitDisablesTheOverlayPlanesOfThePreviousFrame)
     // composited desktop.
     scene::OverlayPlan plan;
     plan.overlays.push_back(
-            makeCandidate(std::make_shared<TestBuffer>(QSize(64, 64)), QRect(10, 10, 64, 64), 1));
+            makeCandidate(std::make_shared<TestBuffer>(base::Size(64, 64)), base::Rect(10, 10, 64, 64), 1));
     const auto session = m_controller->validate(plan, compositedContent(), 42);
     ASSERT_EQ(session.size(), 2u);
     ASSERT_TRUE(m_controller->commit(session, false, nullptr, 42, nullptr));

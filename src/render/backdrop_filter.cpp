@@ -4,8 +4,6 @@
 
 #include "render/backdrop_filter.h"
 
-#include <QTransform>
-#include <QtMath>
 #include <algorithm>
 #include <cmath>
 
@@ -13,6 +11,10 @@
 #include "render/gaussian_kernel.h"
 #include "render/shape_mask.h"
 #include "render_shaders.h"
+#include <cassert>
+#include "base/geometry.h"
+#include "base/transform.h"
+#include "ui/geometry_conversions.h"
 
 namespace cutefish::render {
 
@@ -23,12 +25,14 @@ bool BackdropFilter::initialize(const char *fragmentOverride)
                               fragmentOverride ? fragmentOverride : shaders::blur_fragment_shader);
     GlProgram mask = GlProgram::create(
             shaders::texture_vertex_shader,
-            fragmentOverride ? QByteArray(fragmentOverride)
-                             : clippedFragment(shaders::blur_mask_fragment_shader));
+            (fragmentOverride ? std::string(fragmentOverride)
+                              : clippedFragment(shaders::blur_mask_fragment_shader))
+                    .c_str());
     GlProgram glass =
             GlProgram::create(shaders::texture_vertex_shader,
-                              fragmentOverride ? QByteArray(fragmentOverride)
-                                               : clippedFragment(shaders::glass_fragment_shader));
+                              (fragmentOverride ? std::string(fragmentOverride)
+                                                : clippedFragment(shaders::glass_fragment_shader))
+                                      .c_str());
     if (!blur || !mask || !glass)
         return false;
     m_blurProgram = std::move(blur);
@@ -76,7 +80,7 @@ void BackdropFilter::beginPass(uint64_t scope, const std::vector<uint64_t> &fres
     }
 }
 
-BackdropFilter::Scratch &BackdropFilter::scratch(const QSize &coverage, const QSize &size)
+BackdropFilter::Scratch &BackdropFilter::scratch(const base::Size &coverage, const base::Size &size)
 {
     auto found = std::find_if(m_scratch.begin(), m_scratch.end(), [&](const Scratch &entry) {
         return entry.coverage == coverage && entry.size == size;
@@ -105,16 +109,16 @@ BackdropFilter::Scratch &BackdropFilter::scratch(const QSize &coverage, const QS
     return m_scratch.front();
 }
 
-Texture *BackdropFilter::mask(Renderer &renderer, const QPainterPath &shape,
+Texture *BackdropFilter::mask(Renderer &renderer, const ui::Path &shape,
                               const ShapeRaster &raster)
 {
     auto found = std::find_if(m_masks.begin(), m_masks.end(), [&](const Mask &entry) {
         return entry.raster == raster && entry.shape == shape;
     });
     if (found == m_masks.end()) {
-        const QImage image = rasterizeShape(shape, raster);
-        auto texture = renderer.createTexture(image.size(), image.constBits(),
-                                              image.bytesPerLine(), PixelFormat::Rgba8888);
+        const ui::Bitmap image = rasterizeShape(shape, raster);
+        auto texture = renderer.createTexture(image.size(), image.constBits(), int(image.stride()),
+                                              PixelFormat::Rgba8888);
         if (!texture)
             return nullptr;
         if (m_masks.size() == kCachedSizes)
@@ -128,7 +132,7 @@ Texture *BackdropFilter::mask(Renderer &renderer, const QPainterPath &shape,
 }
 
 void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassParams &glass,
-                                        const QSize &coverage, double scale)
+                                        const base::Size &coverage, double scale)
 {
     const auto uniform = [&program](const char *name) {
         return program.uniform(name);
@@ -157,20 +161,20 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
                 std::clamp(glass.tintAlpha, 0.0f, 1.0f));
 }
 
-bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, const QRect &coverage,
-                                 const QSize &reduced, unsigned int destination)
+bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, const base::Rect &coverage,
+                                 const base::Size &reduced, unsigned int destination)
 {
     if (sources.size() != 1 || sources.front().transform
-        || !m_context->glVersion().startsWith("OpenGL ES 3"))
+        || !m_context->glVersion().starts_with("OpenGL ES 3"))
         return false;
     const BackdropSource &source = sources.front();
-    if (!QRect(source.offset.toPoint(), source.oriented()).contains(coverage))
+    if (!base::Rect(source.offset.toPoint(), source.oriented()).contains(coverage))
         return false;
     GLint viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] < reduced.width() || viewport[3] < reduced.height())
         return false;
-    const QRect physical = source.framebufferRect(coverage);
+    const base::Rect physical = source.framebufferRect(coverage);
     const bool scissored = glIsEnabled(GL_SCISSOR_TEST);
     glDisable(GL_SCISSOR_TEST);
     // Both are bottom-up, as the capture and the draw of it would leave them;
@@ -190,10 +194,10 @@ bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, con
 
 bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
                                      const std::vector<BackdropSource> &sources,
-                                     const QRect &coverage, const QSize &reduced,
-                                     const QRect &allocatedBounds)
+                                     const base::Rect &coverage, const base::Size &reduced,
+                                     const base::Rect &allocatedBounds)
 {
-    const QRect reducedBounds(QPoint(), reduced);
+    const base::Rect reducedBounds(base::Point(), reduced);
     bool copied = true;
     return renderer.renderToTexture(
                 textures.source, allocatedBounds,
@@ -203,13 +207,13 @@ bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
                     if (blitReduced(sources, coverage, reduced, destination))
                         return;
                     for (const auto &source : sources) {
-                        const QRect area = coverage.intersected(
-                                QRect(source.offset.toPoint(), source.oriented()));
+                        const base::Rect area = coverage.intersected(
+                                base::Rect(source.offset.toPoint(), source.oriented()));
                         if (area.isEmpty())
                             continue;
-                        const QRect physical = source.framebufferRect(area);
+                        const base::Rect physical = source.framebufferRect(area);
                         // A turned framebuffer is copied as it lies and drawn upright below.
-                        const QSize captureSize =
+                        const base::Size captureSize =
                                 source.transform ? physical.size() : coverage.size();
                         glBindFramebuffer(GL_FRAMEBUFFER, source.framebuffer);
                         GLint alphaBits = 0;
@@ -238,7 +242,7 @@ bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
                             capture = static_cast<GlTexture *>(textures.opaqueCapture.get());
                         } else {
                             if (!renderer.renderToTexture(
-                                        textures.capture, QRect(QPoint(), captureSize), [] { })) {
+                                        textures.capture, base::Rect(base::Point(), captureSize), [] { })) {
                                 copied = false;
                                 break;
                             }
@@ -264,14 +268,14 @@ bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
                         }
                         const double sx = double(reduced.width()) / coverage.width();
                         const double sy = double(reduced.height()) / coverage.height();
-                        const QRectF upright((area.x() - coverage.x()) * sx,
+                        const base::RectF upright((area.x() - coverage.x()) * sx,
                                              (area.y() - coverage.y()) * sy, area.width() * sx,
                                              area.height() * sy);
-                        QRectF lying(QPointF(), source.transform % 2 ? upright.size().transposed()
+                        base::RectF lying(base::PointF(), source.transform % 2 ? upright.size().transposed()
                                                                      : upright.size());
                         lying.moveCenter(upright.center());
                         // Undoes the output's turn, as ScreenTransitionNode does.
-                        QTransform turn;
+                        base::AffineTransform turn;
                         turn.translate(upright.center().x(), upright.center().y());
                         turn.rotate(source.transform == 1 ? 90 : source.transform == 2 ? 180 : -90);
                         turn.translate(-upright.center().x(), -upright.center().y());
@@ -281,23 +285,21 @@ bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
             && copied;
 }
 
-void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radius,
-                          const QRect &clip, const GlassParams &glass, double scale,
-                          const QPainterPath &shape, const std::vector<BackdropSource> &sources,
+void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int radius,
+                          const base::Rect &clip, const GlassParams &glass, double scale,
+                          const ui::Path &shape, const std::vector<BackdropSource> &sources,
                           std::vector<RoundedShape> &clips,
-                          const std::function<void(const QRectF &, float *)> &quadFor,
+                          const std::function<void(const base::RectF &, float *)> &quadFor,
                           const std::function<void(const GlProgram &)> &applyRoundedClip,
                           uint64_t scope, uint64_t owner)
 {
-    Q_ASSERT(!sources.empty());
+    assert(!sources.empty());
     const BackdropSource &target = sources.back();
-    const QRect lens = exactLens.toAlignedRect();
+    const base::Rect lens = exactLens.toEnclosingRect();
     const bool shaped = !shape.isEmpty();
     // A shaped glass draws over its whole outline, with the lens inside it.
-    const QRect bounds = glass.enabled && shaped
-            ? lens.united(QRectF(shape.boundingRect().topLeft() * scale,
-                                 shape.boundingRect().size() * scale)
-                                  .toAlignedRect())
+    const base::Rect bounds = glass.enabled && shaped
+            ? lens.united(ui::toBase(shape.boundingRect()).scaled(scale).toEnclosingRect())
             : lens;
     if (bounds.isEmpty() || !bounds.intersects(clip))
         return;
@@ -312,8 +314,8 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     float quality = glass.enabled ? 1.0f : 0.33f / scale;
     while (glass.enabled && sigma * quality > kMaxGlassSigma)
         quality /= 2;
-    const QRect output(sources.front().offset.toPoint(), sources.front().oriented());
-    const QRect visibleBounds = bounds.intersected(clip).intersected(output);
+    const base::Rect output(sources.front().offset.toPoint(), sources.front().oriented());
+    const base::Rect visibleBounds = bounds.intersected(clip).intersected(output);
     if (visibleBounds.isEmpty())
         return;
     // Rounded outward, the lens is a pixel wider or taller depending on where
@@ -322,44 +324,43 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     // fractional scale keeps one set of scratch textures instead of cycling
     // through four and reallocating, however the clip or the output cut it.
     // cc's ResourcePool hands out its unused resources by exact size the same way.
-    QSize captured = visibleBounds.size();
+    base::Size captured = visibleBounds.size();
     if (scale != std::floor(scale)) {
-        QRectF exact = exactLens;
+        base::RectF exact = exactLens;
         if (bounds != lens)
-            exact = exact.united(QRectF(shape.boundingRect().topLeft() * scale,
-                                        shape.boundingRect().size() * scale));
+            exact = exact.united(ui::toBase(shape.boundingRect()).scaled(scale));
         captured = captured.expandedTo(
-                QSize(int(std::ceil(exact.width())) + 1, int(std::ceil(exact.height())) + 1));
+                base::Size(int(std::ceil(exact.width())) + 1, int(std::ceil(exact.height())) + 1));
     }
     // Three sigmas, kBackdropBlurSupport at the plain blur's full size.
     const float support = glass.enabled
             ? float(kBackdropBlurSupport)
             : std::min(3 * glass.plainSigma, float(kBackdropBlurSupport));
-    const int halo = qCeil(support * scale);
+    const int halo = base::ceilToInt(support * scale);
     // Moved inside the output rather than cut by its edge, so the size stays
     // the same as the lens nears the edge: cut, it keyed a new set of scratch
     // textures on every frame of a move along it. Only a lens the output
     // cannot hold with its halo is cut. Skia sizes such scratch textures
     // loosely for the same reason (SkBackingFit::kApprox).
-    QRect coverage(visibleBounds.topLeft() - QPoint(halo, halo),
-                   captured + QSize(2 * halo, 2 * halo));
+    base::Rect coverage(visibleBounds.topLeft() - base::Point(halo, halo),
+                   captured + base::Size(2 * halo, 2 * halo));
     coverage.moveLeft(std::clamp(coverage.left(), output.left(),
-                                 std::max(output.left(), output.right() - coverage.width() + 1)));
+                                 std::max(output.left(), output.right() - coverage.width())));
     coverage.moveTop(std::clamp(coverage.top(), output.top(),
-                                std::max(output.top(), output.bottom() - coverage.height() + 1)));
+                                std::max(output.top(), output.bottom() - coverage.height())));
     coverage = coverage.intersected(output);
-    const QSize reduced(std::max(1, int(std::ceil(coverage.width() * quality))),
+    const base::Size reduced(std::max(1, int(std::ceil(coverage.width() * quality))),
                         std::max(1, int(std::ceil(coverage.height() * quality))));
-    const QRect reducedBounds(QPoint(), reduced);
+    const base::Rect reducedBounds(base::Point(), reduced);
 
     GLint oldScissor[4];
     glGetIntegerv(GL_SCISSOR_BOX, oldScissor);
     const bool wasScissored = glIsEnabled(GL_SCISSOR_TEST);
-    QRect scissor = target.framebufferRect(
-            clip.intersected(QRect(target.offset.toPoint(), target.oriented())));
+    base::Rect scissor = target.framebufferRect(
+            clip.intersected(base::Rect(target.offset.toPoint(), target.oriented())));
     if (wasScissored)
         scissor = scissor.intersected(
-                QRect(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]));
+                base::Rect(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]));
     // Outside a partial repaint the blur would only be scissored away.
     if (scissor.intersected(target.framebufferRect(bounds)).isEmpty())
         return;
@@ -393,13 +394,13 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     if (!reused)
         textures = glass.enabled
                 ? &scratch(coverage.size(), reduced)
-                : &scratch(QSize(), QSize(stepUp(reduced.width()), stepUp(reduced.height())));
-    const QSize allocated = reused ? kept->allocated : textures->size;
-    const QRect allocatedBounds(QPoint(), allocated);
+                : &scratch(base::Size(), base::Size(stepUp(reduced.width()), stepUp(reduced.height())));
+    const base::Size allocated = reused ? kept->allocated : textures->size;
+    const base::Rect allocatedBounds(base::Point(), allocated);
     // The used texels, rows bottom-up, and their share of the texture.
-    const QRect texels(0, allocated.height() - reduced.height(), reduced.width(),
+    const base::Rect texels(0, allocated.height() - reduced.height(), reduced.width(),
                        reduced.height());
-    const QSizeF used(double(reduced.width()) / allocated.width(),
+    const base::SizeF used(double(reduced.width()) / allocated.width(),
                       double(reduced.height()) / allocated.height());
 
     struct RestoreClips {
@@ -414,8 +415,8 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
         && !captureBackdrop(renderer, *textures, sources, coverage, reduced, allocatedBounds))
         return;
 
-    const auto drawQuad = [&](const GlProgram &program, Texture *input, const QRect &target,
-                              bool inverted, const QSizeF &share = {1, 1}) {
+    const auto drawQuad = [&](const GlProgram &program, Texture *input, const base::Rect &target,
+                              bool inverted, const base::SizeF &share = {1, 1}) {
         const auto *texture = static_cast<GlTexture *>(input);
         float vertices[8];
         quadFor(target, vertices);
@@ -453,7 +454,7 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     };
     if (!reused) {
         if (kept)
-            kept->coverage = QRect();
+            kept->coverage = base::Rect();
         if (!filter(textures->source.get(), textures->temp, true)
             || !filter(textures->temp.get(), result, false))
             return;
@@ -471,8 +472,8 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     clips = restoreClips.saved;
     if (glass.enabled && !shaped) {
         clips.push_back(
-                {QRectF(bounds),
-                 qreal(std::clamp(radius, 0, std::min(bounds.width(), bounds.height()) / 2))});
+                {base::RectF(bounds),
+                 double(std::clamp(radius, 0, std::min(bounds.width(), bounds.height()) / 2))});
     }
     const GlProgram &program = glass.enabled ? m_glassProgram : m_blurMaskProgram;
     glUseProgram(program);
@@ -498,10 +499,10 @@ void BackdropFilter::draw(Renderer &renderer, const QRectF &exactLens, int radiu
     }
     glUniform1f(program.uniform("uHasShape"), shaped ? 1 : 0);
     if (shaped) {
-        const QPointF origin = shape.boundingRect().topLeft();
+        const base::PointF origin = ui::toBase(shape.boundingRect()).topLeft();
         Texture *shapeMask =
-                mask(renderer, shape.translated(-origin),
-                     {scale, origin * scale - QPointF(bounds.topLeft()), bounds.size()});
+                mask(renderer, shape.translated(-origin.x(), -origin.y()),
+                     {scale, origin * scale - base::PointF(bounds.topLeft()), bounds.size()});
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, shapeMask ? static_cast<GlTexture *>(shapeMask)->name() : 0);
         glUniform1i(program.uniform("uShape"), 1);

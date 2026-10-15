@@ -4,25 +4,26 @@
 
 #pragma once
 
-#include <QFileSystemWatcher>
-#include <QObject>
-#include <QSettings>
+#include <vector>
+
+#include "base/dbus.h"
+#include "base/file_watcher.h"
+#include "base/settings.h"
 
 namespace cutefish::cursor {
 class Cursor;
 
-class Preferences : public QObject
+class Preferences
 {
-    Q_OBJECT
 public:
     explicit Preferences(Cursor &cursor);
 
-public slots:
     void reload();
 
 private:
     Cursor &m_cursor;
-    QSettings m_settings;
-    QFileSystemWatcher m_watcher;
+    base::Settings m_settings;
+    base::FileWatch m_watch;
+    std::vector<base::dbus::Match> m_appearanceSignals;
 };
 } // namespace cutefish::cursor

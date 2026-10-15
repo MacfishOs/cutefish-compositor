@@ -15,51 +15,45 @@
 #ifndef CUTEFISH_WAYLAND_SERVER_H_
 #define CUTEFISH_WAYLAND_SERVER_H_
 
-#include <QObject>
-#include <QString>
-
 #include <chrono>
 #include <memory>
 #include <map>
 #include <set>
+#include <string>
 
 #include "client_tracker.h"
 #include "scoped_wl.h"
 #include "serial_tracker.h"
 
-class QSocketNotifier;
-
 namespace cutefish::wayland {
 
-// A thin wrapper around a libwayland display server, driven by the Qt event
-// loop.
-class Server : public QObject
+// A thin wrapper around a libwayland display server, driven by the main
+// thread's event loop.
+class Server
 {
-    Q_OBJECT
-
 public:
-    explicit Server(QObject* parent = nullptr);
+    Server();
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
-    ~Server() override;
+    ~Server();
 
     // Returns the Server instance owning `display`, or nullptr.
     static Server* serverForDisplay(wl_display* display);
 
     // Creates the listening socket. With an empty `name` a free `wayland-N`
     // name is picked automatically. Must be called before start().
-    bool addSocket(const QString& name = QString());
+    bool addSocket(const std::string& name = {});
 
-    // Attaches the event loop fd to the Qt event loop. Clients are flushed
-    // after every dispatch and before the Qt event loop blocks.
+    // Attaches the event loop fd to the thread's event loop. Clients are
+    // flushed after every dispatch and before that loop blocks.
     bool start();
 
-    // Detaches from the Qt event loop; the display stays alive.
+    // Detaches from the event loop; the display stays alive.
     void stop();
 
     // The socket name clients should use as WAYLAND_DISPLAY. Empty until
     // addSocket() succeeds.
-    QString socketName() const { return m_socketName; }
+    const std::string& socketName() const { return m_socketName; }
 
     wl_display* display() const { return m_display.get(); }
 
@@ -109,6 +103,8 @@ public:
     int trackedClientCount() const { return m_clientTracker->trackedClientCount(); }
 
 private:
+    struct LoopHook;
+
     void onSocketActivated();
 
     // Declaration order is destruction order reversed, and both matter here:
@@ -121,8 +117,8 @@ private:
 
     std::set<wl_client*> m_hiddenSurfaceClients;
     std::map<wl_client*, double> m_clientScales;
-    QSocketNotifier* m_notifier = nullptr;
-    QString m_socketName;
+    std::unique_ptr<LoopHook> m_loopHook;
+    std::string m_socketName;
 };
 
 } // namespace cutefish::wayland

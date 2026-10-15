@@ -3,21 +3,24 @@
 // found in the LICENSE file.
 
 #include "backend/drm/drm_backend.h"
-#include <QFile>
-#include <QHash>
-#include <QFileInfo>
 
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <drm_fourcc.h>
+#include <filesystem>
 #include <gbm.h>
+#include <map>
+#include <set>
+#include <sys/epoll.h>
+#include <utility>
 #include <vector>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
-#include <QSet>
-#include <QSocketNotifier>
+#include "base/event_loop.h"
+#include "base/file.h"
+#include "base/strings.h"
 
 #include "backend/drm/drm_configuration_planner.h"
 #include "backend/drm/drm_device.h"
@@ -29,6 +32,7 @@
 #include "backend/drm/drm_selection.h"
 #include "backend/session/session.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "render/egl_renderer.h"
 
 namespace cutefish::backend {
@@ -39,22 +43,27 @@ namespace {
 // implementation can render to.
 constexpr uint32_t kScanoutFormat = DRM_FORMAT_XRGB8888;
 
-QString readDriverName(int fd)
+std::string readDriverName(int fd)
 {
     drmVersion *version = drmGetVersion(fd);
     if (!version)
-        return QString();
-    const QString name = QString::fromUtf8(version->name, version->name_len);
+        return {};
+    std::string name = base::strings::sanitizedUtf8(
+            std::string_view(version->name, size_t(std::max(version->name_len, 0))));
     drmFreeVersion(version);
     return name;
 }
 
-// Whether the firmware showed its boot console on the primary node at `path`.
-bool isBootVga(const QString &path)
+std::string fileName(const std::string &path)
 {
-    QFile file(QStringLiteral("/sys/class/drm/") + QFileInfo(path).fileName()
-               + QStringLiteral("/device/boot_vga"));
-    return file.open(QIODevice::ReadOnly) && file.readAll().trimmed() == "1";
+    return std::filesystem::path(path).filename().string();
+}
+
+// Whether the firmware showed its boot console on the primary node at `path`.
+bool isBootVga(const std::string &path)
+{
+    const auto contents = base::file::read("/sys/class/drm/" + fileName(path) + "/device/boot_vga");
+    return contents && base::strings::trimmed(*contents) == "1";
 }
 
 bool drivesDisplays(int fd)
@@ -67,23 +76,39 @@ bool drivesDisplays(int fd)
 
 } // namespace
 
-DrmBackend::DrmBackend(Session *session, QObject *parent)
-    : QObject(parent)
-    , m_session(session)
+DrmBackend::DrmBackend(Session *session)
+    : m_session(session)
     , m_format(kScanoutFormat)
 {
-    connect(m_session, &Session::activeChanged, this, &DrmBackend::onSessionActiveChanged);
-    connect(this, &DrmBackend::outputsInvalidated, this, [this] {
-        ++m_topologyEpoch;
+    m_sessionActive = m_session->activeChanged.connect(
+            [this](bool active) { onSessionActiveChanged(active); });
+}
+
+void DrmBackend::invalidateOutputs()
+{
+    ++m_topologyEpoch;
+    outputsInvalidated();
+}
+
+void DrmBackend::invalidateOutputsLater()
+{
+    core::mainLoop()->post([this, alive = std::weak_ptr<bool>(m_alive)] {
+        if (!alive.expired())
+            invalidateOutputs();
     });
+}
+
+void DrmBackend::stopWatching()
+{
+    if (m_watch)
+        core::mainLoop()->unwatch(std::exchange(m_watch, 0));
 }
 
 DrmBackend::~DrmBackend()
 {
     m_devices.clear();
     m_retiredDevices.clear();
-    delete m_notifier;
-    m_notifier = nullptr;
+    stopWatching();
     for (const auto &output : m_outputs)
         output->retireForReprobe(true);
     for (const auto &output : m_retiringOutputs)
@@ -99,8 +124,7 @@ DrmBackend::~DrmBackend()
 
 void DrmBackend::closeDevice()
 {
-    delete m_notifier;
-    m_notifier = nullptr;
+    stopWatching();
 
     if (m_gbm) {
         gbm_device_destroy(m_gbm);
@@ -113,28 +137,28 @@ void DrmBackend::closeDevice()
     m_fd = -1;
 }
 
-bool DrmBackend::open(const QString &devicePath)
+bool DrmBackend::open(const std::string &devicePath)
 {
-    m_autoDevices = devicePath.isEmpty();
-    QStringList candidates;
-    if (!devicePath.isEmpty()) {
-        candidates.append(devicePath);
+    m_autoDevices = devicePath.empty();
+    std::vector<std::string> candidates;
+    if (!devicePath.empty()) {
+        candidates.push_back(devicePath);
     } else {
         drmDevicePtr devices[16] = {};
         const int count = drmGetDevices2(0, devices, 16);
         if (count < 0) {
-            qCCritical(cfDrm) << "drmGetDevices2 failed";
+            CF_CRITICAL(cfDrm) << "drmGetDevices2 failed";
             return false;
         }
         for (int i = 0; i < count; ++i) {
             if (devices[i]->available_nodes & (1 << DRM_NODE_PRIMARY))
-                candidates.append(QString::fromUtf8(devices[i]->nodes[DRM_NODE_PRIMARY]));
+                candidates.push_back(devices[i]->nodes[DRM_NODE_PRIMARY]);
         }
         drmFreeDevices(devices, count);
     }
 
-    if (candidates.isEmpty()) {
-        qCCritical(cfDrm) << "No DRM devices found";
+    if (candidates.empty()) {
+        CF_CRITICAL(cfDrm) << "No DRM devices found";
         return false;
     }
 
@@ -148,9 +172,9 @@ bool DrmBackend::open(const QString &devicePath)
         int deviceId;
         bool drivesDisplays;
     };
-    QHash<QString, Opened> opened;
-    QList<DrmDeviceCandidate> displays, others;
-    for (const QString &path : candidates) {
+    std::map<std::string, Opened> opened;
+    std::vector<DrmDeviceCandidate> displays, others;
+    for (const std::string &path : candidates) {
         int deviceId = -1;
         const int fd = m_session->openDevice(path, &deviceId);
         if (fd < 0)
@@ -161,17 +185,18 @@ bool DrmBackend::open(const QString &devicePath)
             continue;
         }
         const Opened device {fd, deviceId, drivesDisplays(fd)};
-        opened.insert(path, device);
+        opened.insert_or_assign(path, device);
         (device.drivesDisplays ? displays : others)
-                .append({path, readDriverName(fd), isBootVga(path)});
+                .push_back({path, readDriverName(fd), isBootVga(path)});
     }
-    const QStringList preferred = orderDisplayDevices(displays.isEmpty() ? others : displays);
-    for (auto it = opened.cbegin(); it != opened.cend(); ++it) {
-        if (preferred.isEmpty() || it.key() != preferred.front())
-            m_session->closeDevice(it->deviceId);
+    const std::vector<std::string> preferred =
+            orderDisplayDevices(displays.empty() ? others : displays);
+    for (const auto &[path, device] : opened) {
+        if (preferred.empty() || path != preferred.front())
+            m_session->closeDevice(device.deviceId);
     }
-    if (!preferred.isEmpty()) {
-        const Opened &device = opened.value(preferred.front());
+    if (!preferred.empty()) {
+        const Opened &device = opened.at(preferred.front());
         uint64_t monotonic = 0;
         m_monotonicPresentationClock =
                 drmGetCap(device.fd, DRM_CAP_TIMESTAMP_MONOTONIC, &monotonic) == 0
@@ -182,32 +207,32 @@ bool DrmBackend::open(const QString &devicePath)
     }
 
     if (m_fd < 0) {
-        qCCritical(cfDrm) << "Failed to open a usable DRM device";
+        CF_CRITICAL(cfDrm) << "Failed to open a usable DRM device";
         return false;
     }
 
     m_driverName = readDriverName(m_fd);
-    qCInfo(cfDrm) << "DRM device:" << m_devicePath;
-    qCInfo(cfDrm) << "DRM driver:" << m_driverName;
+    CF_INFO(cfDrm) << "DRM device:" << m_devicePath;
+    CF_INFO(cfDrm) << "DRM driver:" << m_driverName;
 
     if (drmSetClientCap(m_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) != 0) {
-        qCCritical(cfDrm) << "The driver does not support universal planes";
+        CF_CRITICAL(cfDrm) << "The driver does not support universal planes";
         closeDevice();
         return false;
     }
     if (drmSetClientCap(m_fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0) {
-        qCCritical(cfDrm) << "The driver does not support atomic modesetting";
+        CF_CRITICAL(cfDrm) << "The driver does not support atomic modesetting";
         closeDevice();
         return false;
     }
-    qCInfo(cfDrm) << "Atomic modesetting: yes";
+    CF_INFO(cfDrm) << "Atomic modesetting: yes";
 
     // A secondary device allocates from the rendering card's GBM device, which
     // gbmDevice() hands out; one of its own would be a driver screen never used.
     if (!m_renderBackend) {
         m_gbm = gbm_create_device(m_fd);
         if (!m_gbm) {
-            qCCritical(cfDrm) << "Failed to create a GBM device";
+            CF_CRITICAL(cfDrm) << "Failed to create a GBM device";
             closeDevice();
             return false;
         }
@@ -215,26 +240,25 @@ bool DrmBackend::open(const QString &devicePath)
 
     m_device = std::make_unique<DrmDevice>(m_fd, m_gbm);
 
-    m_notifier = new QSocketNotifier(m_fd, QSocketNotifier::Read, this);
-    connect(m_notifier, &QSocketNotifier::activated, this, &DrmBackend::onDrmEvent);
+    m_watch = core::mainLoop()->watch(m_fd, EPOLLIN, [this](uint32_t) { onDrmEvent(); });
 
-    m_hotplugMonitor = std::make_unique<DrmHotplugMonitor>(this);
+    m_hotplugMonitor = std::make_unique<DrmHotplugMonitor>();
     if (m_hotplugMonitor->start()) {
-        connect(m_hotplugMonitor.get(), &DrmHotplugMonitor::snapshotsInvalidated, this,
-                &DrmBackend::outputsInvalidated);
-        connect(m_hotplugMonitor.get(), &DrmHotplugMonitor::reprobeRequested, this,
-                &DrmBackend::outputsInvalidated);
+        m_hotplugSubscriptions.push_back(
+                m_hotplugMonitor->snapshotsInvalidated.connect([this] { invalidateOutputs(); }));
+        m_hotplugSubscriptions.push_back(
+                m_hotplugMonitor->reprobeRequested.connect([this] { invalidateOutputs(); }));
     }
 
     return true;
 }
 
-QString DrmBackend::deviceKey() const
+std::string DrmBackend::deviceKey() const
 {
-    const auto key = QFileInfo(QStringLiteral("/sys/class/drm/")
-                               + QFileInfo(m_devicePath).fileName() + QStringLiteral("/device"))
-                             .canonicalFilePath();
-    return key.isEmpty() ? m_devicePath : key;
+    std::error_code error;
+    const auto key = std::filesystem::canonical(
+            "/sys/class/drm/" + fileName(m_devicePath) + "/device", error);
+    return error || key.empty() ? m_devicePath : key.string();
 }
 
 DrmDeviceApi *DrmBackend::device() const
@@ -301,7 +325,7 @@ std::vector<DrmPlane> enumeratePlanes(int fd)
 
         DrmPropertyMap properties =
                 DrmPropertyMap::fromObject(fd, plane->plane_id, DRM_MODE_OBJECT_PLANE);
-        if (properties.missing(DrmPlane::requiredProperties()).isEmpty()) {
+        if (properties.missing(DrmPlane::requiredProperties()).empty()) {
             DrmPlane entry;
             entry.id = plane->plane_id;
             entry.type = static_cast<uint32_t>(properties.value("type"));
@@ -326,28 +350,28 @@ bool DrmBackend::createOutputs()
 {
     drmModeRes *resources = drmModeGetResources(m_fd);
     if (!resources) {
-        qCCritical(cfDrm) << "Failed to read DRM resources";
+        CF_CRITICAL(cfDrm) << "Failed to read DRM resources";
         return false;
     }
 
-    QList<drmModeConnector *> connectors;
+    std::vector<drmModeConnector *> connectors;
     for (int i = 0; i < resources->count_connectors; ++i) {
         drmModeConnector *connector = drmModeGetConnector(m_fd, resources->connectors[i]);
         if (!connector)
             continue;
-        connectors.append(connector);
+        connectors.push_back(connector);
     }
 
     struct ConnectedConnector {
         drmModeConnector *connector = nullptr;
-        QString name;
+        std::string name;
         drmModeModeInfo mode = {};
-        QList<drmModeModeInfo> modes;
+        std::vector<drmModeModeInfo> modes;
         uint32_t possibleCrtcs = 0;
         uint32_t currentCrtc = 0;
     };
 
-    QList<ConnectedConnector> connected;
+    std::vector<ConnectedConnector> connected;
     for (drmModeConnector *connector : connectors) {
         ConnectorInfo info {connector->connector_id, connector->connector_type,
                             connector->connector_type_id, connector->connection,
@@ -367,7 +391,7 @@ bool DrmBackend::createOutputs()
         entry.mode = *mode;
         entry.modes.reserve(connector->count_modes);
         for (int index = 0; index < connector->count_modes; ++index)
-            entry.modes.append(connector->modes[index]);
+            entry.modes.push_back(connector->modes[index]);
         for (int i = 0; i < connector->count_encoders; ++i) {
             drmModeEncoder *encoder = drmModeGetEncoder(m_fd, connector->encoders[i]);
             if (!encoder)
@@ -377,38 +401,38 @@ bool DrmBackend::createOutputs()
                 entry.currentCrtc = encoder->crtc_id;
             drmModeFreeEncoder(encoder);
         }
-        connected.append(entry);
+        connected.push_back(entry);
     }
 
     bool ok = false;
-    if (connected.isEmpty()) {
+    if (connected.empty()) {
         ok = true;
     } else {
         std::vector<DrmPlane> planes = enumeratePlanes(m_fd);
-        QList<DrmCrtcCandidate> crtcCandidates;
+        std::vector<DrmCrtcCandidate> crtcCandidates;
         for (int i = 0; i < resources->count_crtcs; ++i)
-            crtcCandidates.append({resources->crtcs[i], i, {}});
+            crtcCandidates.push_back({resources->crtcs[i], i, {}});
         for (const DrmPlane &plane : planes) {
             if (plane.type != DRM_PLANE_TYPE_PRIMARY)
                 continue;
             for (DrmCrtcCandidate &crtc : crtcCandidates) {
                 if (plane.canUseForCrtc(crtc.index))
-                    crtc.primaryPlanes.append(plane.id);
+                    crtc.primaryPlanes.push_back(plane.id);
             }
         }
-        QList<DrmRouteCandidate> routeCandidates;
+        std::vector<DrmRouteCandidate> routeCandidates;
         for (const ConnectedConnector &connector : connected)
-            routeCandidates.append({connector.connector->connector_id, connector.possibleCrtcs,
+            routeCandidates.push_back({connector.connector->connector_id, connector.possibleCrtcs,
                                     connector.currentCrtc});
         const auto assignments = DrmConfigurationPlanner::assign(routeCandidates, crtcCandidates,
                                                                  m_routeAlternative);
         if (!assignments) {
-            qCCritical(cfDrm) << "No device-wide CRTC and primary-plane assignment";
+            CF_CRITICAL(cfDrm) << "No device-wide CRTC and primary-plane assignment";
         } else {
             m_outputs.clear();
-            QSet<uint32_t> claimedPlanes;
-            for (int index = 0; index < connected.size(); ++index) {
-                const ConnectedConnector &connector = connected.at(index);
+            std::set<uint32_t> claimedPlanes;
+            for (size_t index = 0; index < connected.size(); ++index) {
+                const ConnectedConnector &connector = connected[index];
                 const DrmRouteAssignment &assignment = assignments->at(index);
                 DrmOutput::Config config;
                 config.connectorId = connector.connector->connector_id;
@@ -417,8 +441,8 @@ bool DrmBackend::createOutputs()
                 config.mode = connector.mode;
                 config.modes = connector.modes;
                 config.name = connector.name;
-                config.physicalSizeMm =
-                        QSize(connector.connector->mmWidth, connector.connector->mmHeight);
+                config.physicalSizeMm = base::Size(int(connector.connector->mmWidth),
+                                                   int(connector.connector->mmHeight));
                 config.subpixel = connector.connector->subpixel;
                 config.connectorProperties = DrmPropertyMap::fromObject(
                         m_fd, connector.connector->connector_id, DRM_MODE_OBJECT_CONNECTOR);
@@ -426,26 +450,27 @@ bool DrmBackend::createOutputs()
                 if (edidBlob) {
                     if (auto *blob = drmModeGetPropertyBlob(m_fd, edidBlob)) {
                         config.edid =
-                                QByteArray(static_cast<const char *>(blob->data), blob->length);
+                                std::string(static_cast<const char *>(blob->data), blob->length);
                         drmModeFreePropertyBlob(blob);
                     }
                 }
                 config.portPath = connector.name;
                 if (const auto pathBlob = config.connectorProperties.value("PATH")) {
                     if (auto *blob = drmModeGetPropertyBlob(m_fd, pathBlob)) {
-                        const QString path = QString::fromLatin1(
-                                QByteArray(static_cast<const char *>(blob->data), blob->length)
-                                        .split('\0')
-                                        .first());
+                        std::string path(static_cast<const char *>(blob->data), blob->length);
+                        path = base::strings::latin1ToUtf8(path.substr(0, path.find('\0')));
                         drmModeFreePropertyBlob(blob);
-                        const int separator = path.indexOf(QLatin1Char('-'), 4);
-                        if (path.startsWith(QStringLiteral("mst:")) && separator > 4) {
-                            const uint baseId = path.mid(4, separator - 4).toUInt();
+                        const size_t separator = path.find('-', 4);
+                        if (path.starts_with("mst:") && separator != std::string::npos
+                            && separator > 4) {
+                            const uint32_t baseId =
+                                    base::strings::toNumber<uint32_t>(path.substr(4, separator - 4))
+                                            .value_or(0);
                             for (const auto *base : connectors) {
                                 if (base->connector_id == baseId)
                                     config.portPath = connectorName(base->connector_type,
                                                                     base->connector_type_id)
-                                            + path.mid(separator);
+                                            + path.substr(separator);
                             }
                         }
                     }
@@ -469,23 +494,27 @@ bool DrmBackend::createOutputs()
                     claimedPlanes.insert(plane.id);
                 }
 
-                const QList<QByteArray> missing =
-                        config.connectorProperties.missing(DrmOutput::requiredConnectorProperties())
-                        + config.crtcProperties.missing(DrmOutput::requiredCrtcProperties())
-                        + config.planeProperties.missing(DrmOutput::requiredPlaneProperties());
+                std::vector<std::string> missing;
+                for (const auto &names :
+                     {config.connectorProperties.missing(DrmOutput::requiredConnectorProperties()),
+                      config.crtcProperties.missing(DrmOutput::requiredCrtcProperties()),
+                      config.planeProperties.missing(DrmOutput::requiredPlaneProperties())}) {
+                    missing.insert(missing.end(), names.begin(), names.end());
+                }
 
                 if (refreshRate(connector.mode) <= 0.0) {
-                    qCCritical(cfDrm) << "Selected mode has invalid refresh timing";
-                } else if (!missing.isEmpty()) {
-                    qCCritical(cfDrm) << "Missing atomic properties:" << missing;
+                    CF_CRITICAL(cfDrm) << "Selected mode has invalid refresh timing";
+                } else if (!missing.empty()) {
+                    CF_CRITICAL(cfDrm) << "Missing atomic properties:"
+                                       << base::strings::join(missing, ", ");
                 } else {
-                    qCInfo(cfDrm) << "Connector:" << connector.name;
-                    qCInfo(cfDrm, "Mode: %dx%d@%.0f", connector.mode.hdisplay,
-                           connector.mode.vdisplay, refreshRate(connector.mode));
+                    CF_INFO(cfDrm) << "Connector:" << connector.name;
+                    CF_INFO(cfDrm).printf("Mode: %dx%d@%.0f", connector.mode.hdisplay,
+                                          connector.mode.vdisplay, refreshRate(connector.mode));
                     m_outputs.push_back(std::make_unique<DrmOutput>(this, std::move(config)));
                 }
             }
-            ok = m_outputs.size() == static_cast<size_t>(connected.size());
+            ok = m_outputs.size() == connected.size();
             if (!ok)
                 m_outputs.clear();
         }
@@ -518,7 +547,7 @@ bool DrmBackend::reprobe()
     auto *resources = drmModeGetResources(m_fd);
     if (!resources)
         return false;
-    QSet<uint32_t> connectors;
+    std::set<uint32_t> connectors;
     for (int i = 0; i < resources->count_connectors; ++i)
         connectors.insert(resources->connectors[i]);
     drmModeFreeResources(resources);
@@ -566,7 +595,7 @@ bool DrmBackend::initRenderer()
 bool DrmBackend::tryNextConfigurationResources()
 {
     const auto outputs = allOutputs();
-    if (outputs.isEmpty() || std::any_of(outputs.begin(), outputs.end(), [](auto *output) {
+    if (outputs.empty() || std::any_of(outputs.begin(), outputs.end(), [](auto *output) {
             return output->isEnabled();
         }))
         return false;
@@ -576,40 +605,40 @@ bool DrmBackend::tryNextConfigurationResources()
             output->setLinearBuffers(true);
         return true;
     }
-    QList<DrmBackend *> devices {this};
+    std::vector<DrmBackend *> devices {this};
     for (const auto &device : m_devices)
-        devices.append(device.get());
+        devices.push_back(device.get());
     for (auto *device : devices) {
         if (device->m_routeAlternative >= 7)
             continue;
-        QStringList previous;
-        QList<DrmOutput *> previousObjects;
+        std::vector<std::string> previous;
+        std::vector<DrmOutput *> previousObjects;
         for (const auto &output : device->m_outputs) {
-            previous.append(output->publicName());
-            previousObjects.append(output.get());
+            previous.push_back(output->publicName());
+            previousObjects.push_back(output.get());
         }
         ++device->m_routeAlternative;
         if (!device->createOutputs()) {
             --device->m_routeAlternative;
-            QList<DrmOutput *> remaining;
+            std::vector<DrmOutput *> remaining;
             for (const auto &output : device->m_outputs)
-                remaining.append(output.get());
+                remaining.push_back(output.get());
             if (remaining != previousObjects) {
-                emit outputsInvalidated();
+                invalidateOutputs();
                 return false;
             }
             continue;
         }
-        QStringList current;
+        std::vector<std::string> current;
         for (const auto &output : device->m_outputs) {
-            current.append(output->publicName());
+            current.push_back(output->publicName());
             if (!output->init(renderer())) {
-                emit outputsInvalidated();
+                invalidateOutputs();
                 return false;
             }
         }
         if (current != previous) {
-            emit outputsInvalidated();
+            invalidateOutputs();
             return false;
         }
         m_linearAttempt = false;
@@ -620,24 +649,25 @@ bool DrmBackend::tryNextConfigurationResources()
     return false;
 }
 
-QList<DrmOutput *> DrmBackend::allOutputs(bool retiring) const
+std::vector<DrmOutput *> DrmBackend::allOutputs(bool retiring) const
 {
-    QList<DrmOutput *> result;
+    std::vector<DrmOutput *> result;
     for (const auto &output : retiring ? m_retiringOutputs : m_outputs)
-        result.append(output.get());
-    for (const auto &device : m_devices)
-        result.append(device->allOutputs(retiring));
+        result.push_back(output.get());
+    for (const auto &device : m_devices) {
+        const auto outputs = device->allOutputs(retiring);
+        result.insert(result.end(), outputs.begin(), outputs.end());
+    }
     return result;
 }
 
 void DrmBackend::retireDevice()
 {
-    delete m_notifier;
-    m_notifier = nullptr;
+    stopWatching();
+    m_hotplugSubscriptions.clear();
     m_hotplugMonitor.reset();
-    disconnect(m_session, nullptr, this, nullptr);
-    if (m_renderBackend)
-        disconnect(this, nullptr, m_renderBackend, nullptr);
+    m_sessionActive.reset();
+    m_forwardInvalidation.reset();
     if (m_deviceId >= 0) {
         m_session->closeDevice(m_deviceId);
         m_deviceId = -1;
@@ -658,14 +688,14 @@ bool DrmBackend::refreshDevices()
     const int count = drmGetDevices2(0, enumerated, 16);
     if (count < 0)
         return false;
-    QStringList paths;
+    std::vector<std::string> paths;
     for (int i = 0; i < count; ++i)
         if (enumerated[i]->available_nodes & (1 << DRM_NODE_PRIMARY))
-            paths.append(QString::fromUtf8(enumerated[i]->nodes[DRM_NODE_PRIMARY]));
+            paths.push_back(enumerated[i]->nodes[DRM_NODE_PRIMARY]);
     drmFreeDevices(enumerated, count);
-    paths.sort();
+    std::sort(paths.begin(), paths.end());
     for (auto it = m_devices.begin(); it != m_devices.end();) {
-        if (paths.contains((*it)->devicePath())) {
+        if (std::find(paths.begin(), paths.end(), (*it)->devicePath()) != paths.end()) {
             ++it;
             continue;
         }
@@ -684,11 +714,11 @@ bool DrmBackend::refreshDevices()
         auto device = std::make_unique<DrmBackend>(m_session);
         device->m_renderBackend = this;
         if (!device->open(path) || !device->createOutputs() || !device->initRenderer()) {
-            qCWarning(cfDrm) << "Could not initialize secondary DRM device" << path;
+            CF_WARNING(cfDrm) << "Could not initialize secondary DRM device" << path;
             continue;
         }
-        connect(device.get(), &DrmBackend::outputsInvalidated, this,
-                &DrmBackend::outputsInvalidated);
+        device->m_forwardInvalidation =
+                device->outputsInvalidated.connect([this] { invalidateOutputs(); });
         m_devices.push_back(std::move(device));
     }
     return true;
@@ -715,9 +745,9 @@ void DrmBackend::onDrmEvent()
     if (drmHandleEvent(m_fd, &context) != 0 && errno != EINTR && errno != EAGAIN) {
         // As Ozone's DrmDevice::IOWatcher does, stop watching events that cannot
         // be read, rather than spinning on an fd that stays readable.
-        qCWarning(cfDrm, "Cannot read DRM events from %s: %s", qPrintable(m_devicePath),
-                  strerror(errno));
-        m_notifier->setEnabled(false);
+        CF_WARNING(cfDrm).printf("Cannot read DRM events from %s: %s", m_devicePath.c_str(),
+                                 strerror(errno));
+        stopWatching();
     }
     std::erase_if(m_retiredEvents, [](const auto &event) {
         return event->delivered;
@@ -733,7 +763,7 @@ void DrmBackend::onSessionActiveChanged(bool active)
         return;
     }
 
-    emit outputsInvalidated();
+    invalidateOutputs();
 }
 
 } // namespace cutefish::backend

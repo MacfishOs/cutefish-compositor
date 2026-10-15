@@ -7,9 +7,8 @@
 
 #pragma once
 
+#include "base/weak_ptr.h"
 #include "clipboard/selection.h"
-#include <QObject>
-#include <QPointer>
 #include <functional>
 #include <map>
 #include <memory>
@@ -17,7 +16,7 @@
 
 namespace cutefish::xwayland {
 
-class SelectionBridge : public QObject
+class SelectionBridge
 {
 public:
     using Reply = std::function<void(unsigned, std::function<void(void *)>)>;
@@ -28,7 +27,9 @@ public:
     SelectionBridge(xcb_connection_t *connection, xcb_window_t root,
                     clipboard::SelectionController *controller, Reply reply,
                     Kind kind = Kind::Clipboard);
-    ~SelectionBridge() override;
+    SelectionBridge(const SelectionBridge &) = delete;
+    SelectionBridge &operator=(const SelectionBridge &) = delete;
+    ~SelectionBridge();
     void start(uint8_t eventBase);
     bool event(xcb_generic_event_t *event);
 
@@ -73,7 +74,8 @@ private:
     xcb_connection_t *m_connection;
     xcb_window_t m_root;
     xcb_window_t m_window = 0;
-    QPointer<clipboard::SelectionController> m_controller;
+    base::WeakPtr<clipboard::SelectionController> m_controller;
+    base::Subscription m_selectionChanged;
     Reply m_reply;
     uint8_t m_eventBase = 0;
     uint64_t m_generation = 0;
@@ -85,6 +87,7 @@ private:
     std::shared_ptr<Source> m_source;
     std::unique_ptr<Save> m_save;
     std::map<std::pair<xcb_window_t, xcb_atom_t>, std::unique_ptr<Transfer>> m_transfers;
+    base::WeakPtrFactory<SelectionBridge> m_weakFactory {this};
 };
 
 } // namespace cutefish::xwayland

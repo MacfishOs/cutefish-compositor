@@ -4,13 +4,14 @@
 
 #pragma once
 
-#include <QObject>
-#include <QRect>
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "base/geometry.h"
+#include "base/signal.h"
 #include "wm/window_observer.h"
 
 struct wl_client;
@@ -35,11 +36,11 @@ namespace cutefish::wayland {
 // the capture source manager, the window's own CaptureSource. The shell keeps
 // using its private window-management protocol; this global is only announced
 // to clients allowed to capture.
-class ForeignToplevelList : public QObject, private wm::WindowObserver
+class ForeignToplevelList : private wm::WindowObserver
 {
 public:
     using Authorize = std::function<bool(const wl_client *)>;
-    using ShadowBounds = std::function<QRect(const wm::Window *)>;
+    using ShadowBounds = std::function<base::Rect(const wm::Window *)>;
 
     ForeignToplevelList(wl_display *display, wm::WindowManager *manager,
                         compositor::Compositor *compositor, Authorize authorize);
@@ -81,7 +82,7 @@ private:
     void updateGeometry(Entry &entry);
     void updateAllGeometry();
 
-    void onWindowBoundsChanged(wm::Window *window, const QRect &oldBounds) override;
+    void onWindowBoundsChanged(wm::Window *window, const base::Rect &oldBounds) override;
     void onWindowStateTypeChanged(wm::Window *window, wm::WindowStateType oldType) override;
     void onWindowApplicationIdChanged(wm::Window *window) override;
     void onWindowTitleChanged(wm::Window *window) override;
@@ -94,6 +95,9 @@ private:
     wl_global *m_global = nullptr;
     std::vector<std::unique_ptr<Client>> m_clients;
     std::map<wm::Window *, std::unique_ptr<Entry>> m_entries;
+    base::Subscription m_outputViewsChanged;
+    base::Subscription m_windowAdded;
+    base::Subscription m_windowRemoved;
 };
 
 } // namespace cutefish::wayland

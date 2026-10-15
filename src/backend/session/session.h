@@ -5,23 +5,25 @@
 #ifndef CUTEFISH_BACKEND_SESSION_SESSION_H_
 #define CUTEFISH_BACKEND_SESSION_SESSION_H_
 
-#include <QObject>
-#include <QString>
+#include <string>
+
+#include "base/signal.h"
 
 namespace cutefish::backend {
 
 // Owns privileged device access. Devices are opened through the session rather
 // than directly, so the compositor never needs to run as root and the seat
 // manager can revoke access across VT switches.
-class Session : public QObject
+class Session
 {
-    Q_OBJECT
-
 public:
-    explicit Session(QObject* parent = nullptr) : QObject(parent) {}
-    ~Session() override = default;
+    Session() = default;
+    virtual ~Session() = default;
 
-    virtual QString seatName() const = 0;
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
+
+    virtual std::string seatName() const = 0;
 
     // False while another session owns the seat. No DRM ioctl that requires
     // master may be issued while inactive.
@@ -29,13 +31,12 @@ public:
 
     // Returns a file descriptor the session owns, or -1. `deviceId` receives the
     // handle closeDevice() takes; closing the device closes the descriptor too.
-    virtual int openDevice(const QString& path, int* deviceId) = 0;
+    virtual int openDevice(const std::string& path, int* deviceId) = 0;
     virtual void closeDevice(int deviceId) = 0;
 
-Q_SIGNALS:
-    // Emitted before the seat is actually released, so listeners can stop
-    // touching devices first.
-    void activeChanged(bool active);
+    // Whether the seat is now active; emitted before it is actually released,
+    // so listeners can stop touching devices first.
+    base::Signal<bool> activeChanged;
 };
 
 } // namespace cutefish::backend

@@ -4,107 +4,101 @@
 
 #include "accelerators/accelerator_delegate.h"
 
-#include <QDBusConnection>
-#include <QDBusMessage>
-#include <QDBusPendingCall>
+#include "base/dbus.h"
 
 namespace cutefish::accelerators {
 
 namespace {
 
-void callScreenshot(const QString &method, const QVariantList &arguments = {})
+// Calls without waiting for the answer.
+template<typename... Args>
+void call(const char *service, const char *path, const char *method, const Args &...arguments)
 {
-    QDBusMessage message = QDBusMessage::createMethodCall(
-            QStringLiteral("com.cutefish.Screenshot"), QStringLiteral("/Screenshot"),
-            QStringLiteral("com.cutefish.Screenshot"), method);
-    message.setArguments(arguments);
-    QDBusConnection::sessionBus().asyncCall(message);
+    if (base::dbus::Connection *bus = base::dbus::Connection::session())
+        base::dbus::Proxy(bus, service, path, service).send(method, arguments...);
 }
 
-void callOsd(const QString &method)
+template<typename... Args>
+void callScreenshot(const char *method, const Args &...arguments)
 {
-    QDBusMessage message = QDBusMessage::createMethodCall(
-            QStringLiteral("com.cutefish.Osd"), QStringLiteral("/Osd"),
-            QStringLiteral("com.cutefish.Osd"), method);
-    QDBusConnection::sessionBus().asyncCall(message);
+    call("com.cutefish.Screenshot", "/Screenshot", method, arguments...);
+}
+
+void callOsd(const char *method)
+{
+    call("com.cutefish.Osd", "/Osd", method);
 }
 
 } // namespace
 
 void DBusAcceleratorDelegate::toggleAppList()
 {
-    QDBusMessage message = QDBusMessage::createMethodCall(
-            QStringLiteral("com.cutefish.Launcher"), QStringLiteral("/Launcher"),
-            QStringLiteral("com.cutefish.Launcher"), QStringLiteral("toggle"));
-    QDBusConnection::sessionBus().asyncCall(message);
+    call("com.cutefish.Launcher", "/Launcher", "toggle");
 }
 
 void DBusAcceleratorDelegate::takeScreenshot(bool toClipboard)
 {
-    callScreenshot(QStringLiteral("takeScreenshot"), {toClipboard});
+    callScreenshot("takeScreenshot", toClipboard);
 }
 
 void DBusAcceleratorDelegate::takePartialScreenshot(bool toClipboard)
 {
-    callScreenshot(QStringLiteral("takePartialScreenshot"), {toClipboard});
+    callScreenshot("takePartialScreenshot", toClipboard);
 }
 
 void DBusAcceleratorDelegate::startCaptureMode()
 {
-    callScreenshot(QStringLiteral("startCaptureMode"));
+    callScreenshot("startCaptureMode");
 }
 
 void DBusAcceleratorDelegate::stopScreenRecording()
 {
-    callScreenshot(QStringLiteral("stopRecording"));
+    callScreenshot("stopRecording");
 }
 
 void DBusAcceleratorDelegate::toggleClipboardHistory()
 {
-    QDBusMessage message = QDBusMessage::createMethodCall(
-            QStringLiteral("com.cutefish.ClipboardHistory"), QStringLiteral("/ClipboardHistory"),
-            QStringLiteral("com.cutefish.ClipboardHistory"), QStringLiteral("toggle"));
-    QDBusConnection::sessionBus().asyncCall(message);
+    call("com.cutefish.ClipboardHistory", "/ClipboardHistory", "toggle");
 }
 
 void DBusAcceleratorDelegate::volumeDown()
 {
-    callOsd(QStringLiteral("volumeDown"));
+    callOsd("volumeDown");
 }
 
 void DBusAcceleratorDelegate::volumeUp()
 {
-    callOsd(QStringLiteral("volumeUp"));
+    callOsd("volumeUp");
 }
 
 void DBusAcceleratorDelegate::toggleMute()
 {
-    callOsd(QStringLiteral("toggleMute"));
+    callOsd("toggleMute");
 }
 
 void DBusAcceleratorDelegate::toggleMicrophoneMute()
 {
-    callOsd(QStringLiteral("toggleMicrophoneMute"));
+    callOsd("toggleMicrophoneMute");
 }
 
 void DBusAcceleratorDelegate::brightnessDown()
 {
-    callOsd(QStringLiteral("brightnessDown"));
+    callOsd("brightnessDown");
 }
 
 void DBusAcceleratorDelegate::brightnessUp()
 {
-    callOsd(QStringLiteral("brightnessUp"));
+    callOsd("brightnessUp");
 }
 
 void DBusAcceleratorDelegate::keyboardBrightnessDown()
 {
-    callOsd(QStringLiteral("keyboardBrightnessDown"));
+    callOsd("keyboardBrightnessDown");
 }
 
 void DBusAcceleratorDelegate::keyboardBrightnessUp()
 {
-    callOsd(QStringLiteral("keyboardBrightnessUp"));
+    callOsd("keyboardBrightnessUp");
 }
 
 } // namespace cutefish::accelerators

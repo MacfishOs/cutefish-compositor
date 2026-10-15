@@ -35,15 +35,14 @@ MruWindowTracker::MruWindowTracker(WindowManager *manager)
     : m_manager(manager)
 {
     m_manager->activation()->addObserver(this);
-    m_removedConnection = QObject::connect(m_manager, &WindowManager::windowRemoved, m_manager,
-                                           [this](Window *window) {
-                                               onWindowRemoved(window);
-                                           });
+    m_windowRemoved = m_manager->windowRemoved.connect([this](Window *window) {
+        onWindowRemoved(window);
+    });
 }
 
 MruWindowTracker::~MruWindowTracker()
 {
-    QObject::disconnect(m_removedConnection);
+    m_windowRemoved.reset();
     m_manager->activation()->removeObserver(this);
 }
 

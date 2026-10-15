@@ -5,19 +5,20 @@
 #ifndef CUTEFISH_CORE_PROCESS_ENVIRONMENT_H_
 #define CUTEFISH_CORE_PROCESS_ENVIRONMENT_H_
 
-#include <QByteArray>
-#include <QProcessEnvironment>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace cutefish {
 
 // Sets `name` for the compositor's own Qt alone, as the offscreen platform its
 // lock screen and switcher render on. Processes it starts from
 // childEnvironment() get the value the compositor was started with instead.
-void setPrivateEnvironment(const char *name, const QByteArray &value);
+void setPrivateEnvironment(const char *name, std::string_view value);
 
-// The environment to start a child process from: the compositor's, without
-// its private settings.
-QProcessEnvironment childEnvironment();
+// The environment to start a child process from, as NAME=value entries: the
+// compositor's, without its private settings.
+std::vector<std::string> childEnvironment();
 
 } // namespace cutefish
 

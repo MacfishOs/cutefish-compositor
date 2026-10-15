@@ -6,7 +6,6 @@
 
 #include <linux/input-event-codes.h>
 
-#include <QTimer>
 #include <utility>
 
 #include "compositor/compositor.h"
@@ -38,7 +37,7 @@ scene::WindowAnimation *animationFor(Window *window)
 // replaced between two frames.
 // Upstream: the CrossFadeAnimation calls in
 // ash/wm/workspace/workspace_window_resizer.cc.
-void crossFade(Window *window, const QRect &from, scene::WindowAnimation::Type type)
+void crossFade(Window *window, const base::Rect &from, scene::WindowAnimation::Type type)
 {
     scene::WindowAnimation *animation = animationFor(window);
     if (animation && from != window->bounds())
@@ -55,7 +54,7 @@ ToplevelEventHandler::ToplevelEventHandler(WindowManager *manager)
 
 ToplevelEventHandler::~ToplevelEventHandler()
 {
-    QObject::disconnect(m_frameConnection);
+    m_frameStarted.reset();
 }
 
 Window *ToplevelEventHandler::draggedWindow() const
@@ -68,14 +67,14 @@ ResizeEdge ToplevelEventHandler::draggedEdge() const
     return m_resizer ? m_resizer->edge() : ResizeEdge::None;
 }
 
-bool ToplevelEventHandler::beginMove(Window *window, const QPointF &pointerPosition,
+bool ToplevelEventHandler::beginMove(Window *window, const base::PointF &pointerPosition,
                                      std::optional<int32_t> touchId)
 {
     return beginDrag(window, ResizeEdge::None, pointerPosition, touchId);
 }
 
 bool ToplevelEventHandler::beginResize(Window *window, ResizeEdge edge,
-                                       const QPointF &pointerPosition,
+                                       const base::PointF &pointerPosition,
                                        std::optional<int32_t> touchId)
 {
     if (edge == ResizeEdge::None || !window || !window->isResizable())
@@ -84,7 +83,7 @@ bool ToplevelEventHandler::beginResize(Window *window, ResizeEdge edge,
 }
 
 bool ToplevelEventHandler::beginDrag(Window *window, ResizeEdge edge,
-                                     const QPointF &pointerPosition,
+                                     const base::PointF &pointerPosition,
                                      std::optional<int32_t> touchId)
 {
     if (!window || window->isPopup() || m_resizer)
@@ -101,7 +100,7 @@ bool ToplevelEventHandler::beginDrag(Window *window, ResizeEdge edge,
 
     // Moving a tiled window pulls it back to the size it will restore to, from
     // the first motion past the threshold onwards.
-    QRect restoreBounds;
+    base::Rect restoreBounds;
     if (edge == ResizeEdge::None && !state->isNormal())
         restoreBounds = state->restoreBounds();
 
@@ -112,13 +111,14 @@ bool ToplevelEventHandler::beginDrag(Window *window, ResizeEdge edge,
                                                 m_manager->workAreaFor(window), restoreBounds,
                                                 m_manager->visibleAreaFor(window));
     m_touchId = touchId;
-    qCDebug(cfInputTransitions) << "drag begin target" << window << "edge" << toString(edge)
+    CF_DEBUG(cfInputTransitions) << "drag begin target" << window << "edge" << toString(edge)
                                 << (touchId ? "touch point" : "pointer") << touchId.value_or(-1);
     window->setDraggedInternal(true);
     window->setResizingInternal(edge != ResizeEdge::None);
     if (edge == ResizeEdge::None)
         m_snapController->begin(window, pointerPosition);
-    qCDebug(cfCompositor) << "drag started:" << toString(edge) << "from" << window->bounds();
+    CF_DEBUG(cfCompositor) << "drag started:" << toString(edge) << "from"
+                          << window->bounds();
     if (auto *seat = m_manager->seat()) {
         if (touchId) {
             // The client asked to be moved by this point; the rest of it
@@ -134,7 +134,7 @@ bool ToplevelEventHandler::beginDrag(Window *window, ResizeEdge edge,
     return true;
 }
 
-bool ToplevelEventHandler::onPointerMotion(const QPointF &location)
+bool ToplevelEventHandler::onPointerMotion(const base::PointF &location)
 {
     if (!m_resizer)
         return false;
@@ -143,7 +143,7 @@ bool ToplevelEventHandler::onPointerMotion(const QPointF &location)
     return true;
 }
 
-bool ToplevelEventHandler::onTouchMotion(int32_t id, const QPointF &location)
+bool ToplevelEventHandler::onTouchMotion(int32_t id, const base::PointF &location)
 {
     if (!m_resizer || m_touchId != id)
         return false;
@@ -155,7 +155,7 @@ bool ToplevelEventHandler::onTouchUp(int32_t id)
 {
     if (!m_resizer || m_touchId != id)
         return false;
-    qCDebug(cfInputTransitions) << "drag terminating touch up target" << draggedWindow();
+    CF_DEBUG(cfInputTransitions) << "drag terminating touch up target" << draggedWindow();
     completeDrag(DragResult::Success);
     return true;
 }
@@ -166,7 +166,7 @@ void ToplevelEventHandler::onTouchCancel()
         completeDrag(DragResult::Success);
 }
 
-void ToplevelEventHandler::drag(const QPointF &location)
+void ToplevelEventHandler::drag(const base::PointF &location)
 {
     compositor::Compositor *compositor = m_manager->compositor();
     if (!m_resizer->isResize() || !compositor) {
@@ -177,11 +177,10 @@ void ToplevelEventHandler::drag(const QPointF &location)
         m_heldResize = location;
         return;
     }
-    if (!m_frameConnection) {
-        m_frameConnection = QObject::connect(compositor, &compositor::Compositor::frameStarted,
-                                             [this](double) {
-                                                 releaseHeldResize();
-                                             });
+    if (!m_frameStarted) {
+        m_frameStarted = compositor->frameStarted.connect([this](double) {
+            releaseHeldResize();
+        });
     }
     holdResize();
     applyMotion(location);
@@ -191,7 +190,7 @@ void ToplevelEventHandler::holdResize()
 {
     m_holdingResize = true;
     // A backend without frames of its own, headless for one, still resizes.
-    QTimer::singleShot(kHeldResizeTimeoutMs, m_manager, [this] {
+    m_manager->runLater(std::chrono::milliseconds(kHeldResizeTimeoutMs), [this] {
         releaseHeldResize();
     });
 }
@@ -206,11 +205,11 @@ void ToplevelEventHandler::releaseHeldResize()
     applyMotion(*location);
 }
 
-void ToplevelEventHandler::applyMotion(const QPointF &location)
+void ToplevelEventHandler::applyMotion(const base::PointF &location)
 {
     const bool hadMoved = m_resizer->hasMovedOrResized();
     Window *window = m_resizer->window();
-    const QRect previousBounds = window->bounds();
+    const base::Rect previousBounds = window->bounds();
     m_resizer->drag(location);
     // New bounds reach the client, and a client-facing callback can end the
     // drag or destroy the window from inside that call.
@@ -246,7 +245,7 @@ bool ToplevelEventHandler::onPointerButtonReleased()
         return false;
     if (m_touchId)
         return true;
-    qCDebug(cfInputTransitions) << "drag terminating release target" << draggedWindow();
+    CF_DEBUG(cfInputTransitions) << "drag terminating release target" << draggedWindow();
     completeDrag(DragResult::Success);
     return true;
 }
@@ -260,7 +259,7 @@ bool ToplevelEventHandler::onKeyPressed(uint32_t evdevCode)
 }
 
 void ToplevelEventHandler::settleDrag(WindowResizer *resizer, SnapType snapped,
-                                      const QRect &initialRestoreBounds)
+                                      const base::Rect &initialRestoreBounds)
 {
     // A drag that never passed its threshold changed nothing, and settles
     // nothing either.
@@ -301,7 +300,7 @@ void ToplevelEventHandler::settleDrag(WindowResizer *resizer, SnapType snapped,
         // state change, so nothing has put it back where that state says it
         // goes; the drag left it under the pointer.
         if (state->stateType() == snapStateType(snapped)) {
-            const QRect dragged = window->bounds();
+            const base::Rect dragged = window->bounds();
             state->onEvent(WMEvent(WMEventType::WorkAreaChanged));
             crossFade(window, dragged, scene::WindowAnimation::Type::Bounds);
         }
@@ -337,7 +336,7 @@ void ToplevelEventHandler::completeDrag(DragResult result)
     if (!m_resizer)
         return;
 
-    qCDebug(cfInputTransitions) << "drag finish target" << draggedWindow() << "reason"
+    CF_DEBUG(cfInputTransitions) << "drag finish target" << draggedWindow() << "reason"
                                 << (result == DragResult::Success ? "release/explicit-success"
                                             : result == DragResult::Revert
                                             ? "escape/explicit-revert"
@@ -348,8 +347,8 @@ void ToplevelEventHandler::completeDrag(DragResult result)
     // callback may start another drag or destroy the window.
     std::unique_ptr<WindowResizer> resizer = std::move(m_resizer);
     m_touchId.reset();
-    const QRect initialRestoreBounds = std::exchange(m_initialRestoreBounds, QRect());
-    qCDebug(cfInputTransitions) << "drag capture cleared";
+    const base::Rect initialRestoreBounds = std::exchange(m_initialRestoreBounds, base::Rect());
+    CF_DEBUG(cfInputTransitions) << "drag capture cleared";
     const SnapType snapped = m_snapController->end();
 
     if (result != DragResult::WindowDestroyed) {

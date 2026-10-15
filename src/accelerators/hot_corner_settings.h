@@ -8,10 +8,16 @@
 #include <functional>
 #include <optional>
 
-#include <QObject>
-#include <QSettings>
+#include <memory>
+#include <string>
 
 #include "accelerators/accelerator_actions.h"
+#include "base/settings.h"
+#include "base/signal.h"
+
+namespace cutefish::input {
+class DBusExport;
+}
 
 namespace cutefish::accelerators {
 
@@ -34,22 +40,11 @@ struct HotCornerBinding {
 // The actions of the four screen corners, kept in compositor.conf [HotCorners]
 // and exported as com.cutefish.HotCorners1. An action is named as in the
 // shortcuts service; an empty one turns the corner off.
-class HotCornerSettings : public QObject
+class HotCornerSettings
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.HotCorners1")
-    Q_PROPERTY(QString topLeft READ topLeft NOTIFY changed)
-    Q_PROPERTY(int topLeftModifiers READ topLeftModifiers NOTIFY changed)
-    Q_PROPERTY(QString topRight READ topRight NOTIFY changed)
-    Q_PROPERTY(int topRightModifiers READ topRightModifiers NOTIFY changed)
-    Q_PROPERTY(QString bottomLeft READ bottomLeft NOTIFY changed)
-    Q_PROPERTY(int bottomLeftModifiers READ bottomLeftModifiers NOTIFY changed)
-    Q_PROPERTY(QString bottomRight READ bottomRight NOTIFY changed)
-    Q_PROPERTY(int bottomRightModifiers READ bottomRightModifiers NOTIFY changed)
-
 public:
-    explicit HotCornerSettings(QObject *parent = nullptr, const QString &settingsFile = {});
-    ~HotCornerSettings() override;
+    explicit HotCornerSettings(const std::string &settingsFile = {});
+    ~HotCornerSettings();
 
     bool registerService();
 
@@ -58,19 +53,18 @@ public:
     // What heldModifiers() answers from: the seat the corners read.
     void setModifierSource(std::function<uint32_t()> source) { m_modifierSource = std::move(source); }
 
-    QString topLeft() const { return actionName(HotCorner::TopLeft); }
+    std::string topLeft() const { return actionName(HotCorner::TopLeft); }
     int topLeftModifiers() const { return modifiers(HotCorner::TopLeft); }
-    QString topRight() const { return actionName(HotCorner::TopRight); }
+    std::string topRight() const { return actionName(HotCorner::TopRight); }
     int topRightModifiers() const { return modifiers(HotCorner::TopRight); }
-    QString bottomLeft() const { return actionName(HotCorner::BottomLeft); }
+    std::string bottomLeft() const { return actionName(HotCorner::BottomLeft); }
     int bottomLeftModifiers() const { return modifiers(HotCorner::BottomLeft); }
-    QString bottomRight() const { return actionName(HotCorner::BottomRight); }
+    std::string bottomRight() const { return actionName(HotCorner::BottomRight); }
     int bottomRightModifiers() const { return modifiers(HotCorner::BottomRight); }
 
-public slots:
     // `corner` is top-left, top-right, bottom-left or bottom-right. An action
     // that is not known turns the corner off.
-    void setCorner(const QString &corner, const QString &action, int modifiers);
+    void setCorner(const std::string &corner, const std::string &action, int modifiers);
 
     // The modifiers held right now, as a corner sees them, for a settings page
     // that takes a corner's modifiers from the keys held while choosing. A
@@ -78,17 +72,16 @@ public slots:
     // before applications see them.
     int heldModifiers() const;
 
-signals:
-    void changed();
+    base::Signal<> changed;
 
 private:
-    QString actionName(HotCorner corner) const;
+    std::string actionName(HotCorner corner) const;
     int modifiers(HotCorner corner) const;
 
-    QSettings m_settings;
+    base::Settings m_settings;
     std::array<HotCornerBinding, 4> m_bindings;
     std::function<uint32_t()> m_modifierSource;
-    bool m_registered = false;
+    std::unique_ptr<input::DBusExport> m_object;
 };
 
 } // namespace cutefish::accelerators

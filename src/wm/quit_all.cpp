@@ -5,10 +5,11 @@
 #include "wm/quit_all.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
-#include <QElapsedTimer>
-
+#include "base/event_loop.h"
+#include "core/main_loop.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 
@@ -30,25 +31,31 @@ bool hasPrompt(const Window *window)
 
 } // namespace
 
-QuitAll::QuitAll(WindowManager *manager, std::function<qint64()> clock, QObject *parent)
-    : QObject(parent)
-    , m_manager(manager)
+QuitAll::QuitAll(WindowManager *manager, std::function<int64_t()> clock)
+    : m_manager(manager)
     , m_clock(std::move(clock))
+    , m_timer(core::mainLoop())
 {
     if (!m_clock) {
         m_clock = [] {
-            static QElapsedTimer timer;
-            if (!timer.isValid())
-                timer.start();
-            return timer.elapsed();
+            static const auto start = std::chrono::steady_clock::now();
+            return int64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count());
         };
     }
-    m_timer.setInterval(kPollMs);
-    connect(&m_timer, &QTimer::timeout, this, &QuitAll::update);
+    m_timer.setInterval(std::chrono::milliseconds(kPollMs));
+    m_timer.onTimeout = [this] {
+        update();
+    };
     // The last window going is when the session may end; no need to wait a poll.
-    connect(m_manager, &WindowManager::windowRemoved, this, [this] {
-        if (isRunning())
-            QTimer::singleShot(0, this, &QuitAll::update);
+    m_windowRemoved = m_manager->windowRemoved.connect([this](Window *) {
+        if (!isRunning())
+            return;
+        core::mainLoop()->post([quit = m_weakFactory.getWeakPtr()] {
+            if (quit)
+                quit->update();
+        });
     });
 }
 
@@ -68,7 +75,7 @@ bool QuitAll::isApplicationWindow(const Window *window) const
     return !window->transientParent() && !window->skipTaskbar();
 }
 
-void QuitAll::ask(Window *window, qint64 now)
+void QuitAll::ask(Window *window, int64_t now)
 {
     // Quit asks every window of the application at once; asking one of them
     // again would only raise a second prompt.
@@ -83,7 +90,7 @@ void QuitAll::update()
 {
     if (!isRunning())
         return;
-    const qint64 now = m_clock();
+    const int64_t now = m_clock();
     std::vector<Window *> windows;
     for (Window *window : m_manager->windows()) {
         if (isApplicationWindow(window))

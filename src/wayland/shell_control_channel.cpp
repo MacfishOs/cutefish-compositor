@@ -4,15 +4,15 @@
 
 #include "wayland/shell_control_channel.h"
 
-#include <QFile>
-#include <QSocketNotifier>
-
 #include <cstring>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "base/event_loop.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 
 namespace cutefish::wayland {
 
@@ -64,54 +64,54 @@ int receiveFd(int socket)
 
 } // namespace
 
-ShellControlChannel::ShellControlChannel(QObject *parent)
-    : QObject(parent)
+ShellControlChannel::ShellControlChannel(base::EventLoop *loop)
+    : m_loop(loop ? *loop : *core::mainLoop())
 {
 }
 
 ShellControlChannel::~ShellControlChannel()
 {
     closeControl();
-    delete m_listenNotifier;
+    if (m_listenWatch)
+        m_loop.unwatch(m_listenWatch);
     if (m_listenFd >= 0)
         close(m_listenFd);
-    if (!m_path.isEmpty())
-        QFile::remove(m_path);
+    if (!m_path.empty())
+        unlink(m_path.c_str());
 }
 
-bool ShellControlChannel::listen(const QString &path)
+bool ShellControlChannel::listen(const std::string &path)
 {
-    const QByteArray native = path.toUtf8();
     sockaddr_un address {};
     address.sun_family = AF_UNIX;
-    if (static_cast<size_t>(native.size()) >= sizeof(address.sun_path)) {
-        qCWarning(cfWayland) << "Control socket path is too long:" << path;
+    if (path.size() >= sizeof(address.sun_path)) {
+        CF_WARNING(cfWayland) << "Control socket path is too long:" << path.c_str();
         return false;
     }
-    std::memcpy(address.sun_path, native.constData(), native.size());
+    std::memcpy(address.sun_path, path.data(), path.size());
 
     m_listenFd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (m_listenFd < 0) {
-        qCWarning(cfWayland) << "Cannot create the shell control socket";
+        CF_WARNING(cfWayland) << "Cannot create the shell control socket";
         return false;
     }
 
     // A socket left behind by a compositor that did not shut down cleanly would
     // make bind fail; nothing else may own this path.
-    QFile::remove(path);
+    unlink(path.c_str());
     if (bind(m_listenFd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0
         || ::listen(m_listenFd, 4) != 0) {
-        qCWarning(cfWayland) << "Cannot listen on the shell control socket" << path;
+        CF_WARNING(cfWayland) << "Cannot listen on the shell control socket" << path.c_str();
         close(m_listenFd);
         m_listenFd = -1;
         return false;
     }
 
     m_path = path;
-    m_listenNotifier = new QSocketNotifier(m_listenFd, QSocketNotifier::Read, this);
-    connect(m_listenNotifier, &QSocketNotifier::activated, this,
-            &ShellControlChannel::onAcceptReady);
-    qCInfo(cfWayland) << "Shell control channel listening on" << path;
+    m_listenWatch = m_loop.watch(m_listenFd, EPOLLIN, [this](uint32_t) {
+        onAcceptReady();
+    });
+    CF_INFO(cfWayland) << "Shell control channel listening on" << path.c_str();
     return true;
 }
 
@@ -123,9 +123,9 @@ void ShellControlChannel::onAcceptReady()
 
     closeControl();
     m_controlFd = fd;
-    m_controlNotifier = new QSocketNotifier(m_controlFd, QSocketNotifier::Read, this);
-    connect(m_controlNotifier, &QSocketNotifier::activated, this,
-            &ShellControlChannel::onControlReady);
+    m_controlWatch = m_loop.watch(m_controlFd, EPOLLIN, [this](uint32_t) {
+        onControlReady();
+    });
 }
 
 void ShellControlChannel::onControlReady()
@@ -139,15 +139,17 @@ void ShellControlChannel::onControlReady()
     if (fd == -2)
         return;
 
-    Q_EMIT connectionReceived(fd);
+    if (connectionReceived)
+        connectionReceived(fd);
+    else
+        close(fd);
 }
 
 void ShellControlChannel::closeControl()
 {
-    if (m_controlNotifier) {
-        m_controlNotifier->setEnabled(false);
-        delete m_controlNotifier;
-        m_controlNotifier = nullptr;
+    if (m_controlWatch) {
+        m_loop.unwatch(m_controlWatch);
+        m_controlWatch = 0;
     }
     if (m_controlFd >= 0) {
         close(m_controlFd);

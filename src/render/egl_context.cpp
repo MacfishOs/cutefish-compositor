@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/logging.h"
@@ -59,34 +61,32 @@ std::mutex EglDisplay::s_mutex;
 
 namespace {
 
-QByteArray eglString(EGLDisplay display, EGLint name)
+std::string eglString(EGLDisplay display, EGLint name)
 {
     const char *value = eglQueryString(display, name);
-    return QByteArray(value ? value : "");
+    return value ? value : "";
 }
 
-QByteArray glString(GLenum name)
+std::string glString(GLenum name)
 {
     const auto *value = glGetString(name);
-    return QByteArray(value ? reinterpret_cast<const char *>(value) : "");
+    return value ? reinterpret_cast<const char *>(value) : "";
 }
 
-// Whether the space-separated `list` names `extension` whole. Asked on every
-// render pass, so without splitting the list into allocations each time.
-bool hasExtension(const QByteArray &list, const char *extension)
+} // namespace
+
+bool hasExtension(std::string_view list, std::string_view extension)
 {
-    const QByteArrayView name(extension);
-    if (name.isEmpty())
+    if (extension.empty())
         return false;
-    for (qsizetype from = list.indexOf(name); from >= 0; from = list.indexOf(name, from + 1)) {
-        const qsizetype end = from + name.size();
-        if ((from == 0 || list.at(from - 1) == ' ') && (end == list.size() || list.at(end) == ' '))
+    for (size_t from = list.find(extension); from != std::string_view::npos;
+         from = list.find(extension, from + 1)) {
+        const size_t end = from + extension.size();
+        if ((from == 0 || list[from - 1] == ' ') && (end == list.size() || list[end] == ' '))
             return true;
     }
     return false;
 }
-
-} // namespace
 
 std::shared_ptr<EglContext> EglContext::create(gbm_device *device, uint32_t format)
 {
@@ -156,8 +156,8 @@ bool EglContext::initialize(EGLDisplay display, uint32_t format, int alphaSize)
     m_extensions = eglString(m_display, EGL_EXTENSIONS);
     m_eglVendor = eglString(m_display, EGL_VENDOR);
     m_eglVersion = eglString(m_display, EGL_VERSION);
-    qCInfo(cfRender, "EGL vendor: %s", m_eglVendor.constData());
-    qCInfo(cfRender, "EGL version: %s", m_eglVersion.constData());
+    CF_INFO(cfRender).printf("EGL vendor: %s", m_eglVendor.c_str());
+    CF_INFO(cfRender).printf("EGL version: %s", m_eglVersion.c_str());
     return true;
 }
 
@@ -184,12 +184,12 @@ bool EglContext::makeCurrent(EGLSurface surface)
     }
     if (!eglMakeCurrent(m_display, surface, surface, m_context))
         return false;
-    if (m_glesRenderer.isEmpty()) {
+    if (m_glesRenderer.empty()) {
         m_glExtensions = glString(GL_EXTENSIONS);
         m_glesRenderer = glString(GL_RENDERER);
         m_glesVersion = glString(GL_VERSION);
-        qCInfo(cfRender, "GLES renderer: %s", m_glesRenderer.constData());
-        qCInfo(cfRender, "GLES version: %s", m_glesVersion.constData());
+        CF_INFO(cfRender).printf("GLES renderer: %s", m_glesRenderer.c_str());
+        CF_INFO(cfRender).printf("GLES version: %s", m_glesVersion.c_str());
     }
     return true;
 }

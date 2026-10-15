@@ -5,19 +5,20 @@
 // Upstream: chromium/src/ui/display/types/native_display_delegate.cc
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: queue native operations on the Qt event loop while
+// Adapted for Cutefish: queue native operations on the event loop while
 // keeping the backend-independent completion interface.
 
 #include "display/callback_native_display_delegate.h"
-#include <QTimer>
+
+#include "base/event_loop.h"
+#include "core/main_loop.h"
 
 namespace cutefish::display {
 
 CallbackNativeDisplayDelegate::CallbackNativeDisplayDelegate(HardwareSnapshot snapshot,
                                                              ConfigureHandler configure,
-                                                             PowerHandler power, QObject *parent)
-    : NativeDisplayDelegate(parent)
-    , m_snapshot(std::move(snapshot))
+                                                             PowerHandler power)
+    : m_snapshot(std::move(snapshot))
     , m_configure(std::move(configure))
     , m_power(std::move(power))
 {
@@ -26,7 +27,7 @@ CallbackNativeDisplayDelegate::CallbackNativeDisplayDelegate(HardwareSnapshot sn
 void CallbackNativeDisplayDelegate::invalidateSnapshots()
 {
     ++m_epoch;
-    emit hardwareInvalidated(m_snapshot.topologyGeneration + 1);
+    hardwareInvalidated(m_snapshot.topologyGeneration + 1);
 }
 
 void CallbackNativeDisplayDelegate::setSnapshot(HardwareSnapshot snapshot)
@@ -34,7 +35,7 @@ void CallbackNativeDisplayDelegate::setSnapshot(HardwareSnapshot snapshot)
     ++m_epoch;
     const uint64_t generation = snapshot.topologyGeneration;
     m_snapshot = std::move(snapshot);
-    emit hardwareInvalidated(generation);
+    hardwareInvalidated(generation);
 }
 
 void CallbackNativeDisplayDelegate::takeDisplayControl(ControlCallback callback)
@@ -54,21 +55,23 @@ void CallbackNativeDisplayDelegate::queryHardware(QueryCallback callback)
     else
         callback(std::nullopt,
                  {DisplayErrorCode::Unavailable,
-                  QStringLiteral("Display hardware is unavailable"),
+                  "Display hardware is unavailable",
                   {}});
 }
 
 void CallbackNativeDisplayDelegate::configure(const DisplayConfiguration &configuration,
                                               ConfigureMode mode, ConfigureCallback callback)
 {
-    QTimer::singleShot(
-            0, this,
-            [this, configuration, mode, epoch = m_epoch, callback = std::move(callback)]() mutable {
+    core::mainLoop()->post(
+            [this, alive = std::weak_ptr<bool>(m_alive), configuration, mode, epoch = m_epoch,
+             callback = std::move(callback)]() mutable {
+                if (alive.expired())
+                    return;
                 if (epoch != m_epoch) {
                     callback({false,
                               false,
                               {DisplayErrorCode::StaleConfiguration,
-                               QStringLiteral("Display snapshots were invalidated"),
+                               "Display snapshots were invalidated",
                                {}},
                               std::nullopt});
                     return;
@@ -78,23 +81,25 @@ void CallbackNativeDisplayDelegate::configure(const DisplayConfiguration &config
                                                false,
                                                false,
                                                {DisplayErrorCode::Unavailable,
-                                                QStringLiteral("No display backend is available"),
+                                                "No display backend is available",
                                                 {}},
                                                std::nullopt});
             });
 }
 
-void CallbackNativeDisplayDelegate::setDisplayPower(const QList<DisplayId> &displays,
+void CallbackNativeDisplayDelegate::setDisplayPower(const std::vector<DisplayId> &displays,
                                                     PowerState state, ConfigureCallback callback)
 {
-    QTimer::singleShot(
-            0, this,
-            [this, displays, state, epoch = m_epoch, callback = std::move(callback)]() mutable {
+    core::mainLoop()->post(
+            [this, alive = std::weak_ptr<bool>(m_alive), displays, state, epoch = m_epoch,
+             callback = std::move(callback)]() mutable {
+                if (alive.expired())
+                    return;
                 if (epoch != m_epoch) {
                     callback({false,
                               false,
                               {DisplayErrorCode::StaleConfiguration,
-                               QStringLiteral("Display snapshots were invalidated"),
+                               "Display snapshots were invalidated",
                                {}},
                               std::nullopt});
                     return;
@@ -104,7 +109,7 @@ void CallbackNativeDisplayDelegate::setDisplayPower(const QList<DisplayId> &disp
                                            false,
                                            false,
                                            {DisplayErrorCode::UnsupportedProperty,
-                                            QStringLiteral("Display power control is unavailable"),
+                                            "Display power control is unavailable",
                                             {}},
                                            std::nullopt});
             });

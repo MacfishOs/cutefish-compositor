@@ -20,13 +20,13 @@ TEST(WindowVisualPolicy, ContinuousCornersExtendBeyondCircularTangency)
     EXPECT_TRUE(shape.contains({30, 0}));
     EXPECT_FALSE(shape.contains({6, 6}));
     EXPECT_TRUE(shape.contains({7, 7}));
-    for (const QPointF point : {QPointF(7, 7), {93, 7}, {7, 73}, {93, 73}})
+    for (const base::PointF point : {base::PointF(7, 7), {93, 7}, {7, 73}, {93, 73}})
         EXPECT_TRUE(shape.contains(point));
 
     const render::RoundedShape stretched {{10, 20, 200, 40}, 20, {2, 0.5}};
     for (int y = 0; y <= 80; ++y) {
         for (int x = 0; x <= 100; ++x)
-            EXPECT_EQ(shape.contains({qreal(x), qreal(y)}),
+            EXPECT_EQ(shape.contains({double(x), double(y)}),
                       stretched.contains({10.0 + x * 2, 20.0 + y * 0.5}));
     }
     const render::RoundedShape square {{0, 0, 100, 80}, 0};
@@ -49,7 +49,7 @@ TEST(WindowVisualPolicy, CircularCornersFollowTheSessionStyle)
     const render::RoundedShape stretched {{10, 20, 200, 40}, 20, {2, 0.5}};
     for (int y = 0; y <= 80; ++y) {
         for (int x = 0; x <= 100; ++x)
-            EXPECT_EQ(shape.contains({qreal(x), qreal(y)}),
+            EXPECT_EQ(shape.contains({double(x), double(y)}),
                       stretched.contains({10.0 + x * 2, 20.0 + y * 0.5}));
     }
 }
@@ -178,7 +178,7 @@ TEST(WindowVisualPolicy, SmallWindowsClampAllCornersAndDarkModeDeepensTheOutline
     window.setBounds({0, 0, 18, 10});
     const auto shape = wm::WindowVisualController::evaluate(window).shape;
     EXPECT_EQ(shape.radius, 5);
-    for (const QPointF corner : {QPointF(0, 0), {18, 0}, {0, 10}, {18, 10}})
+    for (const base::PointF corner : {base::PointF(0, 0), {18, 0}, {0, 10}, {18, 10}})
         EXPECT_FALSE(shape.contains(corner));
     EXPECT_TRUE(shape.contains({9, 0}));
     decoration::Theme theme;

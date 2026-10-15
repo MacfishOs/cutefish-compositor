@@ -8,6 +8,7 @@
 
 #include "compositor/surface.h"
 #include "decoration/window_visual_style.h"
+#include "ui/geometry_conversions.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 #include "wm/window_modality_controller.h"
@@ -39,30 +40,30 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
 {
     using Mode = scene::WindowVisualMode;
     scene::WindowVisualState state;
-    state.shape.bounds = window.presentedBounds();
+    state.shape.bounds = base::RectF(window.presentedBounds());
     state.surfaceOrigin = window.frameInsets().topLeft() + window.surfaceOrigin();
     // A sheet is a dialog: clipped and outlined like an application window.
     if (window.isPopup()
         || (window.role() != WindowRole::Normal && window.role() != WindowRole::Sheet)) {
         // Menus and shell panels describe their rounded body through the blur request.
         const auto *surface = window.rootSurface();
-        const QPoint origin = state.surfaceOrigin;
-        const QPainterPath path = surface ? surface->backgroundBlurShape() : QPainterPath();
+        const base::Point origin = state.surfaceOrigin;
+        const ui::Path path = surface ? surface->backgroundBlurShape() : ui::Path();
         if (!path.isEmpty()) {
-            state.outlinePath = path.translated(origin);
-            state.outlineShape = {state.outlinePath.boundingRect(), 0};
+            state.outlinePath = path.translated(origin.x(), origin.y());
+            state.outlineShape = {ui::toBase(state.outlinePath.boundingRect()), 0};
             state.drawOutline = true;
             state.outlineWidthPx = style.outlineWidthPx;
             setShellOutlineColors(state, window, style);
             return state;
         }
-        const QRect body = surface
-                ? surface->backgroundBlurRect().intersected(QRect(QPoint(), surface->contentSize()))
-                : QRect();
+        const base::Rect body = surface
+                ? surface->backgroundBlurRect().intersected(base::Rect(surface->contentSize()))
+                : base::Rect();
         if (!body.isEmpty() && surface->backgroundBlurRadius() > 0) {
-            const qreal radius = std::min({qreal(surface->backgroundBlurRadius()),
+            const double radius = std::min({double(surface->backgroundBlurRadius()),
                                            body.width() / 2.0, body.height() / 2.0});
-            state.outlineShape = {QRectF(body.translated(origin)), radius};
+            state.outlineShape = {base::RectF(body.translated(origin)), radius};
             state.drawOutline = true;
             state.outlineWidthPx = style.outlineWidthPx;
             setShellOutlineColors(state, window, style);
@@ -74,7 +75,8 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
     else
         state.mode = Mode::ServerExterior;
     const auto exterior = window.clientExteriorInsets();
-    state.shape.bounds.adjust(exterior.left, exterior.top, -exterior.right, -exterior.bottom);
+    state.shape.bounds = state.shape.bounds.adjusted(exterior.left, exterior.top, -exterior.right,
+                                                     -exterior.bottom);
     // Exterior pixels stay hidden even when the body has square, tiled edges.
     state.clipContent = !exterior.isNull();
     if (isRoundedStateType(window.decoratedStateType())) {

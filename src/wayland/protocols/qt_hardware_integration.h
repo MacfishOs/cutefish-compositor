@@ -4,9 +4,8 @@
 
 #pragma once
 
-#include <QString>
-
-class QIODevice;
+#include <string>
+#include <string_view>
 
 struct wl_client;
 struct wl_display;
@@ -26,8 +25,17 @@ wl_global* createQtHardwareIntegrationGlobal(wl_display* display);
 // name the session rather than the client.
 bool canLoadCutefishEgl(const wl_client* client, bool sessionClient);
 
+// The Qt versions a plugin file records in its metadata, each empty when
+// missing. Exposed for testing.
+struct QtPluginVersions {
+    std::string gui;
+    std::string waylandClient;
+};
+
+QtPluginVersions qtPluginVersions(std::string_view file);
+
 // The QtWaylandClient file in a /proc/<pid>/maps listing, or an empty string.
 // Exposed for testing.
-QString findMappedQtWaylandClient(QIODevice& maps);
+std::string findMappedQtWaylandClient(std::string_view maps);
 
 } // namespace cutefish::wayland

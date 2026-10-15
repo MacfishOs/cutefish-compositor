@@ -6,6 +6,7 @@
 #include "render/egl_renderer.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -21,7 +22,7 @@ struct TargetRetirement {
 class EglRendererTestAccess
 {
 public:
-    static void applyRepaint(EglRenderer &renderer, const QRect &damage)
+    static void applyRepaint(EglRenderer &renderer, const base::Rect &damage)
     {
         renderer.applyRepaint(damage);
     }

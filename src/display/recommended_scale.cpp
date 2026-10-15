@@ -43,11 +43,11 @@ constexpr std::array<Threshold, 5> kExternal {{
 
 // ui/display/util/display_util.cc: IsDisplaySizeValid. Projectors and some
 // TVs report an aspect ratio or nothing in place of a size.
-bool isPhysicalSizeValid(const QSize &mm)
+bool isPhysicalSizeValid(const base::Size &mm)
 {
     if (mm.width() <= 40 || mm.height() <= 30)
         return false;
-    return mm != QSize(50, 40) && mm != QSize(160, 90) && mm != QSize(160, 100);
+    return mm != base::Size(50, 40) && mm != base::Size(160, 90) && mm != base::Size(160, 100);
 }
 
 } // namespace

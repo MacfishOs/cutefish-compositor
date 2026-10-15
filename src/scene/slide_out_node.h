@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "scene/desk_switch_node.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
@@ -24,11 +25,11 @@ class SlideOutNode : public Node
 public:
     static constexpr int kDurationMs = 200;
 
-    explicit SlideOutNode(std::function<qint64()> clock = {});
+    explicit SlideOutNode(std::function<int64_t()> clock = {});
 
     // `frames` show the window alone, over each output's whole viewport. It
     // leaves `output` past its left edge, or past its right edge.
-    void slideOut(DeskSwitchNode::Frames frames, const QRect &window, const QRect &output,
+    void slideOut(DeskSwitchNode::Frames frames, const base::Rect &window, const base::Rect &output,
                   bool goingLeft);
 
     bool isActive() const { return !m_slides.empty(); }
@@ -36,17 +37,17 @@ public:
     void render(render::Renderer &renderer) const override;
     Content content() const override { return isActive() ? Content::Translucent : Content::None; }
     bool paintsSubtree() const override { return isActive(); }
-    bool acceptsInput(const QPointF &) const override { return false; }
+    bool acceptsInput(const base::PointF &) const override { return false; }
     void releaseRenderResources() override;
 
 private:
     struct Slide {
         DeskSwitchNode::Frames frames;
         int distance = 0;
-        qint64 start = 0;
+        int64_t start = 0;
     };
 
-    std::function<qint64()> m_now;
+    std::function<int64_t()> m_now;
     mutable std::vector<Slide> m_slides;
 };
 

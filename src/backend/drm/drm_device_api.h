@@ -12,8 +12,7 @@
 #ifndef CUTEFISH_BACKEND_DRM_DRM_DEVICE_API_H_
 #define CUTEFISH_BACKEND_DRM_DRM_DEVICE_API_H_
 
-#include <QPoint>
-#include <QSize>
+#include "base/geometry.h"
 
 #include <cstdint>
 #include <vector>
@@ -107,15 +106,15 @@ public:
     // The legacy cursor ioctls, as Ozone uses them: KMS drives the cursor plane
     // itself, so moving the cursor costs no atomic commit and no repaint.
 
-    virtual bool setCursor(uint32_t crtcId, uint32_t handle, const QSize& size,
-                           const QPoint& hotspot) = 0;
-    virtual bool moveCursor(uint32_t crtcId, const QPoint& position) = 0;
+    virtual bool setCursor(uint32_t crtcId, uint32_t handle, const base::Size& size,
+                           const base::Point& hotspot) = 0;
+    virtual bool moveCursor(uint32_t crtcId, const base::Point& position) = 0;
 
     // The largest cursor the hardware accepts, or an empty size when it has no
     // cursor plane at all.
-    virtual QSize maxCursorSize() const = 0;
+    virtual base::Size maxCursorSize() const = 0;
 
-    virtual bool createDumbBuffer(const QSize& size, DumbBufferInfo* info) = 0;
+    virtual bool createDumbBuffer(const base::Size& size, DumbBufferInfo* info) = 0;
     virtual bool destroyDumbBuffer(uint32_t handle) = 0;
     // Returns nullptr on failure. `size` is DumbBufferInfo::size.
     virtual void* mapDumbBuffer(uint32_t handle, uint64_t size) = 0;

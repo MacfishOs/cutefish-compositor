@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <fcntl.h>
 #include <functional>
 #include <gtest/gtest.h>
@@ -12,17 +13,16 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 #include <wayland-client.h>
 
-#include <QCoreApplication>
-#include <QElapsedTimer>
-#include <QThread>
-
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "input/seat.h"
+#include "loop_test_util.h"
 #include "scene/scene.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_data_device_manager.h"
@@ -66,8 +66,8 @@ struct Client {
     std::map<wl_data_offer*, std::vector<std::string>> formats;
     wl_data_offer* selection = nullptr;
     std::vector<std::string> events;
-    QPointF dragEnterPosition;
-    QPointF dragMotionPosition;
+    cutefish::base::PointF dragEnterPosition;
+    cutefish::base::PointF dragMotionPosition;
     std::map<std::string, std::string> payloads;
     size_t cancelled = 0;
     size_t sends = 0;
@@ -218,7 +218,7 @@ struct Client {
                 auto& c = *static_cast<Client*>(data);
                 c.dragOffer = offer;
                 c.dragSerial = serial;
-                c.dragEnterPosition = QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+                c.dragEnterPosition = cutefish::base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
                 c.events.push_back("drag-enter");
             },
             [](void* data, wl_data_device*) {
@@ -226,7 +226,7 @@ struct Client {
             },
             [](void* data, wl_data_device*, uint32_t, wl_fixed_t x, wl_fixed_t y) {
                 static_cast<Client*>(data)->dragMotionPosition =
-                    QPointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
+                    cutefish::base::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y));
                 static_cast<Client*>(data)->events.push_back("drag-motion");
             },
             [](void* data, wl_data_device*) {
@@ -361,7 +361,6 @@ public:
     {
         clients.clear();
         wl_display_destroy_clients(server.display());
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         sigaction(SIGPIPE, &previousSigpipe, nullptr);
     }
 
@@ -371,16 +370,15 @@ public:
             c->pump();
         EXPECT_TRUE(server.dispatch(std::chrono::milliseconds(1)));
         server.flush();
-        QCoreApplication::processEvents();
+        test::processPendingEvents();
     }
 
     bool until(std::function<bool()> done, int timeout = 3000)
     {
-        QElapsedTimer timer;
-        timer.start();
-        while (!done() && timer.elapsed() < timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+        while (!done() && std::chrono::steady_clock::now() < deadline) {
             pump();
-            QThread::usleep(100);
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
         return done();
     }

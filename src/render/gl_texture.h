@@ -6,9 +6,9 @@
 
 #include "render/egl_context.h"
 #include "render/texture.h"
-#include <QRegion>
 #include <optional>
 #include <vector>
+#include "base/region.h"
 
 namespace cutefish::render {
 
@@ -19,18 +19,18 @@ public:
     // `target` is GL_TEXTURE_2D for uploaded pixels and GL_TEXTURE_EXTERNAL_OES
     // for EGLImage imports; passed as a plain enum so this header stays free of
     // the GL headers.
-    GlTexture(uint32_t name, const QSize &size, PixelFormat format = PixelFormat::Rgba8888,
+    GlTexture(uint32_t name, const base::Size &size, PixelFormat format = PixelFormat::Rgba8888,
               uint32_t target = 0x0DE1 /* GL_TEXTURE_2D */,
               std::shared_ptr<EglContext> context = {});
     GlTexture(const GlTexture &) = delete;
     GlTexture &operator=(const GlTexture &) = delete;
     ~GlTexture() override;
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
     PixelFormat format() const override { return m_format; }
 
-    QRectF contentPixels;
+    base::RectF contentPixels;
     bool inverted = false; // Offscreen GL render targets have a bottom-left origin.
     bool mipmapped = false;
 
@@ -46,7 +46,7 @@ protected:
 
 private:
     uint32_t m_name = 0;
-    QSize m_size;
+    base::Size m_size;
     PixelFormat m_format = PixelFormat::Rgba8888;
     uint32_t m_target = 0x0DE1;
 };
@@ -59,17 +59,17 @@ public:
     {
     }
 
-    std::unique_ptr<Texture> create(const QSize &size, const uint8_t *pixels, int stride,
+    std::unique_ptr<Texture> create(const base::Size &size, const uint8_t *pixels, int stride,
                                     PixelFormat format);
     bool update(Texture *texture, const uint8_t *pixels, int stride, PixelFormat format);
     // Only `damage`, in texture pixels, is read from `pixels` and replaced.
     bool update(Texture *texture, const uint8_t *pixels, int stride, PixelFormat format,
-                const QRegion &damage);
+                const base::Region &damage);
 
 private:
     // `rect` of the buffer at `pixels` into the same place of the bound
     // texture, or, with `create`, the whole buffer as its new image.
-    void uploadPixels(const QSize &size, const QRect &rect, const uint8_t *pixels, int stride,
+    void uploadPixels(const base::Size &size, const base::Rect &rect, const uint8_t *pixels, int stride,
                       bool create);
     bool unpacksRows();
     std::shared_ptr<EglContext> m_context;

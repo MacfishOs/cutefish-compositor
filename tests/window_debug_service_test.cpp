@@ -2,36 +2,40 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/dbus.h"
+#include "base/json.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
+#include "loop_test_util.h"
 #include "scene/scene.h"
 #include "session/window_debug_service.h"
 #include "shm_test_util.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
-#include <QDBusConnection>
-#include <QDBusReply>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QTest>
+
+#include <algorithm>
+#include <gtest/gtest.h>
+#include <optional>
 
 using namespace cutefish;
+namespace dbus = base::dbus;
+using base::json::Value;
 
-class WindowDebugServiceTest : public QObject
+namespace {
+
+class WindowDebugServiceTest : public testing::Test
 {
-    Q_OBJECT
-private:
-    QDBusConnection client = QDBusConnection::connectToBus(
-            QDBusConnection::SessionBus, QStringLiteral("window-debug-test-client"));
+protected:
+    std::unique_ptr<dbus::Connection> client = dbus::Connection::open(dbus::Connection::Bus::Session, core::mainLoop());
 
     struct Desktop {
         scene::Scene scene;
         scene::Node *surfaces =
-                scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+                scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
         compositor::Compositor compositor {surfaces};
         testsupport::FakeRenderer renderer;
         input::Seat seat {&compositor};
@@ -39,10 +43,10 @@ private:
         std::vector<std::unique_ptr<compositor::Surface>> owned;
         std::shared_ptr<compositor::ShmPool> pool = testsupport::makePool(1 << 20);
 
-        Desktop() { manager.setOutputBounds(QRect(0, 0, 1280, 800)); }
+        Desktop() { manager.setOutputBounds(base::Rect(0, 0, 1280, 800)); }
         ~Desktop() { seat.shutdown(); }
 
-        wm::Window *open(const QString &applicationId)
+        wm::Window *open(const std::string &applicationId)
         {
             owned.push_back(compositor.createSurface());
             auto *surface = owned.back().get();
@@ -57,116 +61,140 @@ private:
         }
     };
 
-    QDBusMessage call(const QString &method, const QVariantList &arguments = {})
+    // The service answers on this thread, so the wait has to keep the loop running.
+    template<typename... Args>
+    dbus::Reply call(const std::string &method, const Args &...args)
     {
-        QDBusMessage message = QDBusMessage::createMethodCall(
-                QStringLiteral("com.cutefish.WindowDebug1"),
-                QStringLiteral("/com/cutefish/WindowDebug1"),
-                QStringLiteral("com.cutefish.WindowDebug1"), method);
-        message.setArguments(arguments);
-        // The service answers on this thread, so the wait has to keep its event loop running.
-        return client.call(message, QDBus::BlockWithGui);
+        std::optional<dbus::Reply> reply;
+        dbus::Proxy proxy(client.get(), "com.cutefish.WindowDebug1", "/com/cutefish/WindowDebug1",
+                          "com.cutefish.WindowDebug1");
+        auto pending = proxy.callAsync(
+                method, [&reply](const dbus::Reply &answer) { reply = answer; }, args...);
+        EXPECT_TRUE(test::runUntil([&] { return reply.has_value(); }));
+        return reply.value_or(dbus::Reply());
     }
 
-    QJsonArray listWindows()
+    bool callBool(const std::string &method, const auto &...args)
     {
-        const QDBusReply<QString> reply = call(QStringLiteral("ListWindows"));
-        return QJsonDocument::fromJson(reply.value().toUtf8()).array();
+        return call(method, args...).template value<bool>().value_or(false);
     }
 
-private slots:
-    void initTestCase() { QVERIFY(client.isConnected()); }
-
-    void listsTheWindowsBottomToTop()
+    Value listWindows()
     {
-        Desktop desktop;
-        wm::Window *editor = desktop.open(QStringLiteral("kate"));
-        wm::Window *viewer = desktop.open(QStringLiteral("loupe"));
-        editor->setTitle(QStringLiteral("notes.txt"));
-        session::WindowDebugService service(&desktop.manager);
-        QVERIFY(service.registerService());
-
-        const QJsonArray windows = listWindows();
-        QCOMPARE(windows.size(), 2);
-        const QJsonObject bottom = windows.at(0).toObject();
-        QCOMPARE(bottom.value(QStringLiteral("id")).toString(), QString::number(editor->id()));
-        QCOMPARE(bottom.value(QStringLiteral("appId")).toString(), QStringLiteral("kate"));
-        QCOMPARE(bottom.value(QStringLiteral("title")).toString(), QStringLiteral("notes.txt"));
-        QCOMPARE(bottom.value(QStringLiteral("state")).toString(), QStringLiteral("normal"));
-        const QJsonArray bounds = bottom.value(QStringLiteral("bounds")).toArray();
-        QCOMPARE(QRect(bounds.at(0).toInt(), bounds.at(1).toInt(), bounds.at(2).toInt(),
-                       bounds.at(3).toInt()),
-                 editor->bounds());
-        QCOMPARE(windows.at(1).toObject().value(QStringLiteral("appId")).toString(),
-                 QStringLiteral("loupe"));
-        QCOMPARE(windows.at(1).toObject().value(QStringLiteral("id")).toString(),
-                 QString::number(viewer->id()));
-    }
-
-    void movesResizesAndActivatesAWindow()
-    {
-        Desktop desktop;
-        wm::Window *editor = desktop.open(QStringLiteral("kate"));
-        wm::Window *viewer = desktop.open(QStringLiteral("loupe"));
-        viewer->activate();
-        session::WindowDebugService service(&desktop.manager);
-        QVERIFY(service.registerService());
-        const qulonglong id = editor->id();
-
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("MoveWindow"), {id, 40, 60})).value());
-        QCOMPARE(editor->bounds().topLeft(), QPoint(40, 60));
-        QCOMPARE(editor->bounds().size(), QSize(200, 100));
-
-        QVERIFY(QDBusReply<bool>(
-                        call(QStringLiteral("SetWindowBounds"), {id, 100, 120, 300, 200}))
-                        .value());
-        QCOMPARE(editor->bounds(), QRect(100, 120, 300, 200));
-
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("ActivateWindow"), {id})).value());
-        QVERIFY(editor->isActive());
-        QCOMPARE(desktop.manager.windows().back(), editor);
-
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("SnapWindow"), {id, false})).value());
-        QCOMPARE(editor->stateType(), wm::WindowStateType::SecondarySnapped);
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("RestoreWindow"), {id})).value());
-        QCOMPARE(editor->stateType(), wm::WindowStateType::Normal);
-
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("MinimizeWindow"), {id})).value());
-        QCOMPARE(editor->stateType(), wm::WindowStateType::Minimized);
-    }
-
-    void feedsInputOnlyWhenGivenOne()
-    {
-        Desktop desktop;
-        session::WindowDebugService service(&desktop.manager);
-        QVERIFY(service.registerService());
-        QVERIFY(!QDBusReply<bool>(call(QStringLiteral("PointerMotion"), {40.0, 30.0})).value());
-
-        input::InputManager input(&desktop.seat);
-        input.setBounds({1280, 800});
-        service.setInput(&input);
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("PointerMotion"), {40.0, 30.0})).value());
-        QCOMPARE(desktop.seat.pointerLocation(), QPointF(40, 30));
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("PointerButton"), {uint(0x110), true})).value());
-        QVERIFY(desktop.seat.pressedButtons() != input::NoButton);
-        QVERIFY(QDBusReply<bool>(call(QStringLiteral("PointerButton"), {uint(0x110), false})).value());
-        QCOMPARE(desktop.seat.pressedButtons(), input::NoButton);
-    }
-
-    void anUnknownIdChangesNothing()
-    {
-        Desktop desktop;
-        wm::Window *editor = desktop.open(QStringLiteral("kate"));
-        const QRect before = editor->bounds();
-        session::WindowDebugService service(&desktop.manager);
-        QVERIFY(service.registerService());
-
-        const qulonglong missing = editor->id() + 1000;
-        QVERIFY(!QDBusReply<bool>(call(QStringLiteral("MoveWindow"), {missing, 0, 0})).value());
-        QVERIFY(!QDBusReply<bool>(call(QStringLiteral("ActivateWindow"), {missing})).value());
-        QCOMPARE(editor->bounds(), before);
+        const std::string text = call("ListWindows").value<std::string>().value_or("");
+        return Value::parse(text).value_or(Value());
     }
 };
 
-QTEST_GUILESS_MAIN(WindowDebugServiceTest)
-#include "window_debug_service_test.moc"
+} // namespace
+
+TEST_F(WindowDebugServiceTest, ListsTheWindowsBottomToTop)
+{
+    ASSERT_TRUE(client);
+    Desktop desktop;
+    wm::Window *editor = desktop.open("kate");
+    wm::Window *viewer = desktop.open("loupe");
+    editor->setTitle("notes.txt");
+    session::WindowDebugService service(&desktop.manager);
+    ASSERT_TRUE(service.registerService());
+
+    const Value windows = listWindows();
+    ASSERT_EQ(windows.size(), 2u);
+    const Value &bottom = windows[size_t(0)];
+    EXPECT_EQ(bottom["id"].toString(), std::to_string(editor->id()));
+    EXPECT_EQ(bottom["appId"].toString(), "kate");
+    EXPECT_EQ(bottom["title"].toString(), "notes.txt");
+    EXPECT_EQ(bottom["state"].toString(), "normal");
+    const Value &bounds = bottom["bounds"];
+    EXPECT_EQ(base::Rect(int(bounds[size_t(0)].toInt()), int(bounds[size_t(1)].toInt()),
+                    int(bounds[size_t(2)].toInt()), int(bounds[size_t(3)].toInt())),
+              editor->bounds());
+    EXPECT_EQ(windows[size_t(1)]["appId"].toString(), "loupe");
+    EXPECT_EQ(windows[size_t(1)]["id"].toString(), std::to_string(viewer->id()));
+    // Members by name, as Qt's JSON wrote them.
+    const auto &members = bottom.toObject();
+    EXPECT_TRUE(std::is_sorted(members.begin(), members.end(),
+                               [](const auto &a, const auto &b) { return a.first < b.first; }));
+}
+
+TEST_F(WindowDebugServiceTest, MovesResizesAndActivatesAWindow)
+{
+    Desktop desktop;
+    wm::Window *editor = desktop.open("kate");
+    wm::Window *viewer = desktop.open("loupe");
+    viewer->activate();
+    session::WindowDebugService service(&desktop.manager);
+    ASSERT_TRUE(service.registerService());
+    const uint64_t id = editor->id();
+
+    EXPECT_TRUE(callBool("MoveWindow", id, int32_t(40), int32_t(60)));
+    EXPECT_EQ(editor->bounds().topLeft(), base::Point(40, 60));
+    EXPECT_EQ(editor->bounds().size(), base::Size(200, 100));
+
+    EXPECT_TRUE(callBool("SetWindowBounds", id, int32_t(100), int32_t(120), int32_t(300),
+                         int32_t(200)));
+    EXPECT_EQ(editor->bounds(), base::Rect(100, 120, 300, 200));
+
+    EXPECT_TRUE(callBool("ActivateWindow", id));
+    EXPECT_TRUE(editor->isActive());
+    EXPECT_EQ(desktop.manager.windows().back(), editor);
+
+    EXPECT_TRUE(callBool("SnapWindow", id, false));
+    EXPECT_EQ(editor->stateType(), wm::WindowStateType::SecondarySnapped);
+    EXPECT_TRUE(callBool("RestoreWindow", id));
+    EXPECT_EQ(editor->stateType(), wm::WindowStateType::Normal);
+
+    EXPECT_TRUE(callBool("MinimizeWindow", id));
+    EXPECT_EQ(editor->stateType(), wm::WindowStateType::Minimized);
+}
+
+TEST_F(WindowDebugServiceTest, FeedsInputOnlyWhenGivenOne)
+{
+    Desktop desktop;
+    session::WindowDebugService service(&desktop.manager);
+    ASSERT_TRUE(service.registerService());
+    EXPECT_FALSE(callBool("PointerMotion", 40.0, 30.0));
+
+    input::InputManager input(&desktop.seat);
+    input.setBounds({1280, 800});
+    service.setInput(&input);
+    EXPECT_TRUE(callBool("PointerMotion", 40.0, 30.0));
+    EXPECT_EQ(desktop.seat.pointerLocation(), base::PointF(40, 30));
+    EXPECT_TRUE(callBool("PointerButton", uint32_t(0x110), true));
+    EXPECT_NE(desktop.seat.pressedButtons(), input::NoButton);
+    EXPECT_TRUE(callBool("PointerButton", uint32_t(0x110), false));
+    EXPECT_EQ(desktop.seat.pressedButtons(), input::NoButton);
+}
+
+TEST_F(WindowDebugServiceTest, AnUnknownIdChangesNothing)
+{
+    Desktop desktop;
+    wm::Window *editor = desktop.open("kate");
+    const base::Rect before = editor->bounds();
+    session::WindowDebugService service(&desktop.manager);
+    ASSERT_TRUE(service.registerService());
+
+    const uint64_t missing = editor->id() + 1000;
+    EXPECT_FALSE(callBool("MoveWindow", missing, int32_t(0), int32_t(0)));
+    EXPECT_FALSE(callBool("ActivateWindow", missing));
+    EXPECT_EQ(editor->bounds(), before);
+}
+
+TEST_F(WindowDebugServiceTest, IntrospectionNamesTheArguments)
+{
+    Desktop desktop;
+    session::WindowDebugService service(&desktop.manager);
+    ASSERT_TRUE(service.registerService());
+
+    std::optional<dbus::Reply> reply;
+    dbus::Proxy proxy(client.get(), "com.cutefish.WindowDebug1", "/com/cutefish/WindowDebug1",
+                      "org.freedesktop.DBus.Introspectable");
+    auto pending = proxy.callAsync("Introspect", [&reply](const dbus::Reply &answer) { reply = answer; });
+    ASSERT_TRUE(test::runUntil([&] { return reply.has_value(); }));
+    const std::string xml = reply->value<std::string>().value_or(std::string());
+    // Parameters carry their names; sd-bus names every argument or none, so
+    // the result QtDBus left unnamed is "result".
+    EXPECT_NE(xml.find(R"(<arg type="t" name="id" direction="in"/>)"), std::string::npos) << xml;
+    EXPECT_NE(xml.find(R"(<arg type="i" name="height" direction="in"/>)"), std::string::npos);
+    EXPECT_NE(xml.find(R"(<arg type="b" name="result" direction="out"/>)"), std::string::npos);
+}

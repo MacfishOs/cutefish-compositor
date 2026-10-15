@@ -14,171 +14,310 @@
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 
-#include <QDBusConnectionInterface>
-#include <QDBusReply>
-#include <QUuid>
-
+#include "base/uuid.h"
 #include "display/recommended_scale.h"
-#include "display_config_adaptor.h"
 
 namespace cutefish::display::ipc {
 
+namespace dbus = base::dbus;
+
+static constexpr const char* kPath = "/com/cutefish/DisplayConfig1";
+static constexpr const char* kInterface = "com.cutefish.DisplayConfig1";
+static constexpr const char* kUnauthorized = "com.cutefish.DisplayConfig1.Error.Unauthorized";
+
 DisplayConfigService::DisplayConfigService(DisplayManager* manager,
                                            DisplayConfigurationController* controller,
-                                           QDBusConnection connection, SessionActive sessionActive,
-                                           QObject* parent)
-    : QObject(parent)
-    , m_manager(manager)
+                                           dbus::Connection* connection,
+                                           SessionActive sessionActive)
+    : m_manager(manager)
     , m_controller(controller)
-    , m_connection(std::move(connection))
+    , m_connection(connection)
     , m_sessionActive(std::move(sessionActive))
 {
-    registerTypes();
-    new DisplayConfigAdaptor(this);
-    connect(m_manager, &DisplayManager::displaysChanged, this, &DisplayConfigService::StateChanged);
-    connect(m_controller, &DisplayConfigurationController::previewChanged, this,
-            [this](const QString& token, qint64 deadline) {
-                const auto generation = m_manager->hardware() ? m_manager->hardware()->topologyGeneration : 0;
-                const auto revision = m_manager->applied() ? m_manager->applied()->revision : 0;
-                emit PreviewChanged(token, deadline, generation, revision);
-            });
-    connect(m_controller, &DisplayConfigurationController::operationFinished, this,
-            [this](const QString& token, const ConfigurationResult& result) {
-                QStringList affected;
+    if (m_connection) {
+        m_object = std::make_unique<dbus::Object>(m_connection, kPath, kInterface);
+        addMethods();
+    }
+    m_subscriptions.push_back(m_manager->displaysChanged.connect(
+            [this](uint64_t generation, uint64_t revision) {
+                if (m_object)
+                    m_object->emitSignal("StateChanged", generation, revision);
+            }));
+    m_subscriptions.push_back(m_controller->previewChanged.connect(
+            [this](const std::string& token, int64_t deadline) {
+                if (m_object)
+                    m_object->emitSignal("PreviewChanged", token, uint64_t(deadline),
+                                         topologyGeneration(), appliedRevision());
+            }));
+    m_subscriptions.push_back(m_controller->operationFinished.connect(
+            [this](const std::string& token, const ConfigurationResult& result) {
+                std::vector<std::string> affected;
                 for (const auto& id : result.error.affectedDisplays)
-                    affected.append(id.value());
-                const auto generation = m_manager->hardware() ? m_manager->hardware()->topologyGeneration : 0;
-                const auto revision = m_manager->applied() ? m_manager->applied()->revision : 0;
-                emit OperationFinished(token, result.succeeded, result.degraded,
-                                       uint(result.error.code), result.error.message, affected,
-                                       generation, revision);
-            });
-    if (m_connection.interface()) {
-        connect(m_connection.interface(), &QDBusConnectionInterface::serviceOwnerChanged, this,
-                [this](const QString& name, const QString& oldOwner, const QString& newOwner) {
-                    if (!oldOwner.isEmpty() && newOwner.isEmpty())
-                        m_controller->ownerDisconnected(name);
-                });
+                    affected.push_back(id.value());
+                if (m_object)
+                    m_object->emitSignal("OperationFinished", token, result.succeeded,
+                                         result.degraded, uint32_t(result.error.code),
+                                         result.error.message, affected, topologyGeneration(),
+                                         appliedRevision());
+            }));
+    if (m_connection) {
+        dbus::MatchRule rule;
+        rule.sender = "org.freedesktop.DBus";
+        rule.path = "/org/freedesktop/DBus";
+        rule.interface = "org.freedesktop.DBus";
+        rule.member = "NameOwnerChanged";
+        m_ownerChanges = m_connection->subscribe(rule, [this](const dbus::Message& message) {
+            std::string name;
+            std::string oldOwner;
+            std::string newOwner;
+            if (message.read(name, oldOwner, newOwner) && !oldOwner.empty() && newOwner.empty())
+                m_controller->ownerDisconnected(name);
+        });
     }
 }
 
-bool DisplayConfigService::registerService(const QString& serviceName)
+DisplayConfigService::~DisplayConfigService()
 {
-    if (!m_connection.isConnected() || serviceName.isEmpty())
+    if (m_connection && !m_serviceName.empty())
+        m_connection->releaseName(m_serviceName);
+}
+
+bool DisplayConfigService::registerService(const std::string& serviceName)
+{
+    if (!m_connection || !m_object || serviceName.empty())
         return false;
     m_serviceName = serviceName;
-    return m_connection.registerService(serviceName) &&
-        m_connection.registerObject(QStringLiteral("/com/cutefish/DisplayConfig1"), this,
-                                    QDBusConnection::ExportAdaptors);
+    return m_object->publish() && m_connection->requestName(serviceName);
 }
 
-QString DisplayConfigService::caller() const
+uint64_t DisplayConfigService::topologyGeneration() const
 {
-    return calledFromDBus() ? message().service() : QStringLiteral("internal");
+    return m_manager->hardware() ? m_manager->hardware()->topologyGeneration : 0;
 }
 
-bool DisplayConfigService::authorizeWrite()
+uint64_t DisplayConfigService::appliedRevision() const
+{
+    return m_manager->applied() ? m_manager->applied()->revision : 0;
+}
+
+void DisplayConfigService::addMethods()
+{
+    m_object->addProperty("ProtocolVersion", [] { return protocolVersion; });
+
+    m_object->addMethod("GetState", [this] {
+        const auto hardware = m_manager->hardware();
+        const auto applied = m_manager->applied();
+        const auto& physical = applied ? applied->physicalDisplays
+                                       : (hardware ? hardware->displays
+                                                   : std::vector<display::DisplaySnapshot>());
+        return std::tuple(
+                hardware ? hardware->compositorInstanceId : std::string(),
+                hardware ? hardware->seatId : std::string(), topologyGeneration(),
+                appliedRevision(), toWire(physical),
+                toWire(applied ? applied->logicalDisplays : std::vector<display::LogicalDisplay>()),
+                toWire(applied ? applied->placements : std::vector<display::DisplayPlacement>()),
+                m_controller->previewToken(), uint64_t(m_controller->previewDeadlineMs()));
+    }, dbus::ArgumentNames {{},
+                            {"instanceId", "seatId", "topologyGeneration", "appliedRevision",
+                             "physicalDisplays", "logicalDisplays", "placements", "previewToken",
+                             "previewDeadlineMs"}});
+
+    using Configuration = std::tuple<std::string, uint64_t, uint64_t, std::vector<DisplayRequest>,
+                                     std::string, std::vector<Placement>, MirrorGroups>;
+    const std::string configurationIn = dbus::Type<Configuration>::signature();
+    // Without the parentheses of the struct: the arguments are separate.
+    const std::string configurationArguments =
+            configurationIn.substr(1, configurationIn.size() - 2);
+    const auto readConfiguration = [](dbus::MethodCall& call) -> std::optional<DisplayConfiguration> {
+        std::string instanceId;
+        uint64_t generation = 0;
+        uint64_t revision = 0;
+        std::vector<DisplayRequest> displays;
+        std::string primary;
+        std::vector<Placement> placements;
+        MirrorGroups mirrorGroups;
+        if (!call.read(instanceId, generation, revision, displays, primary, placements,
+                       mirrorGroups)) {
+            call.replyError("org.freedesktop.DBus.Error.InvalidArgs", "Unexpected arguments");
+            return std::nullopt;
+        }
+        return fromWire(instanceId, generation, revision, displays, primary, placements,
+                        mirrorGroups);
+    };
+
+    // As in com.cutefish.DisplayConfig1.xml, which introspection has always shown.
+    const dbus::ArgumentNames configurationNames {
+            {"instanceId", "topologyGeneration", "appliedRevision", "displays", "primary",
+             "placements", "mirrorGroups"},
+            {"operationToken"}};
+    m_object->addMethod("TestConfiguration", configurationArguments, "s",
+                        [this, readConfiguration](dbus::MethodCall& call) {
+                            if (!authorizeWrite(call))
+                                return;
+                            if (const auto request = readConfiguration(call))
+                                call.reply(m_controller->test(*request));
+                        }, configurationNames);
+    m_object->addMethod("ApplyConfiguration", configurationArguments, "s",
+                        [this, readConfiguration](dbus::MethodCall& call) {
+                            if (!authorizeWrite(call))
+                                return;
+                            if (const auto request = readConfiguration(call))
+                                call.reply(m_controller->apply(*request,
+                                                               call.message().sender()));
+                        }, configurationNames);
+    m_object->addMethod("SetConfiguration", configurationArguments, "s",
+                        [this, readConfiguration](dbus::MethodCall& call) {
+                            if (!authorizeWrite(call))
+                                return;
+                            if (const auto request = readConfiguration(call))
+                                call.reply(m_controller->apply(*request, call.message().sender(),
+                                                               0));
+                        }, configurationNames);
+
+    m_object->addMethod("ConfirmConfiguration", "s", "", [this](dbus::MethodCall& call) {
+        std::string token;
+        call.read(token);
+        if (!authorizeWrite(call))
+            return;
+        m_controller->confirm(token, call.message().sender());
+        call.reply();
+    }, dbus::ArgumentNames {{"previewToken"}, {}});
+    m_object->addMethod("RevertConfiguration", "s", "", [this](dbus::MethodCall& call) {
+        std::string token;
+        call.read(token);
+        if (!authorizeWrite(call))
+            return;
+        m_controller->revert(token, call.message().sender());
+        call.reply();
+    }, dbus::ArgumentNames {{"previewToken"}, {}});
+
+    m_object->addMethod("ResetConfiguration", "stt", "s", [this](dbus::MethodCall& call) {
+        std::string instanceId;
+        uint64_t generation = 0;
+        uint64_t revision = 0;
+        call.read(instanceId, generation, revision);
+        if (!authorizeWrite(call))
+            return;
+        call.reply(m_controller->apply(defaultConfiguration(instanceId, generation, revision),
+                                       call.message().sender()));
+    }, dbus::ArgumentNames {{"instanceId", "topologyGeneration", "appliedRevision"},
+                            {"operationToken"}});
+
+    m_object->addMethod("SetDisplayPower", "asu", "s", [this](dbus::MethodCall& call) {
+        std::vector<std::string> displayIds;
+        uint32_t state = 0;
+        call.read(displayIds, state);
+        if (!authorizeWrite(call))
+            return;
+        if (state > uint32_t(NativeDisplayDelegate::PowerState::Suspend)) {
+            call.reply(reject(DisplayErrorCode::UnsupportedProperty,
+                              "The display power state is invalid"));
+            return;
+        }
+        std::vector<DisplayId> ids;
+        for (const auto& value : displayIds)
+            ids.push_back(DisplayId(value));
+        call.reply(m_controller->setPower(ids, NativeDisplayDelegate::PowerState(state)));
+    }, dbus::ArgumentNames {{"displayIds", "state"}, {"operationToken"}});
+
+    m_object->addMethod("SetDockedLidClosed", "b", "s", [this](dbus::MethodCall& call) {
+        bool closed = false;
+        call.read(closed);
+        if (!authorizeWrite(call))
+            return;
+        if (!m_manager->hardware()) {
+            call.reply(reject(DisplayErrorCode::Unavailable, "Display hardware is unavailable"));
+            return;
+        }
+        // Between a hotplug and its new layout nothing is applied, which is not
+        // "no external display".
+        if (closed && !m_manager->applied()) {
+            call.reply(reject(DisplayErrorCode::Busy, "A display change is in progress"));
+            return;
+        }
+        bool usableExternal = false;
+        std::vector<DisplayId> internal;
+        for (const auto& physical : m_manager->hardware()->displays) {
+            if (physical.connectionType == DisplayConnectionType::Internal)
+                internal.push_back(physical.sessionId);
+            else if (closed && m_manager->applied()) {
+                for (const auto& logical : m_manager->applied()->logicalDisplays)
+                    usableExternal |= logical.hasDestination(physical.sessionId);
+            }
+        }
+        if (closed && !usableExternal) {
+            call.reply(reject(DisplayErrorCode::NoEnabledOutput,
+                              "No active external display is available for docked mode"));
+            return;
+        }
+        call.reply(m_controller->setPower(internal, closed ? NativeDisplayDelegate::PowerState::Off
+                                                           : NativeDisplayDelegate::PowerState::On));
+    }, dbus::ArgumentNames {{"closed"}, {"operationToken"}});
+
+    m_object->addMethod("SetNightLight", "du", "", [this](dbus::MethodCall& call) {
+        double strength = 0;
+        uint32_t durationMs = 0;
+        call.read(strength, durationMs);
+        // A tint, not a configuration: a session that is not on screen keeps it
+        // for when it is back.
+        if (!authorizeCaller(call))
+            return;
+        if (!std::isfinite(strength)) {
+            call.replyError("org.freedesktop.DBus.Error.InvalidArgs",
+                            "The strength is not a number");
+            return;
+        }
+        if (m_nightLight)
+            m_nightLight(std::clamp(strength, 0.0, 1.0), std::chrono::milliseconds(durationMs));
+        call.reply();
+    }, dbus::ArgumentNames {{"strength", "durationMs"}, {}});
+
+    m_object->addSignal("StateChanged", "tt", {"topologyGeneration", "appliedRevision"});
+    m_object->addSignal("OperationFinished", "sbbusastt",
+                        {"operationToken", "succeeded", "degraded", "errorCode", "errorMessage",
+                         "affectedDisplayIds", "topologyGeneration", "appliedRevision"});
+    m_object->addSignal("PreviewChanged", "sttt",
+                        {"previewToken", "deadlineMs", "topologyGeneration", "appliedRevision"});
+}
+
+bool DisplayConfigService::authorizeWrite(dbus::MethodCall& call)
 {
     if (!m_sessionActive()) {
-        sendErrorReply(QStringLiteral("com.cutefish.DisplayConfig1.Error.Unauthorized"),
-                       QStringLiteral("The graphical session is inactive"));
+        call.replyError(kUnauthorized, "The graphical session is inactive");
         return false;
     }
-    return authorizeCaller();
+    return authorizeCaller(call);
 }
 
-bool DisplayConfigService::authorizeCaller()
+bool DisplayConfigService::authorizeCaller(dbus::MethodCall& call)
 {
-    if (!calledFromDBus())
-        return true;
-    const QDBusReply<uint> uid = m_connection.interface()->serviceUid(message().service());
-    if (!uid.isValid() || uid.value() != uint(getuid())) {
-        sendErrorReply(QStringLiteral("com.cutefish.DisplayConfig1.Error.Unauthorized"),
-                       QStringLiteral("The caller does not own this user session"));
+    dbus::Message query = m_connection->newMethodCall("org.freedesktop.DBus",
+                                                      "/org/freedesktop/DBus",
+                                                      "org.freedesktop.DBus",
+                                                      "GetConnectionUnixUser");
+    query.append(call.message().sender());
+    uint32_t uid = 0;
+    if (!m_connection->call(query).read(uid) || uid != uint32_t(getuid())) {
+        call.replyError(kUnauthorized, "The caller does not own this user session");
         return false;
     }
     return true;
 }
 
-QString DisplayConfigService::GetState(QString& seatId, qulonglong& topologyGeneration,
-                                       qulonglong& appliedRevision,
-                                       QList<PhysicalDisplay>& physicalDisplays,
-                                       QList<LogicalDisplay>& logicalDisplays,
-                                       QList<Placement>& placements, QString& previewToken,
-                                       qulonglong& previewDeadlineMs)
+std::string DisplayConfigService::reject(DisplayErrorCode code, const std::string& message)
 {
-    const auto hardware = m_manager->hardware();
-    const auto applied = m_manager->applied();
-    seatId = hardware ? hardware->seatId : QString();
-    topologyGeneration = hardware ? hardware->topologyGeneration : 0;
-    appliedRevision = applied ? applied->revision : 0;
-    physicalDisplays = toWire(applied ? applied->physicalDisplays :
-        (hardware ? hardware->displays : QList<display::DisplaySnapshot>()));
-    logicalDisplays = toWire(applied ? applied->logicalDisplays : QList<display::LogicalDisplay>());
-    placements = toWire(applied ? applied->placements : QList<display::DisplayPlacement>());
-    previewToken = m_controller->previewToken();
-    previewDeadlineMs = m_controller->previewDeadlineMs();
-    return hardware ? hardware->compositorInstanceId : QString();
-}
-
-QString DisplayConfigService::reject(DisplayErrorCode code, const QString& message)
-{
-    const QString token = QStringLiteral("rejected-") +
-        QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const auto generation = m_manager->hardware() ? m_manager->hardware()->topologyGeneration : 0;
-    const auto revision = m_manager->applied() ? m_manager->applied()->revision : 0;
-    emit OperationFinished(token, false, false, uint(code), message, {}, generation, revision);
+    const std::string token = "rejected-" + base::Uuid::generate().toString();
+    if (m_object)
+        m_object->emitSignal("OperationFinished", token, false, false, uint32_t(code), message,
+                             std::vector<std::string>(), topologyGeneration(), appliedRevision());
     return token;
 }
 
-QString DisplayConfigService::TestConfiguration(
-    const QString& instanceId, qulonglong topologyGeneration, qulonglong appliedRevision,
-    const QList<DisplayRequest>& displays, const QString& primary,
-    const QList<Placement>& placements, const MirrorGroups& mirrorGroups)
-{
-    if (!authorizeWrite())
-        return {};
-    return m_controller->test(fromWire(instanceId, topologyGeneration, appliedRevision, displays,
-                                       primary, placements, mirrorGroups));
-}
-
-QString DisplayConfigService::ApplyConfiguration(
-    const QString& instanceId, qulonglong topologyGeneration, qulonglong appliedRevision,
-    const QList<DisplayRequest>& displays, const QString& primary,
-    const QList<Placement>& placements, const MirrorGroups& mirrorGroups)
-{
-    if (!authorizeWrite())
-        return {};
-    return m_controller->apply(fromWire(instanceId, topologyGeneration, appliedRevision, displays,
-                                        primary, placements, mirrorGroups), caller());
-}
-
-QString DisplayConfigService::SetConfiguration(
-    const QString& instanceId, qulonglong topologyGeneration, qulonglong appliedRevision,
-    const QList<DisplayRequest>& displays, const QString& primary,
-    const QList<Placement>& placements, const MirrorGroups& mirrorGroups)
-{
-    if (!authorizeWrite())
-        return {};
-    return m_controller->apply(fromWire(instanceId, topologyGeneration, appliedRevision, displays,
-                                        primary, placements, mirrorGroups), caller(), 0);
-}
-
-void DisplayConfigService::ConfirmConfiguration(const QString& previewToken)
-{
-    if (authorizeWrite())
-        m_controller->confirm(previewToken, caller());
-}
-
-void DisplayConfigService::RevertConfiguration(const QString& previewToken)
-{
-    if (authorizeWrite())
-        m_controller->revert(previewToken, caller());
-}
-
-DisplayConfiguration DisplayConfigService::defaultConfiguration(
-    const QString& instanceId, qulonglong topologyGeneration, qulonglong appliedRevision) const
+DisplayConfiguration DisplayConfigService::defaultConfiguration(const std::string& instanceId,
+                                                                uint64_t topologyGeneration,
+                                                                uint64_t appliedRevision) const
 {
     DisplayConfiguration result;
     result.base = {instanceId, topologyGeneration, appliedRevision};
@@ -189,81 +328,17 @@ DisplayConfiguration DisplayConfigService::defaultConfiguration(
         const auto mode = display.nativeMode ? display.nativeMode : display.currentMode;
         if (!mode)
             continue;
-        result.displays.append({display.sessionId, true, *mode, recommendedScale(display),
-                                DisplayRotation::Normal});
+        result.displays.push_back({display.sessionId, true, *mode, recommendedScale(display),
+                                   DisplayRotation::Normal});
         if (!result.primary.isValid()) {
             result.primary = display.sessionId;
             parent = display.sessionId;
         } else {
-            result.placements.append({display.sessionId, parent, LayoutEdge::Right, 0});
+            result.placements.push_back({display.sessionId, parent, LayoutEdge::Right, 0});
             parent = display.sessionId;
         }
     }
     return result;
-}
-
-QString DisplayConfigService::ResetConfiguration(const QString& instanceId,
-                                                 qulonglong topologyGeneration,
-                                                 qulonglong appliedRevision)
-{
-    if (!authorizeWrite())
-        return {};
-    return m_controller->apply(defaultConfiguration(instanceId, topologyGeneration, appliedRevision),
-                               caller());
-}
-
-QString DisplayConfigService::SetDisplayPower(const QStringList& displayIds, uint state)
-{
-    if (!authorizeWrite())
-        return {};
-    if (state > uint(NativeDisplayDelegate::PowerState::Suspend))
-        return reject(DisplayErrorCode::UnsupportedProperty,
-                      QStringLiteral("The display power state is invalid"));
-    QList<DisplayId> ids;
-    for (const auto& value : displayIds)
-        ids.append(DisplayId(value));
-    return m_controller->setPower(ids, NativeDisplayDelegate::PowerState(state));
-}
-
-QString DisplayConfigService::SetDockedLidClosed(bool closed)
-{
-    if (!authorizeWrite())
-        return {};
-    if (!m_manager->hardware())
-        return reject(DisplayErrorCode::Unavailable, QStringLiteral("Display hardware is unavailable"));
-    // Between a hotplug and its new layout nothing is applied, which is not "no external display".
-    if (closed && !m_manager->applied())
-        return reject(DisplayErrorCode::Busy, QStringLiteral("A display change is in progress"));
-    bool usableExternal = false;
-    QList<DisplayId> internal;
-    for (const auto& physical : m_manager->hardware()->displays) {
-        if (physical.connectionType == DisplayConnectionType::Internal)
-            internal.append(physical.sessionId);
-        else if (closed && m_manager->applied()) {
-            for (const auto& logical : m_manager->applied()->logicalDisplays)
-                usableExternal |= logical.destinations.contains(physical.sessionId);
-        }
-    }
-    if (closed && !usableExternal)
-        return reject(DisplayErrorCode::NoEnabledOutput,
-                      QStringLiteral("No active external display is available for docked mode"));
-    return m_controller->setPower(internal, closed ? NativeDisplayDelegate::PowerState::Off
-                                                   : NativeDisplayDelegate::PowerState::On);
-}
-
-void DisplayConfigService::SetNightLight(double strength, uint durationMs)
-{
-    // A tint, not a configuration: a session that is not on screen keeps it
-    // for when it is back.
-    if (!authorizeCaller())
-        return;
-    if (!std::isfinite(strength)) {
-        if (calledFromDBus())
-            sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("The strength is not a number"));
-        return;
-    }
-    if (m_nightLight)
-        m_nightLight(std::clamp(strength, 0.0, 1.0), std::chrono::milliseconds(durationMs));
 }
 
 } // namespace cutefish::display::ipc

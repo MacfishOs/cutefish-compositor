@@ -39,7 +39,7 @@ protected:
 
     void SetUp() override
     {
-        scene.setSize({1920, 1080});
+        scene.setSize(base::Size(1920, 1080));
         surface->setPosition({0, 0});
         surface->attach(buffer, {});
         surface->commit();
@@ -65,21 +65,20 @@ protected:
 
     void submit(uint64_t token) { tracker.submitted(token, draw()); }
 
-    render::PresentationSubmission drawOn(const QRect& viewport)
+    render::PresentationSubmission drawOn(const base::Rect& viewport)
     {
         render::OutputRenderContext context;
-        context.outputId = QString::number(viewport.x());
+        context.outputId = std::to_string(viewport.x());
         context.logicalViewport = viewport;
         context.nativeTargetSize = viewport.size();
         renderer.setOutputContext(context);
         return draw();
     }
 
-    void sideBySide(const QRect& left, const QRect& right)
+    void sideBySide(const base::Rect& left, const base::Rect& right)
     {
         scene.setSize(left.united(right).size());
-        compositor.setOutputViews({{QStringLiteral("left"), left, {}, QStringLiteral("A")},
-                                   {QStringLiteral("right"), right, {}, QStringLiteral("B")}});
+        compositor.setOutputViews({{"left", left, {}, "A"}, {"right", right, {}, "B"}});
     }
 
     void complete(uint64_t token, uint32_t seq = 42)
@@ -123,7 +122,7 @@ TEST_F(PresentationTest, SubmittedASurvivesBAndCachedBIsNotReportedWithC)
     request();
     surface->commit();
     request();
-    surface->setViewport(QSize(8, 8));
+    surface->setViewport(base::Size(8, 8));
     surface->commit();
     ASSERT_EQ(results.size(), 1u);
     EXPECT_FALSE(results[0].presented);
@@ -219,7 +218,7 @@ TEST_F(PresentationTest, OffOutputAndAbandonedAttempts)
 
 TEST_F(PresentationTest, AnotherOutputsFrameLeavesContentToItsOwnOutput)
 {
-    const QRect left(0, 0, 1920, 1080), right(1920, 0, 1920, 1080);
+    const base::Rect left(0, 0, 1920, 1080), right(1920, 0, 1920, 1080);
     sideBySide(left, right);
     surface->setPosition({2000, 100});
     request();
@@ -238,7 +237,7 @@ TEST_F(PresentationTest, AnotherOutputsFrameLeavesContentToItsOwnOutput)
 
 TEST_F(PresentationTest, ContentOnNoOutputIsDiscardedByAnyOutputsFrame)
 {
-    const QRect left(0, 0, 1920, 1080), right(1920, 0, 1920, 1080);
+    const base::Rect left(0, 0, 1920, 1080), right(1920, 0, 1920, 1080);
     sideBySide(left, right);
     request();
     surface->commit();
@@ -327,12 +326,12 @@ TEST_F(PresentationTest, ContentLeftOutOfAPartialRepaintIsStillPresented)
 {
     request();
     surface->commit();
-    renderer.paintClip = QRect(100, 100, 10, 10);
+    renderer.paintClip = base::Rect(100, 100, 10, 10);
     renderer.calls.clear();
     submit(1);
     renderer.paintClip.reset();
     EXPECT_TRUE(std::none_of(renderer.calls.begin(), renderer.calls.end(),
-                             [](const auto& call) { return call.kind == QStringLiteral("texture"); }));
+                             [](const auto& call) { return call.kind == "texture"; }));
     complete(1);
     ASSERT_EQ(results.size(), 1u);
     EXPECT_TRUE(results[0].valid());

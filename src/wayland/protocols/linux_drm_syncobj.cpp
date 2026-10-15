@@ -74,7 +74,7 @@ public:
             return;
         m_signaled = true;
         if (m_syncobj && !m_syncobj->signal(m_point, fence)) {
-            qCWarning(cfWayland) << "Failed to signal a DRM syncobj release point";
+            CF_WARNING(cfWayland) << "Failed to signal a DRM syncobj release point";
         }
     }
 
@@ -390,7 +390,7 @@ wl_global* createLinuxDrmSyncobjGlobal(wl_display* display, int drmFd)
 
     // A device that cannot make a timeline cannot serve this protocol at all.
     if (!render::DrmSyncobj::create(drmFd)) {
-        qCInfo(cfWayland) << "DRM syncobj timelines are unavailable; no explicit sync";
+        CF_INFO(cfWayland) << "DRM syncobj timelines are unavailable; no explicit sync";
         return nullptr;
     }
 

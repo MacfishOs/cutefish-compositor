@@ -31,14 +31,14 @@ void DataSource::invalidate()
 {
     if (!std::exchange(m_alive, false))
         return;
-    emit invalidated();
+    invalidated();
 }
 
 void DataSource::cancel()
 {
     if (!m_alive)
         return;
-    QPointer<DataSource> alive(this);
+    const auto alive = m_weakFactory.getWeakPtr();
     invalidate();
     if (alive)
         cancelled();
@@ -47,10 +47,11 @@ void DataSource::cancel()
 SelectionController::~SelectionController()
 {
     m_destroying = true;
-    disconnect(m_sourceConnection);
+    m_sourceConnection.reset();
     auto previous = std::exchange(m_source, nullptr);
     if (previous)
         previous->cancel();
+    destroyed();
 }
 
 void SelectionController::setRecipient(Recipient recipient)
@@ -60,7 +61,7 @@ void SelectionController::setRecipient(Recipient recipient)
     m_recipient = recipient;
     ++m_focusGeneration;
     m_serials.clear();
-    emit recipientChanged();
+    recipientChanged();
 }
 
 void SelectionController::recordSerial(Recipient recipient, uint32_t serial)
@@ -99,11 +100,11 @@ void SelectionController::setIsolated(bool isolated)
         m_savedRecipient = m_recipient;
         // Not cancelled: the session's source stays alive and unused, it is
         // simply not the current selection while the screen is secure.
-        disconnect(m_sourceConnection);
+        m_sourceConnection.reset();
         m_source = nullptr;
         ++m_generation;
         setRecipient(nullptr);
-        emit selectionChanged();
+        selectionChanged();
         return;
     }
 
@@ -113,14 +114,13 @@ void SelectionController::setIsolated(bool isolated)
     // secure clipboard was empty for its whole life.
     m_source = restored && restored->alive() ? std::move(restored) : nullptr;
     if (m_source) {
-        m_sourceConnection = connect(m_source.get(), &DataSource::invalidated, this,
-                                     [this, expected = m_source.get()] {
-                                         sourceDestroyed(expected);
-                                     });
+        m_sourceConnection = m_source->invalidated.connect([this, expected = m_source.get()] {
+            sourceDestroyed(expected);
+        });
     }
     ++m_generation;
     setRecipient(recipient);
-    emit selectionChanged();
+    selectionChanged();
 }
 
 bool SelectionController::setSource(std::shared_ptr<DataSource> source)
@@ -132,24 +132,23 @@ bool SelectionController::setSource(std::shared_ptr<DataSource> source)
         return false;
     if (m_destroying || (source && (!source->alive() || source->used())))
         return false;
-    disconnect(m_sourceConnection);
+    m_sourceConnection.reset();
     auto previous = std::exchange(m_source, std::move(source));
     const auto generation = ++m_generation;
     if (m_source) {
         m_source->markUsed();
-        m_sourceConnection = connect(m_source.get(), &DataSource::invalidated, this,
-                                     [this, expected = m_source.get()] {
-                                         sourceDestroyed(expected);
-                                     });
+        m_sourceConnection = m_source->invalidated.connect([this, expected = m_source.get()] {
+            sourceDestroyed(expected);
+        });
     }
-    QPointer<SelectionController> alive(this);
+    const auto alive = m_weakFactory.getWeakPtr();
     if (previous)
         previous->cancel();
     if (!alive)
         return false;
     if (generation != m_generation)
         return false;
-    emit selectionChanged();
+    selectionChanged();
     return alive && generation == m_generation;
 }
 
@@ -160,7 +159,7 @@ void SelectionController::sourceDestroyed(DataSource *source)
 }
 
 DataOffer::DataOffer(SelectionController *controller)
-    : m_controller(controller)
+    : m_controller(controller->weakPtr())
     , m_source(controller->source())
     , m_formats(controller->source() ? controller->source()->formats() : std::vector<std::string>())
     , m_generation(controller->generation())
@@ -170,9 +169,8 @@ DataOffer::DataOffer(SelectionController *controller)
         if (!valid())
             invalidate();
     };
-    connect(controller, &SelectionController::selectionChanged, this, changed);
-    connect(controller, &SelectionController::recipientChanged, this, changed);
-    connect(controller, &QObject::destroyed, this, &DataOffer::invalidate);
+    m_selectionChanged = controller->selectionChanged.connect(changed);
+    m_recipientChanged = controller->recipientChanged.connect(changed);
 }
 
 void DataOffer::invalidate()

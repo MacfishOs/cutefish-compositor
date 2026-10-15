@@ -13,7 +13,7 @@ using namespace cutefish;
 
 TEST(OutputScale, ParsingCanonicalValuesAndLimits)
 {
-    for (const auto& [text, numerator] : std::vector<std::pair<QString, uint32_t>> {
+    for (const auto& [text, numerator] : std::vector<std::pair<std::string, uint32_t>> {
              {"1.0", 120}, {"1.25", 150}, {"1.5", 180}, {"1.75", 210}, {"2.0", 240}, {"4", 480}}) {
         const auto scale = compositor::OutputScale::parse(text);
         ASSERT_TRUE(scale);
@@ -23,8 +23,10 @@ TEST(OutputScale, ParsingCanonicalValuesAndLimits)
     }
     for (const auto& text : {"", "nan", "inf", "-1", "0", "0.99", "4.01", "1e0", "1.5x", " 1", "1.",
                              "+1", "99999999999999999999999999"})
-        EXPECT_FALSE(compositor::OutputScale::parse(QString::fromLatin1(text))) << text;
+        EXPECT_FALSE(compositor::OutputScale::parse(text)) << text;
     EXPECT_EQ(compositor::OutputScale::parse("1.5001"), compositor::OutputScale::parse("1.5"));
+    EXPECT_EQ(compositor::OutputScale::parse("1.5\n"), compositor::OutputScale::parse("1.5"));
+    EXPECT_FALSE(compositor::OutputScale::parse("1.5\n\n"));
     EXPECT_FALSE(compositor::OutputScale::fromNumerator(0));
     EXPECT_FALSE(compositor::OutputScale::fromNumerator(UINT32_MAX));
 }
@@ -32,17 +34,18 @@ TEST(OutputScale, ParsingCanonicalValuesAndLimits)
 TEST(OutputScale, OutputRoundingAndConservativeDeviceCoverage)
 {
     const auto scale = *compositor::OutputScale::parse("1.5");
-    EXPECT_EQ(scale.logicalSize({1920, 1080}), QSize(1280, 720));
-    EXPECT_EQ(scale.logicalSize({1512, 817}), QSize(1008, 545));
-    EXPECT_EQ(scale.logicalSize({1513, 819}), QSize(1009, 546));
-    EXPECT_EQ(scale.deviceCoverage({100, 50, 800, 600}), QRect(150, 75, 1200, 900));
-    EXPECT_EQ(scale.deviceCoverage({0.25, 0.25, 1, 1}), QRect(0, 0, 2, 2));
+    EXPECT_EQ(scale.logicalSize({1920, 1080}), base::Size(1280, 720));
+    EXPECT_EQ(scale.logicalSize({1512, 817}), base::Size(1008, 545));
+    EXPECT_EQ(scale.logicalSize({1513, 819}), base::Size(1009, 546));
+    EXPECT_EQ(scale.deviceCoverage({100, 50, 800, 600}), base::Rect(150, 75, 1200, 900));
+    EXPECT_EQ(scale.deviceCoverage({0.25, 0.25, 1, 1}), base::Rect(0, 0, 2, 2));
     for (uint32_t numerator : {120u, 150u, 180u, 210u, 240u}) {
         const auto value = *compositor::OutputScale::fromNumerator(numerator);
-        for (QSize native : {QSize(1920, 1080), QSize(1512, 817), QSize(1513, 819)}) {
+        for (base::Size native : {base::Size(1920, 1080), base::Size(1512, 817),
+                                  base::Size(1513, 819)}) {
             const auto logical = value.logicalSize(native);
-            const auto coverage = value.deviceCoverage(QRectF(QPointF(), logical));
-            EXPECT_TRUE(coverage.contains(QRect(QPoint(), native)));
+            const auto coverage = value.deviceCoverage(base::RectF(base::SizeF(logical)));
+            EXPECT_TRUE(coverage.contains(base::Rect(native)));
             EXPECT_LT(coverage.width() - native.width(), std::ceil(value.value()) + 1);
         }
     }
@@ -58,15 +61,15 @@ TEST(OutputScale, DeviceInputAndSceneUseSameMapping)
     input.setDeviceScale(scale.value());
     input.setBounds(scale.logicalSize({1920, 1080}));
     input.onPointerMotionAbsolute({}, {450, 300});
-    EXPECT_EQ(input.pointerPosition(), QPointF(300, 200));
-    EXPECT_EQ(input.pointerPosition() - QPointF(100, 50), QPointF(200, 150));
+    EXPECT_EQ(input.pointerPosition(), base::PointF(300, 200));
+    EXPECT_EQ(input.pointerPosition() - base::PointF(100, 50), base::PointF(200, 150));
     input.onPointerMotion({}, {150, 75});
-    EXPECT_EQ(input.pointerPosition(), QPointF(400, 250));
+    EXPECT_EQ(input.pointerPosition(), base::PointF(400, 250));
     input.onPointerMotionAbsolute({}, {99999, 99999});
-    EXPECT_EQ(input.pointerPosition(), QPointF(1919 / 1.5, 1079 / 1.5));
-    EXPECT_EQ(input.deviceBounds(), QSize(1920, 1080));
+    EXPECT_EQ(input.pointerPosition(), base::PointF(1919 / 1.5, 1079 / 1.5));
+    EXPECT_EQ(input.deviceBounds(), base::Size(1920, 1080));
     input.setDeviceScale(2);
     input.setBounds({960, 540});
-    EXPECT_EQ(input.pointerPosition(), QPointF(959.5, 539.5));
+    EXPECT_EQ(input.pointerPosition(), base::PointF(959.5, 539.5));
     EXPECT_EQ(seat.cursorPosition(), input.pointerPosition());
 }

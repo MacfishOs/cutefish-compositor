@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include <unicode/uchar.h>
+#include <unicode/utf8.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "auth/auth_controller.h"
@@ -38,7 +40,22 @@ ui::Color white(double alpha)
     return kWhite.withAlpha(alpha);
 }
 
-// QML's ColorAnimation: each channel, alpha included, straight.
+// The name's first character in upper case, for the picture's initial.
+std::string initialOf(const std::string &name)
+{
+    int32_t offset = 0;
+    UChar32 character = 0;
+    U8_NEXT(name.data(), offset, int32_t(name.size()), character);
+    if (character < 0)
+        return name.substr(0, size_t(offset));
+    char buffer[U8_MAX_LENGTH];
+    int32_t length = 0;
+    UBool error = false;
+    U8_APPEND(buffer, length, U8_MAX_LENGTH, u_toupper(character), error);
+    return std::string(buffer, size_t(length));
+}
+
+// A colour animation step: each channel, alpha included, straight.
 ui::Color mix(ui::Color from, ui::Color to, double t)
 {
     const auto channel = [t](uint8_t a, uint8_t b) {
@@ -48,8 +65,8 @@ ui::Color mix(ui::Color from, ui::Color to, double t)
             channel(from.a, to.a)};
 }
 
-// A QML Behavior: a change of the target animates from where the value is
-// now. The first value is taken as it is.
+// A change of the target animates from where the value is now. The first
+// value is taken as it is.
 template<typename T>
 class Behavior
 {
@@ -119,7 +136,7 @@ void drawPanelRect(ui::Painter &painter, const ui::RectF &rect, double radius, u
 
 } // namespace
 
-// Qt Quick Text with style Text.Raised: the text drawn again in the style
+// Raised text: the text drawn again in the style
 // colour one logical pixel lower, under it.
 class RaisedLabel final : public ui::StyledLabel
 {
@@ -206,13 +223,12 @@ public:
         m_name = addChild<RaisedLabel>(16, 600, kWhite, kBlack.withAlpha(0.3));
     }
 
-    void setUser(const QString &displayName, const QString &icon)
+    void setUser(const std::string &displayName, const std::string &icon)
     {
-        m_name->setText(displayName.toStdString());
-        m_initial->setText(displayName.isEmpty() ? std::string("?")
-                                                 : displayName.left(1).toUpper().toStdString());
-        if (icon.toStdString() != m_icon) {
-            m_icon = icon.toStdString();
+        m_name->setText(displayName);
+        m_initial->setText(displayName.empty() ? std::string("?") : initialOf(displayName));
+        if (icon != m_icon) {
+            m_icon = icon;
             m_picture->setSource(m_icon);
         }
         updateInitial();
@@ -280,11 +296,9 @@ public:
 
     std::function<void(int index)> onActivated;
 
-    void setNames(const QStringList &names)
+    void setNames(const std::vector<std::string> &names)
     {
-        m_names.clear();
-        for (const QString &name : names)
-            m_names.push_back(name.toStdString());
+        m_names = names;
         m_popup->rebuild();
         m_button->setCurrent(currentName());
         requestLayout();
@@ -532,7 +546,7 @@ public:
         setFadesWhenDisabled(false);
         setEchoMode(EchoMode::Password);
         setPasswordCharacter("\u2022");
-        // What "monospace" resolved to in the Qt version.
+        // What "monospace" resolved to before.
         setFontFamily("DejaVu Sans Mono");
         setFontSize(13);
         setSelectionColors(ui::Color::rgb(0x000080), kWhite);
@@ -554,7 +568,7 @@ protected:
 
     bool keyPress(const ui::KeyEvent &event) override
     {
-        // The clipboard keys the QML refused, which no setting covers.
+        // The clipboard keys are refused, which no setting covers.
         switch (event.key) {
         case XKB_KEY_XF86Copy:
         case XKB_KEY_XF86Cut:
@@ -757,7 +771,7 @@ private:
         void paint(ui::Painter &painter) override
         {
             // One logical pixel of border as whole device pixels, rounded down
-            // as the Qt version's rectangle took it: 1 at 1.5, 2 at 2.
+            // as before: 1 at 1.5, 2 at 2.
             const double border = std::max(1.0, std::floor(painter.scale() + 1e-3)) / painter.scale();
             drawPanelRect(painter, localRect(), geometry().height / 2, m_field->m_fill.value(),
                           border, m_field->m_border.value());
@@ -866,10 +880,10 @@ public:
         m_opacity.setTarget(0);
     }
 
-    void setMessage(const QString &message, bool shown)
+    void setMessage(const std::string &message, bool shown)
     {
-        m_label->setText(message.toStdString());
-        m_opacity.setTarget(shown && !message.isEmpty() ? 1 : 0);
+        m_label->setText(message);
+        m_opacity.setTarget(shown && !message.empty() ? 1 : 0);
         requestLayout();
     }
 
@@ -941,7 +955,7 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         focusPassword();
     };
     m_password->onAccepted = [this](const std::string &password) {
-        m_controller->authenticate(QString::fromStdString(password));
+        m_controller->authenticate(password);
     };
     // Any edit means the user has moved on from the rejection; the error goes
     // away without waiting for another attempt.
@@ -951,7 +965,7 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
     };
     NameInput *name = m_userName->input();
     name->onTextEdited = [this, name] {
-        m_controller->setUserName(QString::fromStdString(name->text()));
+        m_controller->setUserName(name->text());
     };
     name->onAccepted = [this] { focusPassword(); };
     m_window->onPointerPressed = [this](ui::PointF position, ui::MouseButton) {
@@ -962,7 +976,7 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         m_user->setUser(m_controller->displayName(), m_controller->iconSource());
         m_users->setCurrentIndex(m_controller->userIndex());
         NameInput *input = m_userName->input();
-        const std::string text = m_controller->userName().toStdString();
+        const std::string text = m_controller->userName();
         if (input->text() != text)
             input->setText(text);
     };
@@ -977,9 +991,8 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         m_sessions->setMenuVisible(m_controller->canSelectSession());
     };
     const auto promptChanged = [this] {
-        const QString prompt = m_controller->prompt();
-        m_password->setPlaceholder(prompt.isEmpty() ? std::string("Enter Password")
-                                                    : prompt.toStdString());
+        const std::string prompt = m_controller->prompt();
+        m_password->setPlaceholder(prompt.empty() ? std::string("Enter Password") : prompt);
     };
     const auto stateChanged = [this] {
         const bool enabled = !m_controller->busy() && !m_controller->succeeded();
@@ -989,17 +1002,17 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         m_sessions->setMenuEnabled(enabled);
         m_error->setMessage(m_controller->errorMessage(), m_controller->failed());
     };
-    QObject::connect(m_controller, &AuthController::userChanged, &m_context, userChanged);
-    QObject::connect(m_controller, &AuthController::usersChanged, &m_context, usersChanged);
-    QObject::connect(m_controller, &AuthController::sessionsChanged, &m_context, sessionsChanged);
-    QObject::connect(m_controller, &AuthController::sessionChanged, &m_context, sessionsChanged);
-    QObject::connect(m_controller, &AuthController::promptChanged, &m_context, promptChanged);
-    QObject::connect(m_controller, &AuthController::stateChanged, &m_context, stateChanged);
-    QObject::connect(m_controller, &AuthController::authenticationFailed, &m_context, [this] {
+    m_subscriptions.push_back(m_controller->userChanged.connect(userChanged));
+    m_subscriptions.push_back(m_controller->usersChanged.connect(usersChanged));
+    m_subscriptions.push_back(m_controller->sessionsChanged.connect(sessionsChanged));
+    m_subscriptions.push_back(m_controller->sessionChanged.connect(sessionsChanged));
+    m_subscriptions.push_back(m_controller->promptChanged.connect(promptChanged));
+    m_subscriptions.push_back(m_controller->stateChanged.connect(stateChanged));
+    m_subscriptions.push_back(m_controller->authenticationFailed.connect([this] {
         m_password->clear();
         m_password->shake();
         focusPassword();
-    });
+    }));
     usersChanged();
     userChanged();
     sessionsChanged();
@@ -1007,7 +1020,7 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
     stateChanged();
 
     m_clockTimer.setSingleShot(true);
-    QObject::connect(&m_clockTimer, &QTimer::timeout, &m_context, [this] { tick(); });
+    m_clockTimer.onTimeout = [this] { tick(); };
     tick();
 }
 
@@ -1037,13 +1050,13 @@ void AuthScreen::focusPassword()
     m_password->update();
 }
 
-QRectF AuthScreen::fieldBounds() const
+base::RectF AuthScreen::fieldBounds() const
 {
     if (!m_password->isVisible())
         return {};
     const ui::RectF pill = m_password->pillRect();
     const ui::PointF origin = m_password->mapToWindow({pill.x, pill.y});
-    return QRectF(origin.x, origin.y, pill.width, pill.height);
+    return base::RectF(origin.x, origin.y, pill.width, pill.height);
 }
 
 ui::View *AuthScreen::passwordInput() const
@@ -1072,7 +1085,8 @@ void AuthScreen::tick()
     requestLayout();
     // Just past the next minute, so the time never trails the real one.
     if (m_blocked)
-        m_clockTimer.start(int(60000 - local.tm_sec * 1000 - milliseconds + 20));
+        m_clockTimer.start(
+                std::chrono::milliseconds(60000 - local.tm_sec * 1000 - milliseconds + 20));
     else
         m_clockTimer.stop();
 }

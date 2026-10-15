@@ -17,10 +17,9 @@
 #include <optional>
 #include <vector>
 
-#include <QPoint>
-#include <QPointF>
 
 #include "compositor/surface_observer.h"
+#include "base/geometry.h"
 #include "input/cursor_shape.h"
 #include "input/pointer_gesture_delegate.h"
 #include "input/types.h"
@@ -68,14 +67,14 @@ public:
 
     void setCursorShape(CursorShape shape);
 
-    void setCursorPosition(const QPointF& position);
+    void setCursorPosition(const base::PointF& position);
 
-    QPoint hotspot() const { return m_hotspot; }
+    base::Point hotspot() const { return m_hotspot; }
 
     // wl_pointer.set_cursor. `surface` becomes the pointer image, positioned so
     // that `hotspot` sits under the pointer location. A null surface hides the
     // cursor.
-    void setCursor(compositor::Surface* surface, const QPoint& hotspot);
+    void setCursor(compositor::Surface* surface, const base::Point& hotspot);
 
     // Drops focus without moving the pointer: the compositor took the pointer
     // over content of its own, a server-side window frame, and the client must
@@ -83,14 +82,14 @@ public:
     void clearFocus();
 
     // Called by the Seat.
-    void onPointerMotion(Timestamp timestamp, const QPointF& rootLocation,
+    void onPointerMotion(Timestamp timestamp, const base::PointF& rootLocation,
                          const RelativeMotion* relative = nullptr);
-    void onPointerButton(Timestamp timestamp, const QPointF& rootLocation,
+    void onPointerButton(Timestamp timestamp, const base::PointF& rootLocation,
                          ButtonFlags changedButtonFlags, bool pressed);
-    void onPointerAxis(Timestamp timestamp, const QPointF& rootLocation, const QPointF& offset,
+    void onPointerAxis(Timestamp timestamp, const base::PointF& rootLocation, const base::PointF& offset,
                        bool discrete);
-    void onPointerAxisStop(Timestamp timestamp, const QPointF& rootLocation);
-    void onPointerGestureBegin(Timestamp timestamp, const QPointF& rootLocation,
+    void onPointerAxisStop(Timestamp timestamp, const base::PointF& rootLocation);
+    void onPointerGestureBegin(Timestamp timestamp, const base::PointF& rootLocation,
                                GestureType type, uint32_t fingers);
     void onPointerGestureUpdate(Timestamp timestamp, GestureType type,
                                 const GestureUpdate& update);
@@ -110,15 +109,15 @@ private:
     // The target for a location in output coordinates, with the location
     // converted into that surface's coordinates. Null if no surface this
     // pointer may talk to is under the location.
-    compositor::Surface* effectiveTargetForLocation(const QPointF& rootLocation,
-                                                    QPointF* locationInTarget) const;
+    compositor::Surface* effectiveTargetForLocation(const base::PointF& rootLocation,
+                                                    base::PointF* locationInTarget) const;
 
     // Resolves the target for `rootLocation` and moves focus if it changed.
     // Returns the current focus afterwards.
-    compositor::Surface* updateFocus(const QPointF& rootLocation, QPointF* locationInTarget);
+    compositor::Surface* updateFocus(const base::PointF& rootLocation, base::PointF* locationInTarget);
 
-    void setFocus(compositor::Surface* surface, const QPointF& rootLocation,
-                  const QPointF& surfaceLocation);
+    void setFocus(compositor::Surface* surface, const base::PointF& rootLocation,
+                  const base::PointF& surfaceLocation);
 
     // Ends a gesture in progress as cancelled: its surface lost focus or went
     // away, and the rest of it must not reach another surface.
@@ -132,7 +131,7 @@ private:
 
     // Whether the pointer has effectively not moved, in which case Exo
     // suppresses the motion event.
-    bool checkIfSameLocation(const QPointF& locationInRoot, const QPointF& locationInTarget) const;
+    bool checkIfSameLocation(const base::PointF& locationInRoot, const base::PointF& locationInTarget) const;
 
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
     PointerDelegate* m_delegate = nullptr;
@@ -147,14 +146,14 @@ private:
     // Set once focus has been taken; a client that never calls set_cursor gets
     // no pointer image, per the protocol.
     compositor::Surface* m_cursorSurface = nullptr;
-    QPoint m_hotspot;
+    base::Point m_hotspot;
     bool m_hasCursorRequest = false;
     std::optional<CursorShape> m_cursorShape;
     ButtonFlags m_deliveredButtons = NoButton;
 
-    QPointF m_cursorPosition;
-    QPointF m_locationInRoot;
-    QPointF m_locationInSurface;
+    base::PointF m_cursorPosition;
+    base::PointF m_locationInRoot;
+    base::PointF m_locationInSurface;
     bool m_hasLocation = false;
 };
 

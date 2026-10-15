@@ -5,19 +5,16 @@
 // Upstream: chromium/src/ui/display/types/display_snapshot.cc
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: validate stable Qt snapshots and exact timing-based
+// Adapted for Cutefish: validate stable snapshots and exact timing-based
 // mode identities without Chromium display or gfx dependencies.
 
 #include "display/display_types.h"
 
-#include <QSet>
+#include <format>
+#include <set>
+#include <unordered_set>
 
 namespace cutefish::display {
-
-size_t qHash(const DisplayId& id, size_t seed) noexcept
-{
-    return ::qHash(id.value(), seed);
-}
 
 bool DisplayMode::isValid() const
 {
@@ -25,31 +22,24 @@ bool DisplayMode::isValid() const
         horizontalTotal >= pixelSize.width() && verticalTotal >= pixelSize.height();
 }
 
-QString DisplayMode::stableKey() const
+std::string DisplayMode::stableKey() const
 {
-    return QStringLiteral("%1x%2@%3:%4:%5:%6:%7")
-        .arg(pixelSize.width())
-        .arg(pixelSize.height())
-        .arg(refreshMilliHz)
-        .arg(pixelClockKHz)
-        .arg(horizontalTotal)
-        .arg(verticalTotal)
-        .arg(flags);
+    return std::format("{}x{}@{}:{}:{}:{}:{}", pixelSize.width(), pixelSize.height(),
+                       refreshMilliHz, pixelClockKHz, horizontalTotal, verticalTotal, flags);
 }
 
 bool DisplaySnapshot::isValid() const
 {
-    if (!sessionId.isValid() || persistentKey.isEmpty() || portKey.isEmpty() ||
-        connectorName.isEmpty() || devicePath.isEmpty() || physicalSizeMm.width() < 0 ||
-        physicalSizeMm.height() < 0 || modes.isEmpty()) {
+    if (!sessionId.isValid() || persistentKey.empty() || portKey.empty() ||
+        connectorName.empty() || devicePath.empty() || physicalSizeMm.width() < 0 ||
+        physicalSizeMm.height() < 0 || modes.empty()) {
         return false;
     }
 
-    QSet<QString> modeKeys;
+    std::set<std::string> modeKeys;
     for (const DisplayMode& mode : modes) {
-        if (!mode.isValid() || modeKeys.contains(mode.stableKey()))
+        if (!mode.isValid() || !modeKeys.insert(mode.stableKey()).second)
             return false;
-        modeKeys.insert(mode.stableKey());
     }
     return (!currentMode || modeKeys.contains(currentMode->stableKey())) &&
         (!nativeMode || modeKeys.contains(nativeMode->stableKey()));
@@ -57,11 +47,11 @@ bool DisplaySnapshot::isValid() const
 
 bool HardwareSnapshot::isValid() const
 {
-    if (compositorInstanceId.isEmpty() || seatId.isEmpty() || topologyGeneration == 0)
+    if (compositorInstanceId.empty() || seatId.empty() || topologyGeneration == 0)
         return false;
 
-    QSet<DisplayId> sessionIds;
-    QSet<QString> portKeys;
+    std::unordered_set<DisplayId> sessionIds;
+    std::set<std::string> portKeys;
     for (const DisplaySnapshot& display : displays) {
         if (!display.isValid() || sessionIds.contains(display.sessionId) ||
             portKeys.contains(display.portKey)) {

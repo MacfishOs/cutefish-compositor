@@ -8,7 +8,7 @@
 
 namespace cutefish::render {
 
-const Renderer::TextureSet& Renderer::cachedTextureSet(const QString& key,
+const Renderer::TextureSet& Renderer::cachedTextureSet(const std::string& key,
                                                        const std::function<TextureSet()>& make)
 {
     const auto found =

@@ -11,11 +11,8 @@
 #include "accelerators/accelerator_configuration.h"
 
 #include <algorithm>
-
-#include <QDir>
-#include <QFileInfo>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <cassert>
+#include <map>
 
 #include "core/logging.h"
 #include "core/preferences.h"
@@ -40,42 +37,61 @@ const std::array<std::pair<uint32_t, const char *>, 5> kModifierNames = {{
         {AltGrDown, "AltGr"},
 }};
 
-QJsonArray modifiersToJson(uint32_t modifiers)
+base::json::Value modifiersToJson(uint32_t modifiers)
 {
-    QJsonArray names;
+    base::json::Value::Array names;
     for (const auto &[flag, name] : kModifierNames) {
         if (modifiers & flag)
-            names.append(QString::fromLatin1(name));
+            names.emplace_back(name);
     }
     return names;
 }
 
-uint32_t modifiersFromJson(const QJsonArray &names)
+uint32_t modifiersFromJson(const base::json::Value::Array &names)
 {
     uint32_t modifiers = NoModifier;
-    for (const QJsonValue &value : names) {
+    for (const base::json::Value &value : names) {
         for (const auto &[flag, name] : kModifierNames) {
-            if (value.toString() == QLatin1String(name))
+            if (value.toString() == name)
                 modifiers |= flag;
         }
     }
     return modifiers;
 }
 
-QJsonObject modificationToJson(const Accelerator &accelerator,
-                               AcceleratorConfiguration::ModificationAction action)
+// Keys sorted at every level, as the file has always had them; overrides read from
+// the file keep their own order otherwise.
+base::json::Value sortedKeys(const base::json::Value &value)
 {
-    QJsonObject object;
-    object.insert(QLatin1String(kKeyField), keysymName(accelerator.keysym()));
-    object.insert(QLatin1String(kModifiersField), modifiersToJson(accelerator.modifiers()));
-    object.insert(QLatin1String(kStateField),
-                  accelerator.keyState() == Accelerator::KeyState::Pressed
-                          ? QStringLiteral("pressed")
-                          : QStringLiteral("released"));
-    object.insert(QLatin1String(kActionField),
-                  action == AcceleratorConfiguration::ModificationAction::Add
-                          ? QStringLiteral("add")
-                          : QStringLiteral("remove"));
+    if (value.isArray()) {
+        base::json::Value::Array result;
+        for (const auto &item : value.toArray())
+            result.push_back(sortedKeys(item));
+        return base::json::Value(std::move(result));
+    }
+    if (!value.isObject())
+        return value;
+    std::map<std::string, base::json::Value> members;
+    for (const auto &[key, member] : value.toObject())
+        members.insert_or_assign(key, sortedKeys(member));
+    base::json::Value::Object result;
+    for (auto &[key, member] : members)
+        result.emplace_back(key, std::move(member));
+    return base::json::Value::object(std::move(result));
+}
+
+// The members in sorted order, as the files have always had them.
+base::json::Value modificationToJson(const Accelerator &accelerator,
+                                     AcceleratorConfiguration::ModificationAction action)
+{
+    base::json::Value object = base::json::Value::object();
+    object.insert(kActionField,
+                  action == AcceleratorConfiguration::ModificationAction::Add ? "add" : "remove");
+    object.insert(kKeyField, keysymName(accelerator.keysym()));
+    object.insert(kModifiersField, modifiersToJson(accelerator.modifiers()));
+    object.insert(kStateField,
+                  accelerator.keyState() == Accelerator::KeyState::Pressed ? "pressed"
+                                                                           : "released");
     return object;
 }
 
@@ -84,24 +100,22 @@ struct Modification {
     AcceleratorConfiguration::ModificationAction action;
 };
 
-std::optional<Modification> modificationFromJson(const QJsonValue &value)
+std::optional<Modification> modificationFromJson(const base::json::Value &object)
 {
-    if (!value.isObject())
+    if (!object.isObject())
         return std::nullopt;
-    const QJsonObject object = value.toObject();
-    const uint32_t keysym = keysymFromName(object.value(QLatin1String(kKeyField)).toString());
+    const uint32_t keysym = keysymFromName(object[kKeyField].toString());
     if (keysym == 0)
         return std::nullopt;
-    const QString action = object.value(QLatin1String(kActionField)).toString();
-    if (action != QLatin1String("add") && action != QLatin1String("remove"))
+    const std::string action = object[kActionField].toString();
+    if (action != "add" && action != "remove")
         return std::nullopt;
-    Accelerator accelerator(keysym, modifiersFromJson(object.value(QLatin1String(kModifiersField)).toArray()));
-    if (object.value(QLatin1String(kStateField)).toString() == QLatin1String("released"))
+    Accelerator accelerator(keysym, modifiersFromJson(object[kModifiersField].toArray()));
+    if (object[kStateField].toString() == "released")
         accelerator.setKeyState(Accelerator::KeyState::Released);
     return Modification {accelerator,
-                         action == QLatin1String("add")
-                                 ? AcceleratorConfiguration::ModificationAction::Add
-                                 : AcceleratorConfiguration::ModificationAction::Remove};
+                         action == "add" ? AcceleratorConfiguration::ModificationAction::Add
+                                         : AcceleratorConfiguration::ModificationAction::Remove};
 }
 
 void setLookupMaps(std::span<const AcceleratorData> accelerators,
@@ -114,7 +128,7 @@ void setLookupMaps(std::span<const AcceleratorData> accelerators,
         accelerator.setKeyState(data.triggerOnPress ? Accelerator::KeyState::Pressed
                                                     : Accelerator::KeyState::Released);
         if (!acceleratorToId.insertNew(accelerator, data.action)) {
-            qCWarning(cfInput) << "Duplicate default accelerator" << accelerator.shortcutText();
+            CF_WARNING(cfInput) << "Duplicate default accelerator" << accelerator.shortcutText();
             continue;
         }
         idToAccelerator[toActionId(data.action)].push_back(accelerator);
@@ -158,11 +172,8 @@ const char *toString(AcceleratorConfigResult result)
     return "unknown";
 }
 
-AcceleratorConfiguration::AcceleratorConfiguration(const QString &settingsFile, QObject *parent)
-    : QObject(parent)
-    , m_settings(settingsFile.isEmpty() ? preferencesFile(QStringLiteral("compositor"))
-                                       : settingsFile,
-                 QSettings::IniFormat)
+AcceleratorConfiguration::AcceleratorConfiguration(const std::string &settingsFile)
+    : m_settings(settingsFile.empty() ? preferencesFile("compositor") : settingsFile)
 {
 }
 
@@ -263,7 +274,7 @@ AcceleratorConfigResult AcceleratorConfiguration::addUserAccelerator(Accelerator
     const AcceleratorConfigResult result = doAddAccelerator(id, accelerator, /*saveOverride=*/true);
     if (result == AcceleratorConfigResult::Success)
         updateAndNotifyAccelerators();
-    qCDebug(cfInput) << "addAccelerator" << id << accelerator.shortcutText() << toString(result);
+    CF_DEBUG(cfInput) << "addAccelerator" << id << accelerator.shortcutText() << toString(result);
     return result;
 }
 
@@ -276,7 +287,7 @@ AcceleratorConfigResult AcceleratorConfiguration::removeAccelerator(AcceleratorA
         restoreDefaultOwner(accelerator);
         updateAndNotifyAccelerators();
     }
-    qCDebug(cfInput) << "removeAccelerator" << id << accelerator.shortcutText() << toString(result);
+    CF_DEBUG(cfInput) << "removeAccelerator" << id << accelerator.shortcutText() << toString(result);
     return result;
 }
 
@@ -288,7 +299,7 @@ AcceleratorConfiguration::replaceAccelerator(AcceleratorActionId id,
     const AcceleratorConfigResult result = doReplaceAccelerator(id, oldAccelerator, newAccelerator);
     if (result == AcceleratorConfigResult::Success)
         updateAndNotifyAccelerators();
-    qCDebug(cfInput) << "replaceAccelerator" << id << oldAccelerator.shortcutText() << "->"
+    CF_DEBUG(cfInput) << "replaceAccelerator" << id << oldAccelerator.shortcutText() << "->"
                      << newAccelerator.shortcutText() << toString(result);
     return result;
 }
@@ -322,7 +333,7 @@ AcceleratorConfigResult AcceleratorConfiguration::restoreDefault(AcceleratorActi
     // Only bring back the defaults nobody else is using now. The user re-adds
     // the others by hand, which is what makes the conflict visible.
     const auto defaults = m_defaultIdToAccelerators.find(id);
-    Q_ASSERT(defaults != m_defaultIdToAccelerators.end());
+    assert(defaults != m_defaultIdToAccelerators.end());
 
     AcceleratorConfigResult result = AcceleratorConfigResult::Success;
     for (const Accelerator &accelerator : defaults->second) {
@@ -335,7 +346,7 @@ AcceleratorConfigResult AcceleratorConfiguration::restoreDefault(AcceleratorActi
     }
 
     updateAndNotifyAccelerators();
-    qCDebug(cfInput) << "restoreDefault" << id << toString(result);
+    CF_DEBUG(cfInput) << "restoreDefault" << id << toString(result);
     return result;
 }
 
@@ -436,67 +447,61 @@ void AcceleratorConfiguration::updateAndNotifyAccelerators()
         m_accelerators.push_back(accelerator);
 
     saveOverrides();
-    Q_EMIT acceleratorsUpdated();
+    acceleratorsUpdated();
 }
 
-QString AcceleratorConfiguration::overridesGroup() const
+std::string AcceleratorConfiguration::overridesGroup() const
 {
-    return QLatin1String(m_convention == input::ShortcutConvention::Command
-                                 ? kCommandOverridesGroup
-                                 : kOverridesGroup);
+    return m_convention == input::ShortcutConvention::Command ? kCommandOverridesGroup
+                                                              : kOverridesGroup;
 }
 
 void AcceleratorConfiguration::loadOverrides()
 {
     m_overrides.clear();
     m_settings.sync();
-    m_settings.beginGroup(overridesGroup());
-    const QStringList actions = m_settings.childKeys();
-    for (const QString &action : actions) {
-        const QJsonDocument document =
-                QJsonDocument::fromJson(m_settings.value(action).toString().toUtf8());
-        if (document.isArray())
-            m_overrides[action] = document.array();
+    const std::string group = overridesGroup();
+    for (const std::string &action : m_settings.childKeys(group)) {
+        const auto document =
+                base::json::Value::parse(m_settings.stringValue(group + "/" + action));
+        if (document && document->isArray())
+            m_overrides[action] = document->toArray();
     }
-    m_settings.endGroup();
 }
 
 void AcceleratorConfiguration::saveOverrides()
 {
-    m_settings.beginGroup(overridesGroup());
-    m_settings.remove(QString());
-    for (const auto &[action, list] : m_overrides) {
-        m_settings.setValue(action, QString::fromUtf8(QJsonDocument(list).toJson(
-                                            QJsonDocument::Compact)));
-    }
-    m_settings.endGroup();
-    m_settings.sync();
-    if (m_settings.status() != QSettings::NoError)
-        qCWarning(cfInput) << "Cannot persist shortcut overrides to" << m_settings.fileName();
+    const std::string group = overridesGroup();
+    m_settings.remove(group);
+    for (const auto &[action, list] : m_overrides)
+        m_settings.setValue(group + "/" + action, sortedKeys(base::json::Value(list)).serialize());
+    if (!m_settings.sync())
+        CF_WARNING(cfInput) << "Cannot persist shortcut overrides to" << m_settings.path();
 }
 
 void AcceleratorConfiguration::applyOverrides()
 {
-    std::vector<QString> actionsToRemove;
+    std::vector<std::string> actionsToRemove;
 
     for (auto &[actionName, list] : m_overrides) {
         const auto action = acceleratorActionFromName(actionName);
         if (!action || !isValid(toActionId(*action))) {
-            qCInfo(cfInput) << "Dropping shortcut overrides for unknown action" << actionName;
+            CF_INFO(cfInput) << "Dropping shortcut overrides for unknown action"
+                            << actionName;
             actionsToRemove.push_back(actionName);
             continue;
         }
-        if (list.isEmpty()) {
+        if (list.empty()) {
             actionsToRemove.push_back(actionName);
             continue;
         }
         const AcceleratorActionId id = toActionId(*action);
 
-        for (int i = 0; i < list.size();) {
-            const auto modification = modificationFromJson(list.at(i));
+        for (size_t i = 0; i < list.size();) {
+            const auto modification = modificationFromJson(list[i]);
             if (!modification) {
-                qCWarning(cfInput) << "Malformed shortcut override for" << actionName;
-                list.removeAt(i);
+                CF_WARNING(cfInput) << "Malformed shortcut override for" << actionName;
+                list.erase(list.begin() + i);
                 continue;
             }
             if (modification->action == ModificationAction::Remove) {
@@ -505,7 +510,7 @@ void AcceleratorConfiguration::applyOverrides()
                 const AcceleratorAction *found =
                         m_acceleratorToId.find(modification->accelerator);
                 if (!found) {
-                    list.removeAt(i);
+                    list.erase(list.begin() + i);
                     continue;
                 }
                 if (toActionId(*found) == id)
@@ -515,15 +520,15 @@ void AcceleratorConfiguration::applyOverrides()
             }
             ++i;
         }
-        if (list.isEmpty())
+        if (list.empty())
             actionsToRemove.push_back(actionName);
     }
 
-    for (const QString &action : actionsToRemove)
+    for (const std::string &action : actionsToRemove)
         m_overrides.erase(action);
 
     if (!areAcceleratorsValid()) {
-        qCWarning(cfInput) << "Shortcut overrides are inconsistent; restoring the defaults";
+        CF_WARNING(cfInput) << "Shortcut overrides are inconsistent; restoring the defaults";
         restoreAllDefaults();
         return;
     }
@@ -534,27 +539,27 @@ void AcceleratorConfiguration::updateOverrides(AcceleratorActionId id,
                                                const Accelerator &accelerator,
                                                ModificationAction action)
 {
-    const QString key = acceleratorActionName(static_cast<AcceleratorAction>(id));
+    const std::string key = acceleratorActionName(static_cast<AcceleratorAction>(id));
     auto entry = m_overrides.find(key);
     if (entry == m_overrides.end()) {
-        m_overrides[key] = QJsonArray {modificationToJson(accelerator, action)};
+        m_overrides[key] = {modificationToJson(accelerator, action)};
         return;
     }
 
-    QJsonArray &list = entry->second;
-    for (int i = 0; i < list.size(); ++i) {
-        const auto modification = modificationFromJson(list.at(i));
+    base::json::Value::Array &list = entry->second;
+    for (size_t i = 0; i < list.size(); ++i) {
+        const auto modification = modificationFromJson(list[i]);
         if (modification && modification->accelerator == accelerator) {
             // The opposite modification of the same combination cancels it:
             // a custom accelerator removed again, or a default re-enabled.
-            Q_ASSERT(modification->action != action);
-            list.removeAt(i);
-            if (list.isEmpty())
+            assert(modification->action != action);
+            list.erase(list.begin() + i);
+            if (list.empty())
                 m_overrides.erase(entry);
             return;
         }
     }
-    list.append(modificationToJson(accelerator, action));
+    list.push_back(modificationToJson(accelerator, action));
 }
 
 bool AcceleratorConfiguration::hasOverride(AcceleratorActionId id, const Accelerator &accelerator,
@@ -563,7 +568,7 @@ bool AcceleratorConfiguration::hasOverride(AcceleratorActionId id, const Acceler
     const auto entry = m_overrides.find(acceleratorActionName(static_cast<AcceleratorAction>(id)));
     if (entry == m_overrides.end())
         return false;
-    for (const QJsonValue &value : entry->second) {
+    for (const base::json::Value &value : entry->second) {
         const auto modification = modificationFromJson(value);
         if (modification && modification->accelerator == accelerator
             && modification->action == action)
@@ -635,7 +640,7 @@ int AcceleratorConfiguration::totalNumberOfModifications() const
 {
     int count = 0;
     for (const auto &[action, list] : m_overrides)
-        count += list.size();
+        count += int(list.size());
     return count;
 }
 

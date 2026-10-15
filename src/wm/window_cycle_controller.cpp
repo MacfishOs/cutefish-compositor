@@ -18,6 +18,7 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "display/display_manager.h"
 #include "input/seat.h"
 #include "wm/activation.h"
@@ -31,22 +32,21 @@ namespace cutefish::wm {
 WindowCycleController::WindowCycleController(WindowManager *manager, MruWindowTracker *mruTracker)
     : m_manager(manager)
     , m_mruTracker(mruTracker)
+    , m_showTimer(core::mainLoop())
 {
-    m_removedConnection = QObject::connect(m_manager, &WindowManager::windowRemoved, m_manager,
-                                           [this](Window *window) {
-                                               onWindowRemoved(window);
-                                           });
-    m_showTimer.setSingleShot(true);
-    m_showTimer.setInterval(kShowDelayMs);
-    m_showTimer.callOnTimeout([this] {
-        showView();
+    m_windowRemoved = m_manager->windowRemoved.connect([this](Window *window) {
+        onWindowRemoved(window);
     });
-
+    m_showTimer.setSingleShot(true);
+    m_showTimer.setInterval(std::chrono::milliseconds(kShowDelayMs));
+    m_showTimer.onTimeout = [this] {
+        showView();
+    };
 }
 
 WindowCycleController::~WindowCycleController()
 {
-    QObject::disconnect(m_removedConnection);
+    m_windowRemoved.reset();
 }
 
 bool WindowCycleController::canCycle() const
@@ -146,12 +146,12 @@ bool WindowCycleController::onKey(uint32_t keysym, bool pressed)
     return true;
 }
 
-void WindowCycleController::onPointerMotion(const QPointF &location)
+void WindowCycleController::onPointerMotion(const base::PointF &location)
 {
     if (!m_cycling || !isViewShown())
         return;
     if (m_pointerOrigin) {
-        const QPointF moved = location - *m_pointerOrigin;
+        const base::PointF moved = location - *m_pointerOrigin;
         if (std::hypot(moved.x(), moved.y()) <= kMouseMovementThreshold)
             return;
         m_pointerOrigin.reset();
@@ -163,7 +163,7 @@ void WindowCycleController::onPointerMotion(const QPointF &location)
     m_view->selectWindowCycleEntry(m_currentIndex);
 }
 
-bool WindowCycleController::onPointerButtonPressed(const QPointF &location)
+bool WindowCycleController::onPointerButtonPressed(const base::PointF &location)
 {
     if (!m_cycling)
         return false;
@@ -199,7 +199,7 @@ void WindowCycleController::startCycling()
     if (const input::Seat *seat = m_manager->seat())
         m_pointerOrigin = seat->pointerLocation();
     m_showTimer.start();
-    qCDebug(cfInputTransitions) << "application cycle started over" << m_applications.size()
+    CF_DEBUG(cfInputTransitions) << "application cycle started over" << m_applications.size()
                                 << "applications";
 }
 
@@ -238,7 +238,7 @@ void WindowCycleController::stopCycling(bool accept)
     const auto applications = std::exchange(m_applications, {});
     if (accept && !applications.empty())
         switchToApplication(applications[m_currentIndex]);
-    qCDebug(cfInputTransitions) << "application cycle" << (accept ? "completed" : "cancelled");
+    CF_DEBUG(cfInputTransitions) << "application cycle" << (accept ? "completed" : "cancelled");
 }
 
 void WindowCycleController::switchToApplication(const std::vector<Window *> &windows)
@@ -279,17 +279,17 @@ void WindowCycleController::hideView()
         m_view->hideWindowCycle();
 }
 
-QString WindowCycleController::outputForView() const
+std::string WindowCycleController::outputForView() const
 {
     const display::DisplayManager *displays = m_manager->displayManager();
     if (!displays || !displays->applied())
-        return QString();
-    const QRect bounds = m_manager->outputForNewWindow();
+        return {};
+    const base::Rect bounds = m_manager->outputForNewWindow();
     for (const auto &logical : displays->applied()->logicalDisplays) {
         if (logical.bounds == bounds)
             return logical.waylandName;
     }
-    return QString();
+    return {};
 }
 
 void WindowCycleController::onWindowRemoved(Window *window)

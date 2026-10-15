@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/geometry.h"
 #include "input/event_sink.h"
 #include "input/input_manager.h"
 #include "input/keyboard.h"
@@ -12,9 +13,6 @@
 #include <chrono>
 #include <linux/input-event-codes.h>
 #include <unistd.h>
-
-#include <QCoreApplication>
-#include <QEventLoop>
 
 #include "clipboard/selection.h"
 #include "compositor/compositor.h"
@@ -26,6 +24,7 @@
 #include "input/hit_test.h"
 #include "input/seat.h"
 #include "input/xkb_tracker.h"
+#include "loop_test_util.h"
 #include "render/scanout.h"
 #include "scene/node.h"
 #include "scene/overlay_candidate.h"
@@ -47,10 +46,10 @@ using session::SessionState;
 
 namespace {
 
-constexpr QRect kPrimary(0, 0, 1000, 800);
-constexpr QRect kSecondary(1000, 0, 800, 600);
-const QString kPrimaryName = QStringLiteral("DP-1");
-const QString kSecondaryName = QStringLiteral("HDMI-1");
+const base::Rect kPrimary(0, 0, 1000, 800);
+const base::Rect kSecondary(1000, 0, 800, 600);
+const std::string kPrimaryName = "DP-1";
+const std::string kSecondaryName = "HDMI-1";
 
 class TestDataSource : public clipboard::DataSource
 {
@@ -61,21 +60,21 @@ public:
 class TestTexture final : public render::Texture
 {
 public:
-    explicit TestTexture(const QSize &size)
+    explicit TestTexture(const base::Size &size)
         : m_size(size)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 class TestScanoutBuffer final : public render::ScanoutBuffer
 {
 public:
-    explicit TestScanoutBuffer(const QSize &size)
+    explicit TestScanoutBuffer(const base::Size &size)
     {
         m_attributes.size = size;
         m_attributes.format = 0x34325258; // DRM_FORMAT_XRGB8888
@@ -126,14 +125,14 @@ public:
 
     bool canAcceptPointerEventsForSurface(compositor::Surface *) const override { return true; }
 
-    void onPointerEnter(compositor::Surface *, const QPointF &, input::ButtonFlags) override
+    void onPointerEnter(compositor::Surface *, const base::PointF &, input::ButtonFlags) override
     {
         ++events;
     }
 
     void onPointerLeave(compositor::Surface *) override { }
 
-    void onPointerMotion(input::Timestamp, const QPointF &) override { ++events; }
+    void onPointerMotion(input::Timestamp, const base::PointF &) override { ++events; }
 
     void onPointerButton(input::Timestamp, input::ButtonFlags button, bool pressed) override
     {
@@ -141,7 +140,7 @@ public:
         buttons.emplace_back(button, pressed);
     }
 
-    void onPointerScroll(input::Timestamp, const QPointF &, bool) override { ++events; }
+    void onPointerScroll(input::Timestamp, const base::PointF &, bool) override { ++events; }
 
     void onFingerScrollStop(input::Timestamp) override { ++events; }
 
@@ -153,11 +152,11 @@ class SessionLockTest : public testing::Test
 protected:
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     scene::Node *secureNode =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("secure")));
+            scene.root()->addChild(std::make_unique<scene::Node>("secure"));
     scene::Node *greeterNode =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("greeter")));
+            scene.root()->addChild(std::make_unique<scene::Node>("greeter"));
     compositor::Compositor compositor {surfaceContainer};
     testsupport::FakeRenderer renderer;
     input::Seat seat {&compositor};
@@ -175,7 +174,7 @@ protected:
 
     void SetUp() override
     {
-        scene.setSize(QSize(1800, 800));
+        scene.setSize(base::Size(1800, 800));
         manager.setOutputBounds(kPrimary);
         seat.setSessionGate(&controller);
         manager.setSessionGate(&controller);
@@ -184,20 +183,21 @@ protected:
 
     void TearDown() override { seat.shutdown(); }
 
-    compositor::Surface *makeSurface(const QSize &size)
+    compositor::Surface *makeSurface(const base::Size &size)
     {
         surfaces.push_back(compositor.createSurface());
         compositor::Surface *surface = surfaces.back().get();
-        auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
+        auto buffer = pool->createBuffer(size, 0, size.width() * 4,
+                                         render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(base::Point(), size));
         surface->commit();
         compositor.updateTextures(renderer);
         return surface;
     }
 
-    wm::Window *makeWindow(const QRect &bounds)
+    wm::Window *makeWindow(const base::Rect &bounds)
     {
         wm::Window *window =
                 manager.createWindow(makeSurface(bounds.size()), {.requestedSize = bounds.size()});
@@ -212,9 +212,9 @@ protected:
         ASSERT_EQ(SessionState::Locked, controller.state());
     }
 
-    compositor::Surface *surfaceAt(const QPointF &location) const
+    compositor::Surface *surfaceAt(const base::PointF &location) const
     {
-        QPointF local;
+        base::PointF local;
         return input::findTargetSurfaceIn(
                 const_cast<compositor::Compositor *>(&compositor),
                 input::inputRootFor(const_cast<compositor::Compositor *>(&compositor), &controller),
@@ -284,9 +284,7 @@ TEST_F(SessionLockTest, TheLoginScreenIsReadyOnceEveryOutputHasItsShield)
     EXPECT_FALSE(greeterScene.isWallpaperReady());
     greeterScene.setOutputs({{kPrimaryName, kPrimary}});
     // The wallpaper decodes on a worker; the shield is ready once it lands.
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (!greeterScene.isWallpaperReady() && std::chrono::steady_clock::now() < deadline)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    test::runUntil([&] { return greeterScene.isWallpaperReady(); }, std::chrono::seconds(30));
     EXPECT_TRUE(greeterScene.isWallpaperReady());
 }
 
@@ -311,8 +309,8 @@ TEST_F(SessionLockTest, LoginUnlocksIntoAnActiveSessionTheSameWayALockDoes)
 
 TEST_F(SessionLockTest, InputIsConfinedToTheSecureContainerWhileLocked)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 400, 300));
-    const QPointF inWindow(200, 200);
+    wm::Window *window = makeWindow(base::Rect(100, 100, 400, 300));
+    const base::PointF inWindow(200, 200);
     ASSERT_EQ(window, manager.windowAt(inWindow));
 
     lockFully();
@@ -323,27 +321,27 @@ TEST_F(SessionLockTest, InputIsConfinedToTheSecureContainerWhileLocked)
 
 TEST_F(SessionLockTest, NothingIsTargetableOnAnOutputWithNoLockSurface)
 {
-    makeWindow(QRect(100, 100, 400, 300));
+    makeWindow(base::Rect(100, 100, 400, 300));
     lockFully();
 
-    EXPECT_EQ(nullptr, surfaceAt(QPointF(200, 200)));
-    EXPECT_EQ(nullptr, manager.windowAt(QPointF(200, 200)));
+    EXPECT_EQ(nullptr, surfaceAt(base::PointF(200, 200)));
+    EXPECT_EQ(nullptr, manager.windowAt(base::PointF(200, 200)));
 }
 
 TEST_F(SessionLockTest, ServerSideFramesTakeNoInputWhileLocked)
 {
     wm::Window *window = manager.createWindow(
-            makeSurface(QSize(400, 300)), {.requestedSize = QSize(400, 300), .decorated = true});
-    window->setBounds(QRect(100, 100, 400, 300));
+            makeSurface(base::Size(400, 300)), {.requestedSize = base::Size(400, 300), .decorated = true});
+    window->setBounds(base::Rect(100, 100, 400, 300));
     lockFully();
 
-    for (const QPointF point : {QPointF(100, 100), QPointF(300, 105), QPointF(500, 400)})
+    for (const base::PointF point : {base::PointF(100, 100), base::PointF(300, 105), base::PointF(500, 400)})
         EXPECT_EQ(nullptr, manager.frameAt(point)) << "frame took input at " << point.x();
 }
 
 TEST_F(SessionLockTest, LockingClearsFocusAndRefusesItAfterwards)
 {
-    compositor::Surface *application = makeSurface(QSize(400, 300));
+    compositor::Surface *application = makeSurface(base::Size(400, 300));
     seat.setFocusedSurface(application);
     ASSERT_EQ(application, seat.focusedSurface());
 
@@ -357,7 +355,7 @@ TEST_F(SessionLockTest, LockingClearsFocusAndRefusesItAfterwards)
 
 TEST_F(SessionLockTest, LockingDismissesPopupGrabs)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 400, 300));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 400, 300));
     wm::ShellSurface popup(&manager, window->rootSurface());
     manager.pushPopupGrab(&popup);
     ASSERT_EQ(1u, manager.popupGrabs().size());
@@ -370,7 +368,7 @@ TEST_F(SessionLockTest, LockingDismissesPopupGrabs)
 TEST_F(SessionLockTest, LockingCancelsTheDragAndTakesItsIconOutOfTheScene)
 {
     scene::Node *dragIcons =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("drag-icons")));
+            scene.root()->addChild(std::make_unique<scene::Node>("drag-icons"));
     seat.setDragIconContainer(dragIcons);
 
     compositor::Surface *origin = makeSurface({200, 150});
@@ -389,13 +387,13 @@ TEST_F(SessionLockTest, LockingCancelsTheDragAndTakesItsIconOutOfTheScene)
 
 TEST_F(SessionLockTest, AWindowMoveTheLockInterruptedDoesNotResumeAfterUnlock)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 400, 300));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 400, 300));
     input::InputManager input(&seat);
     input.setBounds(scene.size());
     input.setEventSink(&manager);
-    input.warpPointer(QPointF(150, 150));
+    input.warpPointer(base::PointF(150, 150));
     input.onPointerButton({}, BTN_LEFT, true);
-    ASSERT_TRUE(manager.eventHandler()->beginMove(window, QPointF(150, 150)));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(150, 150)));
 
     lockFully();
     input.onPointerButton({}, BTN_LEFT, false);
@@ -403,8 +401,8 @@ TEST_F(SessionLockTest, AWindowMoveTheLockInterruptedDoesNotResumeAfterUnlock)
     controller.notifyFramePresented();
 
     EXPECT_EQ(input::ButtonFlags(input::NoButton), seat.pressedButtons());
-    const QRect bounds = window->bounds();
-    input.onPointerMotion({}, QPointF(40, 30));
+    const base::Rect bounds = window->bounds();
+    input.onPointerMotion({}, base::PointF(40, 30));
     EXPECT_FALSE(manager.eventHandler()->isDragging());
     EXPECT_EQ(bounds, window->bounds());
     input.setEventSink(nullptr);
@@ -414,16 +412,16 @@ TEST_F(SessionLockTest, ACaptionButtonPressedAcrossTheLockIsLetGoOf)
 {
     manager.setFrameProvider(&frames);
     wm::Window *window = manager.createWindow(
-            makeSurface(QSize(400, 300)), {.requestedSize = QSize(400, 300), .decorated = true});
-    window->setBounds(QRect(100, 100, 400, 300));
+            makeSurface(base::Size(400, 300)), {.requestedSize = base::Size(400, 300), .decorated = true});
+    window->setBounds(base::Rect(100, 100, 400, 300));
     auto *frame = static_cast<decoration::Decoration *>(window->frame());
     ASSERT_NE(nullptr, frame);
     ASSERT_FALSE(frame->buttons().empty());
     input::InputManager input(&seat);
     input.setBounds(scene.size());
     input.setEventSink(&manager);
-    input.warpPointer(QPointF(window->bounds().topLeft()
-                              + frame->buttons().front().geometry().center()));
+    input.warpPointer(
+            base::PointF(window->bounds().topLeft() + frame->buttons().front().geometry().center()));
     input.onPointerButton({}, BTN_LEFT, true);
     ASSERT_TRUE(frame->isTrackingPress());
 
@@ -458,7 +456,7 @@ TEST_F(SessionLockTest, AControlClickTheLockInterruptedLeavesNoSecondaryClickBeh
     controller.notifyFramePresented();
 
     EXPECT_EQ(nullptr, seat.pointerGrabSurface());
-    input.onPointerMotion({}, QPointF(1, 1));
+    input.onPointerMotion({}, base::PointF(1, 1));
     client.buttons.clear();
     input.onPointerButton({}, BTN_LEFT, true);
     input.onPointerButton({}, BTN_LEFT, false);
@@ -469,8 +467,8 @@ TEST_F(SessionLockTest, AControlClickTheLockInterruptedLeavesNoSecondaryClickBeh
 
 TEST_F(SessionLockTest, ACaptureHoldingTheKeyboardAcrossTheLockDoesNotStrandIt)
 {
-    wm::Window *application = makeWindow(QRect(100, 100, 400, 300));
-    wm::Window *capture = makeWindow(QRect(0, 0, 1000, 800));
+    wm::Window *application = makeWindow(base::Rect(100, 100, 400, 300));
+    wm::Window *capture = makeWindow(base::Rect(0, 0, 1000, 800));
     manager.activation()->activate(application);
     manager.setKeyboardGrab(capture);
     ASSERT_EQ(capture->rootSurface(), seat.focusedSurface());
@@ -484,7 +482,7 @@ TEST_F(SessionLockTest, ACaptureHoldingTheKeyboardAcrossTheLockDoesNotStrandIt)
 
 TEST_F(SessionLockTest, NoWindowMayBeActivatedWhileLocked)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 400, 300));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 400, 300));
     manager.activation()->activate(window);
     ASSERT_EQ(window, manager.activation()->activeWindow());
 
@@ -495,14 +493,14 @@ TEST_F(SessionLockTest, NoWindowMayBeActivatedWhileLocked)
     manager.activation()->activate(window);
     EXPECT_EQ(nullptr, manager.activation()->activeWindow());
 
-    wm::Window *late = makeWindow(QRect(200, 200, 300, 200));
+    wm::Window *late = makeWindow(base::Rect(200, 200, 300, 200));
     manager.activation()->activate(late);
     EXPECT_EQ(nullptr, manager.activation()->activeWindow());
 }
 
 TEST_F(SessionLockTest, ActivationComesBackOnlyAfterTheSessionIsActiveAgain)
 {
-    wm::Window *window = makeWindow(QRect(100, 100, 400, 300));
+    wm::Window *window = makeWindow(base::Rect(100, 100, 400, 300));
     lockFully();
     ASSERT_TRUE(controller.requestUnlock());
 
@@ -516,8 +514,8 @@ TEST_F(SessionLockTest, ActivationComesBackOnlyAfterTheSessionIsActiveAgain)
 
 TEST_F(SessionLockTest, UnlockingGivesTheKeyboardBackToTheWindowThatHadIt)
 {
-    wm::Window *first = makeWindow(QRect(100, 100, 400, 300));
-    wm::Window *second = makeWindow(QRect(200, 200, 400, 300));
+    wm::Window *first = makeWindow(base::Rect(100, 100, 400, 300));
+    wm::Window *second = makeWindow(base::Rect(200, 200, 400, 300));
     manager.activation()->activate(second);
     manager.activation()->activate(first);
 
@@ -546,11 +544,11 @@ TEST_F(SessionLockTest, UnlockingGivesTheKeyboardBackToTheWindowThatHadIt)
 TEST_F(SessionLockTest, UnlockingNeverTakesTheUserToAnotherDesk)
 {
     wm::DesksController *desks = manager.desks();
-    wm::Window *elsewhere = makeWindow(QRect(100, 100, 400, 300));
+    wm::Window *elsewhere = makeWindow(base::Rect(100, 100, 400, 300));
     manager.activation()->activate(elsewhere);
     wm::Desk *second = desks->newDesk(wm::DesksCreationRemovalSource::Keyboard);
     desks->activateDesk(second, wm::DesksSwitchSource::DeskSwitchShortcut);
-    wm::Window *here = makeWindow(QRect(200, 200, 400, 300));
+    wm::Window *here = makeWindow(base::Rect(200, 200, 400, 300));
     manager.activation()->activate(here);
 
     // The window that had the keyboard closes while locked; the one left on
@@ -650,7 +648,7 @@ TEST_F(SessionLockTest, CaptureAndDirectScanoutAreRefusedWhileBlocked)
 TEST_F(SessionLockTest, TheScanoutPlannerIsSkippedWhileBlocked)
 {
     auto *node = static_cast<scene::SurfaceNode *>(surfaceContainer->addChild(
-            std::make_unique<scene::SurfaceNode>(QStringLiteral("fullscreen"))));
+            std::make_unique<scene::SurfaceNode>("fullscreen")));
     node->setGeometry(kPrimary);
     node->setTexture(std::make_shared<TestTexture>(kPrimary.size()));
     node->setScanoutBuffer(std::make_shared<TestScanoutBuffer>(kPrimary.size()));
@@ -896,7 +894,8 @@ TEST_F(SessionLockTest, ReusedOutputNameMustPresentAgainAfterGeometryChanges)
     controller.setOutputs({{kPrimaryName, kPrimary}, {kSecondaryName, kSecondary}});
     ASSERT_TRUE(controller.requestLock());
     controller.notifyOutputPresented(kPrimaryName);
-    controller.setOutputs({{kPrimaryName, QRect(0, 0, 640, 480)}, {kSecondaryName, kSecondary}});
+    controller.setOutputs({{kPrimaryName, base::Rect(0, 0, 640, 480)},
+                           {kSecondaryName, kSecondary}});
     controller.notifyOutputPresented(kSecondaryName);
     EXPECT_EQ(SessionState::Locking, controller.state());
     controller.notifyOutputPresented(kPrimaryName);

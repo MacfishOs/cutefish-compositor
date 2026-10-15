@@ -5,36 +5,35 @@
 // Upstream: chromium/src/ui/ozone/platform/drm/host/drm_display_host_manager.cc
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: monitor DRM udev events in Qt and coalesce dock bursts
+// Adapted for Cutefish: monitor DRM udev events on the loop and coalesce dock bursts
 // behind a bounded reprobe deadline.
 
 #pragma once
 
 #include <memory>
 
-#include <QObject>
-#include <QTimer>
+#include "base/signal.h"
+#include "base/timer.h"
 
 struct udev;
 struct udev_monitor;
-class QSocketNotifier;
 
 namespace cutefish::backend {
 
-class DrmHotplugMonitor final : public QObject
+class DrmHotplugMonitor final
 {
-    Q_OBJECT
-
 public:
-    explicit DrmHotplugMonitor(QObject *parent = nullptr);
-    ~DrmHotplugMonitor() override;
+    DrmHotplugMonitor();
+    ~DrmHotplugMonitor();
+
+    DrmHotplugMonitor(const DrmHotplugMonitor &) = delete;
+    DrmHotplugMonitor &operator=(const DrmHotplugMonitor &) = delete;
 
     bool start();
     void notifyForTest();
 
-signals:
-    void snapshotsInvalidated();
-    void reprobeRequested();
+    base::Signal<> snapshotsInvalidated;
+    base::Signal<> reprobeRequested;
 
 private:
     void onReadable();
@@ -43,9 +42,9 @@ private:
 
     udev *m_udev = nullptr;
     udev_monitor *m_monitor = nullptr;
-    QSocketNotifier *m_notifier = nullptr;
-    QTimer m_quiet;
-    QTimer m_deadline;
+    int m_watch = 0;
+    base::Timer m_quiet;
+    base::Timer m_deadline;
 };
 
 } // namespace cutefish::backend

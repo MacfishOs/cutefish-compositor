@@ -2,239 +2,249 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/dbus.h"
+#include "loop_test_util.h"
 #include "scene/node.h"
 #include "session/screen_saver_service.h"
 #include "session/session_controller.h"
-#include <QDBusConnectionInterface>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QDeadlineTimer>
-#include <QSignalSpy>
-#include <QTest>
-#include <QThread>
+
+#include <gtest/gtest.h>
+#include <optional>
+#include <unistd.h>
 
 using namespace cutefish;
+namespace dbus = base::dbus;
 
-class ScreenSaverServiceTest : public QObject
+namespace {
+
+class ScreenSaverServiceTest : public testing::Test
 {
-    Q_OBJECT
-private:
-    QDBusConnection client = QDBusConnection::connectToBus(
-            QDBusConnection::SessionBus, QStringLiteral("screen-saver-test-client"));
+protected:
+    std::unique_ptr<dbus::Connection> client = dbus::Connection::open(dbus::Connection::Bus::Session, core::mainLoop());
 
-    QDBusPendingCall call(const QString &method, const QVariantList &arguments = {},
-                          const QString &path = QStringLiteral("/ScreenSaver"),
-                          const QDBusConnection &bus = QDBusConnection(QString()))
+    // A call in flight; its reply lands in `reply`.
+    struct Pending {
+        std::optional<dbus::Reply> reply;
+        dbus::PendingCall call;
+        bool finished() const { return reply.has_value(); }
+    };
+
+    template<typename... Args>
+    std::unique_ptr<Pending> callAt(const std::string &method, const std::string &path,
+                                    dbus::Connection *bus, const Args &...args)
     {
-        auto message = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.ScreenSaver"),
-                                                      path,
-                                                      QStringLiteral("org.freedesktop.ScreenSaver"),
-                                                      method);
-        message.setArguments(arguments);
-        return (bus.isConnected() ? bus : client).asyncCall(message);
+        auto pending = std::make_unique<Pending>();
+        Pending *raw = pending.get();
+        dbus::Proxy proxy(bus ? bus : client.get(), "org.freedesktop.ScreenSaver", path,
+                          "org.freedesktop.ScreenSaver");
+        pending->call = proxy.callAsync(
+                method, [raw](const dbus::Reply &reply) { raw->reply = reply; }, args...);
+        return pending;
     }
 
-    // The service answers on this thread, so the wait has to keep processing events.
-    static QDBusMessage finished(const QDBusPendingCall &pending)
+    template<typename... Args>
+    std::unique_ptr<Pending> call(const std::string &method, const Args &...args)
     {
-        QDBusPendingCallWatcher watcher(pending);
-        QTest::qWaitFor([&watcher] {
-            return watcher.isFinished();
-        });
-        return watcher.reply();
+        return callAt(method, "/ScreenSaver", nullptr, args...);
     }
 
-private slots:
-
-    void initTestCase() { QVERIFY(client.isConnected()); }
-
-    void lockReplyWaitsForEveryOutputAndRepeatedRequestsAreIdempotent()
+    dbus::Reply finished(std::unique_ptr<Pending> pending)
     {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        controller.setOutputs({{QStringLiteral("one"), QRect(0, 0, 800, 600)},
-                               {QStringLiteral("two"), QRect(800, 0, 800, 600)}});
-        session::ScreenSaverService service(&controller);
-        QVERIFY(service.registerService());
-        QSignalSpy changed(&service, &session::ScreenSaverService::ActiveChanged);
-        QDBusPendingCallWatcher first(call(QStringLiteral("Lock")));
-        QTRY_COMPARE(controller.state(), session::SessionState::Locking);
-        QVERIFY(controller.isBlocked());
-        QVERIFY(root.isVisible());
-        QVERIFY(!first.isFinished());
-        QDBusPendingCallWatcher second(call(QStringLiteral("Lock")));
-        QDBusPendingCallWatcher active(call(QStringLiteral("GetActive")));
-        QTRY_VERIFY(active.isFinished());
-        QVERIFY(QDBusPendingReply<bool>(active).value());
-        controller.notifyOutputPresented(QStringLiteral("one"));
-        QCoreApplication::processEvents();
-        QVERIFY(!first.isFinished());
-        QVERIFY(!second.isFinished());
-        controller.notifyOutputPresented(QStringLiteral("two"));
-        QTRY_VERIFY(first.isFinished());
-        QTRY_VERIFY(second.isFinished());
-        QVERIFY(!first.isError());
-        QVERIFY(!second.isError());
-        QCOMPARE(controller.state(), session::SessionState::Locked);
-        QCOMPARE(changed.size(), 1);
-        QDBusPendingCallWatcher repeated(call(QStringLiteral("Lock")));
-        QTRY_VERIFY(repeated.isFinished());
-        QVERIFY(!repeated.isError());
-        QCOMPARE(changed.size(), 1);
-        QVERIFY(controller.requestUnlock());
-        QVERIFY(service.GetActive());
-        QDBusPendingCallWatcher duringUnlock(call(QStringLiteral("Lock")));
-        QTRY_VERIFY(duringUnlock.isFinished());
-        QVERIFY(duringUnlock.isError());
-        controller.notifyFramePresented();
-        QVERIFY(!service.GetActive());
-        QCOMPARE(changed.size(), 2);
-        QCOMPARE(changed.last().first().toBool(), false);
+        EXPECT_TRUE(test::runUntil([&] { return pending->finished(); }));
+        return pending->reply.value_or(dbus::Reply());
     }
 
-    void noDbusMethodCanUnlock()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        session::ScreenSaverService service(&controller);
-        QVERIFY(service.registerService());
-        QDBusPendingCallWatcher lock(call(QStringLiteral("Lock")));
-        QTRY_VERIFY(lock.isFinished());
-        QVERIFY(!lock.isError());
-        QCOMPARE(controller.state(), session::SessionState::Locked);
-        QDBusPendingCallWatcher unlock(call(QStringLiteral("Unlock")));
-        QTRY_VERIFY(unlock.isFinished());
-        QVERIFY(unlock.isError());
-        QCOMPARE(controller.state(), session::SessionState::Locked);
-    }
-
-    void lockAndInhibitAnswerAtBothPaths()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        session::ScreenSaverService service(&controller);
-        int count = 0;
-        service.setInhibition([&count] { ++count; }, [&count] { --count; });
-        QVERIFY(service.registerService());
-        for (const QString path :
-             {QStringLiteral("/ScreenSaver"), QStringLiteral("/org/freedesktop/ScreenSaver")}) {
-            const QDBusMessage active = finished(call(QStringLiteral("GetActive"), {}, path));
-            QCOMPARE(active.type(), QDBusMessage::ReplyMessage);
-            const QDBusMessage cookie = finished(
-                    call(QStringLiteral("Inhibit"), {QStringLiteral("test"), QStringLiteral("video")},
-                         path));
-            QCOMPARE(cookie.type(), QDBusMessage::ReplyMessage);
-            QVERIFY(cookie.arguments().front().toUInt() != 0);
-        }
-        QCOMPARE(count, 2);
-    }
-
-    void inhibitCookiesBelongToTheirCaller()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        session::ScreenSaverService service(&controller);
-        int count = 0;
-        service.setInhibition([&count] { ++count; }, [&count] { --count; });
-        QVERIFY(service.registerService());
-        auto first = QDBusConnection::connectToBus(QDBusConnection::SessionBus,
-                                                   QStringLiteral("screen-saver-first"));
-        auto second = QDBusConnection::connectToBus(QDBusConnection::SessionBus,
-                                                    QStringLiteral("screen-saver-second"));
-        const QVariantList request {QStringLiteral("test"), QStringLiteral("video")};
-        const QString path = QStringLiteral("/org/freedesktop/ScreenSaver");
-        QDBusMessage reply = finished(call(QStringLiteral("Inhibit"), request, path, first));
-        QCOMPARE(reply.type(), QDBusMessage::ReplyMessage);
-        const uint cookie = reply.arguments().front().toUInt();
-        QVERIFY(cookie != 0);
-        QCOMPARE(count, 1);
-        // Another caller cannot release it.
-        QCOMPARE(finished(call(QStringLiteral("UnInhibit"), {cookie}, path, second)).type(),
-                 QDBusMessage::ReplyMessage);
-        QCOMPARE(count, 1);
-        reply = finished(call(QStringLiteral("Inhibit"), request, path, first));
-        QVERIFY(reply.arguments().front().toUInt() != cookie);
-        QCOMPARE(count, 2);
-        finished(call(QStringLiteral("UnInhibit"), {cookie}, path, first));
-        QCOMPARE(count, 1);
-        finished(call(QStringLiteral("UnInhibit"), {cookie}, path, first));
-        QCOMPARE(count, 1);
-        // Leaving the bus releases everything the caller still holds. The
-        // connection only closes once no QDBusConnection refers to it.
-        QDBusConnection::disconnectFromBus(QStringLiteral("screen-saver-first"));
-        first = QDBusConnection(QString());
-        QTRY_COMPARE(count, 0);
-        QDBusConnection::disconnectFromBus(QStringLiteral("screen-saver-second"));
-    }
-
-    void inhibitFromACallerThatAlreadyLeftIsReleased()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure);
-        session::ScreenSaverService service(&controller);
-        int acquired = 0;
-        int count = 0;
-        service.setInhibition(
-                [&] {
-                    ++acquired;
-                    ++count;
-                },
-                [&count] { --count; });
-        QVERIFY(service.registerService());
-        auto gone = QDBusConnection::connectToBus(QDBusConnection::SessionBus,
-                                                  QStringLiteral("screen-saver-gone"));
-        const QString name = gone.baseService();
-        auto message = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.ScreenSaver"),
-                                                      QStringLiteral("/ScreenSaver"),
-                                                      QStringLiteral("org.freedesktop.ScreenSaver"),
-                                                      QStringLiteral("Inhibit"));
-        message.setArguments({QStringLiteral("test"), QStringLiteral("video")});
-        // Sent without waiting for the cookie, as dbus-send does. Once the
-        // blocking call behind it is answered, the bus has routed the Inhibit.
-        QVERIFY(gone.send(message));
-        QVERIFY(gone.interface()->isServiceRegistered(name).value());
-        QDBusConnection::disconnectFromBus(QStringLiteral("screen-saver-gone"));
-        gone = QDBusConnection(QString());
-        // Blocking calls process no events here, so the service handles the
-        // Inhibit only after the bus has announced that the caller left.
-        QDeadlineTimer deadline(5000);
-        while (client.interface()->isServiceRegistered(name).value() && !deadline.hasExpired())
-            QThread::msleep(10);
-        QVERIFY(!client.interface()->isServiceRegistered(name).value());
-        QTRY_COMPARE(acquired, 1);
-        QTRY_COMPARE(count, 0);
-    }
-
-    void inhibitIsRefusedWithoutACounter()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure, nullptr, session::SessionState::Login);
-        session::ScreenSaverService service(&controller);
-        QVERIFY(service.registerService());
-        const QDBusMessage reply = finished(
-                call(QStringLiteral("Inhibit"), {QStringLiteral("test"), QStringLiteral("video")}));
-        QCOMPARE(reply.type(), QDBusMessage::ErrorMessage);
-    }
-
-    void loginRemainsDistinctAndBlocked()
-    {
-        scene::Node root;
-        session::SecureContainer secure(&root);
-        session::SessionController controller(&secure, nullptr, session::SessionState::Login);
-        session::ScreenSaverService service(&controller);
-        QVERIFY(service.registerService());
-        QDBusPendingCallWatcher lock(call(QStringLiteral("Lock")));
-        QTRY_VERIFY(lock.isFinished());
-        QVERIFY(lock.isError());
-        QVERIFY(service.GetActive());
-        QCOMPARE(controller.state(), session::SessionState::Login);
-    }
+    bool waitFor(const std::function<bool()> &done) { return test::runUntil(done); }
 };
-QTEST_GUILESS_MAIN(ScreenSaverServiceTest)
-#include "screen_saver_service_test.moc"
+
+} // namespace
+
+TEST_F(ScreenSaverServiceTest, LockReplyWaitsForEveryOutputAndRepeatedRequestsAreIdempotent)
+{
+    ASSERT_TRUE(client);
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)},
+                           {"two", base::Rect(800, 0, 800, 600)}});
+    session::ScreenSaverService service(&controller);
+    ASSERT_TRUE(service.registerService());
+    std::vector<bool> changed;
+    auto subscription = service.activeChanged.connect([&](bool active) { changed.push_back(active); });
+    auto first = call("Lock");
+    EXPECT_TRUE(waitFor([&] { return controller.state() == session::SessionState::Locking; }));
+    EXPECT_TRUE(controller.isBlocked());
+    EXPECT_TRUE(root.isVisible());
+    EXPECT_FALSE(first->finished());
+    auto second = call("Lock");
+    const dbus::Reply active = finished(call("GetActive"));
+    EXPECT_TRUE(active.value<bool>().value_or(false));
+    controller.notifyOutputPresented("one");
+    test::runFor(std::chrono::milliseconds(20));
+    EXPECT_FALSE(first->finished());
+    EXPECT_FALSE(second->finished());
+    controller.notifyOutputPresented("two");
+    EXPECT_TRUE(waitFor([&] { return first->finished() && second->finished(); }));
+    EXPECT_FALSE(first->reply->isError());
+    EXPECT_FALSE(second->reply->isError());
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
+    EXPECT_EQ(changed.size(), 1u);
+    EXPECT_FALSE(finished(call("Lock")).isError());
+    EXPECT_EQ(changed.size(), 1u);
+    EXPECT_TRUE(controller.requestUnlock());
+    EXPECT_TRUE(service.GetActive());
+    EXPECT_TRUE(finished(call("Lock")).isError());
+    controller.notifyFramePresented();
+    EXPECT_FALSE(service.GetActive());
+    ASSERT_EQ(changed.size(), 2u);
+    EXPECT_FALSE(changed.back());
+}
+
+TEST_F(ScreenSaverServiceTest, TheBusHearsActiveChangedAtBothPaths)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    session::ScreenSaverService service(&controller);
+    ASSERT_TRUE(service.registerService());
+    std::vector<std::string> paths;
+    dbus::MatchRule rule;
+    rule.interface = "org.freedesktop.ScreenSaver";
+    rule.member = "ActiveChanged";
+    auto match = client->subscribe(rule, [&](const dbus::Message &message) {
+        if (message.argument<bool>().value_or(false))
+            paths.push_back(message.path());
+    });
+    // The match is in place once a call behind it is answered.
+    finished(call("GetActive"));
+    service.Lock();
+    EXPECT_TRUE(waitFor([&] { return paths.size() == 2; }));
+}
+
+TEST_F(ScreenSaverServiceTest, NoDbusMethodCanUnlock)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    session::ScreenSaverService service(&controller);
+    ASSERT_TRUE(service.registerService());
+    EXPECT_FALSE(finished(call("Lock")).isError());
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
+    EXPECT_TRUE(finished(call("Unlock")).isError());
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
+}
+
+TEST_F(ScreenSaverServiceTest, LockAndInhibitAnswerAtBothPaths)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    session::ScreenSaverService service(&controller);
+    int count = 0;
+    service.setInhibition([&count] { ++count; }, [&count] { --count; });
+    ASSERT_TRUE(service.registerService());
+    for (const std::string path : {"/ScreenSaver", "/org/freedesktop/ScreenSaver"}) {
+        EXPECT_FALSE(finished(callAt("GetActive", path, nullptr)).isError());
+        const dbus::Reply cookie = finished(
+                callAt("Inhibit", path, nullptr, std::string("test"), std::string("video")));
+        EXPECT_FALSE(cookie.isError());
+        EXPECT_NE(cookie.value<uint32_t>().value_or(0), 0u);
+    }
+    EXPECT_EQ(count, 2);
+}
+
+TEST_F(ScreenSaverServiceTest, InhibitCookiesBelongToTheirCaller)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    session::ScreenSaverService service(&controller);
+    int count = 0;
+    service.setInhibition([&count] { ++count; }, [&count] { --count; });
+    ASSERT_TRUE(service.registerService());
+    auto first = dbus::Connection::open(dbus::Connection::Bus::Session, core::mainLoop());
+    auto second = dbus::Connection::open(dbus::Connection::Bus::Session, core::mainLoop());
+    const std::string path = "/org/freedesktop/ScreenSaver";
+    const auto inhibit = [&](dbus::Connection *bus) {
+        return finished(callAt("Inhibit", path, bus, std::string("test"), std::string("video")));
+    };
+    dbus::Reply reply = inhibit(first.get());
+    ASSERT_FALSE(reply.isError());
+    const uint32_t cookie = reply.value<uint32_t>().value_or(0);
+    EXPECT_NE(cookie, 0u);
+    EXPECT_EQ(count, 1);
+    // Another caller cannot release it.
+    EXPECT_FALSE(finished(callAt("UnInhibit", path, second.get(), cookie)).isError());
+    EXPECT_EQ(count, 1);
+    reply = inhibit(first.get());
+    EXPECT_NE(reply.value<uint32_t>().value_or(0), cookie);
+    EXPECT_EQ(count, 2);
+    finished(callAt("UnInhibit", path, first.get(), cookie));
+    EXPECT_EQ(count, 1);
+    finished(callAt("UnInhibit", path, first.get(), cookie));
+    EXPECT_EQ(count, 1);
+    // Leaving the bus releases everything the caller still holds.
+    first.reset();
+    EXPECT_TRUE(waitFor([&] { return count == 0; }));
+}
+
+TEST_F(ScreenSaverServiceTest, InhibitFromACallerThatAlreadyLeftIsReleased)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    session::ScreenSaverService service(&controller);
+    int acquired = 0;
+    int count = 0;
+    service.setInhibition(
+            [&] {
+                ++acquired;
+                ++count;
+            },
+            [&count] { --count; });
+    ASSERT_TRUE(service.registerService());
+    auto gone = dbus::Connection::open(dbus::Connection::Bus::Session, core::mainLoop());
+    const std::string name = gone->uniqueName();
+    dbus::Message message = gone->newMethodCall("org.freedesktop.ScreenSaver", "/ScreenSaver",
+                                                "org.freedesktop.ScreenSaver", "Inhibit");
+    message.append(std::string("test"), std::string("video"));
+    // Sent without waiting for the cookie, as dbus-send does; the blocking
+    // call behind it makes sure the bus has it.
+    ASSERT_TRUE(gone->send(message));
+    dbus::Proxy driver(gone.get(), "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                       "org.freedesktop.DBus");
+    ASSERT_FALSE(driver.call("GetId").isError());
+    gone.reset();
+    // Blocking calls dispatch nothing here, so the service handles the
+    // Inhibit only after the bus has announced that the caller left.
+    dbus::Proxy clientDriver(client.get(), "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                             "org.freedesktop.DBus");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (clientDriver.call("NameHasOwner", name).value<bool>().value_or(true)
+           && std::chrono::steady_clock::now() < deadline)
+        usleep(10000);
+    EXPECT_FALSE(clientDriver.call("NameHasOwner", name).value<bool>().value_or(true));
+    EXPECT_TRUE(waitFor([&] { return acquired == 1 && count == 0; }));
+}
+
+TEST_F(ScreenSaverServiceTest, InhibitIsRefusedWithoutACounter)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure, nullptr, session::SessionState::Login);
+    session::ScreenSaverService service(&controller);
+    ASSERT_TRUE(service.registerService());
+    EXPECT_TRUE(finished(call("Inhibit", std::string("test"), std::string("video"))).isError());
+}
+
+TEST_F(ScreenSaverServiceTest, LoginRemainsDistinctAndBlocked)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure, nullptr, session::SessionState::Login);
+    session::ScreenSaverService service(&controller);
+    ASSERT_TRUE(service.registerService());
+    EXPECT_TRUE(finished(call("Lock")).isError());
+    EXPECT_TRUE(service.GetActive());
+    EXPECT_EQ(controller.state(), session::SessionState::Login);
+}

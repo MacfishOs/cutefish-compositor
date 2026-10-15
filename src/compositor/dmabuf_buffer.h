@@ -36,7 +36,7 @@ public:
 
     ~DmaBufBuffer() override;
 
-    QSize size() const override { return m_attributes.size; }
+    base::Size size() const override { return m_attributes.size; }
 
     render::PixelFormat format() const override { return m_format; }
 

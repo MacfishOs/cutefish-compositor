@@ -6,15 +6,15 @@
 
 #include "compositor/compositor.h"
 #include "compositor/output.h"
+#include "core/main_loop.h"
 #include "wayland/server_util.h"
 
 namespace cutefish::backend {
 
-HeadlessBackend::HeadlessBackend(compositor::Compositor *compositor, int outputCount,
-                                 QObject *parent)
-    : QObject(parent)
-    , m_compositor(compositor)
+HeadlessBackend::HeadlessBackend(compositor::Compositor *compositor, int outputCount)
+    : m_compositor(compositor)
     , m_outputCount(outputCount)
+    , m_clock(core::mainLoop())
 {
 }
 
@@ -22,9 +22,9 @@ std::vector<std::unique_ptr<compositor::Output>>
 HeadlessBackend::createOutputs(compositor::Output *primary)
 {
     primary->pixelSize = outputSize();
-    primary->physicalSizeMm = QSize(509, 286);
-    primary->model = QStringLiteral("headless");
-    primary->name = QStringLiteral("Cutefish-1");
+    primary->physicalSizeMm = base::Size(509, 286);
+    primary->model = "headless";
+    primary->name = "Cutefish-1";
     primary->refreshMilliHz = 60000;
     primary->preferred = true;
 
@@ -35,8 +35,8 @@ HeadlessBackend::createOutputs(compositor::Output *primary)
         model->physicalSizeMm = primary->physicalSizeMm;
         model->refreshMilliHz = primary->refreshMilliHz;
         model->preferred = true;
-        model->name = QStringLiteral("Cutefish-%1").arg(index + 1);
-        model->model = QStringLiteral("headless-%1").arg(index + 1);
+        model->name = "Cutefish-" + std::to_string(index + 1);
+        model->model = "headless-" + std::to_string(index + 1);
         additional.push_back(std::move(model));
     }
     return additional;
@@ -44,13 +44,13 @@ HeadlessBackend::createOutputs(compositor::Output *primary)
 
 void HeadlessBackend::startClock()
 {
-    connect(&m_clock, &QTimer::timeout, this, [this] {
-        const quint64 generation = ++m_generation;
-        emit aboutToPresent();
+    m_clock.onTimeout = [this] {
+        const uint64_t generation = ++m_generation;
+        aboutToPresent();
         m_compositor->frameSubmitted(generation);
         m_compositor->frameDrawn(wayland::nowInMilliseconds(), generation);
-    });
-    m_clock.start(16);
+    };
+    m_clock.start(std::chrono::milliseconds(16));
 }
 
 } // namespace cutefish::backend

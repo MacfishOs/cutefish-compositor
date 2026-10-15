@@ -10,7 +10,7 @@
 
 #pragma once
 
-#include <QString>
+#include <string>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -44,6 +44,6 @@ void updateOutputMembership(wl_global *global,
                             const std::vector<std::shared_ptr<compositor::Surface *>> &surfaces);
 void removeOutputGlobal(wl_global *global);
 std::shared_ptr<compositor::CaptureSource> outputCaptureSource(wl_resource *resource);
-std::optional<QString> outputNameFromResource(wl_resource *resource);
+std::optional<std::string> outputNameFromResource(wl_resource *resource);
 wl_global *createXdgOutputManagerGlobal(wl_display *display);
 } // namespace cutefish::wayland

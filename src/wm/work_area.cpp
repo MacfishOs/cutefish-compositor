@@ -9,7 +9,7 @@
 namespace cutefish::wm {
 
 bool ExclusiveZones::set(const void* token, ScreenEdge edge, int thickness,
-                         const QString& outputName)
+                         const std::string& outputName)
 {
     if (!token)
         return false;
@@ -40,12 +40,12 @@ bool ExclusiveZones::clearAll()
     return true;
 }
 
-QRect ExclusiveZones::apply(const QRect& outputBounds) const
+base::Rect ExclusiveZones::apply(const base::Rect& outputBounds) const
 {
-    return apply(outputBounds, QString(), true);
+    return apply(outputBounds, std::string(), true);
 }
 
-QRect ExclusiveZones::apply(const QRect& outputBounds, const QString& outputName,
+base::Rect ExclusiveZones::apply(const base::Rect& outputBounds, const std::string& outputName,
                             bool primary) const
 {
     int top = 0;
@@ -54,8 +54,8 @@ QRect ExclusiveZones::apply(const QRect& outputBounds, const QString& outputName
     int right = 0;
 
     for (const auto& [token, zone] : m_zones) {
-        if ((!zone.outputName.isEmpty() && zone.outputName != outputName) ||
-            (zone.outputName.isEmpty() && !primary)) {
+        if ((!zone.outputName.empty() && zone.outputName != outputName) ||
+            (zone.outputName.empty() && !primary)) {
             continue;
         }
         switch (zone.edge) {
@@ -74,7 +74,7 @@ QRect ExclusiveZones::apply(const QRect& outputBounds, const QString& outputName
         }
     }
 
-    QRect area = outputBounds.adjusted(left, top, -right, -bottom);
+    base::Rect area = outputBounds.adjusted(left, top, -right, -bottom);
     // A reservation larger than the output would leave nothing to lay windows
     // out in; the output itself is the floor.
     if (area.width() <= 0 || area.height() <= 0)

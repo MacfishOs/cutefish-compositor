@@ -40,37 +40,37 @@ ResizeEdge edgeFor(bool left, bool right, bool top, bool bottom)
 
 } // namespace
 
-ResizeEdge resizeEdgeFor(const render::RoundedShape &shape, const QRect &frame,
-                         const QPoint &point, int inside, int corner)
+ResizeEdge resizeEdgeFor(const render::RoundedShape &shape, const base::Rect &frame,
+                         const base::Point &point, int inside, int corner)
 {
     // The border follows the arc along a rounded corner; everything outside
     // the outline, the corners' empty pixels included, is border.
-    if (shape.distance(QPointF(point) + QPointF(0.5, 0.5)) <= -inside)
+    if (shape.distance(base::PointF(point) + base::PointF(0.5, 0.5)) <= -inside)
         return ResizeEdge::None;
 
-    const auto reach = [&](qreal radius, qreal halfSize) {
-        const qreal arc = render::cornerExtent(radius, halfSize);
+    const auto reach = [&](double radius, double halfSize) {
+        const double arc = render::cornerExtent(radius, halfSize);
         return std::max(corner, int(std::ceil(arc)) + inside);
     };
     const int cornerX = reach(shape.radius * shape.radiusScale.width(), shape.bounds.width() / 2);
     const int cornerY = reach(shape.radius * shape.radiusScale.height(), shape.bounds.height() / 2);
     const bool nearLeft = point.x() < frame.left() + cornerX;
-    const bool nearRight = point.x() > frame.right() - cornerX;
+    const bool nearRight = point.x() >= frame.right() - cornerX;
     const bool nearTop = point.y() < frame.top() + cornerY;
-    const bool nearBottom = point.y() > frame.bottom() - cornerY;
+    const bool nearBottom = point.y() >= frame.bottom() - cornerY;
     if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
-        const QPoint center = frame.center();
+        const base::Point center = centerPixel(frame);
         const bool left = point.x() <= center.x();
         const bool top = point.y() <= center.y();
         return edgeFor(left, !left, top, !top);
     }
 
-    return edgeFor(point.x() < frame.left() + inside, point.x() > frame.right() - inside,
-                   point.y() < frame.top() + inside, point.y() > frame.bottom() - inside);
+    return edgeFor(point.x() < frame.left() + inside, point.x() >= frame.right() - inside,
+                   point.y() < frame.top() + inside, point.y() >= frame.bottom() - inside);
 }
 
 ResizeEdge serverResizeEdgeAt(const Window &window, const decoration::WindowVisualStyle &style,
-                              const QPointF &location, bool touch)
+                              const base::PointF &location, bool touch)
 {
     const compositor::Surface *surface = window.rootSurface();
     if (!surface || !surface->serverResize() || window.isDecorated() || window.isPopup()
@@ -80,9 +80,9 @@ ResizeEdge serverResizeEdgeAt(const Window &window, const decoration::WindowVisu
         return ResizeEdge::None;
 
     // Window coordinates: the shape is relative to the window's origin.
-    const QPoint point = location.toPoint() - window.bounds().topLeft();
+    const base::Point point = location.toPoint() - window.bounds().topLeft();
     const auto visual = WindowVisualController::evaluate(window, style);
-    const QRect body = visual.shape.bounds.toAlignedRect();
+    const base::Rect body = visual.shape.bounds.toEnclosingRect();
     const int outside = touch ? kResizeOutsideBoundsSize * kResizeOutsideBoundsScaleForTouch
                               : kResizeOutsideBoundsSize;
     if (!body.adjusted(-outside, -outside, outside, outside).contains(point))

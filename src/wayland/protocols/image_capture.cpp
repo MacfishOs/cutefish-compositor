@@ -4,7 +4,6 @@
 
 #include "wayland/protocols/image_capture.h"
 
-#include <QObject>
 #include <algorithm>
 #include <cstring>
 #include <ext-image-capture-source-v1-server-protocol.h>
@@ -55,17 +54,18 @@ void destroy(wl_client *, wl_resource *resource)
     wl_resource_destroy(resource);
 }
 
-bool writeImage(compositor::ShmBuffer &shm, const QImage &image)
+bool writeImage(compositor::ShmBuffer &shm, const ui::Bitmap &image)
 {
     return !image.isNull() && image.size() == shm.size()
             && shm.pool()->writeRows(size_t(shm.offset()), size_t(shm.stride()),
                                      size_t(image.height()), size_t(image.width()) * 4,
-                                     image.constBits(), size_t(image.bytesPerLine()));
+                                     image.constBits(), image.stride());
 }
 
-struct Session : QObject {
+struct Session {
     std::shared_ptr<State> state;
     Source source;
+    base::Subscription sourceChanged;
     wl_resource *resource = nullptr;
     Frame *frame = nullptr;
     bool cursors = false;
@@ -76,7 +76,7 @@ struct Session : QObject {
     // What changed since this session's last frame, for the damage events.
     // Its history starts empty, so the first frame reports everything.
     scene::DamageTracker tracker;
-    QRect lastCursor;
+    base::Rect lastCursor;
 
     void constraints()
     {
@@ -129,9 +129,9 @@ struct Frame {
     bool finished = false;
     uint64_t generation = 0;
     uint32_t transform = 0;
-    QSize size;
+    base::Size size;
     // Buffer-coordinate rectangles, sent before ready.
-    std::vector<QRect> damage;
+    std::vector<base::Rect> damage;
     // A shm capture still on its way back from the GPU, written into the
     // buffer when the frame is presented.
     std::shared_ptr<render::PendingImage> pixels;
@@ -283,9 +283,8 @@ void makeSession(wl_client *client, uint32_t id, const std::shared_ptr<State> &s
     });
     state->sessions.push_back(session);
     if (session->source) {
-        QObject::connect(
-                session->source.get(), &compositor::CaptureSource::changed, session.get(),
-                [weak = std::weak_ptr<Session>(session)] {
+        session->sourceChanged =
+                session->source->changed.connect([weak = std::weak_ptr<Session>(session)] {
                     if (auto session = weak.lock()) {
                         session->constraints();
                         if (!session->source->active && session->frame && session->frame->captured)
@@ -416,19 +415,19 @@ void bind(wl_client *client, void *data, uint32_t, uint32_t id, const wl_interfa
 // content sits at `content` (native pixels) and covers `viewport` at `scale`.
 // A rotated output reports its whole buffer: the mapping through the
 // transform is not worth a second code path for the rare rotated share.
-std::vector<QRect> bufferDamage(const QRegion &logical, const QRect &viewport, double scale,
-                                uint32_t transform, const QRect &content, const QSize &size)
+std::vector<base::Rect> bufferDamage(const base::Region &logical, const base::Rect &viewport,
+                                     double scale, uint32_t transform, const base::Rect &content,
+                                     const base::Size &size)
 {
-    const QRect whole(QPoint(), size);
-    // QRegion::contains(QRect) means overlap; whole coverage is an equality.
-    if (transform != 0 || viewport.isEmpty()
-        || logical.intersected(viewport) == QRegion(viewport))
+    const base::Rect whole(base::Point(), size);
+    if (transform != 0 || viewport.isEmpty() || logical.contains(viewport))
         return {whole};
-    std::vector<QRect> rects;
-    for (const QRect &rect : logical.intersected(viewport)) {
-        const QRectF moved(QPointF(rect.topLeft() - viewport.topLeft()) * scale,
-                           QSizeF(rect.size()) * scale);
-        const QRect pixels = moved.toAlignedRect().translated(content.topLeft()).intersected(whole);
+    std::vector<base::Rect> rects;
+    for (const base::Rect &rect : logical.intersected(viewport)) {
+        const base::RectF moved(base::PointF(rect.topLeft() - viewport.topLeft()) * scale,
+                                base::SizeF(rect.size()) * scale);
+        const base::Rect pixels =
+                moved.toEnclosingRect().translated(content.topLeft()).intersected(whole);
         if (!pixels.isEmpty())
             rects.push_back(pixels);
     }
@@ -439,7 +438,7 @@ void deliver(State &state, const std::shared_ptr<Frame> &frame, uint64_t monoton
 {
     const uint64_t seconds = monotonicNs / 1000000000;
     ext_image_copy_capture_frame_v1_send_transform(frame->resource, frame->transform);
-    for (const QRect &rect : frame->damage) {
+    for (const base::Rect &rect : frame->damage) {
         ext_image_copy_capture_frame_v1_send_damage(frame->resource, rect.x(), rect.y(),
                                                     rect.width(), rect.height());
     }
@@ -557,7 +556,7 @@ wl_global *ImageCaptureManager::copyGlobal() const
     return m_copyGlobal;
 }
 
-bool ImageCaptureManager::hasPending(const QString &output) const
+bool ImageCaptureManager::hasPending(const std::string &output) const
 {
     return std::any_of(m_state->pending.begin(), m_state->pending.end(), [&](const auto &frame) {
         return !frame->finished && frame->session->source->renderedOn() == output;
@@ -579,11 +578,11 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
     const render::OutputRenderContext outputContext = renderer.outputContext();
     struct Capture {
         std::shared_ptr<render::PendingImage> later;
-        QImage image;
+        ui::Bitmap image;
     };
     Capture captures[2];
     const bool allowed = !state->captureAllowed || state->captureAllowed();
-    const QRect cursorBounds = painters.cursorBounds ? painters.cursorBounds() : QRect();
+    const base::Rect cursorBounds = painters.cursorBounds ? painters.cursorBounds() : base::Rect();
     for (const auto &frame : pending) {
         if (frame->finished || frame->generation)
             continue;
@@ -599,7 +598,7 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
             continue;
         }
         const bool window = source->kind == compositor::CaptureSource::Kind::Window;
-        const QSize size = source->pixelSize();
+        const base::Size size = source->pixelSize();
         auto buffer = frame->buffer.lock();
         auto shm = std::dynamic_pointer_cast<compositor::ShmBuffer>(buffer);
         auto dmabuf = std::dynamic_pointer_cast<compositor::DmaBufBuffer>(buffer);
@@ -623,23 +622,23 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
         // The frame's own context: the display's for an output, the window's
         // bounds at its own scale for a window.
         render::OutputRenderContext context = outputContext;
-        QRect viewport = outputContext.logicalViewport;
-        QRect content = outputContext.nativeContentRect.isEmpty()
-                ? QRect(QPoint(), size)
+        base::Rect viewport = outputContext.logicalViewport;
+        base::Rect content = outputContext.nativeContentRect.isEmpty()
+                ? base::Rect(base::Point(), size)
                 : outputContext.nativeContentRect;
         if (window) {
             context.logicalViewport = source->bounds;
             context.nativeTargetSize = size;
             context.scale = source->scale;
             context.transform = 0;
-            context.nativeContentRect = QRect(QPoint(), size);
+            context.nativeContentRect = base::Rect(base::Point(), size);
             viewport = source->bounds;
-            content = QRect(QPoint(), size);
+            content = base::Rect(base::Point(), size);
         }
 
         // Damage since this session's previous frame, tracked before the paint
         // so the tracker's history is this composition's.
-        QRegion logical;
+        base::Region logical;
         const scene::Node *root = window ? source->node : painters.root;
         if (root)
             logical = session->tracker.update(*root, viewport, context.scale, context.transform);
@@ -704,9 +703,10 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
             continue;
         if (!copied) {
             if (dmabuf) {
-                qCWarning(cfWayland, "Capture into a DMA-BUF failed (format 0x%08x, modifier 0x%llx)",
-                          dmabuf->attributes().format,
-                          static_cast<unsigned long long>(dmabuf->attributes().modifier));
+                CF_WARNING(cfWayland).printf(
+                        "Capture into a DMA-BUF failed (format 0x%08x, modifier 0x%llx)",
+                        dmabuf->attributes().format,
+                        static_cast<unsigned long long>(dmabuf->attributes().modifier));
             }
             frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_UNKNOWN);
             continue;
@@ -744,7 +744,7 @@ void ImageCaptureManager::presented(uint64_t generation, uint64_t monotonicNs)
         if (frame->pixels) {
             const auto shm =
                     std::dynamic_pointer_cast<compositor::ShmBuffer>(frame->buffer.lock());
-            const QImage image = std::exchange(frame->pixels, nullptr)->take();
+            const ui::Bitmap image = std::exchange(frame->pixels, nullptr)->take();
             if (!shm || !writeImage(*shm, image)) {
                 frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_UNKNOWN);
                 continue;

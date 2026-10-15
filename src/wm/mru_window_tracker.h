@@ -14,8 +14,7 @@
 
 #include <vector>
 
-#include <QMetaObject>
-
+#include "base/signal.h"
 #include "wm/activation.h"
 
 namespace cutefish::wm {
@@ -58,7 +57,7 @@ private:
     void setActiveWindow(Window *window);
 
     WindowManager *m_manager = nullptr;
-    QMetaObject::Connection m_removedConnection;
+    base::Subscription m_windowRemoved;
     // Least recently used first, so the active window is at the back.
     WindowList m_mruWindows;
 };

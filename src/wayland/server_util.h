@@ -17,8 +17,7 @@
 #include <cstdint>
 #include <memory>
 
-#include <QPointF>
-#include <QRect>
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 class Surface;
@@ -82,15 +81,15 @@ double clientScale(wl_client* client);
 // (SkIRect::MakeXYWH, gfx::Rect); here every edge stays within 2^24 of zero,
 // past any surface a client can attach, so no sum the compositor makes of them
 // overflows. A negative size is empty.
-QRect clientRect(int32_t x, int32_t y, int32_t width, int32_t height);
+base::Rect clientRect(int32_t x, int32_t y, int32_t width, int32_t height);
 
 // Surface coordinates from a scaled client, in logical units. Rectangles grow
 // outwards, so damage and regions never lose a partly covered pixel.
-QRect clientToLogical(const QRect& rect, double scale);
-QPoint clientToLogical(const QPoint& point, double scale);
+base::Rect clientToLogical(const base::Rect& rect, double scale);
+base::Point clientToLogical(const base::Point& point, double scale);
 
 // Logical surface coordinates in a scaled client's units.
-QPointF logicalToClient(const QPointF& point, double scale);
+base::PointF logicalToClient(const base::PointF& point, double scale);
 
 } // namespace cutefish::wayland
 

@@ -3,9 +3,8 @@
 // found in the LICENSE file.
 
 #include "computer_control/controller.h"
+#include "core/main_loop.h"
 
-#include <QList>
-#include <QScopedValueRollback>
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -13,6 +12,8 @@
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon.h>
 
+#include "base/auto_reset.h"
+#include "base/strings.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
 
@@ -33,18 +34,17 @@ bool validKey(uint32_t key)
 
 } // namespace
 
-Controller::Controller(input::InputManager *input, Environment environment, QObject *parent)
-    : QObject(parent)
-    , m_input(input)
+Controller::Controller(input::InputManager *input, Environment environment)
+    : m_input(input)
     , m_environment(std::move(environment))
+    , m_settleTimer(core::mainLoop())
 {
     // Direct, so that what the agent holds is released before the real event
     // that follows the signal is dispatched.
-    connect(m_input, &input::InputManager::userActivity, this, &Controller::realInput,
-            Qt::DirectConnection);
+    m_realInput = m_input->userActivity.connect([this] { realInput(); });
 
-    m_settleTimer.setInterval(16);
-    connect(&m_settleTimer, &QTimer::timeout, this, &Controller::checkSettles);
+    m_settleTimer.setInterval(std::chrono::milliseconds(16));
+    m_settleTimer.onTimeout = [this] { checkSettles(); };
 }
 
 Controller::~Controller()
@@ -59,7 +59,7 @@ Controller::~Controller()
 }
 
 std::unique_ptr<Control> Controller::request(ControlClient *client, const void *owner,
-                                             const QString &agentName)
+                                             const std::string &agentName)
 {
     std::unique_ptr<Control> control(new Control(this, client, owner, agentName));
     m_controls.insert(control.get());
@@ -93,9 +93,9 @@ bool Controller::isActive() const
     return m_current && m_current->m_state == Control::State::Granted;
 }
 
-QString Controller::agentName() const
+std::string Controller::agentName() const
 {
-    return isActive() ? m_current->m_agentName : QString();
+    return isActive() ? m_current->m_agentName : std::string();
 }
 
 bool Controller::allowsCapture(const void *owner) const
@@ -208,7 +208,7 @@ void Controller::answer(Control *control, uint64_t serial, ConsentResult result)
     }
     control->m_state = Control::State::Granted;
     control->m_client->granted();
-    emit activeChanged(true);
+    activeChanged(true);
 }
 
 void Controller::end(Control *control, std::optional<RevokeReason> reason)
@@ -227,7 +227,7 @@ void Controller::end(Control *control, std::optional<RevokeReason> reason)
     if (reason)
         control->m_client->revoked(*reason);
     if (wasActive)
-        emit activeChanged(false);
+        activeChanged(false);
 }
 
 void Controller::releaseAll(Control *control)
@@ -263,12 +263,12 @@ void Controller::dropSettles(const Control *control)
 
 void Controller::inject(const std::function<void()> &event)
 {
-    QScopedValueRollback injecting(m_injecting, true);
+    const base::AutoReset injecting(m_injecting, true);
     event();
 }
 
 Control::Control(Controller *controller, ControlClient *client, const void *owner,
-                 const QString &agentName)
+                 const std::string &agentName)
     : m_controller(controller)
     , m_client(client)
     , m_owner(owner)
@@ -285,7 +285,7 @@ Control::~Control()
     m_controller->m_controls.erase(this);
 }
 
-void Control::motion(const QPointF &position)
+void Control::motion(const base::PointF &position)
 {
     if (!m_controller) {
         m_client->rejected(Rejection::NotGranted);
@@ -319,7 +319,8 @@ void Control::button(uint32_t button, bool pressed)
     const auto &environment = controller->m_environment;
     if (!controller->admits(this, [&] {
             return environment.protectedAt
-                    && environment.protectedAt(controller->m_input->pointerPosition());
+                    && environment.protectedAt(
+                            controller->m_input->pointerPosition());
         }))
         return;
     m_buttons.insert(button);
@@ -340,12 +341,14 @@ void Control::axis(int horizontal, int vertical)
     const auto &environment = controller->m_environment;
     if (!controller->admits(this, [&] {
             return environment.protectedAt
-                    && environment.protectedAt(controller->m_input->pointerPosition());
+                    && environment.protectedAt(
+                            controller->m_input->pointerPosition());
         }))
         return;
     controller->inject([&] {
         controller->m_input->onPointerAxis(
-                controller->now(), QPointF(horizontal, vertical) * input::kAxisUnitsPerClick, true);
+                controller->now(),
+                base::PointF(horizontal, vertical) * input::kAxisUnitsPerClick, true);
     });
 }
 
@@ -428,12 +431,12 @@ void Control::typeText(const std::string &text)
     const bool composing =
             environment.inputMethodGrabsKeyboard && environment.inputMethodGrabsKeyboard();
     const input::XkbTracker *keymap = controller->m_input->seat()->xkbTracker();
-    const QList<uint> characters = QString::fromUtf8(text).toUcs4();
+    const std::u32string characters = base::strings::utf8ToUtf32(text);
     std::vector<input::KeyStroke> strokes;
     bool controlCharacters = false;
     bool commit = false;
-    for (qsizetype i = 0; i < characters.size(); ++i) {
-        const uint character = characters[i];
+    for (size_t i = 0; i < characters.size(); ++i) {
+        const char32_t character = characters[i];
         std::optional<input::KeyStroke> stroke;
         if (character == '\r' && i + 1 < characters.size() && characters[i + 1] == '\n')
             continue;
@@ -502,20 +505,20 @@ void Control::listWindows()
 void Control::activateWindow(uint32_t handle)
 {
     changeWindow(handle, false, m_controller ? m_controller->m_environment.activateWindow
-                                             : std::function<bool(quint64)> {});
+                                             : std::function<bool(uint64_t)> {});
 }
 
 void Control::closeWindow(uint32_t handle)
 {
     changeWindow(handle, true, m_controller ? m_controller->m_environment.closeWindow
-                                            : std::function<bool(quint64)> {});
+                                            : std::function<bool(uint64_t)> {});
 }
 
-void Control::setWindowFrame(uint32_t handle, const QRect &frame)
+void Control::setWindowFrame(uint32_t handle, const base::Rect &frame)
 {
-    std::function<bool(quint64)> change;
+    std::function<bool(uint64_t)> change;
     if (m_controller && m_controller->m_environment.setWindowFrame) {
-        change = [this, frame](quint64 id) {
+        change = [this, frame](uint64_t id) {
             return m_controller->m_environment.setWindowFrame(id, frame);
         };
     }
@@ -561,7 +564,7 @@ void Control::settle(std::chrono::milliseconds timeout, std::function<void(bool 
 }
 
 void Control::changeWindow(uint32_t handle, bool guarded,
-                           const std::function<bool(quint64 id)> &change)
+                           const std::function<bool(uint64_t id)> &change)
 {
     Controller *controller = m_controller;
     if (!controller) {

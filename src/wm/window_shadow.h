@@ -17,8 +17,7 @@
 
 #include <memory>
 
-#include <QRect>
-
+#include "base/geometry.h"
 #include "wm/shadow_types.h"
 
 namespace cutefish::wm {
@@ -36,12 +35,12 @@ public:
     virtual ShadowElevation elevation() const = 0;
 
     // The outer window bounds the shadow is cast by, in output coordinates.
-    virtual void setContentBounds(const QRect& bounds) = 0;
-    virtual QRect contentBounds() const = 0;
+    virtual void setContentBounds(const base::Rect& bounds) = 0;
+    virtual base::Rect contentBounds() const = 0;
 
     // Everything the shadow paints, in output coordinates: contentBounds()
     // grown by the style's exterior margins. Empty when nothing is drawn.
-    virtual QRect shadowBounds() const = 0;
+    virtual base::Rect shadowBounds() const = 0;
 
     // Puts the shadow back underneath everything else the window draws.
     // Upstream: window->layer()->StackAtBottom(shadow->layer()).

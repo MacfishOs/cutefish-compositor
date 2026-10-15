@@ -9,19 +9,23 @@
 #include <libinput.h>
 #include <libudev.h>
 #include <linux/input-event-codes.h>
+#include <sys/epoll.h>
 #include <unistd.h>
 
-#include <QFile>
-#include <QRegularExpression>
-#include <QSocketNotifier>
-
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "backend/input/touchpad_contacts.h"
+#include "base/file.h"
+#include "base/event_loop.h"
+#include "base/strings.h"
 #include "backend/session/session.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "input/input_manager.h"
 #include "input/pointer_acceleration.h"
 #include "input/seat.h"
@@ -67,8 +71,8 @@ bool secondaryClickConfigurable(libinput_device *device)
 // hid_apple's swap_opt_cmd makes the kernel report Command as Alt already.
 bool kernelSwapsAppleModifiers()
 {
-    QFile file(QStringLiteral("/sys/module/hid_apple/parameters/swap_opt_cmd"));
-    return file.open(QIODevice::ReadOnly) && file.readAll().trimmed() != "0";
+    const auto contents = base::file::read("/sys/module/hid_apple/parameters/swap_opt_cmd");
+    return contents && base::strings::trimmed(*contents) != "0";
 }
 
 // KeyboardCapability's rule takes a device named "Apple ... Keyboard" for an
@@ -81,11 +85,16 @@ input::KeyboardModifierLayout modifierLayout(libinput_device *device)
     const unsigned vendor = libinput_device_get_id_vendor(device);
     bool apple = vendor == kAppleUsbVendor || vendor == kAppleBluetoothVendor;
     if (!apple) {
-        const QStringList tokens = QString::fromUtf8(libinput_device_get_name(device))
-                                           .split(QRegularExpression(QStringLiteral("[ .]")),
-                                                  Qt::SkipEmptyParts);
-        apple = tokens.contains(QLatin1String("apple"), Qt::CaseInsensitive)
-                && tokens.contains(QLatin1String("keyboard"), Qt::CaseInsensitive);
+        using base::strings::CaseSensitivity;
+        using base::strings::SplitBehavior;
+        std::vector<std::string> tokens;
+        for (const auto &word : base::strings::split(libinput_device_get_name(device), ' ',
+                                                     SplitBehavior::SkipEmptyParts)) {
+            for (auto &token : base::strings::split(word, '.', SplitBehavior::SkipEmptyParts))
+                tokens.push_back(std::move(token));
+        }
+        apple = base::strings::contains(tokens, "apple", CaseSensitivity::Insensitive)
+                && base::strings::contains(tokens, "keyboard", CaseSensitivity::Insensitive);
     }
     return apple && !kernelSwapsAppleModifiers() ? input::KeyboardModifierLayout::Apple
                                                  : input::KeyboardModifierLayout::Pc;
@@ -93,40 +102,38 @@ input::KeyboardModifierLayout modifierLayout(libinput_device *device)
 
 } // namespace
 
-LibinputBackend::LibinputBackend(Session *session, input::InputManager *inputManager,
-                                 QObject *parent)
-    : QObject(parent)
-    , m_session(session)
+LibinputBackend::LibinputBackend(Session *session, input::InputManager *inputManager)
+    : m_session(session)
     , m_inputManager(inputManager)
 {
     if (input::Seat *seat = m_inputManager->seat()) {
         seat->addObserver(this);
         m_leds = seat->clientXkbTracker()->leds();
     }
-    connect(&m_mouseSettings, &input::MouseSettings::settingsChanged, this, [this] {
+    m_settingsSubscriptions.push_back(m_mouseSettings.settingsChanged.connect([this] {
         for (auto *device : m_mice)
             applyMouseSettings(device);
-    });
+    }));
     // Disabling a device queues the release of whatever it held without
     // waking libinput's fd, so the queue is drained here.
-    connect(&m_touchpadSettings, &input::TouchpadSettings::settingsChanged, this, [this] {
+    m_settingsSubscriptions.push_back(m_touchpadSettings.settingsChanged.connect([this] {
         for (auto *device : m_touchpads)
             applyTouchpadSettings(device);
         dispatch();
-    });
-    connect(&m_touchscreenSettings, &input::TouchscreenSettings::settingsChanged, this, [this] {
+    }));
+    m_settingsSubscriptions.push_back(m_touchscreenSettings.settingsChanged.connect([this] {
         for (auto *device : m_touchscreens)
             applyTouchscreenSettings(device);
         dispatch();
-    });
+    }));
 }
 
 LibinputBackend::~LibinputBackend()
 {
     if (input::Seat *seat = m_inputManager->seat())
         seat->removeObserver(this);
-    if (m_notifier)
-        m_notifier->setEnabled(false);
+    if (m_watch)
+        core::mainLoop()->unwatch(m_watch);
     for (auto *device : m_mice)
         libinput_device_unref(device);
     for (auto *device : m_touchpads)
@@ -142,9 +149,9 @@ LibinputBackend::~LibinputBackend()
 }
 
 std::unique_ptr<LibinputBackend>
-LibinputBackend::create(Session *session, input::InputManager *inputManager, QObject *parent)
+LibinputBackend::create(Session *session, input::InputManager *inputManager)
 {
-    std::unique_ptr<LibinputBackend> backend(new LibinputBackend(session, inputManager, parent));
+    std::unique_ptr<LibinputBackend> backend(new LibinputBackend(session, inputManager));
     if (!backend->open())
         return nullptr;
     backend->m_mouseSettings.registerService();
@@ -157,7 +164,7 @@ int LibinputBackend::openRestricted(const char *path, int flags, void *userData)
 {
     auto *self = static_cast<LibinputBackend *>(userData);
     int deviceId = -1;
-    const int fd = self->m_session->openDevice(QString::fromUtf8(path), &deviceId);
+    const int fd = self->m_session->openDevice(path, &deviceId);
     if (fd < 0)
         return errno ? -errno : -1;
 
@@ -195,30 +202,30 @@ bool LibinputBackend::open()
 
     m_udev = udev_new();
     if (!m_udev) {
-        qCCritical(cfInput) << "Failed to create a udev context";
+        CF_CRITICAL(cfInput) << "Failed to create a udev context";
         return false;
     }
 
     m_libinput = libinput_udev_create_context(&interface, this, m_udev);
     if (!m_libinput) {
-        qCCritical(cfInput) << "Failed to create a libinput context";
+        CF_CRITICAL(cfInput) << "Failed to create a libinput context";
         return false;
     }
 
-    const QByteArray seatName = m_session->seatName().toUtf8();
-    if (libinput_udev_assign_seat(m_libinput, seatName.constData()) != 0) {
-        qCCritical(cfInput) << "Failed to assign libinput to seat" << m_session->seatName();
+    const std::string seatName = m_session->seatName();
+    if (libinput_udev_assign_seat(m_libinput, seatName.c_str()) != 0) {
+        CF_CRITICAL(cfInput) << "Failed to assign libinput to seat" << m_session->seatName();
         return false;
     }
 
-    m_notifier = new QSocketNotifier(libinput_get_fd(m_libinput), QSocketNotifier::Read, this);
-    connect(m_notifier, &QSocketNotifier::activated, this, &LibinputBackend::dispatch);
+    m_watch = core::mainLoop()->watch(libinput_get_fd(m_libinput), EPOLLIN,
+                                      [this](uint32_t) { dispatch(); });
 
     // The seat's devices are announced immediately; drain them so the initial
     // device set is known before the first frame.
     dispatch();
 
-    qCInfo(cfInput) << "libinput opened on seat" << m_session->seatName();
+    CF_INFO(cfInput) << "libinput opened on seat" << m_session->seatName();
     return true;
 }
 
@@ -237,7 +244,7 @@ void LibinputBackend::setActive(bool active)
 {
     if (m_active == active || !m_libinput)
         return;
-    qCDebug(cfInputTransitions) << "libinput active" << active;
+    CF_DEBUG(cfInputTransitions) << "libinput active" << active;
     m_active = active;
     if (active) {
         libinput_resume(m_libinput);
@@ -250,7 +257,7 @@ void LibinputBackend::setActive(bool active)
 void LibinputBackend::dispatch()
 {
     if (libinput_dispatch(m_libinput) != 0) {
-        qCWarning(cfInput) << "libinput_dispatch failed";
+        CF_WARNING(cfInput) << "libinput_dispatch failed";
         return;
     }
 
@@ -325,9 +332,9 @@ void LibinputBackend::applyMouseSettings(libinput_device *device)
 {
     const auto check = [device](libinput_config_status status, const char *setting) {
         if (status != LIBINPUT_CONFIG_STATUS_SUCCESS)
-            qCWarning(cfInput) << "Cannot apply mouse" << setting << "to"
-                               << libinput_device_get_name(device)
-                               << libinput_config_status_to_str(status);
+            CF_WARNING(cfInput) << "Cannot apply mouse" << setting << "to"
+                                << libinput_device_get_name(device)
+                                << libinput_config_status_to_str(status);
     };
     if (libinput_device_config_left_handed_is_available(device))
         check(libinput_device_config_left_handed_set(device, m_mouseSettings.leftHanded()),
@@ -371,9 +378,9 @@ void LibinputBackend::applyTouchpadSettings(libinput_device *device)
 {
     const auto check = [device](libinput_config_status status, const char *setting) {
         if (status != LIBINPUT_CONFIG_STATUS_SUCCESS)
-            qCWarning(cfInput) << "Cannot apply touchpad" << setting << "to"
-                               << libinput_device_get_name(device)
-                               << libinput_config_status_to_str(status);
+            CF_WARNING(cfInput) << "Cannot apply touchpad" << setting << "to"
+                                << libinput_device_get_name(device)
+                                << libinput_config_status_to_str(status);
     };
     const uint32_t modes = libinput_device_config_send_events_get_modes(device);
     uint32_t mode = LIBINPUT_CONFIG_SEND_EVENTS_ENABLED;
@@ -444,7 +451,8 @@ uint32_t LibinputBackend::touchpadButton(libinput_device *device, uint32_t butto
         return button;
     const auto fingers = contacts->second->contacts();
     if (fingers.size() != 2
-        || !input::isTwoFingerClick(fingers[0], fingers[1], time, contacts->second->size()))
+        || !input::isTwoFingerClick(fingers[0], fingers[1], time,
+                                     contacts->second->size()))
         return button;
     m_touchpadButtons[key] = BTN_RIGHT;
     return BTN_RIGHT;
@@ -470,27 +478,33 @@ void LibinputBackend::removeTouchscreen(libinput_device *device)
 
 void LibinputBackend::updateTouchscreenList()
 {
-    QStringList names;
-    for (auto *device : m_touchscreens)
-        names.append(QString::fromUtf8(libinput_device_get_name(device)));
-    // Identical panels share a name, and so one switch.
-    names.removeDuplicates();
-    names.sort(Qt::CaseInsensitive);
+    std::vector<std::string> names;
+    for (auto *device : m_touchscreens) {
+        std::string name = libinput_device_get_name(device);
+        // Identical panels share a name, and so one switch.
+        if (std::find(names.begin(), names.end(), name) == names.end())
+            names.push_back(std::move(name));
+    }
+    std::sort(names.begin(), names.end(), [](const std::string &a, const std::string &b) {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+                                            [](unsigned char x, unsigned char y) {
+                                                return std::tolower(x) < std::tolower(y);
+                                            });
+    });
     m_touchscreenSettings.setDevices(names);
 }
 
 void LibinputBackend::applyTouchscreenSettings(libinput_device *device)
 {
     // Suspending the device makes libinput cancel any finger still down.
-    const auto mode = m_touchscreenSettings.deviceEnabled(
-                              QString::fromUtf8(libinput_device_get_name(device)))
+    const auto mode = m_touchscreenSettings.deviceEnabled(libinput_device_get_name(device))
             ? LIBINPUT_CONFIG_SEND_EVENTS_ENABLED
             : LIBINPUT_CONFIG_SEND_EVENTS_DISABLED;
     const auto status = libinput_device_config_send_events_set_mode(device, mode);
     if (status != LIBINPUT_CONFIG_STATUS_SUCCESS)
-        qCWarning(cfInput) << "Cannot apply touchscreen send-events mode to"
-                           << libinput_device_get_name(device)
-                           << libinput_config_status_to_str(status);
+        CF_WARNING(cfInput) << "Cannot apply touchscreen send-events mode to"
+                            << libinput_device_get_name(device)
+                            << libinput_config_status_to_str(status);
 }
 
 void LibinputBackend::processEvent(libinput_event *event)
@@ -509,18 +523,18 @@ void LibinputBackend::processEvent(libinput_event *event)
         }
         addPointingDevice(libinput_event_get_device(event));
         addTouchscreen(libinput_event_get_device(event));
-        qCDebug(cfInput) << "input device added:"
-                         << libinput_device_get_name(libinput_event_get_device(event));
+        CF_DEBUG(cfInput) << "input device added:"
+                          << libinput_device_get_name(libinput_event_get_device(event));
         break;
     case LIBINPUT_EVENT_DEVICE_REMOVED:
         m_keyboardLayouts.erase(libinput_event_get_device(event));
         removePointingDevice(libinput_event_get_device(event));
         removeTouchscreen(libinput_event_get_device(event));
-        qCDebug(cfInputTransitions)
+        CF_DEBUG(cfInputTransitions)
                 << "libinput removed"
                 << libinput_device_get_sysname(libinput_event_get_device(event));
-        qCDebug(cfInput) << "input device removed:"
-                         << libinput_device_get_name(libinput_event_get_device(event));
+        CF_DEBUG(cfInput) << "input device removed:"
+                          << libinput_device_get_name(libinput_event_get_device(event));
         break;
     case LIBINPUT_EVENT_KEYBOARD_KEY: {
         libinput_event_keyboard *keyEvent = libinput_event_get_keyboard_event(event);
@@ -538,9 +552,9 @@ void LibinputBackend::processEvent(libinput_event *event)
         libinput_event_pointer *motion = libinput_event_get_pointer_event(event);
         m_inputManager->onPointerMotion(
                 timestampFromUsec(libinput_event_pointer_get_time_usec(motion)),
-                QPointF(libinput_event_pointer_get_dx(motion),
+                base::PointF(libinput_event_pointer_get_dx(motion),
                         libinput_event_pointer_get_dy(motion)),
-                QPointF(libinput_event_pointer_get_dx_unaccelerated(motion),
+                base::PointF(libinput_event_pointer_get_dx_unaccelerated(motion),
                         libinput_event_pointer_get_dy_unaccelerated(motion)));
         break;
     }
@@ -548,7 +562,7 @@ void LibinputBackend::processEvent(libinput_event *event)
         libinput_event_pointer *motion = libinput_event_get_pointer_event(event);
         m_inputManager->onPointerMotionNormalized(
                 timestampFromUsec(libinput_event_pointer_get_time_usec(motion)),
-                QPointF(libinput_event_pointer_get_absolute_x_transformed(motion, 1),
+                base::PointF(libinput_event_pointer_get_absolute_x_transformed(motion, 1),
                         libinput_event_pointer_get_absolute_y_transformed(motion, 1)));
         break;
     }
@@ -558,7 +572,7 @@ void LibinputBackend::processEvent(libinput_event *event)
         const auto timestamp = timestampFromUsec(libinput_event_touch_get_time_usec(touch));
         // The seat slot is unique across every touchscreen on the seat.
         const int32_t id = libinput_event_touch_get_seat_slot(touch);
-        const QPointF normalized(libinput_event_touch_get_x_transformed(touch, 1),
+        const base::PointF normalized(libinput_event_touch_get_x_transformed(touch, 1),
                                  libinput_event_touch_get_y_transformed(touch, 1));
         if (type == LIBINPUT_EVENT_TOUCH_DOWN)
             m_inputManager->onTouchDown(timestamp, id, normalized);
@@ -585,7 +599,7 @@ void LibinputBackend::processEvent(libinput_event *event)
     }
     case LIBINPUT_EVENT_POINTER_BUTTON: {
         libinput_event_pointer *button = libinput_event_get_pointer_event(event);
-        qCDebug(cfInputTransitions)
+        CF_DEBUG(cfInputTransitions)
                 << "libinput device"
                 << libinput_device_get_sysname(libinput_event_get_device(event)) << "code"
                 << libinput_event_pointer_get_button(button)
@@ -613,7 +627,7 @@ void LibinputBackend::processEvent(libinput_event *event)
         };
         m_inputManager->onPointerAxis(
                 timestampFromUsec(libinput_event_pointer_get_time_usec(scroll)),
-                QPointF(value(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL),
+                base::PointF(value(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL),
                         value(LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)),
                 true);
         break;
@@ -632,13 +646,13 @@ void LibinputBackend::processEvent(libinput_event *event)
                 return 0.0;
             return libinput_event_pointer_get_scroll_value(scroll, axis) * factor;
         };
-        const QPointF offset(value(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL),
+        const base::PointF offset(value(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL),
                              value(LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL));
         const input::Timestamp timestamp =
                 timestampFromUsec(libinput_event_pointer_get_time_usec(scroll));
         // A finger scroll of zero is libinput's way of saying the fingers were
         // lifted, which is wl_pointer.axis_stop.
-        if (offset.isNull())
+        if (offset.isOrigin())
             m_inputManager->onPointerAxisStop(timestamp);
         else
             m_inputManager->onPointerAxis(timestamp, offset, false);
@@ -661,9 +675,9 @@ void LibinputBackend::processEvent(libinput_event *event)
         m_inputManager->onPointerGestureUpdate(
                 timestampFromUsec(libinput_event_gesture_get_time_usec(gesture)),
                 gestureType(type),
-                QPointF(libinput_event_gesture_get_dx(gesture),
+                base::PointF(libinput_event_gesture_get_dx(gesture),
                         libinput_event_gesture_get_dy(gesture)),
-                QPointF(libinput_event_gesture_get_dx_unaccelerated(gesture),
+                base::PointF(libinput_event_gesture_get_dx_unaccelerated(gesture),
                         libinput_event_gesture_get_dy_unaccelerated(gesture)),
                 pinch ? libinput_event_gesture_get_scale(gesture) : 1.0,
                 pinch ? libinput_event_gesture_get_angle_delta(gesture) : 0.0);

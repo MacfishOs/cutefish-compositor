@@ -4,72 +4,86 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
+#include <string>
+
+#include "base/strings.h"
 #include "display/edid.h"
 
-#include <QCryptographicHash>
-
 using namespace cutefish::display;
+using cutefish::base::strings::fromHex;
 
 namespace {
 
-QByteArray descriptor(uchar tag, const QByteArray &text)
+std::string hex(std::string_view text)
 {
-    QByteArray result = QByteArray::fromHex("000000") + char(tag) + '\0';
-    result += (text + '\n').leftJustified(13, ' ', true);
-    return result;
+    return fromHex(text).value();
+}
+
+std::string descriptor(unsigned char tag, const std::string &text)
+{
+    std::string result = hex("000000") + char(tag) + '\0';
+    std::string padded = (text + '\n').substr(0, 13);
+    padded.resize(13, ' ');
+    return result + padded;
 }
 
 // A 128-byte base block from a Dell monitor, reduced to what the parser reads.
-QByteArray edid(const QByteArray &name, bool validChecksum = true)
+std::string edid(const std::optional<std::string> &name, bool validChecksum = true)
 {
-    QByteArray block = QByteArray::fromHex("00ffffffffffff00");
-    block += QByteArray::fromHex("10ac7ea04c4d5a30"); // "DEL", product, serial number
-    block += QByteArray(54 - block.size(), '\0');
-    block += QByteArray::fromHex("565e00a0a0a029503020350055502100001a"); // Detailed timing.
+    std::string block = hex("00ffffffffffff00");
+    block += hex("10ac7ea04c4d5a30"); // "DEL", product, serial number
+    block += std::string(54 - block.size(), '\0');
+    block += hex("565e00a0a0a029503020350055502100001a"); // Detailed timing.
     block += descriptor(0xff, "ABC1234");
-    block += name.isNull() ? descriptor(0x10, {}) : descriptor(0xfc, name);
+    block += name ? descriptor(0xfc, *name) : descriptor(0x10, {});
     block += descriptor(0x10, {});
-    block += QByteArray(127 - block.size(), '\0');
-    uint sum = 0;
+    block += std::string(127 - block.size(), '\0');
+    unsigned sum = 0;
     for (char byte : block)
-        sum += uchar(byte);
+        sum += static_cast<unsigned char>(byte);
     block += char((256 - sum % 256) % 256 + (validChecksum ? 0 : 1));
     return block;
 }
+
+// SHA-256 of the vendor, product and serial bytes and "ABC1234".
+constexpr const char *kDellKey = "1cef42bf6b30eeafa4758e08eee61214ebde6f51215038162873d639632e2b3c";
 
 } // namespace
 
 TEST(Edid, ReadsManufacturerAndMonitorName)
 {
     const auto info = parseEdid(edid("DELL U2720Q"));
-    EXPECT_EQ(info.make, QStringLiteral("DEL"));
-    EXPECT_EQ(info.model, QStringLiteral("DELL U2720Q"));
+    EXPECT_EQ(info.make, "DEL");
+    EXPECT_EQ(info.model, "DELL U2720Q");
 }
 
 TEST(Edid, KeyCoversVendorProductSerialOnly)
 {
-    const QByteArray bytes = edid("DELL U2720Q");
-    const QByteArray hashed = bytes.mid(8, 8) + "ABC1234";
-    const QString expected = QString::fromLatin1(
-            QCryptographicHash::hash(hashed, QCryptographicHash::Sha256).toHex());
-    EXPECT_EQ(parseEdid(bytes).key, expected);
+    EXPECT_EQ(parseEdid(edid("DELL U2720Q")).key, kDellKey);
     // The name is not part of the identity.
-    EXPECT_EQ(parseEdid(edid("Other name")).key, expected);
+    EXPECT_EQ(parseEdid(edid("Other name")).key, kDellKey);
+}
+
+// The name descriptor is Latin-1; its padding may use the no-break space.
+TEST(Edid, ModelIsLatin1TrimmedAsText)
+{
+    EXPECT_EQ(parseEdid(edid("Caf\xe9\xa0")).model, "Caf\xc3\xa9");
 }
 
 TEST(Edid, PanelWithoutNameDescriptorHasEmptyModel)
 {
-    const auto info = parseEdid(edid(QByteArray()));
-    EXPECT_EQ(info.make, QStringLiteral("DEL"));
-    EXPECT_TRUE(info.model.isEmpty());
-    EXPECT_FALSE(info.key.isEmpty());
+    const auto info = parseEdid(edid(std::nullopt));
+    EXPECT_EQ(info.make, "DEL");
+    EXPECT_TRUE(info.model.empty());
+    EXPECT_FALSE(info.key.empty());
 }
 
 TEST(Edid, RejectsBadChecksumShortBlockAndMissingHeader)
 {
-    EXPECT_TRUE(parseEdid(edid("DELL U2720Q", false)).key.isEmpty());
-    EXPECT_TRUE(parseEdid(edid("DELL U2720Q").left(127)).make.isEmpty());
-    QByteArray noHeader = edid("DELL U2720Q");
+    EXPECT_TRUE(parseEdid(edid("DELL U2720Q", false)).key.empty());
+    EXPECT_TRUE(parseEdid(edid("DELL U2720Q").substr(0, 127)).make.empty());
+    std::string noHeader = edid("DELL U2720Q");
     noHeader[0] = 1;
-    EXPECT_TRUE(parseEdid(noHeader).model.isEmpty());
+    EXPECT_TRUE(parseEdid(noHeader).model.empty());
 }

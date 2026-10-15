@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "scene/motion.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
@@ -55,8 +56,8 @@ double snapped(double offset, double scale)
 
 } // namespace
 
-DeskSwitchNode::DeskSwitchNode(std::function<qint64()> clock)
-    : Node(QStringLiteral("desk-switch"))
+DeskSwitchNode::DeskSwitchNode(std::function<int64_t()> clock)
+    : Node("desk-switch")
     , m_now(clock ? std::move(clock) : [] {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now().time_since_epoch())
@@ -92,7 +93,7 @@ void DeskSwitchNode::start(Type type, int desks, int startingDesk, int endingDes
 }
 
 void DeskSwitchNode::startRemoval(int desks, int removedDesk, int endingDesk, Frames stillFrames,
-                                  std::set<QString> outputs, int width)
+                                  std::set<std::string> outputs, int width)
 {
     stop();
     m_type = Type::Quick;
@@ -101,7 +102,7 @@ void DeskSwitchNode::startRemoval(int desks, int removedDesk, int endingDesk, Fr
     m_endingDesk = endingDesk;
     m_removedDesk = removedDesk;
     m_width = std::max(1, width);
-    for (const QString &output : outputs)
+    for (const std::string &output : outputs)
         m_frames[output];
     for (auto &[output, texture] : stillFrames) {
         if (texture)
@@ -448,7 +449,7 @@ void DeskSwitchNode::paintCoveredContent(render::Renderer &renderer) const
         (*it)->render(renderer);
 }
 
-void DeskSwitchNode::takeFrame(render::Renderer &renderer, const QRect &viewport) const
+void DeskSwitchNode::takeFrame(render::Renderer &renderer, const base::Rect &viewport) const
 {
     if (m_captureDesk < 0 || renderer.capturing)
         return;
@@ -475,7 +476,7 @@ void DeskSwitchNode::takeFrame(render::Renderer &renderer, const QRect &viewport
     }
 }
 
-void DeskSwitchNode::renderStrip(render::Renderer &renderer, const QRect &viewport,
+void DeskSwitchNode::renderStrip(render::Renderer &renderer, const base::Rect &viewport,
                                  double now) const
 {
     const auto output = m_frames.find(renderer.outputContext().outputId);
@@ -499,7 +500,7 @@ void DeskSwitchNode::renderStrip(render::Renderer &renderer, const QRect &viewpo
 
     struct Draw {
         render::Texture *frame = nullptr;
-        QRectF target;
+        base::RectF target;
         float alpha = 1;
     };
     std::vector<Draw> draws;
@@ -507,7 +508,7 @@ void DeskSwitchNode::renderStrip(render::Renderer &renderer, const QRect &viewpo
         const auto frame = output->second.find(desk);
         if (frame == output->second.end() || !frame->second)
             return;
-        const QRectF target(viewport.x() + snapped((slot - current) * distance, scale),
+        const base::RectF target(viewport.x() + snapped((slot - current) * distance, scale),
                             viewport.y(), viewport.width(), viewport.height());
         if (!target.intersects(viewport))
             return;
@@ -538,11 +539,11 @@ void DeskSwitchNode::renderStrip(render::Renderer &renderer, const QRect &viewpo
     double x = viewport.left();
     for (const auto &[left, right] : covered) {
         if (left > x)
-            renderer.fillRectF(QRectF(x, viewport.y(), left - x, viewport.height()), kBlack);
+            renderer.fillRectF(base::RectF(x, viewport.y(), left - x, viewport.height()), kBlack);
         x = std::max(x, right);
     }
     if (x < viewport.x() + viewport.width())
-        renderer.fillRectF(QRectF(x, viewport.y(), viewport.x() + viewport.width() - x,
+        renderer.fillRectF(base::RectF(x, viewport.y(), viewport.x() + viewport.width() - x,
                                   viewport.height()),
                            kBlack);
 
@@ -554,7 +555,7 @@ void DeskSwitchNode::renderStrip(render::Renderer &renderer, const QRect &viewpo
         renderer.drawTexture(still->second.get(), viewport);
 }
 
-void DeskSwitchNode::renderHitTheWall(render::Renderer &renderer, const QRect &viewport,
+void DeskSwitchNode::renderHitTheWall(render::Renderer &renderer, const base::Rect &viewport,
                                       double now) const
 {
     const auto output = m_frames.find(renderer.outputContext().outputId);
@@ -569,15 +570,15 @@ void DeskSwitchNode::renderHitTheWall(render::Renderer &renderer, const QRect &v
     const double offset = snapped(displacement, renderer.outputContext().scale);
     const auto &frame = output->second.at(0);
     if (!frame || offset != 0) {
-        const QRectF uncovered = !frame ? QRectF(viewport)
-                : offset > 0 ? QRectF(viewport.x(), viewport.y(), offset, viewport.height())
-                             : QRectF(viewport.x() + viewport.width() + offset, viewport.y(),
+        const base::RectF uncovered = !frame ? base::RectF(viewport)
+                : offset > 0 ? base::RectF(viewport.x(), viewport.y(), offset, viewport.height())
+                             : base::RectF(viewport.x() + viewport.width() + offset, viewport.y(),
                                       -offset, viewport.height());
         renderer.fillRectF(uncovered, kBlack);
     }
     if (frame) {
         renderer.drawTextureF(frame.get(),
-                              QRectF(viewport.x() + offset, viewport.y(), viewport.width(),
+                              base::RectF(viewport.x() + offset, viewport.y(), viewport.width(),
                                      viewport.height()));
     }
 }
@@ -590,7 +591,7 @@ void DeskSwitchNode::render(render::Renderer &renderer) const
     // drawn, the way WindowAnimation does.
     const double now = renderer.frameTime >= 0 ? renderer.frameTime : double(m_now());
     const auto &context = renderer.outputContext();
-    const QRect viewport =
+    const base::Rect viewport =
             context.logicalViewport.isEmpty() ? absoluteGeometry() : context.logicalViewport;
 
     if (m_hitTheWall) {

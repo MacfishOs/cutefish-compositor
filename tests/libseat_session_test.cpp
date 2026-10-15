@@ -4,9 +4,8 @@
 
 #include <gtest/gtest.h>
 
-#include <QCoreApplication>
-
 #include <fcntl.h>
+#include <stdlib.h>
 
 #include <cerrno>
 #include <memory>
@@ -26,7 +25,7 @@ bool isOpen(int fd)
 // like logind and seatd it leaves the descriptor it hands out to the caller.
 std::unique_ptr<backend::LibseatSession> createSession()
 {
-    qputenv("LIBSEAT_BACKEND", "noop");
+    setenv("LIBSEAT_BACKEND", "noop", 1);
     return backend::LibseatSession::create();
 }
 
@@ -37,7 +36,7 @@ TEST(LibseatSession, ClosingADeviceClosesItsDescriptor)
     auto session = createSession();
     ASSERT_TRUE(session);
     int deviceId = -1;
-    const int fd = session->openDevice(QStringLiteral("/dev/null"), &deviceId);
+    const int fd = session->openDevice("/dev/null", &deviceId);
     ASSERT_GE(fd, 0);
     ASSERT_GE(deviceId, 0);
     EXPECT_TRUE(isOpen(fd));
@@ -52,8 +51,8 @@ TEST(LibseatSession, ClosingOneDeviceLeavesTheOthersOpen)
     ASSERT_TRUE(session);
     int firstId = -1;
     int secondId = -1;
-    const int first = session->openDevice(QStringLiteral("/dev/null"), &firstId);
-    const int second = session->openDevice(QStringLiteral("/dev/zero"), &secondId);
+    const int first = session->openDevice("/dev/null", &firstId);
+    const int second = session->openDevice("/dev/zero", &secondId);
     ASSERT_GE(first, 0);
     ASSERT_GE(second, 0);
 
@@ -63,11 +62,4 @@ TEST(LibseatSession, ClosingOneDeviceLeavesTheOthersOpen)
 
     session->closeDevice(secondId);
     EXPECT_FALSE(isOpen(second));
-}
-
-int main(int argc, char** argv)
-{
-    QCoreApplication app(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

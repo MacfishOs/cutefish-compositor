@@ -76,20 +76,20 @@ bool XkbTracker::updateKeyboardLayout(const std::string &name)
 bool XkbTracker::updateKeyboardLayoutInternal(const xkb_rule_names *names)
 {
     if (!m_context) {
-        qCCritical(cfInput) << "Failed to create an xkb context";
+        CF_CRITICAL(cfInput) << "Failed to create an xkb context";
         return false;
     }
 
     std::unique_ptr<xkb_keymap, KeymapDeleter> keymap(
             xkb_keymap_new_from_names(m_context.get(), names, XKB_KEYMAP_COMPILE_NO_FLAGS));
     if (!keymap) {
-        qCWarning(cfInput) << "Failed to compile the requested xkb keymap";
+        CF_WARNING(cfInput) << "Failed to compile the requested xkb keymap";
         return false;
     }
 
     std::unique_ptr<xkb_state, StateDeleter> state(xkb_state_new(keymap.get()));
     if (!state) {
-        qCWarning(cfInput) << "Failed to create an xkb state";
+        CF_WARNING(cfInput) << "Failed to create an xkb state";
         return false;
     }
 

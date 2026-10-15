@@ -14,19 +14,16 @@
 #ifndef CUTEFISH_WM_DESKS_DESK_ANIMATION_H_
 #define CUTEFISH_WM_DESKS_DESK_ANIMATION_H_
 
-#include <QObject>
-#include <QTimer>
-
+#include "base/timer.h"
+#include "base/weak_ptr.h"
 #include "wm/desks/desks_controller.h"
 
 namespace cutefish::wm {
 
 class Desk;
 
-class DeskAnimationBase : public QObject
+class DeskAnimationBase
 {
-    Q_OBJECT
-
 public:
     // Long enough for every output to draw a frame, even one slowed by a
     // client; past it the switch happens without the animation.
@@ -34,7 +31,7 @@ public:
 
     DeskAnimationBase(DesksController *controller, int endingDesk,
                       bool isContinuousGestureAnimation);
-    ~DeskAnimationBase() override;
+    virtual ~DeskAnimationBase();
 
     int endingDeskIndex() const { return m_endingDesk; }
     // While fingers pull the strip, the desk the swipe was chosen to stay on
@@ -80,14 +77,13 @@ private:
     // Hands the node back empty for the next animation.
     void releaseNode();
 
-    QTimer m_screenshotTimeout;
+    base::Timer m_screenshotTimeout;
     bool m_finished = false;
+    base::WeakPtrFactory<DeskAnimationBase> m_weakFactory {this};
 };
 
 class DeskActivationAnimation : public DeskAnimationBase
 {
-    Q_OBJECT
-
 public:
     DeskActivationAnimation(DesksController *controller, int startingDesk, int endingDesk,
                             DesksSwitchSource source, bool updateWindowActivation);
@@ -112,8 +108,6 @@ private:
 
 class DeskRemovalAnimation : public DeskAnimationBase
 {
-    Q_OBJECT
-
 public:
     DeskRemovalAnimation(DesksController *controller, int deskToRemove, int deskToActivate,
                          DesksCreationRemovalSource source);

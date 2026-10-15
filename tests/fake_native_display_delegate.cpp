@@ -18,7 +18,7 @@ void FakeNativeDisplayDelegate::queryHardware(QueryCallback callback)
     if (!m_snapshot.isValid()) {
         callback(std::nullopt,
                  {display::DisplayErrorCode::Unavailable,
-                  QStringLiteral("No valid hardware snapshot is available"), {}});
+                  "No valid hardware snapshot is available", {}});
         return;
     }
     callback(m_snapshot, {});
@@ -38,7 +38,7 @@ void FakeNativeDisplayDelegate::configure(const display::DisplayConfiguration& c
     callback({true, false, {}, std::nullopt});
 }
 
-void FakeNativeDisplayDelegate::setDisplayPower(const QList<display::DisplayId>& displays,
+void FakeNativeDisplayDelegate::setDisplayPower(const std::vector<display::DisplayId>& displays,
                                                 PowerState state, ConfigureCallback callback)
 {
     m_lastPowerDisplays = displays;

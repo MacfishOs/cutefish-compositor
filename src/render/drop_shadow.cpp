@@ -10,6 +10,7 @@
 #include "render/gaussian_kernel.h"
 #include "render/gl_texture.h"
 #include "render_shaders.h"
+#include "base/geometry.h"
 
 namespace cutefish::render {
 
@@ -27,7 +28,7 @@ bool DropShadow::initialize()
     return m_program != 0;
 }
 
-std::unique_ptr<Texture> DropShadow::render(Renderer &renderer, const QSize &size,
+std::unique_ptr<Texture> DropShadow::render(Renderer &renderer, const base::Size &size,
                                             const std::vector<ShadowLobe> &lobes,
                                             const std::function<void()> &paintCaster)
 {
@@ -35,13 +36,13 @@ std::unique_ptr<Texture> DropShadow::render(Renderer &renderer, const QSize &siz
         return nullptr;
     // The caster's coverage, then each level the one before it halved.
     std::vector<std::unique_ptr<Texture>> levels(1);
-    if (!renderer.renderToTexture(levels[0], QRect(QPoint(), size), paintCaster))
+    if (!renderer.renderToTexture(levels[0], base::Rect(base::Point(), size), paintCaster))
         return nullptr;
 
     struct Blurred {
         std::unique_ptr<Texture> texture;
         int factor = 1;
-        QPoint offset;
+        base::Point offset;
         float opacity = 0;
     };
     std::vector<Blurred> blurred;
@@ -56,15 +57,15 @@ std::unique_ptr<Texture> DropShadow::render(Renderer &renderer, const QSize &siz
         }
         while (levels.size() <= level) {
             Texture *source = levels.back().get();
-            const QSize half((source->size().width() + 1) / 2, (source->size().height() + 1) / 2);
+            const base::Size half((source->size().width() + 1) / 2, (source->size().height() + 1) / 2);
             std::unique_ptr<Texture> reduced;
             // Every pixel samples the corner its four source pixels share,
             // which linear filtering averages.
-            if (!renderer.renderToTexture(reduced, QRect(QPoint(), half), [&] {
+            if (!renderer.renderToTexture(reduced, base::Rect(base::Point(), half), [&] {
                     glUseProgram(m_program);
                     glDisable(GL_BLEND);
                     setGaussianKernel(m_program, 0, 0, 0);
-                    draw(source, QRectF(QPointF(), half), half,
+                    draw(source, base::RectF(base::PointF(), half), half,
                          {2.0 * half.width() / source->size().width(),
                           2.0 * half.height() / source->size().height()});
                 }))
@@ -73,16 +74,16 @@ std::unique_ptr<Texture> DropShadow::render(Renderer &renderer, const QSize &siz
         }
 
         Texture *source = levels[level].get();
-        const QSize reduced = source->size();
+        const base::Size reduced = source->size();
         // Truncated at three sigma, which is what the caller's margins allow for.
         const int reach = int(std::ceil(3 * sigma));
         const auto pass = [&](Texture *input, std::unique_ptr<Texture> &output, float stepX,
                               float stepY) {
-            return renderer.renderToTexture(output, QRect(QPoint(), reduced), [&] {
+            return renderer.renderToTexture(output, base::Rect(base::Point(), reduced), [&] {
                 glUseProgram(m_program);
                 glDisable(GL_BLEND);
                 setGaussianKernel(m_program, sigma, stepX, stepY, reach);
-                draw(input, QRectF(QPointF(), reduced), reduced);
+                draw(input, base::RectF(base::PointF(), reduced), reduced);
             });
         };
         std::unique_ptr<Texture> horizontal;
@@ -94,7 +95,7 @@ std::unique_ptr<Texture> DropShadow::render(Renderer &renderer, const QSize &siz
     }
 
     std::unique_ptr<Texture> result;
-    if (!renderer.renderToTexture(result, QRect(QPoint(), size), [&] {
+    if (!renderer.renderToTexture(result, base::Rect(base::Point(), size), [&] {
             glUseProgram(m_program);
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -103,22 +104,22 @@ std::unique_ptr<Texture> DropShadow::render(Renderer &renderer, const QSize &siz
                 glUniform1f(m_program.uniform("uCenterWeight"), lobe.opacity);
                 // Stretched back over the pixels it stands for. Rows run
                 // bottom-up, so down the image is down GL's y as well.
-                const QSizeF covered = QSizeF(lobe.texture->size()) * lobe.factor;
-                draw(lobe.texture.get(), QRectF(QPointF(lobe.offset.x(), -lobe.offset.y()), covered),
+                const base::SizeF covered = base::SizeF(lobe.texture->size()) * lobe.factor;
+                draw(lobe.texture.get(), base::RectF(base::PointF(lobe.offset.x(), -lobe.offset.y()), covered),
                      size);
             }
             // The outer blur style: nothing of the shadow shows where the caster is.
             glUniform1f(m_program.uniform("uCenterWeight"), 1);
             glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
-            draw(levels[0].get(), QRectF(QPointF(), size), size);
+            draw(levels[0].get(), base::RectF(base::PointF(), size), size);
             glDisable(GL_BLEND);
         }))
         return nullptr;
     return result;
 }
 
-void DropShadow::draw(Texture *texture, const QRectF &rect, const QSize &viewport,
-                      const QPointF &extent) const
+void DropShadow::draw(Texture *texture, const base::RectF &rect, const base::Size &viewport,
+                      const base::PointF &extent) const
 {
     const float x0 = float(rect.left() / viewport.width() * 2 - 1);
     const float x1 = float(rect.right() / viewport.width() * 2 - 1);

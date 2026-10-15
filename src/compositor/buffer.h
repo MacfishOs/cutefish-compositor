@@ -16,7 +16,7 @@
 #include <memory>
 #include <vector>
 
-#include <QSize>
+#include "base/geometry.h"
 
 #include "render/scanout.h"
 #include "render/sync_fence.h"
@@ -71,7 +71,7 @@ public:
     Buffer& operator=(const Buffer&) = delete;
     virtual ~Buffer();
 
-    virtual QSize size() const = 0;
+    virtual base::Size size() const = 0;
     virtual render::PixelFormat format() const = 0;
 
     // Read-only mapping of the buffer contents, or nullptr for buffers the
@@ -187,11 +187,11 @@ private:
 class ShmBuffer : public Buffer
 {
 public:
-    ShmBuffer(std::shared_ptr<ShmPool> pool, const QSize& size, int32_t offset, int32_t stride,
+    ShmBuffer(std::shared_ptr<ShmPool> pool, const base::Size& size, int32_t offset, int32_t stride,
               render::PixelFormat format);
     ~ShmBuffer() override;
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
     render::PixelFormat format() const override { return m_format; }
 
@@ -212,7 +212,7 @@ public:
 
 private:
     std::shared_ptr<ShmPool> m_pool;
-    QSize m_size;
+    base::Size m_size;
     int32_t m_offset = 0;
     int32_t m_stride = 0;
     render::PixelFormat m_format = render::PixelFormat::Bgrx8888;

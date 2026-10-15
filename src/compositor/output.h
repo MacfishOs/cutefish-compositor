@@ -4,10 +4,10 @@
 
 #pragma once
 
-#include <QPoint>
-#include <QRect>
-#include <QSize>
-#include <QString>
+#include <memory>
+#include <string>
+
+#include "base/geometry.h"
 
 #include "compositor/output_scale.h"
 #include "render/presentation.h"
@@ -32,35 +32,36 @@ struct Output {
         Rotate270,
     };
 
-    QSize orientedPixelSize() const
+    base::Size orientedPixelSize() const
     {
         return transform == Transform::Rotate90 || transform == Transform::Rotate270
-                ? QSize(pixelSize.height(), pixelSize.width())
+                ? base::Size(pixelSize.height(), pixelSize.width())
                 : pixelSize;
     }
 
-    QSize logicalSize() const
+    base::Size logicalSize() const
     {
         return logicalExtent.isEmpty() ? scale.logicalSize(orientedPixelSize()) : logicalExtent;
     }
 
-    QPoint position;
-    QSize physicalSizeMm;
-    QSize pixelSize;
-    QString make = QStringLiteral("unknown");
-    QString model;
+    base::Point position;
+    // -1 until known, which is what wl_output reports for an unset size.
+    base::Size physicalSizeMm {-1, -1};
+    base::Size pixelSize {-1, -1};
+    std::string make = "unknown";
+    std::string model;
     int refreshMilliHz = 0;
     bool preferred = false;
     Subpixel subpixel = Subpixel::Unknown;
     OutputScale scale;
     std::shared_ptr<render::PresentationOutput> presentation =
             std::make_shared<render::PresentationOutput>();
-    QString name = QStringLiteral("Cutefish-1");
-    QString description;
+    std::string name = "Cutefish-1";
+    std::string description;
     Transform transform = Transform::Normal;
     double renderScale = 1.0;
-    QRect nativeContentRect;
-    QSize logicalExtent;
-    QString displayId;
+    base::Rect nativeContentRect;
+    base::Size logicalExtent;
+    std::string displayId;
 };
 } // namespace cutefish::compositor

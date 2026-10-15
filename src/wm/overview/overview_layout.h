@@ -5,10 +5,9 @@
 #ifndef CUTEFISH_WM_OVERVIEW_OVERVIEW_LAYOUT_H_
 #define CUTEFISH_WM_OVERVIEW_OVERVIEW_LAYOUT_H_
 
-#include <vector>
+#include "base/geometry.h"
 
-#include <QRect>
-#include <QRectF>
+#include <vector>
 
 namespace cutefish::wm::overview {
 
@@ -25,7 +24,7 @@ namespace cutefish::wm::overview {
 // at `deviceScale`.
 //
 // The same windows in the same order always give the same arrangement.
-std::vector<QRectF> spreadLayout(const std::vector<QRect> &windows, const QRect &area, int gap,
+std::vector<base::RectF> spreadLayout(const std::vector<base::Rect> &windows, const base::Rect &area, int gap,
                                  double deviceScale);
 
 } // namespace cutefish::wm::overview

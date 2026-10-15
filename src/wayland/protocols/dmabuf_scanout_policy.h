@@ -3,8 +3,7 @@
 
 #include <set>
 
-#include <QObject>
-
+#include "base/signal.h"
 #include "wm/window_observer.h"
 
 namespace cutefish::wm {
@@ -22,13 +21,10 @@ class DmaBufFeedbackManager;
 // shell surface's fullscreen state for the same reason.
 //
 // Must be destroyed before the WindowManager it observes.
-class DmaBufScanoutPolicy : public QObject, public wm::WindowObserver
+class DmaBufScanoutPolicy : public wm::WindowObserver
 {
-    Q_OBJECT
-
 public:
-    DmaBufScanoutPolicy(DmaBufFeedbackManager* manager, wm::WindowManager* windowManager,
-                        QObject* parent = nullptr);
+    DmaBufScanoutPolicy(DmaBufFeedbackManager* manager, wm::WindowManager* windowManager);
     ~DmaBufScanoutPolicy() override;
 
     // --- wm::WindowObserver ---
@@ -42,6 +38,8 @@ private:
     DmaBufFeedbackManager* const m_manager;
     wm::WindowManager* const m_windowManager;
     std::set<wm::Window*> m_windows;
+    base::Subscription m_windowAdded;
+    base::Subscription m_windowRemoved;
 };
 
 } // namespace cutefish::wayland

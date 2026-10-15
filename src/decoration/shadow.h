@@ -14,18 +14,17 @@
 
 #include <array>
 #include <memory>
+#include <string>
 
-#include <QMargins>
-#include <QPainterPath>
-#include <QString>
-
+#include "base/geometry.h"
 #include "decoration/raster.h"
+#include "ui/path.h"
 
 namespace cutefish::decoration {
 
 struct ShadowLayer {
     float sigma = 0; // Gaussian standard deviation, logical px, NOT Chromium blur().
-    QPoint offset; // Logical px, positive down/right.
+    base::Point offset; // Logical px, positive down/right.
     float opacity = 0;
 };
 
@@ -44,19 +43,19 @@ public:
     // A non-empty `silhouette`, window-local, replaces the rounded rectangle.
     // Its longest straight run on each axis is stretched the way the
     // nine-patch stretches the sides of a rounded rectangle.
-    ShadowGeometry(const QSize &windowSize, int radius, const ShadowStyle &style,
+    ShadowGeometry(const base::Size &windowSize, int radius, const ShadowStyle &style,
                    int rasterScale = 1, const Corners &corners = Corners::all(),
-                   const QPainterPath &silhouette = {});
+                   const ui::Path &silhouette = {});
 
-    QRect paintBounds() const;
+    base::Rect paintBounds() const;
 
-    const std::array<QRect, 9> &targets() const { return m_targets; }
+    const std::array<base::Rect, 9> &targets() const { return m_targets; }
 
-    const std::array<QRect, 9> &sources() const { return m_sources; }
+    const std::array<base::Rect, 9> &sources() const { return m_sources; }
 
-    QSize rasterSize() const { return m_rasterSize; }
+    base::Size rasterSize() const { return m_rasterSize; }
 
-    QSize canonicalSize() const { return m_canonicalSize; }
+    base::Size canonicalSize() const { return m_canonicalSize; }
 
     int topRadius() const { return m_radius; }
 
@@ -64,37 +63,37 @@ public:
 
     int rasterScale() const { return m_scale; }
 
-    QMargins margins() const { return m_margins; }
+    base::Insets margins() const { return m_margins; }
 
-    QString key() const;
+    std::string key() const;
     // The nine-patch source, drawn by `renderer` at rasterSize(); null where
     // it cannot draw one.
     std::unique_ptr<render::Texture> render(render::Renderer &renderer) const;
 
 private:
-    QSize m_windowSize;
-    QSize m_canonicalSize;
-    QSize m_rasterSize;
+    base::Size m_windowSize;
+    base::Size m_canonicalSize;
+    base::Size m_rasterSize;
     int m_radius = 0;
     int m_scale = 1;
     Corners m_corners;
     ShadowStyle m_style;
-    QPainterPath m_silhouette;
+    ui::Path m_silhouette;
     // Window-local start and end of the stretched run on each axis.
-    QPoint m_stretchBegin;
-    QPoint m_stretchEnd;
-    QMargins m_margins;
-    std::array<QRect, 9> m_targets;
-    std::array<QRect, 9> m_sources;
+    base::Point m_stretchBegin;
+    base::Point m_stretchEnd;
+    base::Insets m_margins;
+    std::array<base::Rect, 9> m_targets;
+    std::array<base::Rect, 9> m_sources;
 };
 
 void paintShadow(render::Renderer &renderer, const ShadowGeometry &geometry,
-                 const QPoint &position, float opacity = 1, const QPointF &snap = {});
+                 const base::Point &position, float opacity = 1, const base::PointF &snap = {});
 
 // `geometry` stretched over `window`, a window near its size: one texture
 // stands in for many sizes in a frame of motion.
 void paintStretchedShadow(render::Renderer &renderer, const ShadowGeometry &geometry,
-                          const QRect &window, float opacity = 1);
+                          const base::Rect &window, float opacity = 1);
 
 } // namespace cutefish::decoration
 

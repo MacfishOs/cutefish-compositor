@@ -7,13 +7,12 @@
 //           chromium/src/ui/gfx/geometry/rect.cc (AdjustToFit)
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: gfx::Rect becomes QRect, with exclusive edges kept.
+// Adapted for Cutefish: gfx::Rect becomes base::Rect.
 
 #ifndef CUTEFISH_WM_PLACEMENT_H_
 #define CUTEFISH_WM_PLACEMENT_H_
 
-#include <QRect>
-#include <QSize>
+#include "base/geometry.h"
 
 namespace cutefish::wm {
 
@@ -22,7 +21,7 @@ namespace cutefish::wm {
 inline constexpr int kMinimumOnScreenArea = 30;
 
 // Shrinks `bounds` so neither dimension exceeds `maxSize`. The origin is kept.
-void adjustBoundsSmallerThan(const QSize &maxSize, QRect *bounds);
+void adjustBoundsSmallerThan(const base::Size &maxSize, base::Rect *bounds);
 
 // Slides `bounds` back until a usable strip of it overlaps `visibleArea`, and
 // never lets its top escape above the area - dragging a window off the top edge
@@ -30,24 +29,24 @@ void adjustBoundsSmallerThan(const QSize &maxSize, QRect *bounds);
 // that strip has to end up when it is pushed down: the work area, so the top of
 // a window can slide under the dock only as far as it stays reachable beside
 // it. Empty means `visibleArea`.
-void adjustBoundsToEnsureMinimumVisibility(const QRect &visibleArea, QRect *bounds,
-                                           const QRect &grabArea = QRect());
+void adjustBoundsToEnsureMinimumVisibility(const base::Rect &visibleArea, base::Rect *bounds,
+                                           const base::Rect &grabArea = base::Rect());
 
 // Shrinks `bounds` to fit inside `area`, then moves it fully inside.
-void adjustBoundsToFit(const QRect &area, QRect *bounds);
+void adjustBoundsToFit(const base::Rect &area, base::Rect *bounds);
 
 // Where new windows go. One instance per WindowManager.
 class Placement
 {
 public:
     // Centers the window in the work area, shrinking it to fit when necessary.
-    QRect place(const QSize &requestedSize, const QRect &workArea);
+    base::Rect place(const base::Size &requestedSize, const base::Rect &workArea);
 
     // Centers a transient window over its parent's client area, as long as the
     // parent is at least as large in one dimension; otherwise over the work
     // area. Always kept inside the work area.
-    QRect placeTransient(const QSize &requestedSize, const QRect &parentBounds, int parentTopInset,
-                         const QRect &workArea);
+    base::Rect placeTransient(const base::Size &requestedSize, const base::Rect &parentBounds, int parentTopInset,
+                         const base::Rect &workArea);
 };
 
 } // namespace cutefish::wm

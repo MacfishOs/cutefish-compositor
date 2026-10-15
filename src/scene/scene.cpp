@@ -7,27 +7,28 @@
 #include <optional>
 
 #include "scene/overlay_candidate.h"
+#include "base/region.h"
 
 namespace cutefish::scene {
 
 Scene::Scene()
-    : m_root(std::make_unique<Node>(QStringLiteral("root")))
+    : m_root(std::make_unique<Node>("root"))
 {
 }
 
 Scene::~Scene() = default;
 
-void Scene::setSize(const QSize &size)
+void Scene::setSize(const base::Size &size)
 {
-    m_root->setGeometry(QRect(QPoint(0, 0), size));
+    m_root->setGeometry(base::Rect(base::Point(0, 0), size));
 }
 
-QRect Scene::viewportFor(const render::OutputRenderContext &context) const
+base::Rect Scene::viewportFor(const render::OutputRenderContext &context) const
 {
     return context.logicalViewport.isEmpty() ? m_root->geometry() : context.logicalViewport;
 }
 
-bool Scene::requiresFullRepaint(const QRect &viewport) const
+bool Scene::requiresFullRepaint(const base::Rect &viewport) const
 {
     const std::function<bool(const Node &)> visit = [&](const Node &node) {
         if (!node.isVisible())
@@ -63,7 +64,7 @@ void Scene::render(render::Renderer &renderer) const
     if (!renderer.capturing) {
         const auto &context = renderer.outputContext();
         auto &tracker = m_damageTrackers[context.outputId];
-        const QRegion damage =
+        const base::Region damage =
                 tracker.update(*m_root, viewportFor(context), context.scale, context.transform);
         // Each output's tracker stands for what its target holds.
         const auto scope = uint64_t(reinterpret_cast<uintptr_t>(&tracker));

@@ -4,65 +4,65 @@
 
 #pragma once
 
+#include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
-#include <QObject>
-#include <QSettings>
-#include <QStringList>
+#include "base/settings.h"
+#include "base/signal.h"
 
 namespace cutefish::input {
+
+class DBusExport;
 
 // An input method a desktop file offers, as KDE marks them with
 // X-KDE-Wayland-VirtualKeyboard=true.
 struct InputMethodProvider {
-    QString id;
-    QString path;
-    QStringList command;
+    std::string id;
+    std::string path;
+    std::vector<std::string> command;
 };
 
-QStringList parseDesktopExec(const QString &exec);
-QList<InputMethodProvider> findInputMethodProviders(const QStringList &applicationDirs);
+std::vector<std::string> parseDesktopExec(const std::string &exec);
+std::vector<InputMethodProvider>
+findInputMethodProviders(const std::vector<std::string> &applicationDirs);
 
-class InputMethodSettings : public QObject
+class InputMethodSettings
 {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.InputMethod1")
-    Q_PROPERTY(QString inputMethod READ inputMethod NOTIFY inputMethodChanged)
-    Q_PROPERTY(bool running READ running NOTIFY runningChanged)
-
 public:
     // Empty arguments select the user's settings file and the XDG application directories.
-    explicit InputMethodSettings(QObject *parent = nullptr, const QString &settingsFile = {},
-                                 const QStringList &applicationDirs = {});
-    ~InputMethodSettings() override;
+    explicit InputMethodSettings(const std::string &settingsFile = {},
+                                 const std::vector<std::string> &applicationDirs = {});
+    ~InputMethodSettings();
     bool registerService();
 
     // The selected desktop file id, or empty when none is selected or installed.
-    QString inputMethod() const;
+    std::string inputMethod() const;
 
     bool running() const { return m_running; }
 
-    QStringList command() const;
+    std::vector<std::string> command() const;
     void setRunning(bool running);
     // Launches `id` for this session only; the saved selection is unchanged.
-    void overrideInputMethod(const QString &id);
+    void overrideInputMethod(const std::string &id);
 
-public slots:
-    QStringList availableInputMethods() const;
-    bool setInputMethod(const QString &id);
+    std::vector<std::string> availableInputMethods() const;
+    bool setInputMethod(const std::string &id);
 
-signals:
-    void inputMethodChanged();
-    void runningChanged();
-    void commandChanged();
+    base::Signal<> inputMethodChanged;
+    base::Signal<> runningChanged;
+    base::Signal<> commandChanged;
 
 private:
-    std::optional<InputMethodProvider> provider(const QString &id) const;
-    QSettings m_settings;
-    QStringList m_applicationDirs;
-    QString m_selected;
+    std::optional<InputMethodProvider> provider(const std::string &id) const;
+    void notify(const base::Signal<> &signal, const char *member);
+
+    base::Settings m_settings;
+    std::vector<std::string> m_applicationDirs;
+    std::string m_selected;
     bool m_running = false;
-    bool m_registered = false;
+    std::unique_ptr<DBusExport> m_object;
 };
 
 } // namespace cutefish::input

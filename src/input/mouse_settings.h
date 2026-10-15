@@ -4,26 +4,21 @@
 
 #pragma once
 
-#include <QDBusConnection>
-#include <QObject>
-#include <QSettings>
+#include <memory>
+#include <string>
+
+#include "base/settings.h"
+#include "base/signal.h"
 
 namespace cutefish::input {
 
-class MouseSettings : public QObject
-{
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "com.cutefish.Mouse1")
-    Q_PROPERTY(bool available READ available NOTIFY availableChanged)
-    Q_PROPERTY(bool leftHanded READ leftHanded NOTIFY leftHandedChanged)
-    Q_PROPERTY(bool naturalScroll READ naturalScroll NOTIFY naturalScrollChanged)
-    Q_PROPERTY(bool acceleration READ acceleration NOTIFY accelerationChanged)
-    Q_PROPERTY(
-            double pointerAcceleration READ pointerAcceleration NOTIFY pointerAccelerationChanged)
+class DBusExport;
 
+class MouseSettings
+{
 public:
-    explicit MouseSettings(QObject *parent = nullptr, const QString &settingsFile = {});
-    ~MouseSettings() override;
+    explicit MouseSettings(const std::string &settingsFile = {});
+    ~MouseSettings();
     bool registerService();
 
     bool available() const { return m_available; }
@@ -38,29 +33,30 @@ public:
 
     void setAvailable(bool available);
 
-public slots:
     void setLeftHanded(bool enabled);
     void setNaturalScroll(bool enabled);
     void setAcceleration(bool enabled);
     void setPointerAcceleration(double value);
 
-signals:
-    void availableChanged();
-    void leftHandedChanged();
-    void naturalScrollChanged();
-    void accelerationChanged();
-    void pointerAccelerationChanged();
-    void settingsChanged();
+    base::Signal<> availableChanged;
+    base::Signal<> leftHandedChanged;
+    base::Signal<> naturalScrollChanged;
+    base::Signal<> accelerationChanged;
+    base::Signal<> pointerAccelerationChanged;
+    base::Signal<> settingsChanged;
 
 private:
-    void save(const QString &key, const QVariant &value);
-    QSettings m_settings;
+    template<typename T>
+    void save(const std::string &key, T value);
+    void notify(const base::Signal<> &signal, const char *member);
+
+    base::Settings m_settings;
     bool m_available = false;
     bool m_leftHanded = false;
     bool m_naturalScroll = true;
     bool m_acceleration = true;
     double m_pointerAcceleration = 0;
-    bool m_registered = false;
+    std::unique_ptr<DBusExport> m_object;
 };
 
 } // namespace cutefish::input

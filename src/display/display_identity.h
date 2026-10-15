@@ -5,21 +5,22 @@
 #pragma once
 
 #include "display/display_types.h"
-#include <QSet>
+#include <set>
+#include <vector>
 
 namespace cutefish::display {
 
 class DisplayIdentity
 {
 public:
-    void seed(const QList<DisplaySnapshot> &displays) { m_known = displays; }
+    void seed(const std::vector<DisplaySnapshot> &displays) { m_known = displays; }
 
-    void rememberPersistentKeys(const QStringList &keys);
-    void assign(QList<DisplaySnapshot> &displays);
+    void rememberPersistentKeys(const std::vector<std::string> &keys);
+    void assign(std::vector<DisplaySnapshot> &displays);
 
 private:
-    QList<DisplaySnapshot> m_known;
-    QSet<QString> m_ambiguous;
+    std::vector<DisplaySnapshot> m_known;
+    std::set<std::string> m_ambiguous;
 };
 
 } // namespace cutefish::display

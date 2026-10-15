@@ -26,11 +26,11 @@ public:
 
     void hideCursor() override { ++hides; }
 
-    void moveCursor(const QPointF& point) override { position = point; }
+    void moveCursor(const base::PointF& point) override { position = point; }
 
     int images = 0;
     int hides = 0;
-    QPointF position;
+    base::PointF position;
 };
 } // namespace
 
@@ -42,13 +42,13 @@ TEST(OutputCursorRouter, CrossingOutputsHidesOldPlaneAndUsesLocalCoordinates)
     router.setTargets({{{0, 0, 100, 100}, &left}, {{100, 20, 200, 100}, &right}});
     uint32_t pixel = 0xffffffff;
     ASSERT_TRUE(
-        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), base::Size(1, 1), 4, {}}));
     router.moveCursor({40, 30});
-    EXPECT_EQ(left.position, QPoint(40, 30));
+    EXPECT_EQ(left.position, base::PointF(40, 30));
     router.moveCursor({150, 50});
     EXPECT_EQ(left.hides, 1);
     EXPECT_EQ(right.images, 1);
-    EXPECT_EQ(right.position, QPoint(50, 30));
+    EXPECT_EQ(right.position, base::PointF(50, 30));
     EXPECT_EQ(router.activeTarget(), 1);
 }
 
@@ -61,10 +61,10 @@ TEST(OutputCursorRouter, ShowsTheCursorOnEveryMirroredDestination)
     router.moveCursor({40, 30});
     uint32_t pixel = 0xffffffff;
     ASSERT_TRUE(
-        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), base::Size(1, 1), 4, {}}));
     router.moveCursor({50, 40});
-    EXPECT_EQ(first.position, QPoint(50, 40));
-    EXPECT_EQ(second.position, QPoint(50, 40));
+    EXPECT_EQ(first.position, base::PointF(50, 40));
+    EXPECT_EQ(second.position, base::PointF(50, 40));
     EXPECT_EQ(first.images, 1);
     EXPECT_EQ(second.images, 1);
 }
@@ -85,10 +85,10 @@ TEST(OutputCursorRouter, MapsCursorThroughEachMirrorDestination)
     router.moveCursor({-75, 70});
     uint32_t pixel = 0xffffffff;
     ASSERT_TRUE(
-        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), base::Size(1, 1), 4, {}}));
     router.moveCursor({-50, 45});
-    EXPECT_EQ(wide.position, QPoint(100, 100));
-    EXPECT_EQ(rotated.position, QPoint(35, 100));
+    EXPECT_EQ(wide.position, base::PointF(100, 100));
+    EXPECT_EQ(rotated.position, base::PointF(35, 100));
 }
 
 TEST(OutputCursorRouter, ReconfigurationKeepsAStationaryCursorVisible)
@@ -102,7 +102,7 @@ TEST(OutputCursorRouter, ReconfigurationKeepsAStationaryCursorVisible)
     router.setTargets({{{0, 0, 100, 100}, &sink,
         display::MirrorTransform({0, 0, 100, 100}, {0, 0, 200, 200}, display::DisplayRotation::Normal)}});
     EXPECT_EQ(sink.images, 2);
-    EXPECT_EQ(sink.position, QPoint(80, 60));
+    EXPECT_EQ(sink.position, base::PointF(80, 60));
     EXPECT_EQ(router.activeTarget(), 0);
 }
 
@@ -117,11 +117,11 @@ TEST(OutputCursorRouter, AnimationFramesKeepOnePlaneActive)
     uint32_t pixel = 0xffffffff;
     for (int frame = 0; frame < 3; ++frame)
         ASSERT_TRUE(
-            router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+            router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), base::Size(1, 1), 4, {}}));
     router.moveCursor({40, 30});
     EXPECT_EQ(sink.images, 3);
     EXPECT_EQ(sink.hides, 0);
-    EXPECT_EQ(sink.position, QPoint(40, 30));
+    EXPECT_EQ(sink.position, base::PointF(40, 30));
     EXPECT_EQ(router.activeTarget(), 0);
 }
 
@@ -134,10 +134,10 @@ TEST(OutputCursorRouter, ImageBetweenOutputsStaysOnTheActiveOutput)
     router.moveCursor({250, 50});
     uint32_t pixel = 0xffffffff;
     ASSERT_TRUE(
-        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), base::Size(1, 1), 4, {}}));
     router.moveCursor({150, 50});
     ASSERT_TRUE(
-        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), QSize(1, 1), 4, {}}));
+        router.setCursorImage({reinterpret_cast<const uint8_t*>(&pixel), base::Size(1, 1), 4, {}}));
     EXPECT_EQ(right.images, 2);
     EXPECT_EQ(right.hides, 0);
     EXPECT_EQ(left.images, 0);

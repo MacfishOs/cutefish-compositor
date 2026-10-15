@@ -9,6 +9,7 @@
 
 #include "scene/damage_tracker.h"
 #include "scene/node.h"
+#include "base/geometry.h"
 
 namespace cutefish::scene {
 
@@ -26,9 +27,9 @@ public:
     const Node *root() const { return m_root.get(); }
 
     // Sets the root geometry; nodes are positioned relative to it.
-    void setSize(const QSize &size);
+    void setSize(const base::Size &size);
 
-    QSize size() const { return m_root->geometry().size(); }
+    base::Size size() const { return m_root->geometry().size(); }
 
     // Clears to `background` and paints the tree back to front.
     void render(render::Renderer &renderer) const;
@@ -39,7 +40,7 @@ public:
 
     // Whether a visible node that repaints the whole of `viewport` whenever it
     // draws (an animation covering the output) lies on it.
-    bool requiresFullRepaint(const QRect &viewport) const;
+    bool requiresFullRepaint(const base::Rect &viewport) const;
 
     // Ends and collects closing windows while no output composites: their
     // snapshots would otherwise pile up until the next frame, as retirement
@@ -55,9 +56,9 @@ public:
     }
 
 private:
-    QRect viewportFor(const render::OutputRenderContext &context) const;
+    base::Rect viewportFor(const render::OutputRenderContext &context) const;
 
-    mutable std::map<QString, DamageTracker> m_damageTrackers;
+    mutable std::map<std::string, DamageTracker> m_damageTrackers;
     std::unique_ptr<Node> m_root;
     render::Color m_background;
 };

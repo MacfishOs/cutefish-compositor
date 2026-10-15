@@ -5,43 +5,77 @@
 #include "wayland/input_method_launcher.h"
 
 #include <algorithm>
-#include <csignal>
-#include <fcntl.h>
-#include <linux/close_range.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <QProcess>
-
+#include "base/event_loop.h"
+#include "base/process.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 
 namespace cutefish::wayland {
 namespace {
 constexpr int kMaxFailures = 5;
-constexpr int kStableUptimeMs = 60000;
-constexpr int kTerminateTimeoutMs = 3000;
+constexpr int64_t kStableUptimeMs = 60000;
+constexpr std::chrono::milliseconds kTerminateTimeout(3000);
+constexpr std::chrono::milliseconds kFinishWait(500);
+
+// Replaces or adds NAME=value in NAME=value entries.
+void setVariable(std::vector<std::string> &environment, const std::string &name,
+                 const std::string &value)
+{
+    const std::string prefix = name + '=';
+    std::erase_if(environment, [&](const std::string &entry) {
+        return entry.starts_with(prefix);
+    });
+    environment.push_back(prefix + value);
+}
+
+std::string joined(const std::vector<std::string> &command)
+{
+    std::string text;
+    for (const std::string &part : command)
+        text += (text.empty() ? "" : " ") + part;
+    return text;
+}
 } // namespace
 
-InputMethodLauncher::InputMethodLauncher(wl_display *display, QObject *parent)
-    : QObject(parent)
+struct InputMethodLauncher::Child {
+    explicit Child(base::EventLoop &loop)
+        : process(&loop)
+        , kill(&loop)
+    {
+    }
+
+    base::Process process;
+    std::string program;
+    // Started once the process was asked to end; gives up waiting.
+    base::Timer kill;
+};
+
+InputMethodLauncher::InputMethodLauncher(wl_display *display, base::EventLoop *loop)
+    : m_loop(loop ? *loop : *core::mainLoop())
     , m_display(display)
+    , m_restartTimer(&m_loop)
 {
     m_restartTimer.setSingleShot(true);
-    connect(&m_restartTimer, &QTimer::timeout, this, &InputMethodLauncher::start);
+    m_restartTimer.onTimeout = [this] {
+        start();
+    };
 }
 
 InputMethodLauncher::~InputMethodLauncher()
 {
     stop();
-    for (auto *process : findChildren<QProcess *>()) {
-        process->disconnect(this);
-        if (!process->waitForFinished(500))
-            process->kill();
-        process->waitForFinished(500);
+    for (const auto &child : m_children) {
+        child->process.onFinished = nullptr;
+        if (!child->process.waitForFinished(kFinishWait))
+            child->process.kill();
+        child->process.waitForFinished(kFinishWait);
     }
 }
 
-void InputMethodLauncher::setCommand(const QStringList &command)
+void InputMethodLauncher::setCommand(const std::vector<std::string> &command)
 {
     if (command == m_command && (m_client || m_restartTimer.isActive()))
         return;
@@ -53,7 +87,7 @@ void InputMethodLauncher::setCommand(const QStringList &command)
 
 void InputMethodLauncher::restart()
 {
-    if (m_command.isEmpty())
+    if (m_command.empty())
         return;
     stop();
     m_failures = 0;
@@ -62,19 +96,19 @@ void InputMethodLauncher::restart()
 
 void InputMethodLauncher::start()
 {
-    if (m_command.isEmpty() || m_client)
+    if (m_command.empty() || m_client)
         return;
 
     int fds[2] {-1, -1};
     if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds)) {
-        qCWarning(cfWayland) << "Cannot create the input method connection";
+        CF_WARNING(cfWayland) << "Cannot create the input method connection";
         return;
     }
     m_client = wl_client_create(m_display, fds[0]);
     if (!m_client) {
         close(fds[0]);
         close(fds[1]);
-        qCWarning(cfWayland) << "Cannot adopt the input method connection";
+        CF_WARNING(cfWayland) << "Cannot adopt the input method connection";
         return;
     }
     m_destroy.owner = this;
@@ -83,43 +117,35 @@ void InputMethodLauncher::start()
     };
     wl_client_add_destroy_listener(m_client, &m_destroy.listener);
 
-    auto *process = new QProcess(this);
-    const int child = fds[1];
-    process->setChildProcessModifier([child] {
-        if (close_range(3, ~0u, CLOSE_RANGE_CLOEXEC) < 0)
-            _exit(127);
-        sigset_t empty;
-        sigemptyset(&empty);
-        sigprocmask(SIG_SETMASK, &empty, nullptr);
-        for (int signal : {SIGINT, SIGTERM, SIGPIPE, SIGHUP, SIGCHLD})
-            ::signal(signal, SIG_DFL);
-        fcntl(child, F_SETFD, 0);
-    });
+    auto child = std::make_unique<Child>(m_loop);
+    base::Process *process = &child->process;
+    child->program = m_command.front();
     auto environment = m_environment;
-    environment.insert(QStringLiteral("WAYLAND_SOCKET"), QString::number(child));
-    process->setProcessEnvironment(environment);
-    process->setProcessChannelMode(QProcess::ForwardedChannels);
-    connect(process, &QProcess::finished, this, [this, process](int code, QProcess::ExitStatus) {
-        qCInfo(cfWayland) << "Input method process" << process->program() << "exited with" << code;
-        if (m_process == process)
-            m_process = nullptr;
-        process->deleteLater();
-    });
-    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
-        if (error != QProcess::FailedToStart)
-            return;
-        qCWarning(cfWayland) << "Cannot start input method" << process->program();
-        if (m_process == process)
-            m_process = nullptr;
-        process->deleteLater();
-    });
+    setVariable(environment, "WAYLAND_SOCKET", std::to_string(base::Process::kInheritedFd));
+    process->setEnvironment(std::move(environment));
+    process->setOutputForwarded(true);
+    process->setInheritedFd(fds[1]);
+    process->onFinished = [this, process](int code, bool) {
+        const auto it = std::find_if(m_children.begin(), m_children.end(), [&](const auto &c) {
+            return &c->process == process;
+        });
+        CF_INFO(cfWayland) << "Input method process" << (*it)->program << "exited with" << code;
+        forget(process);
+    };
     m_process = process;
     m_uptime.start();
-    process->start(m_command.first(), m_command.mid(1));
+    const bool started = process->start(
+            m_command.front(), std::vector<std::string>(m_command.begin() + 1, m_command.end()));
     // The child holds the only other end, so its exit closes the connection.
-    close(child);
-    qCInfo(cfWayland) << "Started input method" << m_command;
-    emit runningChanged();
+    close(fds[1]);
+    if (started) {
+        m_children.push_back(std::move(child));
+    } else {
+        CF_WARNING(cfWayland) << "Cannot start input method" << m_command.front();
+        m_process = nullptr;
+    }
+    CF_INFO(cfWayland) << "Started input method" << joined(m_command);
+    runningChanged();
 }
 
 void InputMethodLauncher::stop()
@@ -129,41 +155,66 @@ void InputMethodLauncher::stop()
         wl_list_remove(&m_destroy.listener.link);
         m_client = nullptr;
         wl_client_destroy(client);
-        emit runningChanged();
+        runningChanged();
     }
-    if (auto *process = std::exchange(m_process, nullptr))
-        terminate(process);
+    if (auto *process = std::exchange(m_process, nullptr)) {
+        for (const auto &child : m_children) {
+            if (&child->process == process)
+                terminate(*child);
+        }
+    }
 }
 
-void InputMethodLauncher::terminate(QProcess *process)
+void InputMethodLauncher::terminate(Child &child)
 {
-    if (process->state() == QProcess::NotRunning)
+    if (!child.process.isRunning())
         return;
-    process->terminate();
-    QTimer::singleShot(kTerminateTimeoutMs, process, [process] {
+    child.process.terminate();
+    child.kill.setSingleShot(true);
+    child.kill.onTimeout = [process = &child.process] {
         process->kill();
+    };
+    child.kill.start(kTerminateTimeout);
+}
+
+// Deleted from the loop: a process cannot go inside its own callback.
+void InputMethodLauncher::forget(base::Process *process)
+{
+    if (m_process == process)
+        m_process = nullptr;
+    const auto it = std::find_if(m_children.begin(), m_children.end(), [&](const auto &child) {
+        return &child->process == process;
     });
+    if (it == m_children.end())
+        return;
+    std::shared_ptr<Child> doomed(std::move(*it));
+    m_children.erase(it);
+    m_loop.post([doomed] {});
 }
 
 void InputMethodLauncher::connectionLost()
 {
     wl_list_remove(&m_destroy.listener.link);
     m_client = nullptr;
-    emit runningChanged();
+    runningChanged();
 
     // A process without its connection cannot serve input; do not leave a duplicate running.
-    if (auto *process = std::exchange(m_process, nullptr))
-        terminate(process);
-    if (m_uptime.isValid() && m_uptime.elapsed() >= kStableUptimeMs)
+    if (auto *process = std::exchange(m_process, nullptr)) {
+        for (const auto &child : m_children) {
+            if (&child->process == process)
+                terminate(*child);
+        }
+    }
+    if (m_uptime.isValid() && m_uptime.elapsedMs() >= kStableUptimeMs)
         m_failures = 0;
     if (++m_failures > kMaxFailures) {
-        qCWarning(cfWayland) << "Input method" << m_command
-                             << "keeps losing its connection; not restarting it";
+        CF_WARNING(cfWayland) << "Input method" << joined(m_command)
+                              << "keeps losing its connection; not restarting it";
         return;
     }
     const int delay = std::min(m_restartDelay << (m_failures - 1), m_restartDelay * 16);
-    qCWarning(cfWayland) << "Input method connection lost; restarting in" << delay << "ms";
-    m_restartTimer.start(delay);
+    CF_WARNING(cfWayland) << "Input method connection lost; restarting in" << delay << "ms";
+    m_restartTimer.start(std::chrono::milliseconds(delay));
 }
 
 } // namespace cutefish::wayland

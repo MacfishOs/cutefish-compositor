@@ -12,28 +12,27 @@
 #include "backend/drm/drm_configuration_planner.h"
 
 #include <algorithm>
-
-#include <QSet>
+#include <set>
 
 namespace cutefish::backend {
 namespace {
 
-bool assignRoute(int routeIndex, const QList<DrmRouteCandidate> &routes,
-                 const QList<DrmCrtcCandidate> &crtcs, QSet<uint32_t> *usedCrtcs,
-                 QSet<uint32_t> *usedPlanes, QList<DrmRouteAssignment> *result, int *skip)
+bool assignRoute(size_t routeIndex, const std::vector<DrmRouteCandidate> &routes,
+                 const std::vector<DrmCrtcCandidate> &crtcs, std::set<uint32_t> *usedCrtcs,
+                 std::set<uint32_t> *usedPlanes, std::vector<DrmRouteAssignment> *result, int *skip)
 {
     if (routeIndex == routes.size())
         return (*skip)-- == 0;
 
-    const DrmRouteCandidate &route = routes.at(routeIndex);
-    QList<const DrmCrtcCandidate *> choices;
+    const DrmRouteCandidate &route = routes[routeIndex];
+    std::vector<const DrmCrtcCandidate *> choices;
     for (const DrmCrtcCandidate &crtc : crtcs) {
         if (crtc.index < 0 || crtc.index >= 32
             || !(route.possibleCrtcs & (uint32_t {1} << crtc.index))
             || usedCrtcs->contains(crtc.crtcId)) {
             continue;
         }
-        choices.append(&crtc);
+        choices.push_back(&crtc);
     }
     std::stable_sort(choices.begin(), choices.end(), [&](const auto *left, const auto *right) {
         return left->crtcId == route.currentCrtcId && right->crtcId != route.currentCrtcId;
@@ -45,12 +44,12 @@ bool assignRoute(int routeIndex, const QList<DrmRouteCandidate> &routes,
                 continue;
             usedCrtcs->insert(crtc->crtcId);
             usedPlanes->insert(plane);
-            result->append({route.connectorId, crtc->crtcId, crtc->index, plane});
+            result->push_back({route.connectorId, crtc->crtcId, crtc->index, plane});
             if (assignRoute(routeIndex + 1, routes, crtcs, usedCrtcs, usedPlanes, result, skip))
                 return true;
-            result->removeLast();
-            usedPlanes->remove(plane);
-            usedCrtcs->remove(crtc->crtcId);
+            result->pop_back();
+            usedPlanes->erase(plane);
+            usedCrtcs->erase(crtc->crtcId);
         }
     }
     return false;
@@ -58,17 +57,17 @@ bool assignRoute(int routeIndex, const QList<DrmRouteCandidate> &routes,
 
 } // namespace
 
-std::optional<QList<DrmRouteAssignment>>
-DrmConfigurationPlanner::assign(const QList<DrmRouteCandidate> &routes,
-                                const QList<DrmCrtcCandidate> &crtcs, int alternative)
+std::optional<std::vector<DrmRouteAssignment>>
+DrmConfigurationPlanner::assign(const std::vector<DrmRouteCandidate> &routes,
+                                const std::vector<DrmCrtcCandidate> &crtcs, int alternative)
 {
     if (alternative < 0 || alternative >= 8)
         return std::nullopt;
-    if (routes.isEmpty())
-        return alternative == 0 ? std::optional(QList<DrmRouteAssignment> {}) : std::nullopt;
-    QList<DrmRouteAssignment> result;
-    QSet<uint32_t> usedCrtcs;
-    QSet<uint32_t> usedPlanes;
+    if (routes.empty())
+        return alternative == 0 ? std::optional(std::vector<DrmRouteAssignment> {}) : std::nullopt;
+    std::vector<DrmRouteAssignment> result;
+    std::set<uint32_t> usedCrtcs;
+    std::set<uint32_t> usedPlanes;
     if (!assignRoute(0, routes, crtcs, &usedCrtcs, &usedPlanes, &result, &alternative))
         return std::nullopt;
     return result;

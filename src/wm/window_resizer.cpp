@@ -7,8 +7,6 @@
 #include <algorithm>
 #include <cmath>
 
-#include <QLineF>
-
 #include "wm/placement.h"
 #include "wm/window.h"
 
@@ -24,14 +22,14 @@ constexpr int kRestoreDragThreshold = 5;
 
 } // namespace
 
-WindowResizer::WindowResizer(Window *window, const QPointF &startLocation, ResizeEdge edge,
-                             const QRect &workArea, const QRect &restoreBounds,
-                             const QRect &visibleArea)
+WindowResizer::WindowResizer(Window *window, const base::PointF &startLocation, ResizeEdge edge,
+                             const base::Rect &workArea, const base::Rect &restoreBounds,
+                             const base::Rect &visibleArea)
     : m_window(window)
     , m_edge(window && window->isResizable() ? edge : ResizeEdge::None)
     , m_initialLocation(startLocation)
-    , m_initialBounds(window ? window->bounds() : QRect())
-    , m_restoreBounds(edge == ResizeEdge::None ? restoreBounds : QRect())
+    , m_initialBounds(window ? window->bounds() : base::Rect())
+    , m_restoreBounds(edge == ResizeEdge::None ? restoreBounds : base::Rect())
     , m_workArea(workArea)
     , m_visibleArea(visibleArea.isEmpty() ? workArea : visibleArea)
 {
@@ -92,7 +90,7 @@ int WindowResizer::heightForDrag(int *deltaY) const
     return height;
 }
 
-QRect WindowResizer::calculateBoundsForDrag(const QPointF &location) const
+base::Rect WindowResizer::calculateBoundsForDrag(const base::PointF &location) const
 {
     if (!m_window)
         return m_initialBounds;
@@ -100,46 +98,46 @@ QRect WindowResizer::calculateBoundsForDrag(const QPointF &location) const
     int deltaX = static_cast<int>(std::lround(location.x() - m_initialLocation.x()));
     int deltaY = static_cast<int>(std::lround(location.y() - m_initialLocation.y()));
 
-    QSize size(widthForDrag(&deltaX), heightForDrag(&deltaY));
+    base::Size size(widthForDrag(&deltaX), heightForDrag(&deltaY));
 
-    QPoint origin = m_initialBounds.topLeft();
+    base::Point origin = m_initialBounds.topLeft();
     if (!isResize()) {
         // Unlike ash, a move leaves the size alone: a client may resize while
         // it is dragged, as a pulled-out tab's window leaving an inherited state does.
         size = m_window->bounds().size();
-        origin += QPoint(deltaX, deltaY);
+        origin += base::Point(deltaX, deltaY);
         if (!m_restoreBounds.isEmpty() && !m_initialBounds.isEmpty()) {
             // The window shrinks back to its restored size under the pointer.
             // Keeping the grab at the same fraction of the title bar is what
             // stops it jumping out from under the cursor.
             size = m_restoreBounds.size();
-            const qreal ratio = (m_initialLocation.x() - m_initialBounds.x())
-                    / static_cast<qreal>(m_initialBounds.width());
+            const double ratio = (m_initialLocation.x() - m_initialBounds.x())
+                    / static_cast<double>(m_initialBounds.width());
             origin.setX(static_cast<int>(std::lround(location.x() - ratio * size.width())));
         }
     } else {
         // Only the edges that move the origin consume the (possibly clamped)
         // delta; the opposite edges stay where they were.
         if (isLeftEdge(m_edge))
-            origin.rx() += deltaX;
+            origin.setX(origin.x() + deltaX);
         if (isTopEdge(m_edge))
-            origin.ry() += deltaY;
+            origin.setY(origin.y() + deltaY);
     }
 
-    QRect bounds(origin, size);
+    base::Rect bounds(origin, size);
     adjustBoundsToEnsureMinimumVisibility(m_visibleArea, &bounds, m_workArea);
     return bounds;
 }
 
-void WindowResizer::drag(const QPointF &location)
+void WindowResizer::drag(const base::PointF &location)
 {
     if (!m_window)
         return;
     if (!m_movedOrResized && !m_restoreBounds.isEmpty()
-        && QLineF(m_initialLocation, location).length() < kRestoreDragThreshold) {
+        && (location - m_initialLocation).length() < kRestoreDragThreshold) {
         return;
     }
-    const QRect bounds = calculateBoundsForDrag(location);
+    const base::Rect bounds = calculateBoundsForDrag(location);
     if (bounds == m_window->bounds())
         return;
     m_movedOrResized = true;

@@ -13,14 +13,16 @@
 #include <functional>
 #include <optional>
 
-#include <QList>
-#include <QSize>
-#include <QString>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "base/geometry.h"
 
 namespace cutefish::backend {
 
 struct DrmDeviceTransaction {
-    QString deviceKey;
+    std::string deviceKey;
     std::function<bool()> test;
     std::function<bool()> commit;
     std::function<bool()> rollback;
@@ -29,21 +31,21 @@ struct DrmDeviceTransaction {
 struct DrmMultiDeviceResult {
     bool succeeded = false;
     bool rolledBack = false;
-    QString failedDevice;
-    QString message;
+    std::string failedDevice;
+    std::string message;
 };
 
 class DrmMultiDeviceCommitCoordinator
 {
 public:
-    static DrmMultiDeviceResult run(const QList<DrmDeviceTransaction>& devices,
+    static DrmMultiDeviceResult run(const std::vector<DrmDeviceTransaction>& devices,
                                     uint64_t expectedGeneration,
                                     std::function<uint64_t()> currentGeneration);
 };
 
 // The largest frame copied through the CPU when the scanout device cannot
 // import it: a 4K screen still gets a picture, at the cost of a copy a frame.
-inline constexpr qint64 kMaximumCpuCopyPixels = 3840 * 2160;
+inline constexpr int64_t kMaximumCpuCopyPixels = 3840 * 2160;
 
 enum class CrossGpuTransfer {
     Direct,
@@ -58,32 +60,33 @@ struct CrossGpuCapabilities {
     bool dmaBufImport = false;
     bool gpuCopy = false;
     bool cpuMappable = false;
-    qint64 framePixels = 0;
+    int64_t framePixels = 0;
 };
 
 CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities& capabilities,
-                                        qint64 maximumCpuCopyPixels = kMaximumCpuCopyPixels);
+                                        int64_t maximumCpuCopyPixels = kMaximumCpuCopyPixels);
 
 struct DrmTileSnapshot {
     uint32_t connectorId = 0;
-    QString groupId;
+    std::string groupId;
     int column = 0;
     int row = 0;
     int columns = 1;
     int rows = 1;
-    QSize tileSize;
+    base::Size tileSize;
 };
 
 struct DrmTiledMonitor {
-    QString groupId;
-    QSize combinedSize;
-    QList<uint32_t> connectors;
+    std::string groupId;
+    base::Size combinedSize;
+    std::vector<uint32_t> connectors;
 };
 
-std::optional<QList<DrmTiledMonitor>> groupDrmTiles(const QList<DrmTileSnapshot>& tiles);
+std::optional<std::vector<DrmTiledMonitor>>
+groupDrmTiles(const std::vector<DrmTileSnapshot>& tiles);
 
-bool hardwareCloneEligible(const QString& firstDevice, const QString& secondDevice,
-                           const QString& firstMode, const QString& secondMode,
+bool hardwareCloneEligible(const std::string& firstDevice, const std::string& secondDevice,
+                           const std::string& firstMode, const std::string& secondMode,
                            uint32_t firstPossibleCrtcs, uint32_t secondPossibleCrtcs);
 
 } // namespace cutefish::backend

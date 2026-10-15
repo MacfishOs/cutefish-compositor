@@ -30,9 +30,9 @@ namespace {
 // pixel of the region, and is the smallest step a client can see.
 constexpr double kEdgeInset = 1.0 / 256;
 
-QPoint flooredPoint(const QPointF &point)
+base::Point flooredPoint(const base::PointF &point)
 {
-    return QPoint(static_cast<int>(std::floor(point.x())), static_cast<int>(std::floor(point.y())));
+    return point.toFlooredPoint();
 }
 
 const compositor::Surface *rootSurface(const compositor::Surface *surface)
@@ -42,10 +42,11 @@ const compositor::Surface *rootSurface(const compositor::Surface *surface)
     return surface;
 }
 
-QPointF clampToRect(const QPointF &point, const QRect &rect)
+base::PointF clampToRect(const base::PointF &point, const base::Rect &rect)
 {
-    return QPointF(std::clamp(point.x(), double(rect.left()), rect.left() + rect.width() - kEdgeInset),
-                   std::clamp(point.y(), double(rect.top()), rect.top() + rect.height() - kEdgeInset));
+    return base::PointF(
+            std::clamp(point.x(), double(rect.left()), rect.left() + rect.width() - kEdgeInset),
+            std::clamp(point.y(), double(rect.top()), rect.top() + rect.height() - kEdgeInset));
 }
 
 } // namespace
@@ -75,7 +76,7 @@ bool PointerConstraints::add(PointerConstraintDelegate *delegate)
     // Can only have one constraint request per surface.
     const auto [it, inserted] = m_constraints.try_emplace(surface, delegate);
     if (!inserted) {
-        qCDebug(cfInput) << "Pointer constraint not granted; one already exists.";
+        CF_DEBUG(cfInput) << "Pointer constraint not granted; one already exists.";
         delegate->onAlreadyConstrained();
         delegate->onDefunct();
         return false;
@@ -89,7 +90,7 @@ void PointerConstraints::remove(PointerConstraintDelegate *delegate)
 {
     // Destroying the lock is how a client unlocks, Xwayland included, so the
     // hint applies here too.
-    std::optional<QPointF> warpTo;
+    std::optional<base::PointF> warpTo;
     if (m_active == delegate) {
         warpTo = hintPosition();
         m_active = nullptr;
@@ -99,7 +100,7 @@ void PointerConstraints::remove(PointerConstraintDelegate *delegate)
         warp(*warpTo);
 }
 
-std::optional<QPointF> PointerConstraints::hintPosition() const
+std::optional<base::PointF> PointerConstraints::hintPosition() const
 {
     if (!isLocked())
         return std::nullopt;
@@ -107,7 +108,7 @@ std::optional<QPointF> PointerConstraints::hintPosition() const
     const compositor::Surface *surface = m_active->constrainedSurface();
     if (!hint || !surface)
         return std::nullopt;
-    const QPointF location = m_seat->cursorPosition();
+    const base::PointF location = m_seat->cursorPosition();
     return location - locationInSurface(surface, location) + *hint;
 }
 
@@ -126,12 +127,12 @@ bool PointerConstraints::isLocked() const
     return m_active && m_active->kind() == PointerConstraintDelegate::Kind::Lock;
 }
 
-QRegion PointerConstraints::effectiveRegion(PointerConstraintDelegate *delegate) const
+base::Region PointerConstraints::effectiveRegion(PointerConstraintDelegate *delegate) const
 {
     const compositor::Surface *surface = delegate->constrainedSurface();
     if (!surface)
         return {};
-    const QRegion input = surface->localHitTestRegion();
+    const base::Region input = surface->localHitTestRegion();
     const auto region = delegate->region();
     return region ? input & *region : input;
 }
@@ -158,14 +159,14 @@ bool PointerConstraints::canActivate(PointerConstraintDelegate *delegate) const
     // keeps it inside, so only activation looks at the location.
     if (delegate == m_active)
         return true;
-    const QPointF location = locationInSurface(surface, m_seat->cursorPosition());
+    const base::PointF location = locationInSurface(surface, m_seat->cursorPosition());
     return effectiveRegion(delegate).contains(flooredPoint(location));
 }
 
 void PointerConstraints::update()
 {
     if (m_active && !canActivate(m_active)) {
-        const std::optional<QPointF> warpTo = hintPosition();
+        const std::optional<base::PointF> warpTo = hintPosition();
         deactivate();
         // The warp's motion re-enters this, and may activate another constraint.
         if (warpTo && warp)
@@ -193,26 +194,26 @@ void PointerConstraints::deactivate()
     }
 }
 
-QPointF PointerConstraints::confine(const QPointF &from, const QPointF &to) const
+base::PointF PointerConstraints::confine(const base::PointF &from, const base::PointF &to) const
 {
     if (!m_active || m_active->kind() != PointerConstraintDelegate::Kind::Confine)
         return to;
     const compositor::Surface *surface = m_active->constrainedSurface();
-    const QPointF origin = from - locationInSurface(surface, from);
-    const QRegion region = effectiveRegion(m_active);
+    const base::PointF origin = from - locationInSurface(surface, from);
+    const base::Region region = effectiveRegion(m_active);
     if (region.isEmpty())
         return from;
-    const QPointF target = to - origin;
+    const base::PointF target = to - origin;
     if (region.contains(flooredPoint(target)))
         return to;
 
     // Slide along the edge of the rectangle the pointer is in, or of the
     // nearest one when the window moved away from under it.
-    const QPointF current = from - origin;
-    QRect nearest;
+    const base::PointF current = from - origin;
+    base::Rect nearest;
     double nearestDistance = std::numeric_limits<double>::max();
-    for (const QRect &rect : region) {
-        const QPointF delta = current - clampToRect(current, rect);
+    for (const base::Rect &rect : region) {
+        const base::PointF delta = current - clampToRect(current, rect);
         const double distance = delta.x() * delta.x() + delta.y() * delta.y();
         if (distance < nearestDistance) {
             nearest = rect;
@@ -230,7 +231,7 @@ bool PointerConstraints::breakByUserAction()
     m_capturePermitted = false;
     if (!m_active)
         return false;
-    qCDebug(cfInput) << "Pointer constraint broken by user action";
+    CF_DEBUG(cfInput) << "Pointer constraint broken by user action";
     update();
     return true;
 }

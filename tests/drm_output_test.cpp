@@ -4,33 +4,44 @@
 
 #include "backend/drm/drm_mode_fallback_planner.h"
 #include "backend/drm/drm_output.h"
+#include "base/strings.h"
 #include "egl_test_util.h"
 #include "fake_drm_device.h"
+#include "loop_test_util.h"
 #include "presentation_wire_fixture.h"
 #include "wayland/protocols/image_capture.h"
 #include "wayland/server_util.h"
 #include <GLES2/gl2.h>
-#include <QCoreApplication>
-#include <QDeadlineTimer>
-#include <QSet>
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <drm_fourcc.h>
 #include <ext-image-capture-source-v1-client-protocol.h>
 #include <ext-image-copy-capture-v1-client-protocol.h>
 #include <fcntl.h>
 #include <gbm.h>
 #include <optional>
+#include <set>
+#include <string>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 
 namespace {
 using Output = backend::DrmOutput;
 
+// RGBA bytes of a `size` image in one colour.
+std::vector<uint8_t> solidRgba(const base::Size &size, const std::array<uint8_t, 4> &color)
+{
+    std::vector<uint8_t> pixels;
+    for (int64_t i = 0; i < size.area(); ++i)
+        pixels.insert(pixels.end(), color.begin(), color.end());
+    return pixels;
+}
+
 class ScanoutStorage : public render::ScanoutBuffer
 {
 public:
-    explicit ScanoutStorage(QSize size = {16, 16})
+    explicit ScanoutStorage(base::Size size = {16, 16})
     {
         attributes.size = size;
         attributes.format = DRM_FORMAT_XRGB8888;
@@ -85,9 +96,10 @@ protected:
 
     // Keep native windows alive until all EGL targets and locked buffers retire.
     std::vector<NativeTarget> nativeTargets;
-    QSize acquiredSize;
+    base::Size acquiredSize;
     std::unique_ptr<render::EglRenderer> egl;
     std::unique_ptr<Output> drm;
+    std::vector<base::Subscription> outputSubscriptions;
     Output::Config initialConfig;
     std::vector<Output::FlipEvent> events;
     std::function<bool(const cutefish::testing::FakeDrmDevice::Commit &)> accept;
@@ -104,20 +116,17 @@ protected:
     int acquired = 0, released = 0, pacing = 0, prepared = 0;
     double scale = 1;
     std::shared_ptr<ScanoutStorage> storage;
+    base::Subscription repaintNeeded;
 
     void SetUp() override
     {
-        static int argc = 1;
-        static char name[] = "drm-output-test";
-        static char *argv[] = {name, nullptr};
-        static QCoreApplication app(argc, argv);
         PresentationProtocolTest::SetUp();
         ASSERT_FALSE(HasFatalFailure());
-        const auto devicePath = qgetenv("CUTEFISH_TEST_DRM_DEVICE");
-        if (devicePath.isEmpty()) {
+        const char *devicePath = getenv("CUTEFISH_TEST_DRM_DEVICE");
+        if (!devicePath || !*devicePath) {
             egl = render::EglRendererTestAccess::create();
         } else {
-            gbmFd.reset(open(devicePath.constData(), O_RDWR | O_CLOEXEC));
+            gbmFd.reset(open(devicePath, O_RDWR | O_CLOEXEC));
             ASSERT_TRUE(gbmFd.isValid());
             gbmDevice.reset(gbm_create_device(gbmFd.get()));
             ASSERT_TRUE(gbmDevice);
@@ -173,7 +182,7 @@ protected:
                 [&] {
                     return active;
                 },
-                true, nullptr,
+                true,
                 [&] {
                     return std::chrono::steady_clock::now() + clockOffset;
                 });
@@ -184,47 +193,48 @@ protected:
                 [&] {
                     return acquireBuffer();
                 },
-                [&](QSize size) {
+                [&](base::Size size) {
                     return createTarget(size);
                 }));
         output.pixelSize = {16, 16};
         scene.setSize({16, 16});
         drm->presentationOutput = output.presentation;
         drm->presentationSubmitted = [&](const auto &submission) {
-            compositor.abandonUnsubmittedPresentation(QRect(QPoint(), drm->size()), submission);
+            compositor.abandonUnsubmittedPresentation(base::Rect(drm->size()), submission);
         };
-        QObject::connect(&compositor, &compositor::Compositor::repaintNeeded, drm.get(),
-                         [output = drm.get()](bool decoration) {
-                             output->scheduleFrame(decoration ? Output::Reason::Decoration
-                                                              : Output::Reason::Surface);
-                         });
-        QObject::connect(drm.get(), &Output::frameDiscarded, [&](quint64 frame) {
-            compositor.frameDiscarded(frame);
+        repaintNeeded = compositor.repaintNeeded.connect([output = drm->weakPtr()](bool decoration) {
+            if (output)
+                output->scheduleFrame(decoration ? Output::Reason::Decoration
+                                                 : Output::Reason::Surface);
         });
-        drm->setPrepareCallback([&](render::Renderer &renderer, quint64 frame) {
+        outputSubscriptions.push_back(drm->frameDiscarded.connect([&](uint64_t frame) {
+            compositor.frameDiscarded(frame);
+        }));
+        drm->setPrepareCallback([&](render::Renderer &renderer, uint64_t frame) {
             ++prepared;
             renderer.setOutputContext(
-                    {output.name, QRect(QPoint(), drm->size()), drm->size(), 1, 0, frame});
+                    {output.name, base::Rect(drm->size()), drm->size(), 1, 0, frame});
             compositor.updateTextures(renderer);
             compositor.frameSubmitted(frame);
         });
-        drm->setRenderCallback([&](render::Renderer &renderer, quint64) {
+        drm->setRenderCallback([&](render::Renderer &renderer, uint64_t) {
             scene.render(renderer);
         });
-        drm->setScanoutPlanner([&](const QSize &size, size_t count) {
+        drm->setScanoutPlanner([&](const base::Size &size, size_t count) {
             return scene::proposeOverlays(*scene.root(), size, count, scale);
         });
-        QObject::connect(drm.get(), &Output::frameDrawn, [&](quint64 frame) {
+        outputSubscriptions.push_back(drm->frameDrawn.connect([&](uint64_t frame, uint64_t) {
             compositor.frameDrawn(wayland::nowInMilliseconds(), frame);
-        });
-        QObject::connect(drm.get(), &Output::framePresented, [&](quint32, quint64) {
+        }));
+        outputSubscriptions.push_back(drm->framePresented.connect([&](uint32_t, uint64_t) {
             ++pacing;
-        });
+        }));
     }
 
     void TearDown() override
     {
         accept = {};
+        repaintNeeded.reset();
         drm.reset();
         storage.reset();
         PresentationProtocolTest::TearDown();
@@ -232,7 +242,7 @@ protected:
         nativeTargets.clear();
     }
 
-    std::unique_ptr<render::EglRenderTarget> createTarget(QSize size)
+    std::unique_ptr<render::EglRenderTarget> createTarget(base::Size size)
     {
         if (gbmDevice) {
             auto surface = std::shared_ptr<gbm_surface>(
@@ -350,7 +360,7 @@ protected:
                     [&] {
                         return acquireBuffer();
                     },
-                    [this, failTarget](QSize size) {
+                    [this, failTarget](base::Size size) {
                         return failTarget ? std::unique_ptr<render::EglRenderTarget>()
                                           : createTarget(size);
                     }))
@@ -360,10 +370,7 @@ protected:
 
     bool waitEvents(size_t count)
     {
-        QDeadlineTimer deadline(3000);
-        while (events.size() < count && !deadline.hasExpired())
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-        return events.size() >= count;
+        return test::runUntil([&] { return events.size() >= count; }, std::chrono::milliseconds(3000));
     }
 
     Feedback &update()
@@ -409,7 +416,7 @@ TEST_F(DrmOutputTest, ProbedCursorIsThePreviousMastersCursorPlane)
         probed.planes.push_back(plane);
         return Output(&device, probed, [] { return true; }, true).probedCursor();
     };
-    EXPECT_EQ(probe(cursor), QPoint(-3, 40));
+    EXPECT_EQ(probe(cursor), cutefish::base::Point(-3, 40));
     auto off = cursor;
     off.properties.insert("FB_ID", 61, 0);
     EXPECT_EQ(probe(off), std::nullopt);
@@ -425,7 +432,7 @@ TEST_F(DrmOutputTest, ConfigurationTestDoesNotChangeModeOrRetireScanout)
     mode.hdisplay = 12;
     const int previousReleased = released;
     ASSERT_TRUE(Output::configure({{drm.get(), mode, true}}, true));
-    EXPECT_EQ(drm->size(), QSize(16, 16));
+    EXPECT_EQ(drm->size(), base::Size(16, 16));
     EXPECT_TRUE(drm->isEnabled());
     EXPECT_EQ(released, previousReleased + 1);
 }
@@ -440,7 +447,7 @@ TEST_F(DrmOutputTest, ConfigurationFailurePreservesModeAndOldScanout)
     };
     const int previousReleased = released;
     EXPECT_FALSE(Output::configure({{drm.get(), mode, true}}, false));
-    EXPECT_EQ(drm->size(), QSize(16, 16));
+    EXPECT_EQ(drm->size(), base::Size(16, 16));
     EXPECT_TRUE(drm->isEnabled());
     EXPECT_EQ(released, previousReleased + 1);
 }
@@ -452,7 +459,7 @@ TEST_F(DrmOutputTest, ConfigurationCommitChangesModeAndRetiresOldScanout)
     mode.hdisplay = 12;
     const int previousReleased = released;
     ASSERT_TRUE(Output::configure({{drm.get(), mode, true}}, false));
-    EXPECT_EQ(drm->size(), QSize(12, 16));
+    EXPECT_EQ(drm->size(), base::Size(12, 16));
     EXPECT_TRUE(drm->isEnabled());
     EXPECT_EQ(released, previousReleased + 1);
     ASSERT_TRUE(Output::configure({{drm.get(), mode, false}}, false));
@@ -465,15 +472,15 @@ TEST_F(DrmOutputTest, ReconfigurationAcquiresFromTheRenderedTargetAfterCommitAnd
     ASSERT_TRUE(drm->enable());
     flip(0);
     for (bool commit : {true, false}) {
-        const QSize previousSize = drm->size();
+        const base::Size previousSize = drm->size();
         auto mode = drm->mode();
         mode.hdisplay -= 4;
         accept = [commit](const auto &request) {
             return commit || (request.flags & DRM_MODE_ATOMIC_TEST_ONLY);
         };
         EXPECT_EQ(Output::configure({{drm.get(), mode, true}}, false), commit);
-        EXPECT_EQ(acquiredSize, QSize(mode.hdisplay, mode.vdisplay));
-        const QSize appliedSize = commit ? acquiredSize : previousSize;
+        EXPECT_EQ(acquiredSize, base::Size(mode.hdisplay, mode.vdisplay));
+        const base::Size appliedSize = commit ? acquiredSize : previousSize;
         EXPECT_EQ(drm->size(), appliedSize);
         accept = {};
         const auto next = events.size();
@@ -498,7 +505,7 @@ TEST_F(DrmOutputTest, BlankedScanoutKeepsBlackFrameUntilUnblanked)
     const auto commits = device.commits.size();
     const auto buffers = acquired;
     drm->scheduleFrame(Output::Reason::Scene);
-    QCoreApplication::processEvents();
+    test::processPendingEvents();
     EXPECT_EQ(device.commits.size(), commits);
     EXPECT_EQ(acquired, buffers);
     ASSERT_TRUE(Output::configure({{drm.get(), drm->mode(), true}}, false));
@@ -517,10 +524,10 @@ TEST_F(DrmOutputTest, JointConfigurationTestsAndCommitsBothRoutesBeforeNotifying
     const std::vector<Output::Configuration> changes = {{drm.get(), mode, true},
                                                         {second.get(), mode, true}};
     int notifications = 0;
-    QObject::connect(drm.get(), &Output::frameDiscarded, drm.get(), [&](quint64) {
+    const auto discarded = drm->frameDiscarded.connect([&](uint64_t) {
         ++notifications;
-        EXPECT_EQ(drm->size(), QSize(12, 16));
-        EXPECT_EQ(second->size(), QSize(12, 16));
+        EXPECT_EQ(drm->size(), base::Size(12, 16));
+        EXPECT_EQ(second->size(), base::Size(12, 16));
         backend::DrmCommitStatus status;
         EXPECT_FALSE(Output::configure(changes, false, &status));
         EXPECT_EQ(status, backend::DrmCommitStatus::InvalidRequest);
@@ -534,7 +541,7 @@ TEST_F(DrmOutputTest, JointConfigurationTestsAndCommitsBothRoutesBeforeNotifying
     const auto &tested = device.commits.front().request.properties;
     const auto &committed = device.commits.back().request.properties;
     ASSERT_EQ(tested.size(), committed.size());
-    QSet<uint32_t> objects;
+    std::set<uint32_t> objects;
     for (size_t i = 0; i < tested.size(); ++i) {
         objects.insert(tested[i].objectId);
         EXPECT_EQ(tested[i].objectId, committed[i].objectId);
@@ -563,8 +570,8 @@ TEST_F(DrmOutputTest, JointTestFailureDoesNotCommitOrRetireEitherRoute)
                                    &status));
     EXPECT_EQ(status, backend::DrmCommitStatus::TestFailed);
     EXPECT_EQ(device.realCommitCount(), 0u);
-    EXPECT_EQ(drm->size(), QSize(16, 16));
-    EXPECT_EQ(second->size(), QSize(16, 16));
+    EXPECT_EQ(drm->size(), base::Size(16, 16));
+    EXPECT_EQ(second->size(), base::Size(16, 16));
     EXPECT_TRUE(drm->isEnabled());
     EXPECT_TRUE(second->isEnabled());
     EXPECT_EQ(released, previousReleased + 2);
@@ -586,12 +593,12 @@ TEST_F(DrmOutputTest, JointRealCommitFailurePreservesBothRoutesAndCanRetry)
                                                              {second.get(), mode, true}};
     EXPECT_FALSE(Output::configure(changes, false, &status));
     EXPECT_EQ(status, backend::DrmCommitStatus::CommitFailed);
-    EXPECT_EQ(drm->size(), QSize(16, 16));
-    EXPECT_EQ(second->size(), QSize(16, 16));
+    EXPECT_EQ(drm->size(), base::Size(16, 16));
+    EXPECT_EQ(second->size(), base::Size(16, 16));
     accept = {};
     ASSERT_TRUE(Output::configure(changes, false, &status));
-    EXPECT_EQ(drm->size(), QSize(12, 16));
-    EXPECT_EQ(second->size(), QSize(12, 16));
+    EXPECT_EQ(drm->size(), base::Size(12, 16));
+    EXPECT_EQ(second->size(), base::Size(12, 16));
 }
 
 TEST_F(DrmOutputTest, LaterTargetAllocationFailureReleasesPreparedResourcesWithoutIoctl)
@@ -637,13 +644,13 @@ TEST_F(DrmOutputTest, MultiDeviceSuccessTestsEveryDeviceBeforeAnyWriteOrNotifica
     ASSERT_TRUE(second);
     ASSERT_TRUE(drm->enable());
     ASSERT_TRUE(second->enable());
-    QStringList journal;
+    std::vector<std::string> journal;
     const int before = released;
-    auto record = [&](const auto &commit, const QString &name) {
-        journal.append((commit.flags & DRM_MODE_ATOMIC_TEST_ONLY ? "test-" : "commit-") + name);
+    auto record = [&](const auto &commit, const std::string &name) {
+        journal.push_back((commit.flags & DRM_MODE_ATOMIC_TEST_ONLY ? "test-" : "commit-") + name);
         EXPECT_EQ(released, before);
-        EXPECT_EQ(drm->size(), QSize(16, 16));
-        EXPECT_EQ(second->size(), QSize(16, 16));
+        EXPECT_EQ(drm->size(), base::Size(16, 16));
+        EXPECT_EQ(second->size(), base::Size(16, 16));
         return true;
     };
     accept = [&](const auto &commit) {
@@ -652,14 +659,15 @@ TEST_F(DrmOutputTest, MultiDeviceSuccessTestsEveryDeviceBeforeAnyWriteOrNotifica
     other.commitFilter = [&](const auto &commit) {
         return record(commit, "second");
     };
-    QObject::connect(drm.get(), &Output::frameDiscarded, drm.get(), [&](quint64) {
-        EXPECT_EQ(drm->size(), QSize(12, 16));
-        EXPECT_EQ(second->size(), QSize(12, 16));
+    const auto discarded = drm->frameDiscarded.connect([&](uint64_t) {
+        EXPECT_EQ(drm->size(), base::Size(12, 16));
+        EXPECT_EQ(second->size(), base::Size(12, 16));
     });
     auto mode = drm->mode();
     mode.hdisplay = 12;
     ASSERT_TRUE(Output::configure({{drm.get(), mode, true}, {second.get(), mode, true}}, false));
-    EXPECT_EQ(journal, QStringList({"test-first", "test-second", "commit-first", "commit-second"}));
+    EXPECT_EQ(journal, std::vector<std::string>(
+                               {"test-first", "test-second", "commit-first", "commit-second"}));
     EXPECT_EQ(released, before + 2);
     accept = {};
     other.commitFilter = {};
@@ -702,15 +710,15 @@ TEST_F(DrmOutputTest, LaterDeviceCommitFailureRestoresEarlierNativeDevice)
         return bool(commit.flags & DRM_MODE_ATOMIC_TEST_ONLY);
     };
     backend::DrmCommitStatus status;
-    QString diagnostic;
+    std::string diagnostic;
     EXPECT_FALSE(Output::configure({{drm.get(), mode, true}, {second.get(), mode, true}}, false,
                                    &status, &diagnostic));
     EXPECT_EQ(status, backend::DrmCommitStatus::CommitFailed);
     EXPECT_EQ(device.realCommitCount(), 2u);
     EXPECT_EQ(other.realCommitCount(), 1u);
-    EXPECT_EQ(drm->size(), QSize(16, 16));
-    EXPECT_EQ(second->size(), QSize(16, 16));
-    EXPECT_TRUE(diagnostic.contains("restored"));
+    EXPECT_EQ(drm->size(), base::Size(16, 16));
+    EXPECT_EQ(second->size(), base::Size(16, 16));
+    EXPECT_NE(diagnostic.find("restored"), std::string::npos);
 }
 
 TEST_F(DrmOutputTest, FailedCompensationRetainsActuallyCommittedCandidate)
@@ -736,8 +744,8 @@ TEST_F(DrmOutputTest, FailedCompensationRetainsActuallyCommittedCandidate)
     EXPECT_FALSE(Output::configure({{drm.get(), mode, true}, {second.get(), mode, true}}, false,
                                    &status));
     EXPECT_EQ(status, backend::DrmCommitStatus::RollbackFailed);
-    EXPECT_EQ(drm->size(), QSize(12, 16));
-    EXPECT_EQ(second->size(), QSize(16, 16));
+    EXPECT_EQ(drm->size(), base::Size(12, 16));
+    EXPECT_EQ(second->size(), base::Size(16, 16));
     EXPECT_EQ(released, before + 2);
     accept = {};
     EXPECT_TRUE(drm->retireForReprobe(true));
@@ -784,7 +792,7 @@ TEST_F(DrmOutputTest, FallbackTestsCombinedBandwidthAndCommitsTheSelectedNativeM
     ASSERT_TRUE(Output::configure({{drm.get(), high, true}}, true));
     ASSERT_TRUE(Output::configure({{second.get(), high, true}}, true));
     device.commits.clear();
-    const QList<backend::DrmFallbackHead> heads = {
+    const std::vector<backend::DrmFallbackHead> heads = {
             {3, "eDP-1", "internal", true, {{"high", 16, 16, 60000, 30, true}}},
             {4,
              "DP-1-1",
@@ -799,8 +807,8 @@ TEST_F(DrmOutputTest, FallbackTestsCombinedBandwidthAndCommitsTheSelectedNativeM
                             {second.get(), modes[1].key == "high" ? high : low, true}};
                 backend::DrmCommitStatus status;
                 const bool accepted = Output::configure(selected, true, &status);
-                EXPECT_EQ(drm->size(), QSize(16, 16));
-                EXPECT_EQ(second->size(), QSize(16, 16));
+                EXPECT_EQ(drm->size(), base::Size(16, 16));
+                EXPECT_EQ(second->size(), base::Size(16, 16));
                 EXPECT_EQ(device.realCommitCount(), 0u);
                 return backend::DrmFallbackTestResult {
                         accepted,
@@ -811,10 +819,10 @@ TEST_F(DrmOutputTest, FallbackTestsCombinedBandwidthAndCommitsTheSelectedNativeM
             8);
     ASSERT_TRUE(plan);
     EXPECT_EQ(plan->attempts, 2);
-    EXPECT_EQ(plan->downgradedConnectors, QStringList({"DP-1-1"}));
+    EXPECT_EQ(plan->downgradedConnectors, std::vector<std::string>({"DP-1-1"}));
     ASSERT_TRUE(Output::configure(selected, false));
-    EXPECT_EQ(drm->size(), QSize(16, 16));
-    EXPECT_EQ(second->size(), QSize(12, 16));
+    EXPECT_EQ(drm->size(), base::Size(16, 16));
+    EXPECT_EQ(second->size(), base::Size(12, 16));
     EXPECT_EQ(device.testCommitCount(), 3u);
     EXPECT_EQ(device.realCommitCount(), 1u);
 }
@@ -869,9 +877,11 @@ TEST_F(DrmOutputTest, InitialModesetHasMeasuredWireCompletionAndSchedulesAgain)
 
 double slowestDrawMs(const Output &output)
 {
-    const QStringList fields = output.statsLine().split(QLatin1Char(' '));
-    const qsizetype index = fields.indexOf(QStringLiteral("slowest-draw-ms"));
-    return index >= 0 && index + 1 < fields.size() ? fields[index + 1].toDouble() : -1;
+    const std::vector<std::string> fields = base::strings::split(output.statsLine(), ' ');
+    const auto field = std::find(fields.begin(), fields.end(), "slowest-draw-ms");
+    if (field == fields.end() || field + 1 == fields.end())
+        return -1;
+    return base::strings::toDouble(*(field + 1)).value_or(0);
 }
 
 // The scheduler learns what composition takes on this GPU from every frame
@@ -916,10 +926,10 @@ TEST_F(DrmOutputTest, WithoutColourPropertiesTheTintIsBlendedOverEachFrame)
             [&] {
                 return acquireBuffer();
             },
-            [&](QSize size) {
+            [&](base::Size size) {
                 return createTarget(size);
             }));
-    drm->setRenderCallback([](render::Renderer &renderer, quint64) {
+    drm->setRenderCallback([](render::Renderer &renderer, uint64_t) {
         renderer.clear({0.8f, 0.8f, 0.8f, 1});
     });
     recordPixel = true;
@@ -975,9 +985,7 @@ TEST_F(DrmOutputTest, NoFrameIsDrawnBehindALateFlip)
     ASSERT_TRUE(waitEvents(2));
     auto &c = update();
     drm->scheduleFrame();
-    QDeadlineTimer deadline(60);
-    while (!deadline.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    test::runFor(std::chrono::milliseconds(60));
     EXPECT_EQ(events.size(), 2u);
     EXPECT_EQ(prepared, 2);
     EXPECT_TRUE(c.events.empty());
@@ -1072,9 +1080,7 @@ TEST_F(DrmOutputTest, AFrameWithNothingToDrawBeginsButIsNeitherDrawnNorFlipped)
         return needed;
     });
     const auto settle = [] {
-        QDeadlineTimer deadline(60);
-        while (!deadline.hasExpired())
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        test::runFor(std::chrono::milliseconds(60));
     };
     update();
     ASSERT_TRUE(drm->enable());
@@ -1109,9 +1115,7 @@ TEST_F(DrmOutputTest, ATintFlipsWithNothingNewToDrawAndSurvivesAWake)
         return false;
     });
     const auto settle = [] {
-        QDeadlineTimer deadline(60);
-        while (!deadline.hasExpired())
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        test::runFor(std::chrono::milliseconds(60));
     };
     update();
     ASSERT_TRUE(drm->enable());
@@ -1159,22 +1163,19 @@ TEST_F(DrmOutputTest, DisablingDiscardsTheQueuedFrameAndReleasesItsBuffer)
     ASSERT_TRUE(waitEvents(3));
     auto &c = update();
     drm->scheduleFrame();
-    QDeadlineTimer deadline(60);
-    while (!deadline.hasExpired())
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    test::runFor(std::chrono::milliseconds(60));
     ASSERT_EQ(acquired, 4);
-    std::vector<quint64> discarded;
-    const auto connection =
-            QObject::connect(drm.get(), &Output::frameDiscarded, drm.get(), [&](quint64 frame) {
-                discarded.push_back(frame);
-            });
+    std::vector<uint64_t> discarded;
+    auto connection = drm->frameDiscarded.connect([&](uint64_t frame) {
+        discarded.push_back(frame);
+    });
     active = false;
     drm->disable();
-    EXPECT_EQ(discarded, (std::vector<quint64> {events[2].frame, events[2].frame + 1}));
+    EXPECT_EQ(discarded, (std::vector<uint64_t> {events[2].frame, events[2].frame + 1}));
     // Once discarded, a frame owes nothing more.
     drm->disable();
     EXPECT_EQ(discarded.size(), 2u);
-    QObject::disconnect(connection);
+    connection.reset();
     EXPECT_EQ(events.size(), 3u);
     // Only the queued frame's buffer is free; the flipped ones are retained
     // until a modeset replaces them. Its content never reached the device, so
@@ -1330,7 +1331,7 @@ TEST_F(DrmOutputTest, MixedCompositionAndOverlayHaveDifferentWireFlags)
     compositor.updateTextures(*egl);
     compositor.surfaces().back()->setPosition({0, 0});
     auto *top = compositor.surfaces().back()->node();
-    storage = std::make_shared<ScanoutStorage>(QSize(8, 8));
+    storage = std::make_shared<ScanoutStorage>(base::Size(8, 8));
     top->setScanoutBuffer(storage);
     drm->scheduleFrame();
     ASSERT_TRUE(waitEvents(2));
@@ -1342,15 +1343,15 @@ TEST_F(DrmOutputTest, MixedCompositionAndOverlayHaveDifferentWireFlags)
     EXPECT_EQ(overlay.flags, 15u);
     EXPECT_EQ(storage->references, 1);
 
-    QImage color(8, 8, QImage::Format_RGBA8888);
-    color.fill(QColor(30, 90, 180));
-    top->setTexture(egl->createTexture(color.size(), color.constBits()));
-    std::vector<QColor> samples;
-    drm->setRenderCallback([&](render::Renderer &renderer, quint64) {
+    const std::array<uint8_t, 4> blue {30, 90, 180, 255};
+    const std::vector<uint8_t> color = solidRgba(base::Size(8, 8), blue);
+    top->setTexture(egl->createTexture(base::Size(8, 8), color.data()));
+    std::vector<std::array<uint8_t, 4>> samples;
+    drm->setRenderCallback([&](render::Renderer &renderer, uint64_t) {
         scene.render(renderer);
         uint8_t pixel[4] = {};
         glReadPixels(2, 13, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-        samples.emplace_back(pixel[0], pixel[1], pixel[2], pixel[3]);
+        samples.push_back({pixel[0], pixel[1], pixel[2], pixel[3]});
     });
     accept = [](const auto &commit) {
         if (commit.flags & DRM_MODE_ATOMIC_TEST_ONLY)
@@ -1366,8 +1367,8 @@ TEST_F(DrmOutputTest, MixedCompositionAndOverlayHaveDifferentWireFlags)
     ASSERT_TRUE(waitEvents(3));
     EXPECT_EQ(prepared, previousPrepares + 1);
     ASSERT_EQ(samples.size(), 2u);
-    EXPECT_NE(samples.front(), QColor(30, 90, 180));
-    EXPECT_EQ(samples.back(), QColor(30, 90, 180));
+    EXPECT_NE(samples.front(), blue);
+    EXPECT_EQ(samples.back(), blue);
     EXPECT_EQ(storage->references, 1);
     flip(2);
     EXPECT_EQ(fallback.flags, 7u);
@@ -1458,8 +1459,8 @@ TEST_F(DrmOutputTest, ElapsedTimeAndStaleEventsCannotPresentOrRetirePendingConte
     ASSERT_TRUE(drm->enable());
     clockOffset += std::chrono::minutes(5);
     drm->scheduleFrame();
-    QCoreApplication::processEvents();
-    Output::dispatchPageFlip({drm.get(), events.front().frame + 100}, 123, 456789, 42);
+    test::processPendingEvents();
+    Output::dispatchPageFlip({drm->weakPtr(), events.front().frame + 100}, 123, 456789, 42);
     ASSERT_GE(roundtrip(), 0);
     EXPECT_TRUE(a.events.empty());
     // The blocking modeset is on screen, so the next frame flips behind it
@@ -1579,7 +1580,7 @@ TEST_F(DrmOutputTest, HotplugRetirementKeepsRawFlipCookieAliveAfterOutputDestruc
     drm.reset();
     ASSERT_FALSE(retired.empty());
     EXPECT_EQ(retired.front().get(), raw);
-    EXPECT_TRUE(raw->output.isNull());
+    EXPECT_FALSE(raw->output);
     Output::dispatchPageFlip(*raw, 123, 456, 1);
     EXPECT_EQ(released, before);
 }
@@ -1659,7 +1660,7 @@ TEST_F(DrmOutputTest, ModesetBufferCarriesOverTheFrameTheCrtcShows)
     for (int row = 0; row < 16; ++row)
         std::fill_n(pixels + row * stride, 16 * 4, uint8_t(0x80));
     gbm_bo_unmap(bo.get(), mapping);
-    const auto shown = [&](QSize size, render::DmaBufAttributes *attributes) {
+    const auto shown = [&](base::Size size, render::DmaBufAttributes *attributes) {
         attributes->size = size;
         attributes->format = DRM_FORMAT_XRGB8888;
         attributes->modifier = DRM_FORMAT_MOD_LINEAR;
@@ -1689,7 +1690,7 @@ TEST_F(DrmOutputTest, ModesetBufferCarriesOverTheFrameTheCrtcShows)
     ASSERT_TRUE(Output::configure({{drm.get(), drm->mode(), true}}, false));
     const auto carried = drm->takeCarriedFrame();
     ASSERT_TRUE(carried);
-    EXPECT_EQ(carried->size(), QSize(16, 16));
+    EXPECT_EQ(carried->size(), base::Size(16, 16));
     EXPECT_FALSE(drm->takeCarriedFrame());
     drm->setKeepCarriedFrame(false);
 
@@ -1823,25 +1824,25 @@ TEST_F(DrmOutputTest, ScreenshotForcesCompositionUntilPresentedThenResumesStatic
     ASSERT_GE(roundtrip(), 0);
     ASSERT_TRUE(clientState.sources);
     ASSERT_TRUE(clientState.copies);
-    drm->setPrepareCallback([&](render::Renderer &renderer, quint64 frame) {
-        renderer.setOutputContext({output.name, {0, 0, 16, 16}, {16, 16}, 1, 0, frame});
+    drm->setPrepareCallback([&](render::Renderer &renderer, uint64_t frame) {
+        renderer.setOutputContext(
+                {output.name, {0, 0, 16, 16}, {16, 16}, 1, 0, frame});
         compositor.updateTextures(renderer);
         compositor.frameSubmitted(frame);
     });
-    drm->setScanoutPlanner([&](const QSize &size, size_t count) {
+    drm->setScanoutPlanner([&](const base::Size &size, size_t count) {
         return capture.hasPending(output.name) ? scene::OverlayPlan()
                                                : scene::proposeOverlays(*scene.root(), size, count);
     });
-    drm->setRenderCallback([&](render::Renderer &renderer, quint64) {
+    drm->setRenderCallback([&](render::Renderer &renderer, uint64_t) {
         scene.render(renderer);
         capture.renderPending(renderer, [&](bool) {
             scene.render(renderer);
         });
     });
-    const auto presented = QObject::connect(drm.get(), &Output::imagePresented, &capture,
-                                            [&](quint64 frame, quint64 time) {
-                                                capture.presented(frame, time);
-                                            });
+    auto presented = drm->imagePresented.connect([&](uint64_t frame, uint64_t time) {
+        capture.presented(frame, time);
+    });
     update();
     ASSERT_TRUE(drm->enable());
     flip(0);
@@ -1853,13 +1854,13 @@ TEST_F(DrmOutputTest, ScreenshotForcesCompositionUntilPresentedThenResumesStatic
     ASSERT_EQ(storage->references, 1);
     const auto directFrames = drm->directScanoutFrames();
     std::printf("Capture transition renderer: %s\n", glGetString(GL_RENDERER));
-    QImage pattern(16, 16, QImage::Format_RGBA8888);
-    pattern.fill(QColor(25, 80, 190));
+    std::vector<uint8_t> pattern = solidRgba(base::Size(16, 16), {25, 80, 190, 255});
+    const std::array<uint8_t, 4> red {200, 40, 70, 255};
     for (int y = 0; y < 16; ++y)
         for (int x = 0; x < 8; ++x)
-            pattern.setPixelColor(x, y, QColor(200, 40, 70));
+            std::copy(red.begin(), red.end(), pattern.begin() + (y * 16 + x) * 4);
     compositor.surfaces().front()->node()->setTexture(
-            egl->createTexture(pattern.size(), pattern.constBits()));
+            egl->createTexture(base::Size(16, 16), pattern.data()));
 
     auto *source = ext_output_image_capture_source_manager_v1_create_source(clientState.sources,
                                                                             clientState.output);
@@ -1906,7 +1907,11 @@ TEST_F(DrmOutputTest, ScreenshotForcesCompositionUntilPresentedThenResumesStatic
     // The pixels are the client's to read once the frame is ready.
     for (int y = 0; y < 16; ++y)
         for (int x = 0; x < 16; ++x)
-            EXPECT_EQ(pixels[y * 16 + x], pattern.pixelColor(x, y).rgba());
+            {
+                const uint8_t *rgba = pattern.data() + (y * 16 + x) * 4;
+                EXPECT_EQ(pixels[y * 16 + x], uint32_t(rgba[3]) << 24 | uint32_t(rgba[0]) << 16
+                                                      | uint32_t(rgba[1]) << 8 | rgba[2]);
+            }
     EXPECT_FALSE(capture.hasPending(output.name));
     EXPECT_EQ(storage->references, 0);
     ASSERT_TRUE(waitEvents(4));
@@ -1914,7 +1919,7 @@ TEST_F(DrmOutputTest, ScreenshotForcesCompositionUntilPresentedThenResumesStatic
     EXPECT_EQ(drm->directScanoutFrames(), directFrames + 1);
     EXPECT_EQ(storage->references, 1);
 
-    QObject::disconnect(presented);
+    presented.reset();
     drm->setScanoutPlanner({});
     drm->setRenderCallback({});
     ext_image_copy_capture_frame_v1_destroy(frame);

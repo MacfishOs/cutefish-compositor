@@ -66,13 +66,13 @@ constexpr std::array<std::pair<AcceleratorAction, const char *>, 46> kActionName
 
 } // namespace
 
-QString acceleratorActionName(AcceleratorAction action)
+std::string acceleratorActionName(AcceleratorAction action)
 {
     for (const auto &[candidate, name] : kActionNames) {
         if (candidate == action)
-            return QString::fromLatin1(name);
+            return name;
     }
-    return QString();
+    return {};
 }
 
 std::vector<AcceleratorAction> allAcceleratorActions()
@@ -84,10 +84,10 @@ std::vector<AcceleratorAction> allAcceleratorActions()
     return actions;
 }
 
-std::optional<AcceleratorAction> acceleratorActionFromName(const QString &name)
+std::optional<AcceleratorAction> acceleratorActionFromName(std::string_view name)
 {
     for (const auto &[action, candidate] : kActionNames) {
-        if (name == QLatin1String(candidate))
+        if (name == candidate)
             return action;
     }
     return std::nullopt;

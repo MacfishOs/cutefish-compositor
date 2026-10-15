@@ -6,10 +6,6 @@
 
 #include <algorithm>
 
-#include <QImage>
-#include <QPointer>
-#include <QTimer>
-
 #include "scene/window_animation.h"
 #include "wm/activation.h"
 #include "wm/placement.h"
@@ -25,6 +21,11 @@ namespace {
 
 // Upper bound for previews and high-density dock thumbnails.
 constexpr int kMinimizedSnapshotSize = 384;
+
+base::WeakPtr<WindowManager> weakManager(Window *window)
+{
+    return window->manager() ? window->manager()->weakPtr() : base::WeakPtr<WindowManager>();
+}
 
 // A window may only restore back to a state at a strictly lower layer.
 // Upstream: ash/wm/window_state.cc kWindowStateRestoreHistoryLayerMap.
@@ -117,7 +118,7 @@ void WindowState::onEvent(const WMEvent &event)
     case WMEventType::SetBounds: {
         const auto &setBounds = static_cast<const SetBoundsWMEvent &>(event);
         if (isNormal()) {
-            QRect bounds = setBounds.requestedBounds();
+            base::Rect bounds = setBounds.requestedBounds();
             adjustBoundsToEnsureMinimumVisibility(m_window->manager()->visibleAreaFor(m_window),
                                                   &bounds,
                                                   m_window->manager()->workAreaFor(m_window));
@@ -146,7 +147,7 @@ void WindowState::enterState(WindowStateType next)
         return;
 
     const WindowStateType previous = m_type;
-    const QRect previousBounds = m_window->bounds();
+    const base::Rect previousBounds = m_window->bounds();
 
     // Only the normal state's bounds are worth coming back to.
     if (previous == WindowStateType::Normal)
@@ -163,21 +164,21 @@ void WindowState::enterState(WindowStateType next)
     if (animation && !m_window->isHidden() && !m_window->isDeskHidden()) {
         using Type = scene::WindowAnimation::Type;
         // Read the dock bounds again on restore: its icon may have moved.
-        QRect target = m_window->minimizedGeometry();
+        base::Rect target = m_window->minimizedGeometry();
         if (target.isEmpty()) {
-            const QRect output = m_window->manager()->outputBoundsFor(m_window);
-            target = QRect(output.center().x(), output.bottom(), 1, 1);
+            const base::Rect output = m_window->manager()->outputBoundsFor(m_window);
+            target = base::Rect(centerPixel(output).x(), output.bottom() - 1, 1, 1);
         }
         const bool dock = next == WindowStateType::Minimized || previous == WindowStateType::Minimized;
-        const QPointer<WindowManager> manager(m_window->manager());
-        const quint64 id = m_window->id();
+        const base::WeakPtr<WindowManager> manager = weakManager(m_window);
+        const uint64_t id = m_window->id();
         animation->setHoldAtEnd(next == WindowStateType::Minimized);
         if (next == WindowStateType::Minimized) {
             // Landed on the dock slot: hand over to the shell's thumbnail.
             animation->setFinishedCallback([manager, id] {
                 if (!manager)
                     return;
-                QTimer::singleShot(0, manager.data(), [manager, id] {
+                manager->runLater(std::chrono::milliseconds(0), [manager, id] {
                     if (Window *window = manager->windowById(id))
                         window->beginMinimizeHandoff();
                 });
@@ -187,7 +188,7 @@ void WindowState::enterState(WindowStateType next)
             animation->setFinishedCallback([manager] {
                 if (!manager)
                     return;
-                QTimer::singleShot(0, manager.data(), [manager] {
+                manager->runLater(std::chrono::milliseconds(0), [manager] {
                     manager->restackScene();
                 });
             });
@@ -225,7 +226,7 @@ void WindowState::enterState(WindowStateType next)
 
 void WindowState::updateMinimizeTarget()
 {
-    const QRect target = m_window->minimizedGeometry();
+    const base::Rect target = m_window->minimizedGeometry();
     auto *animation = dynamic_cast<scene::WindowAnimation *>(m_window->node());
     if (animation && isMinimized() && !target.isEmpty())
         animation->setMinimizeTarget(target);
@@ -233,18 +234,18 @@ void WindowState::updateMinimizeTarget()
 
 void WindowState::requestMinimizedSnapshot(scene::WindowAnimation *animation)
 {
-    const QPointer<WindowManager> manager(m_window->manager());
-    const quint64 id = m_window->id();
+    const base::WeakPtr<WindowManager> manager = weakManager(m_window);
+    const uint64_t id = m_window->id();
     animation->requestSnapshot(
-            [manager, id](const QImage &image) {
+            [manager, id](const ui::Bitmap &bitmap) {
                 if (!manager)
                     return;
                 // Rendering is not the place to notify observers.
-                QTimer::singleShot(0, manager.data(), [manager, id, image] {
+                manager->runLater(std::chrono::milliseconds(0), [manager, id, bitmap] {
                     Window *window = manager->windowById(id);
                     if (!window || !window->state()->isMinimized())
                         return;
-                    window->setMinimizedSnapshot(image);
+                    window->setMinimizedSnapshot(bitmap);
                 });
             },
             kMinimizedSnapshotSize);
@@ -262,11 +263,11 @@ void WindowState::updateRestoreHistory(WindowStateType previous)
 void WindowState::updateBoundsFromState(WindowStateType previous)
 {
     WindowManager *manager = m_window->manager();
-    const QRect workArea = manager->workAreaFor(m_window);
+    const base::Rect workArea = manager->workAreaFor(m_window);
 
     switch (m_type) {
     case WindowStateType::Normal: {
-        QRect bounds = m_window->bounds();
+        base::Rect bounds = m_window->bounds();
         if (hasRestoreBounds()) {
             bounds = restoreBounds();
             // The restore bounds can be as large as the work area if the window
@@ -310,19 +311,19 @@ void WindowState::updateVisibility(WindowStateType previous)
         // not hold the keyboard.
         m_window->setVisible(false);
     } else if (previous == WindowStateType::Minimized) {
-        m_window->setMinimizedSnapshot(QImage());
+        m_window->setMinimizedSnapshot(ui::Bitmap());
         m_window->setVisible(!m_window->isHidden());
         m_window->manager()->restackScene();
     }
 }
 
-void WindowState::setBoundsDirect(const QRect &bounds)
+void WindowState::setBoundsDirect(const base::Rect &bounds)
 {
-    QRect adjusted = bounds;
+    base::Rect adjusted = bounds;
     // Below the minimum size nothing useful is left to interact with, whatever
     // the state machine computed.
     if (isNormal()) {
-        const QSize minimum = m_window->minimumOuterSize();
+        const base::Size minimum = m_window->minimumOuterSize();
         adjusted.setWidth(std::max(adjusted.width(), minimum.width()));
         adjusted.setHeight(std::max(adjusted.height(), minimum.height()));
     }

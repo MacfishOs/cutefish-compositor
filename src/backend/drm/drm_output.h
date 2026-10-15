@@ -11,16 +11,16 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 #include <xf86drmMode.h>
 
-#include <QList>
-#include <QObject>
-#include <QPointer>
-#include <QSize>
-#include <QString>
-#include <QTimer>
-
 #include "backend/drm/drm_commit_coordinator.h"
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/timer.h"
+#include "base/weak_ptr.h"
+#include "core/main_loop.h"
 #include "backend/drm/drm_plane.h"
 #include "backend/drm/drm_properties.h"
 #include "backend/drm/presentation_tracker.h"
@@ -51,10 +51,8 @@ class DrmDeviceApi;
 // One connector driven by one CRTC, compositing onto the primary plane and,
 // where the hardware allows it, scanning client buffers out of overlay planes
 // and the cursor plane directly.
-class DrmOutput : public QObject, public render::CursorSink
+class DrmOutput : public render::CursorSink
 {
-    Q_OBJECT
-
 public:
     struct Config {
         uint32_t connectorId = 0;
@@ -63,11 +61,12 @@ public:
         int crtcIndex = -1;
         uint32_t planeId = 0;
         drmModeModeInfo mode = {};
-        QList<drmModeModeInfo> modes;
-        QString name;
-        QByteArray edid;
-        QString portPath;
-        QSize physicalSizeMm;
+        std::vector<drmModeModeInfo> modes;
+        std::string name;
+        // The EDID blob's bytes.
+        std::string edid;
+        std::string portPath;
+        base::Size physicalSizeMm;
         int subpixel = DRM_MODE_SUBPIXEL_UNKNOWN;
         DrmPropertyMap connectorProperties;
         DrmPropertyMap crtcProperties;
@@ -77,13 +76,13 @@ public:
     };
 
     // Property names an atomic commit cannot do without.
-    static QList<QByteArray> requiredConnectorProperties();
-    static QList<QByteArray> requiredCrtcProperties();
-    static QList<QByteArray> requiredPlaneProperties();
+    static std::vector<std::string> requiredConnectorProperties();
+    static std::vector<std::string> requiredCrtcProperties();
+    static std::vector<std::string> requiredPlaneProperties();
 
-    DrmOutput(DrmBackend *backend, Config config, QObject *parent = nullptr);
+    DrmOutput(DrmBackend *backend, Config config);
     DrmOutput(DrmDeviceApi *device, Config config, std::function<bool()> sessionActive,
-              bool monotonicClock, QObject *parent = nullptr,
+              bool monotonicClock,
               std::function<render::OutputScheduler::Time()> now =
                       render::OutputScheduler::Clock::now);
     ~DrmOutput() override;
@@ -103,7 +102,7 @@ public:
     };
 
     using AcquireBuffer = std::function<std::unique_ptr<CompositedBuffer>()>;
-    using CreateTarget = std::function<std::unique_ptr<render::EglRenderTarget>(QSize)>;
+    using CreateTarget = std::function<std::unique_ptr<render::EglRenderTarget>(base::Size)>;
     bool init(render::EglRenderer *renderer, std::unique_ptr<render::EglRenderTarget> target,
               AcquireBuffer acquire, CreateTarget createTarget = {});
 
@@ -113,13 +112,13 @@ public:
 
     // Where this CRTC's cursor plane showed an image when the device was probed,
     // in CRTC pixels: at startup, the cursor the previous DRM master left.
-    std::optional<QPoint> probedCursor() const;
+    std::optional<base::Point> probedCursor() const;
 
-    QByteArray edid() const { return m_config.edid; }
+    const std::string &edid() const { return m_config.edid; }
 
-    QString portPath() const
+    const std::string &portPath() const
     {
-        return m_config.portPath.isEmpty() ? m_config.name : m_config.portPath;
+        return m_config.portPath.empty() ? m_config.name : m_config.portPath;
     }
 
     // `keepRoute`: the output replacing this one drives the same connector from
@@ -128,20 +127,20 @@ public:
     // buffer, which is only released once KMS has stopped reading it.
     bool retireForReprobe(bool connectorExists, bool keepRoute = false);
 
-    QString name() const { return m_config.name; }
+    const std::string &name() const { return m_config.name; }
 
-    QString publicName() const;
+    std::string publicName() const;
 
     DrmBackend *backend() const { return m_backend; }
 
-    QSize size() const;
+    base::Size size() const;
 
     // DRM fourcc -> the modifiers the primary plane accepts for it; an empty
     // list means the plane only has a legacy format list. What linux-dmabuf
     // advertises as scanout-able.
     std::map<uint32_t, std::vector<uint64_t>> primaryPlaneFormats() const;
 
-    QSize physicalSizeMm() const { return m_config.physicalSizeMm; }
+    base::Size physicalSizeMm() const { return m_config.physicalSizeMm; }
 
     int subpixel() const { return m_config.subpixel; }
 
@@ -153,7 +152,7 @@ public:
 
     const drmModeModeInfo &mode() const { return m_config.mode; }
 
-    const QList<drmModeModeInfo> &modes() const { return m_config.modes; }
+    const std::vector<drmModeModeInfo> &modes() const { return m_config.modes; }
 
     // Creates the GBM surface and the renderer's target.
     bool init(render::EglRenderer *renderer);
@@ -172,7 +171,7 @@ public:
 
     void setLinearBuffers(bool linear) { m_linearBuffers = linear; }
     // The GBM surface frames for this output are rendered into.
-    gbm_surface *createSurface(const QSize &size) const;
+    gbm_surface *createSurface(const base::Size &size) const;
 
     struct Configuration {
         DrmOutput *output;
@@ -182,16 +181,16 @@ public:
     };
 
     static bool configure(const std::vector<Configuration> &configuration, bool testOnly,
-                          DrmCommitStatus *status = nullptr, QString *diagnostic = nullptr,
+                          DrmCommitStatus *status = nullptr, std::string *diagnostic = nullptr,
                           DrmDeviceApi **failedDevice = nullptr);
 
     // Painting is a callback so DRM/KMS stays independent of the scene.
-    void setRenderCallback(std::function<void(render::Renderer &, quint64)> callback);
+    void setRenderCallback(std::function<void(render::Renderer &, uint64_t)> callback);
 
     // Per-frame work that has to happen whether or not the scene is composited:
     // texture uploads and frame-callback accounting. Runs with the GL context
     // current, before the scene is painted.
-    void setPrepareCallback(std::function<void(render::Renderer &, quint64)> callback);
+    void setPrepareCallback(std::function<void(render::Renderer &, uint64_t)> callback);
 
     // Called as each scheduled frame begins, with its frame time in fractional
     // milliseconds, so what steps on frames steps whether or not this output
@@ -201,7 +200,7 @@ public:
 
     // Asked once per frame for the content that could go on hardware planes.
     // Absent, or returning an empty plan, means everything is composited.
-    void setScanoutPlanner(std::function<scene::OverlayPlan(const QSize &, size_t)> planner);
+    void setScanoutPlanner(std::function<scene::OverlayPlan(const base::Size &, size_t)> planner);
 
     // Paints `context.logicalViewport` into a texture outside the frame cycle.
     // Nothing is presented; the next frame repaints in full.
@@ -276,15 +275,15 @@ public:
     // render::CursorSink: the KMS cursor plane, when the device has one.
     bool setCursorImage(const render::CursorImage &image) override;
     void hideCursor() override;
-    void moveCursor(const QPointF &position) override;
+    void moveCursor(const base::PointF &position) override;
 
     bool hasHardwareCursor() const { return m_cursor != nullptr; }
 
     // Frames whose primary plane showed a client buffer rather than the
     // composited scene.
-    quint64 directScanoutFrames() const { return m_directScanoutFrames; }
+    uint64_t directScanoutFrames() const { return m_directScanoutFrames; }
 
-    quint64 overlayFrames() const { return m_overlayFrames; }
+    uint64_t overlayFrames() const { return m_overlayFrames; }
 
     using Reason = render::OutputScheduler::Reason;
     void scheduleFrame(Reason reason = Reason::Scene);
@@ -295,8 +294,10 @@ public:
     // the scheduler to begin it early enough.
     void setFullRepaintQuery(std::function<bool()> query) { m_fullRepaintQuery = std::move(query); }
 
+    base::WeakPtr<DrmOutput> weakPtr() { return m_weakFactory.getWeakPtr(); }
+
     struct FlipEvent {
-        QPointer<DrmOutput> output;
+        base::WeakPtr<DrmOutput> output;
         uint64_t frame;
         bool delivered = false;
     };
@@ -317,21 +318,23 @@ public:
     std::function<void(const render::PresentationSubmission &)> presentationSubmitted;
     void reportStats() const;
     // The same counters as reportStats() logs, for a debug interface to read.
-    QString statsLine() const;
+    std::string statsLine() const;
 
     // Output renders (including initial modesets), not completion events.
-    quint64 frameCount() const { return m_frameCount; }
+    uint64_t frameCount() const { return m_frameCount; }
 
-Q_SIGNALS:
     // The frame was composed and handed to KMS, committed or queued behind a
     // pending flip: viz's DrawAndSwap, where it acks the frames it drew.
-    // `aimedNs` is the refresh it was drawn for, on the monotonic clock.
-    void frameDrawn(quint64 generation, quint64 aimedNs);
-    // Matched normal submission completed. Scheduling uses a separate
-    // monotonic nominal clock.
-    void framePresented(quint32 timeMs, quint64 generation);
-    void imagePresented(quint64 generation, quint64 monotonicNs);
-    void frameDiscarded(quint64 generation);
+    // The second value is the refresh it was drawn for, monotonic nanoseconds.
+    base::Signal<uint64_t, uint64_t> frameDrawn;
+    // Matched normal submission completed, with its time in milliseconds and
+    // its generation. Scheduling uses a separate monotonic nominal clock.
+    base::Signal<uint32_t, uint64_t> framePresented;
+    // The generation and when it reached the screen, monotonic nanoseconds.
+    base::Signal<uint64_t, uint64_t> imagePresented;
+    base::Signal<uint64_t> frameDiscarded;
+    // The last thing the destructor does; the output still answers.
+    base::Signal<> destroyed;
 
 private:
     // The planes and the GBM buffer one committed frame is made of.
@@ -366,7 +369,7 @@ private:
     void commitQueued();
     // Forgets every frame rendered but not presented, returning their tokens
     // for frameDiscarded once the caller's state is consistent.
-    QList<quint64> dropOutstandingFrames();
+    std::vector<uint64_t> dropOutstandingFrames();
     bool renderFrame(uint64_t frame, bool modeset);
     // One attempt at a frame. `allowPromotion` false forces plain composition,
     // which is the fallback when a promoted configuration fails to commit.
@@ -375,7 +378,7 @@ private:
     void wakeup();
     void armWakeup();
     // The refresh the frame begun last is drawn for, in monotonic nanoseconds.
-    quint64 aimedNs() const;
+    uint64_t aimedNs() const;
     // What follows a flip, landed or given up on: the pending buffers go on
     // screen, the queued frame is committed and the scheduler moves on.
     void finishFlip(uint64_t frame, uint32_t timeMs,
@@ -388,7 +391,7 @@ private:
     // Upstream: ScreenManager::GetModesetPlanes and FillModesetBuffer, which
     // copy the CRTC's current framebuffer into the modeset buffer when the
     // sizes match and clear it black otherwise.
-    bool fillModesetBuffer(render::EglRenderTarget *target, const QSize &size, bool copyScanout);
+    bool fillModesetBuffer(render::EglRenderTarget *target, const base::Size &size, bool copyScanout);
     bool createModeBlob();
     void destroyModeBlob();
     void releaseScanoutBuffers();
@@ -416,14 +419,14 @@ private:
     // Committed but not yet flipped to.
     gbm_bo *m_pendingBuffer = nullptr;
 
-    std::function<void(render::Renderer &, quint64)> m_renderCallback;
-    std::function<void(render::Renderer &, quint64)> m_prepareCallback;
+    std::function<void(render::Renderer &, uint64_t)> m_renderCallback;
+    std::function<void(render::Renderer &, uint64_t)> m_prepareCallback;
     std::function<bool(double)> m_beginFrameCallback;
     std::function<bool()> m_fullRepaintQuery;
     // The next frame draws whatever the scene says: after a resume, a modeset
     // or a change in how frames are committed, the screen needs a new one.
     bool m_forceFrame = true;
-    std::function<scene::OverlayPlan(const QSize &, size_t)> m_scanoutPlanner;
+    std::function<scene::OverlayPlan(const base::Size &, size_t)> m_scanoutPlanner;
 
     std::unique_ptr<ScanoutController> m_scanout;
     std::unique_ptr<DrmCursor> m_cursor;
@@ -449,7 +452,7 @@ private:
     bool m_carryOverWhileSecure = false;
     std::unique_ptr<render::Texture> m_carriedFrame;
     bool m_lastPresentedSecure = false;
-    quint64 m_directScanoutFrames = 0, m_overlayFrames = 0;
+    uint64_t m_directScanoutFrames = 0, m_overlayFrames = 0;
 
     bool m_enabled = false;
     bool m_blanked = false;
@@ -460,20 +463,22 @@ private:
     bool m_configuring = false;
     std::function<render::OutputScheduler::Time()> m_now;
     render::OutputScheduler m_scheduler;
-    QTimer m_wakeup;
+    base::Timer m_wakeup {core::mainLoop()};
     render::OutputScheduler::Time m_armedDeadline {};
-    QTimer m_flipTimeout;
+    base::Timer m_flipTimeout {core::mainLoop()};
     std::map<uint64_t, std::unique_ptr<FlipEvent>> m_events;
     std::function<void(std::unique_ptr<FlipEvent>)> m_retireEvent;
     uint64_t m_bufferFrame = 0;
     // Frames whose wl_surface.frame callbacks are still owed, oldest first:
     // committed, queued, or a modeset's; gone once presented or discarded.
-    QList<quint64> m_outstanding;
-    quint64 m_frameCount = 0, m_commits = 0, m_flipCommits = 0, m_completions = 0;
+    std::vector<uint64_t> m_outstanding;
+    uint64_t m_frameCount = 0, m_commits = 0, m_flipCommits = 0, m_completions = 0;
     std::clock_t m_cpuStart = std::clock();
     uint32_t m_lastSequence = 0, m_lastTimeMs = 0;
     bool m_unsynced = false;
     std::chrono::steady_clock::time_point m_statsStart = std::chrono::steady_clock::now();
+    // Last, so flip events lose this output before anything else of it goes.
+    base::WeakPtrFactory<DrmOutput> m_weakFactory {this};
 };
 
 } // namespace cutefish::backend

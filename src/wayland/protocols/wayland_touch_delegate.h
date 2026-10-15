@@ -32,9 +32,9 @@ public:
     void onTouchDestroying(input::Touch* touch) override;
     bool canAcceptTouchEventsForSurface(compositor::Surface* surface) const override;
     void onTouchDown(compositor::Surface* surface, input::Timestamp timestamp, int32_t id,
-                     const QPointF& location) override;
+                     const base::PointF& location) override;
     void onTouchUp(input::Timestamp timestamp, int32_t id) override;
-    void onTouchMotion(input::Timestamp timestamp, int32_t id, const QPointF& location) override;
+    void onTouchMotion(input::Timestamp timestamp, int32_t id, const base::PointF& location) override;
     void onTouchFrame() override;
     void onTouchCancel() override;
 

@@ -6,19 +6,21 @@
 // shortcut and by three fingers, the input it takes and leaves, clicking,
 // closing and dragging windows, and the desk bar. No DRM, no GL.
 
-#include <QCoreApplication>
-
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <map>
+#include <vector>
 
 #include <gtest/gtest.h>
 
+#include "base/event_loop.h"
+#include "base/geometry.h"
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "core/main_loop.h"
 #include "display/display_manager.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
@@ -45,41 +47,41 @@ using State = OverviewController::State;
 
 namespace {
 
-QRectF lerp(const QRectF &a, const QRectF &b, double t)
+base::RectF lerp(const base::RectF &a, const base::RectF &b, double t)
 {
-    return QRectF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t,
+    return base::RectF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t,
                   a.width() + (b.width() - a.width()) * t,
                   a.height() + (b.height() - a.height()) * t);
 }
 
-constexpr QRect kOutput(0, 0, 1000, 800);
+const base::Rect kOutput(0, 0, 1000, 800);
 
 class FrameTexture : public render::Texture
 {
 public:
-    explicit FrameTexture(QSize size)
+    explicit FrameTexture(base::Size size)
         : m_size(size)
     {
     }
 
-    QSize size() const override { return m_size; }
+    base::Size size() const override { return m_size; }
 
 private:
-    QSize m_size;
+    base::Size m_size;
 };
 
 class FrameRenderer : public testsupport::FakeRenderer
 {
 public:
-    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const QRect &bounds,
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &rect,
                          const std::function<void()> &paint) override
     {
-        const qsizetype before = calls.size();
+        const size_t before = calls.size();
         paint();
-        if (!texture || texture->size() != bounds.size())
-            texture = std::make_unique<FrameTexture>(bounds.size());
+        if (!texture || texture->size() != rect.size())
+            texture = std::make_unique<FrameTexture>(rect.size());
         // What the texture holds, for reading the draw order of cached windows.
-        for (qsizetype i = before; i < calls.size(); ++i) {
+        for (size_t i = before; i < calls.size(); ++i) {
             if (calls[i].texture)
                 contents[texture.get()] = calls[i].texture;
         }
@@ -88,24 +90,22 @@ public:
 
     std::map<const render::Texture *, const render::Texture *> contents;
 
-    void drawBackgroundBlur(const QRect &bounds, int, const QRect &, const render::GlassParams &,
-                            const QPainterPath &, uint64_t) override
+    void drawBackgroundBlur(const base::Rect &bounds, int, const base::Rect &,
+                            const render::GlassParams &, const ui::Path &, uint64_t) override
     {
-        blurs.append(bounds);
+        blurs.push_back(bounds);
     }
 
-    QList<QRect> blurs;
+    std::vector<base::Rect> blurs;
 };
 
 class OverviewTest : public testing::Test
 {
 protected:
-    int argc = 0;
-    QCoreApplication application {argc, nullptr};
-    qint64 now = 1000;
+    int64_t now = 1000;
     scene::Scene scene;
     scene::Node *surfaceContainer =
-            scene.root()->addChild(std::make_unique<scene::Node>(QStringLiteral("surfaces")));
+            scene.root()->addChild(std::make_unique<scene::Node>("surfaces"));
     compositor::Compositor compositor {surfaceContainer};
     FrameRenderer renderer;
     input::Seat seat {&compositor};
@@ -136,24 +136,24 @@ protected:
 
     void TearDown() override { seat.shutdown(); }
 
-    compositor::Surface *makeSurface(const QSize &size)
+    compositor::Surface *makeSurface(const base::Size &size)
     {
         surfaces.push_back(compositor.createSurface());
         compositor::Surface *surface = surfaces.back().get();
         auto buffer = pool->createBuffer(size, 0, size.width() * 4, render::PixelFormat::Bgrx8888,
                                          nullptr);
         surface->attach(buffer, {});
-        surface->damage(QRect(QPoint(), size));
+        surface->damage(base::Rect(base::Point(), size));
         surface->commit();
         compositor.updateTextures(renderer);
         return surface;
     }
 
-    Window *makeWindow(const QRect &bounds)
+    Window *makeWindow(const base::Rect &bounds)
     {
         Window *window = manager.createWindow(makeSurface(bounds.size()),
                                               {.requestedSize = bounds.size(),
-                                               .applicationId = QStringLiteral("app")});
+                                               .applicationId = "app"});
         window->setBounds(bounds);
         manager.activation()->activate(window);
         return window;
@@ -165,14 +165,13 @@ protected:
 
     void flush()
     {
-        QCoreApplication::processEvents();
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        core::mainLoop()->dispatch();
     }
 
     void paint()
     {
         renderer.calls.clear();
-        renderer.setOutputContext({QStringLiteral("out"), kOutput, kOutput.size(), 1, 0, 0, {}});
+        renderer.setOutputContext({"out", kOutput, kOutput.size(), 1, 0, 0, {}});
         renderer.frameTime = double(now);
         surfaceContainer->render(renderer);
         flush();
@@ -187,14 +186,14 @@ protected:
         paint();
     }
 
-    static input::Timestamp at(qint64 ms)
+    static input::Timestamp at(int64_t ms)
     {
         return input::Timestamp(std::chrono::milliseconds(ms));
     }
 
-    void moveTo(const QPointF &location) { input.onPointerMotionLogical(at(now), location); }
+    void moveTo(const base::PointF &location) { input.onPointerMotionLogical(at(now), location); }
 
-    void click(const QPointF &location)
+    void click(const base::PointF &location)
     {
         moveTo(location);
         input.onPointerButton(at(now), BTN_LEFT, true);
@@ -228,10 +227,10 @@ protected:
                                });
     }
 
-    QRectF placeOf(const Window *window) const
+    base::RectF placeOf(const Window *window) const
     {
         const int index = indexOf(window);
-        return index >= 0 ? overview->items()[index].bounds : QRectF();
+        return index >= 0 ? overview->items()[index].bounds : base::RectF();
     }
 
     void show()
@@ -246,8 +245,8 @@ protected:
 
 TEST_F(OverviewTest, TheShortcutBringsItInAndTakesItAway)
 {
-    Window *first = makeWindow(QRect(100, 100, 500, 400));
-    Window *second = makeWindow(QRect(300, 200, 500, 400));
+    Window *first = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *second = makeWindow(base::Rect(300, 200, 500, 400));
     overview->toggle();
     EXPECT_EQ(State::Entering, overview->state());
     EXPECT_TRUE(node->isActive());
@@ -257,13 +256,13 @@ TEST_F(OverviewTest, TheShortcutBringsItInAndTakesItAway)
     // Both, apart, below the desk bar and inside the work area, smaller than
     // they are.
     ASSERT_EQ(2u, overview->items().size());
-    const QRectF a = placeOf(first);
-    const QRectF b = placeOf(second);
+    const base::RectF a = placeOf(first);
+    const base::RectF b = placeOf(second);
     EXPECT_FALSE(a.intersects(b));
     ASSERT_EQ(1u, overview->bars().size());
-    for (const QRectF &place : {a, b}) {
+    for (const base::RectF &place : {a, b}) {
         EXPECT_GE(place.top(), overview->bars()[0].bounds.bottom());
-        EXPECT_TRUE(QRectF(kOutput).contains(place));
+        EXPECT_TRUE(base::RectF(kOutput).contains(place));
         EXPECT_LT(place.width(), 500);
     }
     // Where they were relative to each other.
@@ -281,8 +280,8 @@ TEST_F(OverviewTest, TheShortcutBringsItInAndTakesItAway)
 
 TEST_F(OverviewTest, ThePointerAndTheKeysAreTheOverviewsWhileItIsUp)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
-    EXPECT_FALSE(overview->onPointerMotion(at(now), QPointF(300, 300)));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
+    EXPECT_FALSE(overview->onPointerMotion(at(now), base::PointF(300, 300)));
     EXPECT_FALSE(overview->onKey(at(now), KEY_A, true));
     EXPECT_FALSE(overview->onKey(at(now), KEY_A, false));
 
@@ -295,7 +294,7 @@ TEST_F(OverviewTest, ThePointerAndTheKeysAreTheOverviewsWhileItIsUp)
 
     overview->exit();
     // On its way out the windows have their input again.
-    EXPECT_FALSE(overview->onPointerMotion(at(now), QPointF(300, 300)));
+    EXPECT_FALSE(overview->onPointerMotion(at(now), base::PointF(300, 300)));
     EXPECT_FALSE(overview->onKey(at(now), KEY_A, true));
     EXPECT_FALSE(overview->onKey(at(now), KEY_A, false));
     settle();
@@ -304,33 +303,33 @@ TEST_F(OverviewTest, ThePointerAndTheKeysAreTheOverviewsWhileItIsUp)
 
 TEST_F(OverviewTest, ThePanelsAndTheDockKeepTheirInput)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
-    Window *dock = makeWindow(QRect(300, 740, 400, 60));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *dock = makeWindow(base::Rect(300, 740, 400, 60));
     dock->setRole(WindowRole::Dock);
     dock->setFocusPolicy(FocusPolicy::NoFocus);
     manager.activation()->activate(window);
     show();
     ASSERT_EQ(1u, overview->items().size());
 
-    EXPECT_EQ(OverviewController::Hit::Type::Panel, overview->hitTest(QPointF(500, 770)).type);
-    EXPECT_FALSE(overview->onPointerMotion(at(now), QPointF(500, 770)));
-    EXPECT_FALSE(overview->onPointerButton(at(now), QPointF(500, 770), BTN_LEFT, true));
-    EXPECT_FALSE(overview->onPointerButton(at(now), QPointF(500, 770), BTN_LEFT, false));
+    EXPECT_EQ(OverviewController::Hit::Type::Panel, overview->hitTest(base::PointF(500, 770)).type);
+    EXPECT_FALSE(overview->onPointerMotion(at(now), base::PointF(500, 770)));
+    EXPECT_FALSE(overview->onPointerButton(at(now), base::PointF(500, 770), BTN_LEFT, true));
+    EXPECT_FALSE(overview->onPointerButton(at(now), base::PointF(500, 770), BTN_LEFT, false));
     EXPECT_EQ(State::Shown, overview->state());
     // Off the dock, the overview has it again.
-    EXPECT_TRUE(overview->onPointerMotion(at(now), QPointF(500, 600)));
+    EXPECT_TRUE(overview->onPointerMotion(at(now), base::PointF(500, 600)));
 }
 
 TEST_F(OverviewTest, ThePanelsGiveWayAsItComesIn)
 {
     DockLayoutManager layout {&manager};
-    Window *panel = makeWindow(QRect(0, 0, 1000, 30));
+    Window *panel = makeWindow(base::Rect(0, 0, 1000, 30));
     panel->setRole(WindowRole::Panel);
     panel->setFocusPolicy(FocusPolicy::NoFocus);
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     layout.advance(double(now));
     layout.advance(double(now + DockLayoutManager::kSlideDurationMs));
-    ASSERT_EQ(QPoint(), panel->presentationOffset());
+    ASSERT_EQ(base::Point(), panel->presentationOffset());
 
     // Off the top edge with the overview's progress.
     ASSERT_TRUE(overview->enter());
@@ -341,27 +340,27 @@ TEST_F(OverviewTest, ThePanelsGiveWayAsItComesIn)
     EXPECT_FALSE(panel->isPresentationHidden());
     settle();
     layout.advance(double(now));
-    EXPECT_EQ(QPoint(0, -30), panel->presentationOffset());
+    EXPECT_EQ(base::Point(0, -30), panel->presentationOffset());
     EXPECT_TRUE(panel->isPresentationHidden());
     // The desk bar takes the edge it left, and the pointer there is the overview's.
     EXPECT_EQ(kOutput.top(), overview->bars().front().bounds.top());
     // Its previews keep half the margin they had under the panel.
-    const QRect work = manager.outputAreas().front().workArea;
+    const base::Rect work = manager.outputAreas().front().workArea;
     EXPECT_EQ(std::round((work.top() + OverviewController::kBarPadding) / 2.0),
               overview->bars().front().desks.front().bounds.top());
-    EXPECT_NE(OverviewController::Hit::Type::Panel, overview->hitTest(QPointF(500, 10)).type);
+    EXPECT_NE(OverviewController::Hit::Type::Panel, overview->hitTest(base::PointF(500, 10)).type);
 
     overview->toggle();
     settle();
     layout.advance(double(now));
-    EXPECT_EQ(QPoint(), panel->presentationOffset());
+    EXPECT_EQ(base::Point(), panel->presentationOffset());
     EXPECT_FALSE(panel->isPresentationHidden());
 }
 
 TEST_F(OverviewTest, AClickedWindowIsActivatedAndLandsOnTop)
 {
-    Window *first = makeWindow(QRect(100, 100, 500, 400));
-    Window *second = makeWindow(QRect(300, 200, 500, 400));
+    Window *first = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *second = makeWindow(base::Rect(300, 200, 500, 400));
     show();
     moveTo(placeOf(first).center());
     EXPECT_EQ(indexOf(first), overview->hovered());
@@ -378,7 +377,7 @@ TEST_F(OverviewTest, AClickedWindowIsActivatedAndLandsOnTop)
 
 TEST_F(OverviewTest, EscapeAndAClickOnNothingLeaveAsItWas)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
     show();
     key(KEY_ESC);
     EXPECT_EQ(State::Exiting, overview->state());
@@ -386,23 +385,23 @@ TEST_F(OverviewTest, EscapeAndAClickOnNothingLeaveAsItWas)
     EXPECT_EQ(State::Hidden, overview->state());
 
     show();
-    click(QPointF(10, 790));
+    click(base::PointF(10, 790));
     EXPECT_EQ(State::Exiting, overview->state());
     EXPECT_EQ(window, active());
     settle();
 
     // The desk bar's empty space too.
     show();
-    ASSERT_EQ(OverviewController::Hit::Type::Bar, overview->hitTest(QPointF(10, 10)).type);
-    click(QPointF(10, 10));
+    ASSERT_EQ(OverviewController::Hit::Type::Bar, overview->hitTest(base::PointF(10, 10)).type);
+    click(base::PointF(10, 10));
     EXPECT_EQ(State::Exiting, overview->state());
     EXPECT_EQ(window, active());
 }
 
 TEST_F(OverviewTest, TheKeyboardPicksAWindow)
 {
-    Window *left = makeWindow(QRect(0, 200, 400, 300));
-    Window *right = makeWindow(QRect(600, 200, 400, 300));
+    Window *left = makeWindow(base::Rect(0, 200, 400, 300));
+    Window *right = makeWindow(base::Rect(600, 200, 400, 300));
     show();
     // The active window first, then the one to its left.
     key(KEY_RIGHT);
@@ -416,9 +415,9 @@ TEST_F(OverviewTest, TheKeyboardPicksAWindow)
 
 TEST_F(OverviewTest, APressStaysWithItsWindowWhenTheOthersChange)
 {
-    Window *bottom = makeWindow(QRect(0, 100, 300, 300));
-    Window *middle = makeWindow(QRect(350, 100, 300, 300));
-    Window *top = makeWindow(QRect(700, 100, 300, 300));
+    Window *bottom = makeWindow(base::Rect(0, 100, 300, 300));
+    Window *middle = makeWindow(base::Rect(350, 100, 300, 300));
+    Window *top = makeWindow(base::Rect(700, 100, 300, 300));
     show();
     ASSERT_EQ(3u, overview->items().size());
 
@@ -441,7 +440,7 @@ TEST_F(OverviewTest, APressStaysWithItsWindowWhenTheOthersChange)
 
 TEST_F(OverviewTest, AKeyHeldSinceBeforeGoesUpAtTheWindow)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     EXPECT_FALSE(overview->onKey(at(now), KEY_LEFTMETA, true));
     show();
     EXPECT_TRUE(overview->onKey(at(now), KEY_A, true));
@@ -453,8 +452,8 @@ TEST_F(OverviewTest, AKeyHeldSinceBeforeGoesUpAtTheWindow)
 
 TEST_F(OverviewTest, ActivationFromElsewhereEndsIt)
 {
-    Window *first = makeWindow(QRect(100, 100, 500, 400));
-    makeWindow(QRect(300, 200, 500, 400));
+    Window *first = makeWindow(base::Rect(100, 100, 500, 400));
+    makeWindow(base::Rect(300, 200, 500, 400));
     show();
     // The dock asking for a window.
     manager.activation()->activate(first);
@@ -463,8 +462,8 @@ TEST_F(OverviewTest, ActivationFromElsewhereEndsIt)
 
 TEST_F(OverviewTest, MinimizedWindowsAreLeftOut)
 {
-    Window *shown = makeWindow(QRect(100, 100, 500, 400));
-    Window *minimized = makeWindow(QRect(300, 200, 500, 400));
+    Window *shown = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *minimized = makeWindow(base::Rect(300, 200, 500, 400));
     // Minimized from the click on, its animation still running.
     minimized->minimize();
     ASSERT_TRUE(minimized->state()->isMinimized());
@@ -480,10 +479,10 @@ TEST_F(OverviewTest, MinimizedWindowsAreLeftOut)
 
 TEST_F(OverviewTest, ClickingADeskShowsItsWindowsAndStaysUp)
 {
-    Window *first = makeWindow(QRect(100, 100, 500, 400));
+    Window *first = makeWindow(base::Rect(100, 100, 500, 400));
     ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
     desks->activateDesk(desk(1), DesksSwitchSource::DeskSwitchShortcut);
-    Window *second = makeWindow(QRect(200, 100, 500, 400));
+    Window *second = makeWindow(base::Rect(200, 100, 500, 400));
     desks->activateDesk(desk(0), DesksSwitchSource::DeskSwitchShortcut);
     ASSERT_EQ(first, active());
     show();
@@ -498,7 +497,7 @@ TEST_F(OverviewTest, ClickingADeskShowsItsWindowsAndStaysUp)
 
 TEST_F(OverviewTest, ClickingTheDeskItIsOnTakesItAway)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
     show();
     click(overview->bars()[0].desks[0].bounds.center());
     EXPECT_EQ(State::Exiting, overview->state());
@@ -508,12 +507,12 @@ TEST_F(OverviewTest, ClickingTheDeskItIsOnTakesItAway)
 
 TEST_F(OverviewTest, AWindowDraggedOntoADeskMovesThere)
 {
-    Window *moved = makeWindow(QRect(100, 100, 500, 400));
-    Window *stays = makeWindow(QRect(300, 200, 500, 400));
+    Window *moved = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *stays = makeWindow(base::Rect(300, 200, 500, 400));
     ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
     show();
-    const QPointF from = placeOf(moved).center();
-    const QPointF to = overview->bars()[0].desks[1].bounds.center();
+    const base::PointF from = placeOf(moved).center();
+    const base::PointF to = overview->bars()[0].desks[1].bounds.center();
     moveTo(from);
     input.onPointerButton(at(now), BTN_LEFT, true);
     for (int step = 1; step <= 10; ++step)
@@ -529,12 +528,12 @@ TEST_F(OverviewTest, AWindowDraggedOntoADeskMovesThere)
 
 TEST_F(OverviewTest, AWindowLetGoElsewhereGoesBack)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
     show();
-    const QRectF place = placeOf(window);
+    const base::RectF place = placeOf(window);
     moveTo(place.center());
     input.onPointerButton(at(now), BTN_LEFT, true);
-    moveTo(place.center() + QPointF(60, 40));
+    moveTo(place.center() + base::PointF(60, 40));
     input.onPointerButton(at(now), BTN_LEFT, false);
     EXPECT_EQ(State::Shown, overview->state());
     EXPECT_EQ(place, placeOf(window));
@@ -544,11 +543,11 @@ TEST_F(OverviewTest, AWindowLetGoElsewhereGoesBack)
 TEST_F(OverviewTest, ThreeFingersUpFollowAndDownLeave)
 {
     // Large enough that the overview shows it smaller.
-    Window *window = makeWindow(QRect(0, 30, 1000, 740));
+    Window *window = makeWindow(base::Rect(0, 30, 1000, 740));
     WmGestureHandler gestures(desks, {}, overview);
     input.setGestureFilter(&gestures);
     const auto swipe = [this](double mm) {
-        const QPointF travel(0, mm / WmGestureHandler::kMmPerUnacceleratedUnit);
+        const base::PointF travel(0, mm / WmGestureHandler::kMmPerUnacceleratedUnit);
         input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel * 5, travel, 1, 0);
     };
 
@@ -576,7 +575,7 @@ TEST_F(OverviewTest, ThreeFingersUpFollowAndDownLeave)
     EXPECT_EQ(State::Entering, overview->state());
     const double progress = node->progress(double(now) + 5);
     EXPECT_NEAR(0.6, progress, 0.05);
-    const QRectF halfway = node->presentedRect(0, progress, double(now));
+    const base::RectF halfway = node->presentedRect(0, progress, double(now));
     EXPECT_LT(halfway.width(), window->bounds().width());
     EXPECT_GT(halfway.width(), placeOf(window).width());
     now += 200;
@@ -611,14 +610,14 @@ TEST_F(OverviewTest, ThreeFingersUpFollowAndDownLeave)
 
 TEST_F(OverviewTest, AFlickInOneEventBringsItIn)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     WmGestureHandler gestures(desks, {}, overview);
     input.setGestureFilter(&gestures);
 
     // A quick flick that libinput reports in a single event past the threshold.
     input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
     now += 8;
-    const QPointF travel(0, -6 / WmGestureHandler::kMmPerUnacceleratedUnit);
+    const base::PointF travel(0, -6 / WmGestureHandler::kMmPerUnacceleratedUnit);
     input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel * 5, travel, 1, 0);
     now += 9;
     input.onPointerGestureEnd(at(now), input::GestureType::Swipe, false);
@@ -630,7 +629,7 @@ TEST_F(OverviewTest, AFlickInOneEventBringsItIn)
 
 TEST_F(OverviewTest, SlowFingersPastTheThresholdMoveItWithoutAJump)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     show();
     WmGestureHandler gestures(desks, {}, overview);
     input.setGestureFilter(&gestures);
@@ -643,7 +642,7 @@ TEST_F(OverviewTest, SlowFingersPastTheThresholdMoveItWithoutAJump)
     while (travel < 4 * WmGestureHandler::kContinuousGestureMoveThresholdMm) {
         now += 10;
         travel += step;
-        const QPointF delta(0, step / WmGestureHandler::kMmPerUnacceleratedUnit);
+        const base::PointF delta(0, step / WmGestureHandler::kMmPerUnacceleratedUnit);
         input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, delta * 5, delta, 1, 0);
         const double progress = node->progress(double(now) + 5);
         // Moving from the first step past the threshold, never more than
@@ -662,10 +661,10 @@ TEST_F(OverviewTest, SlowFingersPastTheThresholdMoveItWithoutAJump)
 
 TEST_F(OverviewTest, EveryDeskPreviewShowsItsWindows)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
     desks->activateDesk(desk(1), DesksSwitchSource::DeskSwitchShortcut);
-    Window *there = makeWindow(QRect(200, 100, 500, 400));
+    Window *there = makeWindow(base::Rect(200, 100, 500, 400));
     desks->activateDesk(desk(0), DesksSwitchSource::DeskSwitchShortcut);
     ASSERT_FALSE(there->isVisible());
     show();
@@ -678,10 +677,10 @@ TEST_F(OverviewTest, EveryDeskPreviewShowsItsWindows)
 
 TEST_F(OverviewTest, ADraggedWindowShrinksOnItsWayToTheBar)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
     ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
     show();
-    const QRectF place = placeOf(window);
+    const base::RectF place = placeOf(window);
     const int index = indexOf(window);
     const auto dragged = [&] {
         return node->presentedRect(index, 1, double(now));
@@ -689,22 +688,22 @@ TEST_F(OverviewTest, ADraggedWindowShrinksOnItsWayToTheBar)
     moveTo(place.center());
     input.onPointerButton(at(now), BTN_LEFT, true);
     // Away from the bar, the size it has in the overview.
-    moveTo(place.center() + QPointF(0, -10));
+    moveTo(place.center() + base::PointF(0, -10));
     EXPECT_EQ(place.size(), dragged().size());
-    EXPECT_TRUE(dragged().contains(place.center() + QPointF(0, -10)));
+    EXPECT_TRUE(dragged().contains(place.center() + base::PointF(0, -10)));
 
     // On the bar, the window at the expanded bar's share of the output's
     // height: 6 + 80 + 24 + 6 of 800.
     const auto bar = overview->bars()[0];
     const double expanded = 116;
-    const QPointF onBar = bar.desks[1].bounds.center();
+    const base::PointF onBar = bar.desks[1].bounds.center();
     moveTo(onBar);
     EXPECT_NEAR(500 * expanded / 800, dragged().width(), 0.01);
     EXPECT_NEAR(400 * expanded / 800, dragged().height(), 0.01);
     EXPECT_TRUE(dragged().contains(onBar));
 
     // Half its reach below the bar, halfway there.
-    const QPointF between(onBar.x(), bar.bounds.top() + expanded + place.height() / 4);
+    const base::PointF between(onBar.x(), bar.bounds.top() + expanded + place.height() / 4);
     moveTo(between);
     EXPECT_NEAR((place.width() + 500 * expanded / 800) / 2, dragged().width(), 0.01);
     input.onPointerButton(at(now), BTN_LEFT, false);
@@ -712,28 +711,28 @@ TEST_F(OverviewTest, ADraggedWindowShrinksOnItsWayToTheBar)
 
 TEST_F(OverviewTest, GlassIsDrawnWhereTheWindowIsShown)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
     compositor::Surface *surface = window->rootSurface();
-    surface->setBackgroundBlur(QRect(0, 0, 100, 400), 10);
+    surface->setBackgroundBlur(base::Rect(0, 0, 100, 400), 10);
     surface->commit();
     compositor.updateTextures(renderer);
     show();
     renderer.blurs.clear();
     paint();
-    const QRectF place = placeOf(window);
+    const base::RectF place = placeOf(window);
     const double scale = place.width() / 500;
     ASSERT_EQ(2, renderer.blurs.size());
-    EXPECT_EQ(QRectF(place.topLeft(), QSizeF(100, 400) * scale).toAlignedRect(),
+    EXPECT_EQ(base::RectF(place.topLeft(), base::SizeF(100, 400) * scale).toEnclosingRect(),
               renderer.blurs[0]);
     // The new-desk button is frosted over it.
-    EXPECT_EQ(overview->bars()[0].newDesk.toAlignedRect(), renderer.blurs[1]);
+    EXPECT_EQ(overview->bars()[0].newDesk.toEnclosingRect(), renderer.blurs[1]);
 }
 
 TEST_F(OverviewTest, ABlurredWindowIsNotDrawnAgainEachTimeItComesIn)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
     compositor::Surface *surface = window->rootSurface();
-    surface->setBackgroundBlur(QRect(0, 0, 100, 400), 10);
+    surface->setBackgroundBlur(base::Rect(0, 0, 100, 400), 10);
     surface->commit();
     compositor.updateTextures(renderer);
     paint();
@@ -750,21 +749,21 @@ TEST_F(OverviewTest, ABlurredWindowIsNotDrawnAgainEachTimeItComesIn)
 
 TEST_F(OverviewTest, APreviewsCloseButtonCombinesItsDeskIntoTheNext)
 {
-    Window *here = makeWindow(QRect(100, 100, 500, 400));
+    Window *here = makeWindow(base::Rect(100, 100, 500, 400));
     ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
     desks->activateDesk(desk(1), DesksSwitchSource::DeskSwitchShortcut);
-    Window *there = makeWindow(QRect(200, 100, 500, 400));
+    Window *there = makeWindow(base::Rect(200, 100, 500, 400));
     desks->activateDesk(desk(0), DesksSwitchSource::DeskSwitchShortcut);
     show();
     ASSERT_EQ(1u, overview->items().size());
 
     // Only on the preview the pointer is on.
-    const QRectF preview = overview->bars()[0].desks[1].bounds;
+    const base::RectF preview = overview->bars()[0].desks[1].bounds;
     moveTo(preview.center());
     EXPECT_FALSE(overview->bars()[0].desks[0].closeShown);
     EXPECT_TRUE(overview->bars()[0].desks[1].closeShown);
     EXPECT_FALSE(overview->bars()[0].desks[1].closeHovered);
-    const QRectF button = scene::OverviewDeskBarNode::closeButtonRect(preview);
+    const base::RectF button = scene::OverviewDeskBarNode::closeButtonRect(preview);
     EXPECT_TRUE(preview.contains(button));
     moveTo(button.center());
     EXPECT_TRUE(overview->bars()[0].desks[1].closeHovered);
@@ -793,10 +792,10 @@ TEST_F(OverviewTest, ClosingTheActiveDeskSwitchesAtOnceWithoutTheRemovalStrip)
     desks->setScreenshotter([this](const std::function<void(render::Renderer &)> &paint) {
         paint(renderer);
         scene::DeskSwitchNode::Frames frames;
-        frames[QStringLiteral("out")] = std::make_unique<FrameTexture>(kOutput.size());
+        frames["out"] = std::make_unique<FrameTexture>(kOutput.size());
         return frames;
     });
-    Window *here = makeWindow(QRect(100, 100, 500, 400));
+    Window *here = makeWindow(base::Rect(100, 100, 500, 400));
     show();
 
     // A new desk, clicked to, then closed.
@@ -809,7 +808,7 @@ TEST_F(OverviewTest, ClosingTheActiveDeskSwitchesAtOnceWithoutTheRemovalStrip)
     ASSERT_EQ(State::Shown, overview->state());
     EXPECT_TRUE(overview->items().empty());
 
-    const QRectF preview = overview->bars()[0].desks[1].bounds;
+    const base::RectF preview = overview->bars()[0].desks[1].bounds;
     moveTo(preview.center());
     click(scene::OverviewDeskBarNode::closeButtonRect(preview).center());
     EXPECT_EQ(nullptr, desks->animation());
@@ -825,19 +824,19 @@ TEST_F(OverviewTest, ClosingTheActiveDeskSwitchesAtOnceWithoutTheRemovalStrip)
 
 TEST_F(OverviewTest, EvenOneDeskGetsAPreview)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     show();
     ASSERT_EQ(1u, overview->bars().size());
     const auto one = overview->bars()[0];
     ASSERT_EQ(1u, one.desks.size());
     EXPECT_TRUE(one.desks[0].active);
     // A preview at the output's shape, the new-desk button half as wide.
-    const QRectF preview = one.desks[0].bounds;
+    const base::RectF preview = one.desks[0].bounds;
     EXPECT_NEAR(double(kOutput.width()) / kOutput.height(), preview.width() / preview.height(),
                 0.02);
     EXPECT_EQ(preview.height(), one.newDesk.height());
     EXPECT_NEAR(preview.width() / 2, one.newDesk.width(), 1);
-    const QRectF place = overview->items()[0].bounds;
+    const base::RectF place = overview->items()[0].bounds;
 
     click(one.newDesk.center());
     EXPECT_EQ(2u, desks->desks().size());
@@ -852,11 +851,11 @@ TEST_F(OverviewTest, EvenOneDeskGetsAPreview)
 
 TEST_F(OverviewTest, AWindowDroppedOnNewGoesToANewDesk)
 {
-    Window *window = makeWindow(QRect(100, 100, 500, 400));
-    makeWindow(QRect(300, 200, 500, 400));
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
+    makeWindow(base::Rect(300, 200, 500, 400));
     show();
-    const QPointF from = placeOf(window).center();
-    const QPointF to = overview->bars()[0].newDesk.center();
+    const base::PointF from = placeOf(window).center();
+    const base::PointF to = overview->bars()[0].newDesk.center();
     moveTo(from);
     input.onPointerButton(at(now), BTN_LEFT, true);
     for (int step = 1; step <= 10; ++step)
@@ -870,7 +869,7 @@ TEST_F(OverviewTest, AWindowDroppedOnNewGoesToANewDesk)
 
 TEST_F(OverviewTest, TheCursorIsTheDefaultOneThroughout)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     ASSERT_FALSE(seat.cursorOverride().has_value());
     ASSERT_TRUE(overview->enter());
     EXPECT_EQ(input::CursorShape::Default, seat.cursorOverride());
@@ -886,12 +885,12 @@ TEST_F(OverviewTest, TheCursorIsTheDefaultOneThroughout)
 
 TEST_F(OverviewTest, ThreeFingersDownOverAWindowBringItToTheFront)
 {
-    Window *below = makeWindow(QRect(100, 100, 500, 400));
-    Window *above = makeWindow(QRect(300, 200, 500, 400));
+    Window *below = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *above = makeWindow(base::Rect(300, 200, 500, 400));
     WmGestureHandler gestures(desks, {}, overview);
     input.setGestureFilter(&gestures);
     const auto swipe = [this](double mm) {
-        const QPointF travel(0, mm / WmGestureHandler::kMmPerUnacceleratedUnit);
+        const base::PointF travel(0, mm / WmGestureHandler::kMmPerUnacceleratedUnit);
         input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel * 5, travel, 1, 0);
     };
     const auto flickDown = [&] {
@@ -906,7 +905,7 @@ TEST_F(OverviewTest, ThreeFingersDownOverAWindowBringItToTheFront)
 
     // Away from every window: the desk as it was.
     show();
-    moveTo(QPointF(990, 790));
+    moveTo(base::PointF(990, 790));
     flickDown();
     EXPECT_EQ(State::Hidden, overview->state());
     EXPECT_EQ(above, active());
@@ -923,8 +922,8 @@ TEST_F(OverviewTest, ThreeFingersDownOverAWindowBringItToTheFront)
 
 TEST_F(OverviewTest, AClickWhileItComesInTakesTheWindowUnderThePointer)
 {
-    Window *first = makeWindow(QRect(100, 100, 400, 300));
-    Window *second = makeWindow(QRect(500, 300, 400, 300));
+    Window *first = makeWindow(base::Rect(100, 100, 400, 300));
+    Window *second = makeWindow(base::Rect(500, 300, 400, 300));
     ASSERT_EQ(second, active());
     ASSERT_TRUE(overview->enter());
     paint();
@@ -934,7 +933,7 @@ TEST_F(OverviewTest, AClickWhileItComesInTakesTheWindowUnderThePointer)
     ASSERT_LT(progress, 0.9);
     ASSERT_EQ(State::Entering, overview->state());
     // Where it is drawn now, not where it is going.
-    const QRectF drawn = node->presentedRect(indexOf(first), progress, double(now));
+    const base::RectF drawn = node->presentedRect(indexOf(first), progress, double(now));
     click(drawn.center());
     EXPECT_EQ(State::Exiting, overview->state());
     EXPECT_EQ(first, active());
@@ -943,8 +942,8 @@ TEST_F(OverviewTest, AClickWhileItComesInTakesTheWindowUnderThePointer)
 TEST_F(OverviewTest, AClickedWindowIsDrawnOverTheRestAllTheWayOut)
 {
     // Behind the active one on the desk, overlapping it.
-    Window *behind = makeWindow(QRect(100, 100, 600, 400));
-    Window *front = makeWindow(QRect(300, 200, 600, 400));
+    Window *behind = makeWindow(base::Rect(100, 100, 600, 400));
+    Window *front = makeWindow(base::Rect(300, 200, 600, 400));
     ASSERT_EQ(front, active());
     show();
     click(placeOf(behind).center());
@@ -960,7 +959,7 @@ TEST_F(OverviewTest, AClickedWindowIsDrawnOverTheRestAllTheWayOut)
         const auto drawnAt = [this](const Window *window) {
             const render::Texture *texture = window->rootSurface()->node()->texture();
             int last = -1;
-            for (qsizetype i = 0; i < renderer.calls.size(); ++i) {
+            for (size_t i = 0; i < renderer.calls.size(); ++i) {
                 const render::Texture *drawn = renderer.calls[i].texture;
                 const auto cached = renderer.contents.find(drawn);
                 if (drawn && (drawn == texture || (cached != renderer.contents.end() && cached->second == texture)))
@@ -984,12 +983,12 @@ TEST_F(OverviewTest, AClickKeepsEveryWindowsPlaceOnTheWayOut)
 {
     // The same centre: the layout orders them by stacking, which the click
     // changes, so the places must be kept rather than laid out again.
-    Window *behind = makeWindow(QRect(300, 200, 400, 300));
-    Window *front = makeWindow(QRect(100, 100, 800, 500));
+    Window *behind = makeWindow(base::Rect(300, 200, 400, 300));
+    Window *front = makeWindow(base::Rect(100, 100, 800, 500));
     ASSERT_EQ(front, active());
     show();
-    const QRectF behindPlace = placeOf(behind);
-    const QRectF frontPlace = placeOf(front);
+    const base::RectF behindPlace = placeOf(behind);
+    const base::RectF frontPlace = placeOf(front);
     ASSERT_NE(behindPlace, frontPlace);
     click(behindPlace.center());
     ASSERT_EQ(State::Exiting, overview->state());
@@ -999,15 +998,15 @@ TEST_F(OverviewTest, AClickKeepsEveryWindowsPlaceOnTheWayOut)
     now += 40;
     paint();
     const double progress = node->progress(double(now));
-    const QRectF drawn = node->presentedRect(indexOf(behind), progress, double(now));
-    const QRectF straight = lerp(QRectF(behind->bounds()), behindPlace, progress);
+    const base::RectF drawn = node->presentedRect(indexOf(behind), progress, double(now));
+    const base::RectF straight = lerp(base::RectF(behind->bounds()), behindPlace, progress);
     EXPECT_NEAR(straight.x(), drawn.x(), 1e-6);
     EXPECT_NEAR(straight.y(), drawn.y(), 1e-6);
 }
 
 TEST_F(OverviewTest, TheShortcutTurnsItAroundWhereverItIs)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     ASSERT_TRUE(overview->enter());
     paint();
     for (const State heading : {State::Exiting, State::Entering, State::Exiting}) {
@@ -1025,11 +1024,11 @@ TEST_F(OverviewTest, TheShortcutTurnsItAroundWhereverItIs)
 
 TEST_F(OverviewTest, ASidewaysSwipeLandsItWhereItWasHeading)
 {
-    makeWindow(QRect(100, 100, 500, 400));
+    makeWindow(base::Rect(100, 100, 500, 400));
     WmGestureHandler gestures(desks, {}, overview);
     input.setGestureFilter(&gestures);
     const auto sideways = [this] {
-        const QPointF travel(10 / WmGestureHandler::kMmPerUnacceleratedUnit, 0);
+        const base::PointF travel(10 / WmGestureHandler::kMmPerUnacceleratedUnit, 0);
         input.onPointerGestureBegin(at(now), input::GestureType::Swipe, 3);
         input.onPointerGestureUpdate(at(now), input::GestureType::Swipe, travel * 5, travel, 1,
                                      0);
@@ -1055,15 +1054,15 @@ TEST_F(OverviewTest, ASidewaysSwipeLandsItWhereItWasHeading)
 
 TEST_F(OverviewTest, ANewOutputSizeLaysItOutAgainAtOnce)
 {
-    Window *first = makeWindow(QRect(100, 100, 500, 400));
-    Window *second = makeWindow(QRect(300, 200, 500, 400));
+    Window *first = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *second = makeWindow(base::Rect(300, 200, 500, 400));
     show();
-    const QRectF place = placeOf(second);
+    const base::RectF place = placeOf(second);
     moveTo(place.center());
     input.onPointerButton(at(now), BTN_LEFT, true);
-    moveTo(place.center() + QPointF(60, 40));
+    moveTo(place.center() + base::PointF(60, 40));
 
-    constexpr QRect kWide(0, 0, 1600, 800);
+    const base::Rect kWide(0, 0, 1600, 800);
     manager.setOutputBounds(kWide);
     EXPECT_EQ(State::Shown, overview->state());
     EXPECT_EQ(kWide, node->geometry());
@@ -1073,7 +1072,7 @@ TEST_F(OverviewTest, ANewOutputSizeLaysItOutAgainAtOnce)
     ASSERT_EQ(2u, overview->items().size());
     // At its new place straight away, not on a tween from the old one.
     for (const Window *window : {first, second}) {
-        EXPECT_TRUE(QRectF(kWide).contains(placeOf(window)));
+        EXPECT_TRUE(base::RectF(kWide).contains(placeOf(window)));
         EXPECT_EQ(placeOf(window), node->items()[indexOf(window)].to);
     }
     EXPECT_NE(place, placeOf(second));
@@ -1087,29 +1086,28 @@ namespace {
 
 display::DisplayId displayId(const char *value)
 {
-    return display::DisplayId(QString::fromLatin1(value));
+    return display::DisplayId(value);
 }
 
-display::DisplaySnapshot physicalDisplay(const char *name, QSize size)
+display::DisplaySnapshot physicalDisplay(const char *name, base::Size size)
 {
     display::DisplaySnapshot result;
     result.sessionId = displayId(name);
-    result.persistentKey = QStringLiteral("edid-") + QString::fromLatin1(name);
-    result.portKey = QStringLiteral("port-") + QString::fromLatin1(name);
-    result.connectorName = QString::fromLatin1(name);
-    result.devicePath = QStringLiteral("/dev/dri/card0");
+    result.persistentKey = "edid-" + std::string(name);
+    result.portKey = "port-" + std::string(name);
+    result.connectorName = name;
+    result.devicePath = "/dev/dri/card0";
     result.physicalSizeMm = {600, 340};
-    result.modes = {{size, 60000, 148500, size.width() + 100, size.height() + 50, 0,
-                     QStringLiteral("mode"), true}};
-    result.currentMode = result.modes.first();
+    result.modes = {{size, 60000, 148500, size.width() + 100, size.height() + 50, 0, "mode", true}};
+    result.currentMode = result.modes.front();
     return result;
 }
 
-display::LogicalDisplay logicalDisplay(const char *name, QRect bounds, bool primary)
+display::LogicalDisplay logicalDisplay(const char *name, base::Rect bounds, bool primary)
 {
     return {displayId(name),
             {displayId(name)},
-            QStringLiteral("Cutefish-") + QString::fromLatin1(name),
+            "Cutefish-" + std::string(name),
             bounds,
             bounds,
             {},
@@ -1117,7 +1115,7 @@ display::LogicalDisplay logicalDisplay(const char *name, QRect bounds, bool prim
             primary};
 }
 
-constexpr QRect kSecondary(1000, 0, 800, 600);
+const base::Rect kSecondary(1000, 0, 800, 600);
 
 } // namespace
 
@@ -1131,8 +1129,8 @@ protected:
     {
         OverviewTest::SetUp();
         ASSERT_TRUE(displays.installHardware(
-                {QStringLiteral("instance"),
-                 QStringLiteral("seat0"),
+                {"instance",
+                 "seat0",
                  1,
                  {physicalDisplay("a", kOutput.size()), physicalDisplay("b", kSecondary.size())}}));
         apply(true);
@@ -1147,24 +1145,24 @@ protected:
 
     void apply(bool withSecondary)
     {
-        QList<display::LogicalDisplay> logical {logicalDisplay("a", kOutput, true)};
-        QList<display::DisplayPlacement> placements;
+        std::vector<display::LogicalDisplay> logical {logicalDisplay("a", kOutput, true)};
+        std::vector<display::DisplayPlacement> placements;
         if (withSecondary) {
-            logical.append(logicalDisplay("b", kSecondary, false));
-            placements.append({displayId("b"), displayId("a"), display::LayoutEdge::Right, 0});
+            logical.push_back(logicalDisplay("b", kSecondary, false));
+            placements.push_back({displayId("b"), displayId("a"), display::LayoutEdge::Right, 0});
         }
         ASSERT_TRUE(displays.installApplied(
-                {QStringLiteral("instance"), 1, ++revision, {}, logical, placements}));
+                {"instance", 1, ++revision, {}, logical, placements}));
     }
 };
 
 TEST_F(MultiOutputOverviewTest, AnOutputGoingOrComingLaysItOutAgain)
 {
-    Window *here = makeWindow(QRect(100, 100, 500, 400));
-    Window *there = makeWindow(QRect(1100, 100, 500, 400));
+    Window *here = makeWindow(base::Rect(100, 100, 500, 400));
+    Window *there = makeWindow(base::Rect(1100, 100, 500, 400));
     show();
     ASSERT_EQ(2u, overview->bars().size());
-    EXPECT_TRUE(QRectF(kSecondary).contains(placeOf(there)));
+    EXPECT_TRUE(base::RectF(kSecondary).contains(placeOf(there)));
 
     apply(false);
     EXPECT_EQ(State::Shown, overview->state());
@@ -1173,10 +1171,10 @@ TEST_F(MultiOutputOverviewTest, AnOutputGoingOrComingLaysItOutAgain)
     // The window brought back from the output that went is laid out with the rest.
     ASSERT_EQ(2u, overview->items().size());
     for (const Window *window : {here, there})
-        EXPECT_TRUE(QRectF(kOutput).contains(placeOf(window)));
+        EXPECT_TRUE(base::RectF(kOutput).contains(placeOf(window)));
 
     apply(true);
-    const QRect both = kOutput.united(kSecondary);
+    const base::Rect both = kOutput.united(kSecondary);
     EXPECT_EQ(both, node->geometry());
     EXPECT_EQ(both, bar->geometry());
     ASSERT_EQ(2u, overview->bars().size());

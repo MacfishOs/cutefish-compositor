@@ -11,6 +11,7 @@
 #include "accelerators/accelerator_manager.h"
 
 #include <algorithm>
+#include <cassert>
 
 #include "core/logging.h"
 
@@ -23,7 +24,7 @@ AcceleratorManager::~AcceleratorManager() = default;
 void AcceleratorManager::registerAccelerators(const std::vector<Accelerator> &accelerators,
                                               HandlerPriority priority, AcceleratorTarget *target)
 {
-    Q_ASSERT(target);
+    assert(target);
     for (const Accelerator &accelerator : accelerators) {
         TargetInfo &info = m_accelerators.getOrInsertDefault(accelerator);
         if (info.contains(target)) {
@@ -40,7 +41,7 @@ void AcceleratorManager::unregisterAccelerator(const Accelerator &accelerator,
 {
     TargetInfo *info = m_accelerators.find(accelerator);
     if (!info) {
-        qCWarning(cfInput) << "Unregistering an unknown accelerator" << accelerator.shortcutText();
+        CF_WARNING(cfInput) << "Unregistering an unknown accelerator" << accelerator.shortcutText();
         return;
     }
     if (info->unregister(target) && !info->hasTargets())
@@ -85,7 +86,7 @@ void AcceleratorManager::TargetInfo::registerWithPriority(AcceleratorTarget *tar
 {
     if (priority == HighPriority) {
         // Only one priority handler per accelerator, and it goes first.
-        Q_ASSERT(!m_hasPriorityHandler);
+        assert(!m_hasPriorityHandler);
         m_hasPriorityHandler = true;
         m_targets.push_front(target);
     } else {

@@ -4,6 +4,7 @@
 
 #include "core/computer_control_environment.h"
 
+
 #include <linux/sockios.h>
 #include <sys/ioctl.h>
 
@@ -35,16 +36,16 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
 
     computer_control::Environment environment;
     environment.askConsent = [consent = hosts.consent](
-                                     const QString &agentName,
+                                     const std::string &agentName,
                                      std::function<void(computer_control::ConsentResult)> answer) {
         return consent->ask(agentName, std::move(answer));
     };
     // The permission prompt and the authentication dialogs are the user's to
     // answer, so the agent neither clicks nor types into them.
-    environment.protectedAt = [wm, showsSystemDialogs](const QPointF &position) {
-        wm::Window *window = wm->windowAt(position);
+    environment.protectedAt = [wm, showsSystemDialogs](const base::PointF &point) {
+        wm::Window *window = wm->windowAt(point);
         if (!window)
-            window = wm->frameAt(position);
+            window = wm->frameAt(point);
         return window && showsSystemDialogs(window->processId());
     };
     environment.protectedFocus = [wm, seat, showsSystemDialogs] {
@@ -87,7 +88,7 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
         return windows;
     };
     // What the dock's click on a task does; each step can end the window.
-    environment.activateWindow = [wm](quint64 id) {
+    environment.activateWindow = [wm](uint64_t id) {
         wm::Window *window = wm->windowById(id);
         if (!window || !wm::canIncludeWindowInMruList(window))
             return false;
@@ -102,12 +103,12 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
         wm->activation()->activate(window);
         return true;
     };
-    environment.protectedWindow = [wm, showsSystemDialogs](quint64 id) {
+    environment.protectedWindow = [wm, showsSystemDialogs](uint64_t id) {
         wm::Window *window = wm->windowById(id);
         return window && showsSystemDialogs(window->processId());
     };
     // What the close button does (commands::closeWindow).
-    environment.closeWindow = [wm](quint64 id) {
+    environment.closeWindow = [wm](uint64_t id) {
         wm::Window *window = wm->windowById(id);
         if (!window || !wm::canIncludeWindowInMruList(window) || !window->canClose())
             return false;
@@ -116,18 +117,18 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
     };
     // A window out of view is brought back with activateWindow first, so the
     // agent sees what it moves.
-    environment.setWindowFrame = [wm](quint64 id, const QRect &frame) {
+    environment.setWindowFrame = [wm](uint64_t id, const base::Rect &requested) {
         wm::Window *window = wm->windowById(id);
         if (!window || !wm::canIncludeWindowInMruList(window) || window->isHidden()
             || window->isDeskHidden() || window->state()->isMinimized())
             return false;
-        QRect bounds = frame;
+        base::Rect bounds = requested;
         if (!window->isResizable()) {
             bounds.setSize(window->bounds().size());
         } else {
             // No larger than the work area, as a resize by hand (WindowResizer).
-            QSize maximum = wm->workAreaFor(window).size();
-            if (const QSize limit = window->maximumOuterSize(); !limit.isEmpty())
+            base::Size maximum = wm->workAreaFor(window).size();
+            if (const base::Size limit = window->maximumOuterSize(); !limit.isEmpty())
                 maximum = maximum.isEmpty() ? limit : maximum.boundedTo(limit);
             if (!maximum.isEmpty()) {
                 bounds.setWidth(std::min(bounds.width(), maximum.width()));
@@ -149,11 +150,10 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
     // The text as wl-copy offers it, so Xwayland clients get it too.
     environment.setClipboard = [seat](const std::string &text) {
         auto source = std::make_shared<clipboard::StoredSource>();
-        const QByteArray data = QByteArray::fromStdString(text);
         for (const char *mime : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING",
                                  "STRING", "TEXT"}) {
             source->offer(mime);
-            source->payloads[mime] = data;
+            source->payloads[mime] = text;
         }
         seat->selection()->setSource(std::move(source));
     };

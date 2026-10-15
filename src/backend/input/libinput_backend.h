@@ -10,19 +10,18 @@
 #include "input/touchpad_settings.h"
 #include "input/touchscreen_settings.h"
 #include "input/types.h"
-#include <QObject>
 
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 struct libinput;
 struct libinput_event;
 struct libinput_device;
 struct udev;
-class QSocketNotifier;
 
 namespace cutefish::input {
 class InputManager;
@@ -33,23 +32,21 @@ namespace cutefish::backend {
 class Session;
 class TouchpadContacts;
 
-// Opens the seat's input devices through libinput and pumps them from the Qt
-// event loop, feeding an input::InputManager.
+// Opens the seat's input devices through libinput and pumps them from the main
+// loop, feeding an input::InputManager.
 //
 // Devices are opened through the Session, so the compositor never needs
 // permission to /dev/input itself and the seat manager can revoke access across
 // VT switches.
-class LibinputBackend : public QObject, public input::SeatObserver
+class LibinputBackend : public input::SeatObserver
 {
-    Q_OBJECT
-
 public:
     ~LibinputBackend() override;
 
     // Creates a udev-backed context assigned to the session's seat. Returns
     // nullptr if the context or the seat could not be acquired.
     static std::unique_ptr<LibinputBackend>
-    create(Session *session, input::InputManager *inputManager, QObject *parent = nullptr);
+    create(Session *session, input::InputManager *inputManager);
 
     // Devices are suspended while another session owns the seat; libinput is
     // told so that it re-reads device state on resume.
@@ -61,7 +58,7 @@ public:
     void onKeyboardLayoutUpdated() override { onKeyboardModifierUpdated(); }
 
 private:
-    LibinputBackend(Session *session, input::InputManager *inputManager, QObject *parent);
+    LibinputBackend(Session *session, input::InputManager *inputManager);
 
     bool open();
     void dispatch();
@@ -89,7 +86,7 @@ private:
 
     udev *m_udev = nullptr;
     libinput *m_libinput = nullptr;
-    QSocketNotifier *m_notifier = nullptr;
+    int m_watch = 0;
 
     // Session device handles, keyed by the fd libinput knows them as.
     std::map<int, int> m_deviceIds;
@@ -98,6 +95,7 @@ private:
     input::MouseSettings m_mouseSettings;
     input::TouchpadSettings m_touchpadSettings;
     input::TouchscreenSettings m_touchscreenSettings;
+    std::vector<base::Subscription> m_settingsSubscriptions;
     std::set<libinput_device *> m_mice;
     std::set<libinput_device *> m_touchpads;
     std::set<libinput_device *> m_touchscreens;

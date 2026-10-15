@@ -8,11 +8,11 @@
 #include <ctime>
 #include <memory>
 #include <optional>
+#include <vector>
 
-#include <QObject>
-#include <QRectF>
-#include <QTimer>
-
+#include "base/geometry.h"
+#include "base/signal.h"
+#include "base/timer.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -50,7 +50,7 @@ public:
 
     // The password field in panel coordinates, for the blur behind it; it
     // moves with the shake.
-    QRectF fieldBounds() const;
+    base::RectF fieldBounds() const;
     // The view keys go to: the password field's input unless the user moved
     // the focus to the typed user name.
     ui::View *passwordInput() const;
@@ -66,8 +66,8 @@ private:
 
     ui::Window *m_window;
     AuthController *m_controller;
-    QObject m_context;
-    QTimer m_clockTimer;
+    base::Timer m_clockTimer;
+    std::vector<base::Subscription> m_subscriptions;
     std::optional<std::time_t> m_fixedClock;
     bool m_blocked = false;
     RaisedLabel *m_date = nullptr;
