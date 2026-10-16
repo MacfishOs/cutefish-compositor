@@ -38,6 +38,7 @@ public:
     Content content() const override { return isActive() ? Content::Translucent : Content::None; }
     bool paintsSubtree() const override { return isActive(); }
     bool acceptsInput(const base::PointF &) const override { return false; }
+    void finishRetiring() override;
     void releaseRenderResources() override;
 
 private:

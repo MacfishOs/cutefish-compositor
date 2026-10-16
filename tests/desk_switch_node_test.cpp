@@ -671,6 +671,33 @@ TEST(SlideOutNode, AWindowSentToAnotherDeskSlidesOffTowardsIt)
     EXPECT_FALSE(node.isActive());
 }
 
+TEST(SlideOutNode, SlidesNoOutputDrewEndAllTheSame)
+{
+    int64_t now = 0;
+    scene::SlideOutNode node([&now] {
+        return now;
+    });
+    FrameRenderer renderer;
+    renderer.setOutputContext({"out", kViewport, base::Size(1000, 800), 1, 0, 0, {}});
+    const auto slideOut = [&] {
+        Node::Frames frames;
+        frames["out"] = std::make_unique<FrameTexture>(kViewport.size());
+        node.slideOut(std::move(frames), base::Rect(100, 100, 300, 200), kViewport,
+                      /*goingLeft=*/true);
+    };
+    for (int i = 0; i < 3; ++i) {
+        slideOut();
+        now += scene::SlideOutNode::kDurationMs;
+    }
+    slideOut();
+    node.render(renderer);
+    EXPECT_EQ(renderer.calls.size(), 1);
+
+    slideOut();
+    node.finishRetiring();
+    EXPECT_FALSE(node.isActive());
+}
+
 TEST(DeskSwitchNode, TheDeskContentBelowIsNotDrawnWhereTheNodeCoversIt)
 {
     Fixture f;

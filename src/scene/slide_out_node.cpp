@@ -17,6 +17,11 @@
 
 namespace cutefish::scene {
 
+static double slideDuration()
+{
+    return std::max(1.0, SlideOutNode::kDurationMs * motion::durationScale());
+}
+
 SlideOutNode::SlideOutNode(std::function<int64_t()> clock)
     : Node("window-move-to-desk")
     , m_now(clock ? std::move(clock) : [] {
@@ -35,7 +40,12 @@ void SlideOutNode::slideOut(DeskSwitchNode::Frames frames, const base::Rect &win
     // Upstream GetWindowEndTransform: just past the edge on the target's side.
     const int distance = goingLeft ? -(window.right() - output.left())
                                    : output.right() - window.left();
-    m_slides.push_back({std::move(frames), distance, m_now()});
+    const int64_t now = m_now();
+    // Slides end where they are drawn; with no output drawing, they end here.
+    std::erase_if(m_slides, [now](const Slide &slide) {
+        return now - slide.start >= slideDuration();
+    });
+    m_slides.push_back({std::move(frames), distance, now});
     notifyChanged();
 }
 
@@ -47,7 +57,7 @@ void SlideOutNode::render(render::Renderer &renderer) const
     const auto &context = renderer.outputContext();
     const base::Rect viewport =
             context.logicalViewport.isEmpty() ? absoluteGeometry() : context.logicalViewport;
-    const double duration = std::max(1.0, kDurationMs * motion::durationScale());
+    const double duration = slideDuration();
     for (const Slide &slide : m_slides) {
         const auto frame = slide.frames.find(context.outputId);
         if (frame == slide.frames.end() || !frame->second)
@@ -66,6 +76,12 @@ void SlideOutNode::render(render::Renderer &renderer) const
     });
     // Once more after the last slide ends, to repaint without it.
     notifyChanged();
+}
+
+void SlideOutNode::finishRetiring()
+{
+    m_slides.clear();
+    Node::finishRetiring();
 }
 
 void SlideOutNode::releaseRenderResources()
