@@ -5,6 +5,8 @@
 #ifndef CUTEFISH_SESSION_SECURE_CONTAINER_H_
 #define CUTEFISH_SESSION_SECURE_CONTAINER_H_
 
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -20,6 +22,10 @@ namespace cutefish::scene {
 class ColorNode;
 class Node;
 } // namespace cutefish::scene
+
+namespace cutefish::ui {
+class Bitmap;
+}
 
 namespace cutefish::session {
 
@@ -94,6 +100,16 @@ public:
     // loading, whether or not it could be read.
     bool isWallpaperReady() const;
 
+    // Decodes the picture covering `deviceSize`, centre-cropped; `done` runs
+    // while the returned handle is kept. The session's desktop shares its
+    // decode this way; unset, the lock screen decodes on its own.
+    using PictureLoader = std::function<std::shared_ptr<void>(
+            const std::string &path, const base::Size &deviceSize, std::function<void(const ui::Bitmap &)> done)>;
+    void setPictureLoader(PictureLoader loader) { m_pictureLoader = std::move(loader); }
+    const PictureLoader &pictureLoader() const { return m_pictureLoader; }
+    // The wallpaper file shown, empty for the plain colour.
+    const std::string &picture() const { return m_picture; }
+
 private:
     void rebuildShield();
     void refreshWallpaper();
@@ -102,6 +118,8 @@ private:
     base::FileWatch m_settingsWatch;
     base::FileWatch m_wallpaperWatch;
     std::string m_wallpaperKey;
+    std::string m_picture;
+    PictureLoader m_pictureLoader;
 
     int transitionDuration() const;
 

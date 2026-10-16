@@ -102,6 +102,8 @@ void Compositor::surfaceDestroyed(Surface *surface)
 
 void Compositor::updateTextures(render::Renderer &renderer)
 {
+    if (m_contentProducer)
+        m_contentProducer->produceContent(renderer);
     for (Surface *surface : m_surfaces)
         surface->updateTexture(renderer);
 }
@@ -205,6 +207,8 @@ std::vector<std::shared_ptr<Surface *>> Compositor::takeMovedSurfaces()
 
 bool Compositor::awaitsFrame(const base::Rect &viewport) const
 {
+    if (m_contentProducer && m_contentProducer->hasPendingContent(viewport))
+        return true;
     return std::any_of(m_surfaces.begin(), m_surfaces.end(), [&](const Surface *surface) {
         const auto *node = surface->node();
         return node && node->absoluteGeometry().intersects(viewport) && surface->awaitsFrame();

@@ -14,11 +14,12 @@ namespace cutefish::wayland {
 
 // The privilege boundary for the private shell protocols.
 //
-// Exactly one wl_client at a time is the trusted shell. It is not recognised by
-// uid, by pid or by anything else it could claim about itself: the session
-// hands the compositor one end of a socketpair it created, the compositor turns
-// that fd into a wl_client with wl_client_create(), and *that* client object is
-// the trusted one. Nothing that connects to the public socket can become it.
+// Exactly one wl_client at a time is trusted: the file manager's desktop, called
+// the shell here. It is not recognised by uid, by pid or by anything else it
+// could claim about itself: the session hands the compositor one end of a
+// socketpair it created, the compositor turns that fd into a wl_client with
+// wl_client_create(), and *that* client object is the trusted one. Nothing that
+// connects to the public socket can become it.
 //
 // A global registered here is invisible to every other client - the filter runs
 // before wl_registry.global is sent - and its bind handler must check
@@ -47,13 +48,6 @@ public:
     void removeRestrictedGlobal(wl_global *global);
     void removePrivateGlobal(wl_global *global);
 
-    // Runs after the trusted client has gone and the stored client is already
-    // null, so a handler is free to tear its protocol state down.
-    void setShellDisconnectedCallback(std::function<void()> callback)
-    {
-        m_shell.disconnected = std::move(callback);
-    }
-
 private:
     struct TrustedConnection;
 
@@ -63,11 +57,9 @@ private:
         TrustedConnection *connection;
     };
 
-    // One adopted connection: the client, its destroy listener, and what to run
-    // when it goes away.
+    // One adopted connection: the client and its destroy listener.
     struct TrustedConnection {
         wl_client *client = nullptr;
-        std::function<void()> disconnected;
         const char *label = "";
         DestroyListener destroy {};
         bool listening = false;
@@ -80,7 +72,7 @@ private:
     static void forget(TrustedConnection &connection);
 
     wl_display *m_display = nullptr;
-    TrustedConnection m_shell {nullptr, {}, "shell", {}, false};
+    TrustedConnection m_shell {nullptr, "shell", {}, false};
     std::vector<wl_global *> m_privateGlobals;
     std::map<const wl_global *, std::function<bool(const wl_client *)>> m_restrictedGlobals;
 };

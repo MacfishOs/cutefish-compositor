@@ -13,12 +13,9 @@
 
 namespace cutefish::wm {
 
-// Aggregates the work-area reservations the trusted shell makes through
-// cutefish_shell_surface_v1.set_exclusive_zone.
-//
-// Keys are opaque tokens owned by the caller - the protocol layer uses the
-// shell surface's address - so a reservation can be dropped again when the
-// object that made it goes away, including when the whole shell disconnects.
+// Aggregates the work-area reservations of the shell's panels (the status bar,
+// the dock). Keys are opaque tokens owned by the caller - the panel's window -
+// so a reservation can be dropped again when the panel that made it goes.
 class ExclusiveZones
 {
 public:
@@ -33,8 +30,6 @@ public:
     bool set(const void* token, ScreenEdge edge, int thickness,
              const std::string& outputName = {});
     bool clear(const void* token);
-    // Drops every reservation at once; what a shell disconnect does.
-    bool clearAll();
 
     bool isEmpty() const { return m_zones.empty(); }
 

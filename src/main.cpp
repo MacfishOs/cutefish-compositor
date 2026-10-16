@@ -14,6 +14,7 @@
 #include "core/compositor_shell.h"
 #include "core/logging.h"
 #include "core/main_loop.h"
+#include "core/malloc_policy.h"
 #include "core/scoped_fd.h"
 #include "scene/motion.h"
 
@@ -41,6 +42,7 @@ int createSignalFd()
 
 int main(int argc, char *argv[])
 {
+    cutefish::core::applyMallocPolicy();
     signal(SIGPIPE, SIG_IGN);
     // The user's locale from the start, not only once the embedded toolkit
     // sets it when the lock screen first appears.

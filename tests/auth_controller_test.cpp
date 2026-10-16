@@ -101,8 +101,9 @@ TEST(AuthControllerTest, LoginSessionsFollowWaylandSessions)
     setLoginSessionDirectoriesForTesting({});
 }
 
-// Exec lines split as Qt's QProcess::splitCommand() splits them.
-TEST(AuthControllerTest, SplitsCommandsAsQtDoes)
+// Exec lines split on whitespace, double quotes grouping and """ a literal
+// quote.
+TEST(AuthControllerTest, SplitsOnWhitespaceAndQuotes)
 {
     EXPECT_EQ(splitCommand("  a  b\tc "), (std::vector<std::string> {"a", "b", "c"}));
     EXPECT_EQ(splitCommand("run \"two words\" x"),

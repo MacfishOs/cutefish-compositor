@@ -18,7 +18,6 @@
 #include "wayland/protocols/cursor_shape.h"
 #include "wayland/protocols/cutefish_computer_control.h"
 #include "wayland/protocols/cutefish_shell.h"
-#include "wayland/protocols/cutefish_window_management.h"
 #include "wayland/protocols/data_control.h"
 #include "wayland/protocols/idle_notify.h"
 #include "wayland/protocols/foreign_toplevel_list.h"
@@ -233,23 +232,14 @@ bool ProtocolGlobals::registerComputerControl()
 
 bool ProtocolGlobals::registerPrivateShell()
 {
-    // Both globals are registered with the privileged filter, so an ordinary
-    // client never sees them in its registry.
+    // Registered with the privileged filter, so an ordinary client never sees
+    // it in its registry.
     m_cutefishShell =
             std::make_unique<WaylandCutefishShell>(m_deps.windowManager, m_privileged.get());
-    m_windowManagement = std::make_unique<WaylandCutefishWindowManagement>(m_deps.windowManager,
-                                                                           m_privileged.get());
-    wl_display *display = m_deps.server->display();
-    if (!createCutefishShellGlobal(display, m_cutefishShell.get())
-        || !createCutefishWindowManagementGlobal(display, m_windowManagement.get())) {
-        CF_CRITICAL(cfWayland) << "Failed to register the private shell globals";
+    if (!createCutefishShellGlobal(m_deps.server->display(), m_cutefishShell.get())) {
+        CF_CRITICAL(cfWayland) << "Failed to register the private shell global";
         return false;
     }
-    m_windowManagement->setCaptureSourceExporter(
-            [capture = m_imageCapture.get(), list = m_toplevelList.get()](
-                    wl_client *client, uint32_t id, wm::Window *window) {
-                capture->exportSource(client, id, list->shadowedSourceFor(window));
-            });
     return true;
 }
 
@@ -348,9 +338,6 @@ void ProtocolGlobals::shutdown()
     m_computerControl.reset();
     if (m_privileged && m_qtHardwareIntegration)
         m_privileged->removeRestrictedGlobal(m_qtHardwareIntegration);
-    // Window sources keep coming while the shell is up; after this they stop.
-    if (m_windowManagement)
-        m_windowManagement->setCaptureSourceExporter({});
     if (m_imageCapture)
         m_imageCapture->shutdown();
     if (m_toplevelList)

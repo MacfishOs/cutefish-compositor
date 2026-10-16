@@ -21,9 +21,10 @@ constexpr uint32_t kCutefishShellVersion = 1;
 
 // The per-display state the cutefish_shell_v1 global hands to its resources.
 //
-// cutefish_shell_v1 is the private extension the trusted shell uses to say what
-// its ordinary xdg surfaces are for. Everything it carries is adapted into
-// wm:: concepts; no wl_resource crosses into the window manager.
+// cutefish_shell_v1 is the private extension the trusted client (the file
+// manager's desktop) uses to say that an ordinary xdg surface is an output's
+// desktop. Everything it carries is adapted into wm:: concepts; no wl_resource
+// crosses into the window manager.
 class WaylandCutefishShell
 {
 public:

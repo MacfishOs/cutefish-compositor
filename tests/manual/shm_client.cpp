@@ -5,7 +5,7 @@
 // A minimal libwayland-client program for exercising wl_shm by hand: it binds
 // wl_compositor and wl_shm, paints a moving pattern into an shm buffer and
 // drives repeated commits from frame callbacks. Deliberately no xdg-shell and
-// no Qt, so that a failure points at the compositor rather than at a toolkit.
+// no toolkit, so that a failure points at the compositor rather than at one.
 
 #include <wayland-client.h>
 

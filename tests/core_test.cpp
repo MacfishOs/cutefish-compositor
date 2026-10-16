@@ -133,26 +133,18 @@ TEST(PreferencesTest, TestsWriteUnderTheirOwnConfigHome)
     setConfigHomeForTesting(scratch);
 }
 
-TEST(ProcessEnvironmentTest, ChildrenGetTheOriginalValues)
+TEST(ProcessEnvironmentTest, ChildrenGetTheCurrentEnvironment)
 {
     setenv("CUTEFISH_CORE_TEST_SET", "outer", 1);
     unsetenv("CUTEFISH_CORE_TEST_UNSET");
-    setPrivateEnvironment("CUTEFISH_CORE_TEST_SET", "private");
-    setPrivateEnvironment("CUTEFISH_CORE_TEST_UNSET", "private");
-    EXPECT_STREQ(std::getenv("CUTEFISH_CORE_TEST_SET"), "private");
-    EXPECT_STREQ(std::getenv("CUTEFISH_CORE_TEST_UNSET"), "private");
 
     const std::vector<std::string> child = childEnvironment();
-    const auto count = [&](const std::string &entry) {
-        return std::count(child.begin(), child.end(), entry);
-    };
-    EXPECT_EQ(count("CUTEFISH_CORE_TEST_SET=outer"), 1);
-    EXPECT_EQ(count("CUTEFISH_CORE_TEST_SET=private"), 0);
+    EXPECT_EQ(std::count(child.begin(), child.end(), "CUTEFISH_CORE_TEST_SET=outer"), 1);
     EXPECT_EQ(std::count_if(child.begin(), child.end(), [](const std::string &entry) {
                   return entry.starts_with("CUTEFISH_CORE_TEST_UNSET=");
               }),
               0);
-    EXPECT_GT(child.size(), 2u);
+    EXPECT_GT(child.size(), 1u);
 }
 
 } // namespace

@@ -58,11 +58,11 @@ class ToplevelEventHandler;
 class TransientManager;
 class Window;
 
-// What the trusted shell said about a surface through cutefish_shell_v1,
-// already adapted into window-manager concepts. The protocol layer registers it
-// against the wl_surface's compositor::Surface; the window manager applies it
-// when the surface's xdg role turns into a Window, before placement and before
-// the window is announced.
+// What a shell surface is for, in window-manager concepts: set by the
+// compositor's own shell windows, and by the trusted desktop client through
+// cutefish_shell_v1. Registered against the compositor::Surface; the window
+// manager applies it when the surface's role turns into a Window, before
+// placement and before the window is announced.
 struct ShellWindowMetadata {
     WindowRole role = WindowRole::Normal;
     FocusPolicy focusPolicy = FocusPolicy::Normal;
@@ -75,9 +75,9 @@ struct ShellWindowMetadata {
 };
 
 // Everything a window is announced with. The application id and the process id
-// belong here rather than being set afterwards: windowAdded is what the
-// window-management protocol enumerates from, and a task that appears without
-// an app id never gets one, because nothing changed after that.
+// belong here rather than being set afterwards: windowAdded is what the shell's
+// task list enumerates from, and a task that appears without an app id never
+// gets one, because nothing changed after that.
 struct WindowInit {
     WindowType type = WindowType::Normal;
     base::Point origin;
@@ -214,7 +214,7 @@ public:
     // --- Applications ---
     //
     // Quit, Hide and Hide Others, for the shell's application menu and dock
-    // (cutefish_window_management_v1) and the Command convention's shortcuts.
+    // and the Command convention's shortcuts.
     // An application is the task-list windows of one application id, as the
     // dock groups them, or of one process for windows without an id.
 
@@ -257,9 +257,8 @@ public:
         m_forceQuitProcess = std::move(forceQuit);
     }
 
-    // How the user is offered force quit for a window that stopped answering;
-    // returns whether anybody offered it. The window-management protocol's
-    // not_responding in production.
+    // How the user is offered force quit for a window that stopped answering
+    // (the shell's not-responding sheets); returns whether it was offered.
     void setNotRespondingPrompt(std::function<bool(Window *)> prompt)
     {
         m_notRespondingPrompt = std::move(prompt);
@@ -274,10 +273,9 @@ public:
 
     // --- Private shell metadata ---
 
-    // Records what the trusted shell said about `surface` and, when the surface
-    // already has a window, applies it there. Passing metadata whose role is
-    // Normal is how the protocol layer takes a surface back out of the shell
-    // model.
+    // Records what `surface` is for and, when the surface already has a
+    // window, applies it there. Passing metadata whose role is Normal takes a
+    // surface back out of the shell model.
     void setShellMetadata(compositor::Surface *surface, const ShellWindowMetadata &metadata);
     void clearShellMetadata(compositor::Surface *surface);
     const ShellWindowMetadata *shellMetadata(compositor::Surface *surface) const;
@@ -307,8 +305,6 @@ public:
     void setExclusiveZone(const void *token, ScreenEdge edge, int thickness,
                           const std::string &outputName = {});
     void clearExclusiveZone(const void *token);
-    // What a shell disconnect does.
-    void clearAllExclusiveZones();
 
     // --- Surfaces that are not windows ---
 
@@ -317,7 +313,7 @@ public:
     void setSurfaceOwner(compositor::Surface *surface, Window *owner);
     void clearSurfaceOwner(compositor::Surface *surface);
 
-    // Unowned auxiliary surfaces remain below trusted shell layers.
+    // Unowned auxiliary surfaces remain below the shell layers.
     void setAuxiliarySurface(compositor::Surface *surface, Window *owner);
 
     // --- Drag overlay ---
@@ -392,9 +388,9 @@ public:
     display::DisplayManager *displayManager() const { return m_displayManager; }
 
     // Where normal and maximized windows are laid out: the output bounds minus
-    // whatever the trusted shell reserved through set_exclusive_zone. A shell
-    // window is never confined to it - the launcher covers the whole screen -
-    // so this is the output bounds for those.
+    // what the shell's panels reserved. A shell window is never confined to it
+    // - the launcher covers the whole screen - so this is the output bounds for
+    // those.
     base::Rect workAreaFor(const Window *window) const;
     // What a normal window must stay partly inside while moved: the work area,
     // but down to the output's bottom edge so it can slide under the dock.
@@ -453,6 +449,8 @@ public:
     // An output came, went or changed its bounds, work area or scale; windows
     // left on no output have been brought back by now.
     base::Signal<> outputsChanged;
+    // A reservation came, went or changed: the work areas may have.
+    base::Signal<> exclusiveZonesChanged;
 
 private:
     bool hasApplicationWindow(int64_t process) const;

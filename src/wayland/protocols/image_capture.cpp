@@ -13,11 +13,13 @@
 #include <vector>
 #include <wayland-server-protocol.h>
 
+#include "base/event_loop.h"
 #include "compositor/buffer.h"
 #include "compositor/capture_source.h"
 #include "compositor/dmabuf_buffer.h"
 #include "compositor/shm_pool.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "render/renderer.h"
 #include "scene/damage_tracker.h"
 #include "scene/node.h"
@@ -135,6 +137,12 @@ struct Frame {
     // A shm capture still on its way back from the GPU, written into the
     // buffer when the frame is presented.
     std::shared_ptr<render::PendingImage> pixels;
+    // The compositor's own capture: no resource or buffer, the picture goes
+    // to `done` while someone still holds `handle`.
+    bool internal = false;
+    ImageCaptureManager::CaptureDone done;
+    std::weak_ptr<void> handle;
+    ui::Bitmap image;
 
     ~Frame()
     {
@@ -164,9 +172,24 @@ struct Frame {
         std::erase_if(session->state->pending, [this](const auto &frame) {
             return frame.get() == this;
         });
-        ext_image_copy_capture_frame_v1_send_failed(resource, reason);
+        if (internal)
+            finishInternal({});
+        else
+            ext_image_copy_capture_frame_v1_send_failed(resource, reason);
         if (captured && session->state->repaint)
             session->state->repaint();
+    }
+
+    // Posted: a frame finishes inside the composition that drew it.
+    void finishInternal(ui::Bitmap result)
+    {
+        if (!done || handle.expired())
+            return;
+        core::mainLoop()->post([done = std::move(done), handle = handle, result = std::move(result),
+                                transform = transform] {
+            if (!handle.expired())
+                done(result, transform);
+        });
     }
 };
 
@@ -436,6 +459,14 @@ std::vector<base::Rect> bufferDamage(const base::Region &logical, const base::Re
 
 void deliver(State &state, const std::shared_ptr<Frame> &frame, uint64_t monotonicNs)
 {
+    if (frame->internal) {
+        frame->finished = true;
+        std::erase(state.pending, frame);
+        frame->finishInternal(std::exchange(frame->image, {}));
+        if (state.repaint)
+            state.repaint();
+        return;
+    }
     const uint64_t seconds = monotonicNs / 1000000000;
     ext_image_copy_capture_frame_v1_send_transform(frame->resource, frame->transform);
     for (const base::Rect &rect : frame->damage) {
@@ -477,6 +508,40 @@ void ImageCaptureManager::exportSource(wl_client *client, uint32_t id,
 void ImageCaptureManager::setToplevelSourceResolver(ToplevelSourceResolver resolver)
 {
     m_state->toplevelSource = std::move(resolver);
+}
+
+std::shared_ptr<void> ImageCaptureManager::capture(std::shared_ptr<compositor::CaptureSource> source,
+                                                   bool cursors, CaptureDone done)
+{
+    auto handle = std::make_shared<int>(0);
+    auto session = std::make_shared<Session>();
+    session->state = m_state;
+    session->source = std::move(source);
+    session->cursors = cursors;
+    auto frame = std::make_shared<Frame>();
+    frame->session = session;
+    frame->resource = nullptr;
+    frame->internal = true;
+    frame->done = std::move(done);
+    frame->handle = handle;
+    frame->attached = true;
+    frame->captured = true;
+    if (!m_state->active || !session->source || !session->source->active) {
+        frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_STOPPED);
+        return handle;
+    }
+    m_state->pending.push_back(frame);
+    if (m_state->repaint)
+        m_state->repaint();
+    return handle;
+}
+
+std::shared_ptr<compositor::CaptureSource> ImageCaptureManager::outputSource(const std::string &output)
+{
+    auto source = std::make_shared<compositor::CaptureSource>();
+    source->kind = compositor::CaptureSource::Kind::Output;
+    source->output.name = output;
+    return source;
 }
 
 void ImageCaptureManager::setRenderer(const render::Renderer *renderer)
@@ -588,17 +653,23 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
             continue;
         const auto &session = frame->session;
         const auto &source = session->source;
+        if (frame->internal && frame->handle.expired()) {
+            frame->finished = true;
+            std::erase(state->pending, frame);
+            continue;
+        }
         if (source->renderedOn() != outputContext.outputId)
             continue;
         // Left pending: the next composition after the unlock captures it.
         if (!allowed)
             continue;
-        if (!state->authorize(wl_resource_get_client(frame->resource))) {
+        if (!frame->internal && !state->authorize(wl_resource_get_client(frame->resource))) {
             frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_STOPPED);
             continue;
         }
         const bool window = source->kind == compositor::CaptureSource::Kind::Window;
-        const base::Size size = source->pixelSize();
+        const base::Size size = window || !frame->internal ? source->pixelSize()
+                                                           : outputContext.nativeTargetSize;
         auto buffer = frame->buffer.lock();
         auto shm = std::dynamic_pointer_cast<compositor::ShmBuffer>(buffer);
         auto dmabuf = std::dynamic_pointer_cast<compositor::DmaBufBuffer>(buffer);
@@ -606,7 +677,7 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
                 && (window || size == outputContext.nativeTargetSize);
         const bool formatOk = (shm && shm->format() == render::PixelFormat::Bgra8888)
                 || (dmabuf && renderer.captureDmaBufFormats().contains(dmabuf->attributes().format));
-        if (!sizeOk || !formatOk) {
+        if (!frame->internal && (!sizeOk || !formatOk)) {
             frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_BUFFER_CONSTRAINTS);
             continue;
         }
@@ -695,6 +766,9 @@ void ImageCaptureManager::renderPending(render::Renderer &renderer, const Painte
                 // collecting it then does not stall the compositor.
                 frame->pixels = std::move(capture.later);
                 copied = true;
+            } else if (frame->internal) {
+                frame->image = capture.image;
+                copied = !frame->image.isNull();
             } else {
                 copied = writeImage(*shm, capture.image);
             }
@@ -741,7 +815,13 @@ void ImageCaptureManager::presented(uint64_t generation, uint64_t monotonicNs)
             frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_UNKNOWN);
             continue;
         }
-        if (frame->pixels) {
+        if (frame->pixels && frame->internal) {
+            frame->image = std::exchange(frame->pixels, nullptr)->take();
+            if (frame->image.isNull()) {
+                frame->fail(EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_UNKNOWN);
+                continue;
+            }
+        } else if (frame->pixels) {
             const auto shm =
                     std::dynamic_pointer_cast<compositor::ShmBuffer>(frame->buffer.lock());
             const ui::Bitmap image = std::exchange(frame->pixels, nullptr)->take();

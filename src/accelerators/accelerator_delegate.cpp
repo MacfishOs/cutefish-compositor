@@ -33,6 +33,10 @@ void callOsd(const char *method)
 
 void DBusAcceleratorDelegate::toggleAppList()
 {
+    if (launcherToggle) {
+        launcherToggle();
+        return;
+    }
     call("com.cutefish.Launcher", "/Launcher", "toggle");
 }
 

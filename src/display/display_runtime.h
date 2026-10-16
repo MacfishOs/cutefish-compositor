@@ -90,6 +90,9 @@ public:
     }
 
     std::function<void()> lockRequested;
+    // Whether the desktop background is up at the outputs' current size; a
+    // rotation's transition waits for it as for the desktop window.
+    std::function<bool()> backgroundReady;
     std::function<bool(const std::string &)> capturePending;
     // The largest scale of the applied displays, reported before the outputs
     // are re-sent. Xwayland renders at it, and sizes its screen from them.

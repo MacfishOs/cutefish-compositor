@@ -1,0 +1,106 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef CUTEFISH_SHELL_STATUSBAR_STATUS_ICON_H_
+#define CUTEFISH_SHELL_STATUSBAR_STATUS_ICON_H_
+
+#include <functional>
+#include <optional>
+#include <string>
+
+#include "shell/statusbar/bar_item.h"
+
+namespace cutefish::ui {
+class RowLayout;
+}
+
+namespace cutefish::shell {
+
+// A bar icon that opens a panel, with an optional dot after
+// it and an optional label, 12 px of the item on either side of them.
+class StatusIcon : public BarItem
+{
+public:
+    explicit StatusIcon(BarContext *bar);
+
+    // The bar's own artwork, statusbar/<dark|light>/<name>.svg.
+    void setIconName(std::string name);
+    // A FishUI glyph in the bar's colour, in place of the artwork.
+    void setGlyph(std::string name);
+    void setIconWidth(double width);
+    void setLabel(std::string label);
+    // The dot after the icon; none when unset.
+    void setIndicatorColor(std::optional<ui::Color> color);
+
+    const std::string &iconName() const { return m_iconName; }
+    const std::string &glyph() const { return m_glyph; }
+    const std::string &label() const { return m_label; }
+
+    // 12 + content + 12, as the bar's row lays it out.
+    double preferredWidth() const;
+    // The content's width changed.
+    std::function<void()> onPreferredWidthChanged;
+    // The bar's look changed.
+    void updateLook();
+
+protected:
+    void layout() override;
+
+private:
+    class Indicator;
+
+    void updateIcon();
+    void updateContent();
+
+    std::string m_iconName;
+    std::string m_glyph;
+    std::string m_label;
+    double m_iconWidth = BarContext::kIconSize;
+    std::optional<ui::Color> m_indicatorColor;
+    ui::RowLayout *m_content = nullptr;
+    BarIcon *m_icon = nullptr;
+    Indicator *m_indicator = nullptr;
+    BarLabel *m_text = nullptr;
+};
+
+// The clock: its text centred over its plate, the plate reaching 9 px from
+// the screen's edge.
+class ClockItem : public BarItem
+{
+public:
+    explicit ClockItem(BarContext *bar);
+
+    void setText(const std::string &text);
+    const std::string &text() const;
+    double preferredWidth() const;
+    void updateLook();
+    std::function<void()> onPreferredWidthChanged;
+
+protected:
+    void layout() override;
+
+private:
+    BarLabel *m_label;
+};
+
+// The stop buttons of a screen recording and of an agent's control: a
+// single-colour glyph in the bar's colour.
+class StopItem : public BarItem
+{
+public:
+    explicit StopItem(BarContext *bar);
+
+    double preferredWidth() const { return BarContext::kItemGap + BarContext::kIconSize + 2 * BarContext::kSmallSpacing; }
+    void updateLook();
+
+protected:
+    void layout() override;
+
+private:
+    BarIcon *m_icon;
+};
+
+} // namespace cutefish::shell
+
+#endif // CUTEFISH_SHELL_STATUSBAR_STATUS_ICON_H_

@@ -92,6 +92,13 @@ class HotCornerController;
 class HotCornerSettings;
 } // namespace accelerators
 
+namespace shell {
+class DockWindow;
+class Wallpaper;
+class Shell;
+struct ScreenCaptureServices;
+}
+
 namespace switcher {
 class SwitcherView;
 }
@@ -154,6 +161,8 @@ private:
     bool initDrm();
     bool initDisplay();
     void initXwayland();
+    void initShell();
+    shell::ScreenCaptureServices screenCaptureServices(shell::DockWindow *dockWindow, shell::Wallpaper *wallpaper);
     std::vector<compositor::Output *> outputModels() const;
     void publishDisplayState();
     void probeCursor();
@@ -285,6 +294,10 @@ private:
     // chain, so they are destroyed before it.
     std::unique_ptr<wm::WindowCycleController> m_windowCycle;
     std::unique_ptr<switcher::SwitcherView> m_switcherView;
+    // The desktop shell drawn by the compositor; none in the greeter.
+    std::unique_ptr<shell::Shell> m_shell;
+    // The shell's desktop background; the startup cover waits for it.
+    shell::Wallpaper *m_wallpaper = nullptr;
     std::unique_ptr<accelerators::AcceleratorConfiguration> m_acceleratorConfiguration;
     std::unique_ptr<accelerators::DBusAcceleratorDelegate> m_acceleratorDelegate;
     std::unique_ptr<accelerators::AcceleratorController> m_acceleratorController;
@@ -352,6 +365,9 @@ private:
 
     // Last, so they go before any receiver they call.
     base::Subscription m_computerControlDrawn;
+    base::Subscription m_statusBarAgentControl;
+    // The shell components' connections to one another.
+    std::vector<base::Subscription> m_shellSubscriptions;
     std::vector<base::Subscription> m_compositorSubscriptions;
 };
 

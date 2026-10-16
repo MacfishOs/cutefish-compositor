@@ -7,7 +7,7 @@
 // The values come from the existing Cutefish decoration rather than from a new
 // design: the KWin plugin in `kwin-plugins/plugins/decoration` (titlebar
 // height, frame radius, caption button size, spacing and hover treatment,
-// titlebar and caption colours) and FishUI's `Window.qml` (the hairline window
+// titlebar and caption colours) and FishUI's window frame (the hairline window
 // border, and its active/inactive alpha). Nothing here is derived from the
 // KDecoration API, and none of it is linked: only the metrics were carried
 // across.
@@ -42,14 +42,14 @@ struct Metrics {
     int titleBarHeight = 36;
     // The outline overlays client pixels; resize hit areas do not need a visible inset.
     int borderWidth = 0;
-    // FishUI Theme.qml windowRadius, shared by all compositor-owned corners.
+    // FishUI's window corner radius, shared by all compositor-owned corners.
     // Initialized in decoration_theme.cpp from the shared visual style.
     int cornerRadius;
     // kwin-plugins: setResizeOnlyBorders(5), which reaches outside the window.
     int resizeMargin = 5;
     // How far along an edge counts as the corner rather than the edge.
     int resizeCorner = 16;
-    // FishUI Window.qml: 7px between hover circles and to the right edge, so
+    // FishUI's title bar: 7px between hover circles and to the right edge, so
     // right-aligned windows line their buttons up.
     int buttonSize = 32;
     int buttonSpacing = 1;
@@ -59,7 +59,7 @@ struct Metrics {
     // kwin-plugins: the caption keeps this much clear of the buttons.
     int captionMargin = 20;
     // Logical pixel size of the caption font: the session's FontSize (points)
-    // at Qt's 96 dpi logical density, see Theme::setCaptionPointSize. The
+    // at a 96 dpi logical density, see Theme::setCaptionPointSize. The
     // default is the Appearance service's 9pt.
     int textPixelSize = 12;
 
@@ -167,6 +167,7 @@ public:
 
     // The Appearance service's AccentColor index; only notifies observers.
     void setAccentColor(int index);
+    int accentColor() const { return m_accentColor; }
 
     const Palette &palette() const;
 

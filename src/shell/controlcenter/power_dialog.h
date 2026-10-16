@@ -1,0 +1,72 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef CUTEFISH_SHELL_CONTROLCENTER_POWER_DIALOG_H_
+#define CUTEFISH_SHELL_CONTROLCENTER_POWER_DIALOG_H_
+
+#include <functional>
+#include <memory>
+#include <string>
+
+namespace cutefish::ui {
+class DialogButton;
+}
+
+namespace cutefish::shell {
+
+class Shell;
+class ShellWindow;
+
+// FishUI's ConfirmDialog asking before logging
+// out, restarting or shutting down, a toplevel kept above applications and
+// centred by the window manager. Return confirms even while Cancel has the
+// focus; Escape and the close button cancel. Asking again while it is up
+// changes what it asks.
+class PowerDialog
+{
+public:
+    enum class Action {
+        Logout,
+        Reboot,
+        Shutdown,
+    };
+
+    explicit PowerDialog(Shell *shell);
+    ~PowerDialog();
+
+    PowerDialog(const PowerDialog &) = delete;
+    PowerDialog &operator=(const PowerDialog &) = delete;
+
+    // Shows the dialog for `action`, or changes it while shown.
+    void open(Action action);
+    // Hides it without an answer.
+    void close();
+    bool isOpen() const;
+    Action action() const { return m_action; }
+
+    ShellWindow *window() const { return m_window.get(); }
+    ui::DialogButton *cancelButton() const;
+    ui::DialogButton *confirmButton() const;
+
+    std::function<void()> onAccepted;
+    std::function<void()> onRejected;
+
+    static std::string title(Action action);
+    static std::string confirmText(Action action);
+
+private:
+    class Content;
+
+    void finish(bool accepted);
+    void resize();
+
+    Shell *m_shell;
+    std::unique_ptr<ShellWindow> m_window;
+    Content *m_content = nullptr;
+    Action m_action = Action::Logout;
+};
+
+} // namespace cutefish::shell
+
+#endif // CUTEFISH_SHELL_CONTROLCENTER_POWER_DIALOG_H_

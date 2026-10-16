@@ -103,8 +103,6 @@ cutefish_wayland_protocol(linux-drm-syncobj-v1
 set(CUTEFISH_PRIVATE_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocols)
 cutefish_wayland_protocol(cutefish-shell-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-shell-v1.xml)
-cutefish_wayland_protocol(cutefish-window-management-v1
-    ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-window-management-v1.xml)
 cutefish_wayland_protocol(cutefish-computer-control-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-computer-control-v1.xml)
 
@@ -169,7 +167,6 @@ add_library(cutefish-protocols STATIC
     ${xdg-toplevel-drag-v1_SOURCES}
     ${cursor-shape-v1_SOURCES} ${tablet-v2_SOURCES} ${linux-dmabuf-v1_SOURCES}
     ${linux-drm-syncobj-v1_SOURCES} ${cutefish-shell-v1_SOURCES}
-    ${cutefish-window-management-v1_SOURCES}
     ${cutefish-computer-control-v1_SOURCES})
 target_include_directories(cutefish-protocols PUBLIC ${CUTEFISH_PROTOCOL_DIR})
 target_link_libraries(cutefish-protocols PUBLIC PkgConfig::WaylandServer)
@@ -297,6 +294,8 @@ add_library(cutefish-scene STATIC
     src/scene/scene.h
     src/scene/surface_node.cpp
     src/scene/surface_node.h
+    src/scene/wallpaper_node.cpp
+    src/scene/wallpaper_node.h
     src/scene/overlay_candidate.cpp
     src/scene/overlay_candidate.h
     src/render/cursor_sink.h
@@ -720,8 +719,6 @@ add_library(cutefish-wayland-private-shell STATIC
     src/wayland/shell_control_channel.h
     src/wayland/protocols/cutefish_shell.cpp
     src/wayland/protocols/cutefish_shell.h
-    src/wayland/protocols/cutefish_window_management.cpp
-    src/wayland/protocols/cutefish_window_management.h
     src/wayland/protocols/foreign_toplevel_list.cpp
     src/wayland/protocols/foreign_toplevel_list.h
 )
@@ -888,6 +885,24 @@ target_include_directories(cutefish-switcher PUBLIC src)
 target_link_libraries(cutefish-switcher PUBLIC cutefish-wm cutefish-decoration cutefish-scene
     cutefish-toolkit-host)
 
+# The desktop shell inside the compositor: its internal windows, their input
+# and rendering, and the components built on them.
+add_library(cutefish-shell STATIC
+    src/shell/shell.cpp src/shell/shell.h
+    src/shell/shell_data.cpp src/shell/shell_data.h
+    src/shell/shell_drag.cpp src/shell/shell_drag.h
+    src/shell/shell_host.cpp src/shell/shell_host.h
+    src/shell/shell_input.cpp src/shell/shell_input.h
+    src/shell/shell_text_input.cpp src/shell/shell_text_input.h
+    src/shell/shell_window.cpp src/shell/shell_window.h
+    src/shell/window_renderer.cpp src/shell/window_renderer.h)
+target_include_directories(cutefish-shell PUBLIC src)
+target_link_libraries(cutefish-shell PUBLIC cutefish-wm cutefish-input cutefish-display
+    cutefish-decoration cutefish-toolkit-host cutefish-shell-common PRIVATE cutefish-wayland-shell)
+target_compile_definitions(cutefish-shell PRIVATE
+    CUTEFISH_SHELL_DATA_DIR="${CMAKE_INSTALL_FULL_DATADIR}/cutefish-compositor/shell")
+install(DIRECTORY data/shell/ DESTINATION ${CMAKE_INSTALL_DATADIR}/cutefish-compositor/shell)
+
 # The synthetic display: outputs and a presentation clock with no hardware.
 add_library(cutefish-headless STATIC
     src/backend/headless/headless_backend.cpp
@@ -923,7 +938,7 @@ add_executable(cutefish-compositor
     src/core/compositor_shell.h
 )
 target_link_libraries(cutefish-compositor PRIVATE cutefish-display-runtime
-    cutefish-auth cutefish-switcher cutefish-wayland-globals cutefish-headless)
+    cutefish-auth cutefish-switcher cutefish-shell cutefish-wayland-globals cutefish-headless)
 # The portal backend streams outputs to PipeWire through the same capture
 # globals as cutefish-screenshot, and cutefish-core's screen recorder encodes them
 # to files, so both are allowlisted by their installed paths.
@@ -979,6 +994,7 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/cutefish-compositor)
 install(FILES LICENSE LICENSE.chromium LICENSE.sommelier DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/cutefish-compositor)
 install(FILES ${DISPLAY_CONFIG_XML} DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
+install(FILES data/cutefish-screenshot.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 
 target_link_libraries(cutefish-wayland-input PUBLIC cutefish-protocols)
 
@@ -988,6 +1004,12 @@ target_include_directories(cutefish-cursor PUBLIC src)
 target_sources(cutefish-cursor PRIVATE src/cursor/preferences.cpp src/cursor/preferences.h)
 target_link_libraries(cutefish-cursor PUBLIC cutefish-input cutefish-display Cutefish::Toolkit)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-cursor)
+
+# The shell's backends: models and D-Bus services without views.
+include(src/shell/backends.cmake)
+# The shell's components: their views on the backends above.
+include(src/shell/components.cmake)
+
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()

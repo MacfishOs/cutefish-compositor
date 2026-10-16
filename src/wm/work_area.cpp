@@ -32,14 +32,6 @@ bool ExclusiveZones::clear(const void* token)
     return m_zones.erase(token) != 0;
 }
 
-bool ExclusiveZones::clearAll()
-{
-    if (m_zones.empty())
-        return false;
-    m_zones.clear();
-    return true;
-}
-
 base::Rect ExclusiveZones::apply(const base::Rect& outputBounds) const
 {
     return apply(outputBounds, std::string(), true);

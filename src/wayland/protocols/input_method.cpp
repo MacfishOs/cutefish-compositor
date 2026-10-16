@@ -179,6 +179,8 @@ struct InputMethodManager::Impl : InputMethodRelay, input::SeatObserver {
 
     bool eligible(const TextInput *t) const
     {
+        if (!t->resource())
+            return t->attached() && usable() && t->ownsSurface(m_seat->focusedSurface());
         return t->attached() && focusedClient(wl_resource_get_client(t->resource()));
     }
 
@@ -753,6 +755,11 @@ void InputMethodManager::setAuthorizer(std::function<bool(const wl_client *)> au
 {
     if (m_impl)
         m_impl->authorizer = std::move(authorizer);
+}
+
+InputMethodRelay *InputMethodManager::relay() const
+{
+    return m_impl.get();
 }
 
 bool InputMethodManager::hasFocusedTextInput() const

@@ -21,7 +21,7 @@
 #include "ui/label.h"
 #include "ui/painter.h"
 #include "ui/path.h"
-#include "ui/quick_layout.h"
+#include "ui/cell_layout.h"
 #include "ui/styled_label.h"
 #include "ui/text_field.h"
 #include "ui/window.h"
@@ -30,7 +30,7 @@ namespace cutefish::auth {
 
 namespace {
 
-using ui::qml::anchorsCenter;
+using ui::rounding::centeredStart;
 
 constexpr ui::Color kWhite {255, 255, 255, 255};
 constexpr ui::Color kBlack {0, 0, 0, 255};
@@ -244,14 +244,14 @@ protected:
     void layout() override
     {
         const double width = geometry().width;
-        const ui::RectF avatar {anchorsCenter(width, 64), 0, 64, 64};
+        const ui::RectF avatar {centeredStart(width, 64), 0, 64, 64};
         m_disc->setGeometry(avatar);
         m_picture->setGeometry(avatar);
         const ui::SizeF initial = m_initial->sizeHint();
-        m_initial->setGeometry({avatar.x + anchorsCenter(64, initial.width),
-                                anchorsCenter(64, initial.height), initial.width, initial.height});
+        m_initial->setGeometry({avatar.x + centeredStart(64, initial.width),
+                                centeredStart(64, initial.height), initial.width, initial.height});
         const ui::SizeF name = m_name->sizeHint();
-        m_name->setGeometry({anchorsCenter(width, name.width), 74, name.width, name.height});
+        m_name->setGeometry({centeredStart(width, name.width), 74, name.width, name.height});
     }
 
 private:
@@ -355,7 +355,7 @@ protected:
     void layout() override
     {
         const ui::SizeF button = m_button->sizeHint();
-        m_button->setGeometry({anchorsCenter(geometry().width, button.width), 0, button.width, 30});
+        m_button->setGeometry({centeredStart(geometry().width, button.width), 0, button.width, 30});
         m_popup->place();
     }
 
@@ -398,8 +398,8 @@ private:
         void layout() override
         {
             const ui::SizeF label = m_label->sizeHint();
-            m_label->setGeometry({anchorsCenter(geometry().width, label.width),
-                                  anchorsCenter(geometry().height, label.height), label.width,
+            m_label->setGeometry({centeredStart(geometry().width, label.width),
+                                  centeredStart(geometry().height, label.height), label.width,
                                   label.height});
         }
 
@@ -432,7 +432,7 @@ private:
         void layout() override
         {
             const ui::SizeF label = m_label->sizeHint();
-            m_label->setGeometry({12, anchorsCenter(geometry().height, label.height), label.width,
+            m_label->setGeometry({12, centeredStart(geometry().height, label.height), label.width,
                                   label.height});
         }
 
@@ -462,6 +462,7 @@ private:
             double widest = 0;
             for (const std::string &name : m_menu->m_names) {
                 ui::Label measure;
+                measure.setTextLayoutMode(textLayoutMode());
                 measure.setText(name);
                 measure.setFontSize(13);
                 measure.setWeight(600);
@@ -491,7 +492,7 @@ private:
             const double menuWidth = m_menu->geometry().width;
             const ui::PointF origin = parent()->mapFromWindow(m_menu->mapToWindow({0, 0}));
             const double y = m_menu->m_upward ? -size.height - 6 : m_menu->geometry().height + 6;
-            setGeometry({origin.x + anchorsCenter(menuWidth, size.width), origin.y + y, size.width,
+            setGeometry({origin.x + centeredStart(menuWidth, size.width), origin.y + y, size.width,
                          size.height});
         }
 
@@ -501,8 +502,8 @@ private:
         void layout() override
         {
             const double listHeight = 30.0 * double(children().size());
-            const double x = anchorsCenter(geometry().width, m_entryWidth);
-            const double top = anchorsCenter(geometry().height, listHeight);
+            const double x = centeredStart(geometry().width, m_entryWidth);
+            const double top = centeredStart(geometry().height, listHeight);
             for (size_t i = 0; i < children().size(); ++i)
                 children()[i]->setGeometry({x, top + 30.0 * double(i), m_entryWidth, 30});
         }
@@ -636,8 +637,8 @@ protected:
         // TextInput's default alignment is the top: its line, not the box, is placed.
         m_input->setGeometry({inner.x, inner.y, inner.width, m_input->sizeHint().height});
         const ui::SizeF placeholder = m_placeholder->sizeHint();
-        m_placeholder->setGeometry({inner.x + anchorsCenter(inner.width, placeholder.width),
-                                    inner.y + anchorsCenter(inner.height, placeholder.height),
+        m_placeholder->setGeometry({inner.x + centeredStart(inner.width, placeholder.width),
+                                    inner.y + centeredStart(inner.height, placeholder.height),
                                     placeholder.width, placeholder.height});
     }
 
@@ -752,10 +753,10 @@ protected:
         // The shake moves the pill, not the field, which the layout places.
         m_pill->setGeometry({rect.x + m_shakeOffset, rect.y, rect.width, rect.height});
         const ui::SizeF prompt = m_prompt->sizeHint();
-        m_prompt->setGeometry({14, anchorsCenter(rect.height, prompt.height), prompt.width,
+        m_prompt->setGeometry({14, centeredStart(rect.height, prompt.height), prompt.width,
                                prompt.height});
         m_input->setGeometry({14, 0, rect.width - 14 - 40, rect.height});
-        m_go->setGeometry({rect.width - 4 - 24, anchorsCenter(rect.height, 24), 24, 24});
+        m_go->setGeometry({rect.width - 4 - 24, centeredStart(rect.height, 24), 24, 24});
     }
 
 private:
@@ -893,7 +894,7 @@ protected:
     void layout() override
     {
         const double height = m_label->sizeHint().height;
-        m_label->setGeometry({0, anchorsCenter(geometry().height, height), geometry().width, height});
+        m_label->setGeometry({0, centeredStart(geometry().height, height), geometry().width, height});
     }
 
 private:
@@ -1105,14 +1106,14 @@ void AuthScreen::layout()
     const ui::SizeF time = m_time->sizeHint();
     // A Column of the two, 4 closer than touching, centred at the top.
     const double column = std::max(date.width, time.width);
-    const double left = anchorsCenter(width, column);
-    m_date->setGeometry({left + anchorsCenter(column, date.width), 56, date.width, date.height});
-    m_time->setGeometry({left + anchorsCenter(column, time.width), 56 + date.height - 4, time.width,
+    const double left = centeredStart(width, column);
+    m_date->setGeometry({left + centeredStart(column, date.width), 56, date.width, date.height});
+    m_time->setGeometry({left + centeredStart(column, time.width), 56 + date.height - 4, time.width,
                          time.height});
 
     const double podWidth = std::min(width - 48, 240.0);
     const double podHeight = m_pod->verticalExtent(podWidth).preferred;
-    m_pod->setGeometry({anchorsCenter(width, podWidth), height - 64 - podHeight, podWidth, podHeight});
+    m_pod->setGeometry({centeredStart(width, podWidth), height - 64 - podHeight, podWidth, podHeight});
 }
 
 } // namespace cutefish::auth

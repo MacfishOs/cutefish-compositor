@@ -251,7 +251,6 @@ TEST_F(ProtocolBindingTest, OrdinaryClientsDoNotSeeRestrictedGlobals)
     auto trusted = connect(true);
     for (const char *restricted : {
                  "cutefish_shell_v1",
-                 "cutefish_window_management_v1",
                  "ext_data_control_manager_v1",
                  "zwlr_data_control_manager_v1",
                  "ext_output_image_capture_source_manager_v1",

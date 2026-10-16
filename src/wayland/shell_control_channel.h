@@ -18,12 +18,13 @@ namespace cutefish::wayland {
 //
 // The session, not the compositor, launches its privileged clients: for every
 // launch and relaunch it creates a Wayland socketpair, passes one end here over
-// SCM_RIGHTS, and gives the other to the new process as WAYLAND_SOCKET. The
-// compositor turns the fd it receives into a trusted wl_client. Nothing about
-// the client's identity is taken on trust from the client itself.
+// SCM_RIGHTS, and gives the other to the new process (the file manager's
+// daemon, as `--desktop-socket <fd>`). The compositor turns the fd it receives
+// into a trusted wl_client. Nothing about the client's identity is taken on
+// trust from the client itself.
 //
 // The channel is a plain SOCK_STREAM UNIX socket. It carries file descriptors
-// and nothing else; no window-management traffic ever crosses it.
+// and nothing else.
 class ShellControlChannel
 {
 public:

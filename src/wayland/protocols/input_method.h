@@ -16,6 +16,7 @@ class Node;
 
 namespace cutefish::wayland {
 struct WaylandSeat;
+class InputMethodRelay;
 
 // Where a candidate popup of `size` goes for the text cursor `caret`, both in
 // output coordinates: below the caret, above it when only there it fits, and
@@ -47,6 +48,9 @@ public:
 
     // Restricts input-method and virtual-keyboard binds; unset allows every client.
     void setAuthorizer(std::function<bool(const wl_client *)> authorizer);
+
+    // What text inputs of the compositor's own register with.
+    InputMethodRelay *relay() const;
 
     // A text field of the keyboard-focused client is enabled.
     bool hasFocusedTextInput() const;

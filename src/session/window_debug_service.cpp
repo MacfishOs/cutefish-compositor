@@ -10,6 +10,8 @@
 #include <chrono>
 #include <utility>
 
+#include <sys/stat.h>
+
 #include "base/json.h"
 #include "input/input_manager.h"
 #include "scene/surface_node.h"
@@ -249,17 +251,30 @@ std::vector<std::string> WindowDebugService::OutputStats() const
     return m_outputStats ? m_outputStats() : std::vector<std::string>();
 }
 
-bool WindowDebugService::PointerMotion(double x, double y)
+bool WindowDebugService::acceptsInput() const
 {
     if (!m_input)
         return false;
-    m_input->onPointerMotionAbsolute(std::chrono::steady_clock::now(), base::PointF(x, y));
+    if (m_inputGate.empty())
+        return true;
+    // lstat: a symlink to a root-owned file is not the administrator's switch.
+    struct stat info = {};
+    return lstat(m_inputGate.c_str(), &info) == 0 && S_ISREG(info.st_mode) && info.st_uid == 0
+            && !(info.st_mode & (S_IWGRP | S_IWOTH));
+}
+
+bool WindowDebugService::PointerMotion(double x, double y)
+{
+    if (!acceptsInput())
+        return false;
+    // Where the computer control puts the pointer: logical, whatever the scale.
+    m_input->onPointerMotionLogical(std::chrono::steady_clock::now(), base::PointF(x, y));
     return true;
 }
 
 bool WindowDebugService::PointerButton(uint32_t button, bool pressed)
 {
-    if (!m_input)
+    if (!acceptsInput())
         return false;
     m_input->onPointerButton(std::chrono::steady_clock::now(), button, pressed);
     return true;
@@ -267,7 +282,7 @@ bool WindowDebugService::PointerButton(uint32_t button, bool pressed)
 
 bool WindowDebugService::Key(uint32_t code, bool pressed)
 {
-    if (!m_input)
+    if (!acceptsInput())
         return false;
     m_input->onKey(std::chrono::steady_clock::now(), code, pressed);
     return true;

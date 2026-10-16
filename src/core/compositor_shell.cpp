@@ -23,15 +23,17 @@
 #include "backend/input/libinput_backend.h"
 #include "backend/session/libseat_session.h"
 #include "base/dbus.h"
+#include "base/event_loop.h"
 #include "compositor/surface.h"
 #include "computer_control/computer_control_service.h"
 #include "computer_control/controller.h"
 #include "computer_control/permission_consent.h"
-#include "base/dbus.h"
 #include "base/uuid.h"
 #include "core/computer_control_environment.h"
 #include "core/logging.h"
 #include "core/main_loop.h"
+#include "core/preferences.h"
+#include "core/process_environment.h"
 #include "decoration/overview_window_frame.h"
 #include "decoration/window_visual_style.h"
 #include "display/callback_native_display_delegate.h"
@@ -47,6 +49,27 @@
 #include "scene/overview_node.h"
 #include "scene/slide_out_node.h"
 #include "session/session_state.h"
+#include "shell/clipboard/clipboard_history.h"
+#include "shell/clipboard/clipboard_picker.h"
+#include "shell/controlcenter/control_center.h"
+#include "shell/dock/dock.h"
+#include "shell/dock/dock_window.h"
+#include "shell/notresponding/not_responding_sheets.h"
+#include "shell/notification/notification_ui.h"
+#include "shell/notification/notifications.h"
+#include "shell/launcher/launcher.h"
+#include "shell/launcher/launcher_window.h"
+#include "shell/menubar/menu_bar_view.h"
+#include "shell/osd/osd.h"
+#include "shell/screenshot/screen_capture.h"
+#include "shell/screenshot/screen_grabber.h"
+#include "shell/secrets/secret_prompts.h"
+#include "shell/shell.h"
+#include "shell/shell_window.h"
+#include "shell/statusbar/device_usage.h"
+#include "shell/statusbar/status_bar.h"
+#include "shell/statusbar/status_bar_window.h"
+#include "shell/wallpaper/wallpaper.h"
 #include "switcher/switcher_view.h"
 #include "wayland/idle_inhibition.h"
 #include "wayland/input_method_launcher.h"
@@ -536,8 +559,9 @@ bool CompositorShell::init()
             CF_WARNING(cfWayland) << "The applications service is unavailable";
 
         m_windowDebugService = std::make_unique<session::WindowDebugService>(&m_windowManager);
-        if (m_options.noDrm)
-            m_windowDebugService->setInput(&m_inputManager);
+        m_windowDebugService->setInput(&m_inputManager);
+        if (!m_options.noDrm)
+            m_windowDebugService->setInputGate("/etc/cutefish/window-debug-input");
         m_windowDebugService->setOutputStats([this] {
             std::vector<std::string> lines;
             if (m_backend) {
@@ -567,12 +591,8 @@ bool CompositorShell::init()
 
     initXwayland();
 
-    // A shell that goes away leaves the compositor and every application it was
-    // showing untouched; only its own reservations have to be released, since
-    // its windows disappear with its surfaces.
-    m_globals->privileged()->setShellDisconnectedCallback([this] {
-        m_windowManager.clearAllExclusiveZones();
-    });
+    // The trusted client (the file manager's desktop) reserves nothing: every
+    // reservation is the compositor's own panels', which outlive it.
 
     if (!m_options.shellControlSocket.empty()) {
         m_shellControl = std::make_unique<wayland::ShellControlChannel>();
@@ -608,7 +628,138 @@ bool CompositorShell::init()
         m_cursorRelease.start(std::chrono::seconds(2));
     }
 
-    return initDisplay();
+    if (!initDisplay())
+        return false;
+    // The shell on the first loop turn, after the ready byte: the toolkit's
+    // start alone costs ~60 ms the session would otherwise wait before it
+    // starts anything.
+    mainLoop()->post([this] { initShell(); });
+    return true;
+}
+
+void CompositorShell::initShell()
+{
+    // The greeter shows no desktop.
+    if (m_options.login)
+        return;
+    shell::ShellEnvironment environment;
+    environment.compositor = &m_compositor;
+    environment.windowManager = &m_windowManager;
+    environment.seat = &m_seat;
+    environment.bus = base::dbus::Connection::session(mainLoop());
+    if (m_globals && m_globals->inputMethod())
+        environment.inputMethod = m_globals->inputMethod()->relay();
+    environment.theme = &m_decorationTheme;
+    m_shell = std::make_unique<shell::Shell>(environment);
+
+    // First, so the components that share its decode go before it.
+    auto *wallpaper = m_shell->addComponent(std::make_unique<shell::Wallpaper>(m_shell.get()));
+    m_wallpaper = wallpaper;
+    m_secureScene.setPictureLoader([wallpaper](const std::string &path, const base::Size &deviceSize,
+                                               std::function<void(const ui::Bitmap &)> done) {
+        return wallpaper->cache().load(path, deviceSize, std::move(done));
+    });
+    auto *osd = m_shell->addComponent(std::make_unique<shell::Osd>(
+            m_shell.get(), shell::createSessionOsdLevels(environment.bus)));
+    auto dock = std::make_unique<shell::Dock>(environment.bus, m_shell->tasks(), m_shell->launcher(),
+                                              preferencesFile("shell"));
+    shell::Dock *dockService = dock.get();
+    auto *dockWindow = m_shell->addComponent(std::make_unique<shell::DockWindow>(m_shell.get(), std::move(dock)));
+    auto *clipboard = m_shell->addComponent(std::make_unique<shell::ClipboardPicker>(
+            m_shell.get(), std::make_unique<shell::ClipboardHistory>(environment.bus, *m_seat.selection())));
+    m_shell->addComponent(std::make_unique<shell::NotRespondingSheets>(m_shell.get()));
+    auto *screenshot = m_shell->addComponent(std::make_unique<shell::ScreenCapture>(
+            m_shell.get(), screenCaptureServices(dockWindow, wallpaper)));
+    auto *secrets = m_shell->addComponent(shell::SecretPrompts::create(m_shell.get()));
+    auto *notifications = m_shell->addComponent(std::make_unique<shell::NotificationUi>(
+            m_shell.get(), std::make_unique<shell::Notifications>(environment.bus, m_shell->applications(),
+                                                                  &m_shell->tasks())));
+    auto launcher = std::make_unique<shell::Launcher>(environment.bus, m_shell->tasks(), m_shell->launcher(),
+                                                      dockService, preferencesFile("shell"));
+    shell::Launcher *launcherService = launcher.get();
+    m_shell->addComponent(std::make_unique<shell::LauncherWindow>(m_shell.get(), std::move(launcher),
+                                                                  dockService, wallpaper));
+    // The dock and the accelerators reach the launcher directly.
+    dockService->applications().hideLauncher = [launcherService] { launcherService->hide(); };
+    dockService->applications().toggleLauncher = [launcherService] { launcherService->toggle(); };
+    dockService->minimizedWindows().hideLauncher = [launcherService] { launcherService->hide(); };
+    if (m_acceleratorDelegate)
+        m_acceleratorDelegate->launcherToggle = [launcherService] { launcherService->toggle(); };
+    auto statusBar = std::make_unique<shell::StatusBar>(
+            environment.bus, environment.bus ? base::dbus::Connection::system(mainLoop()) : nullptr,
+            &m_shell->tasks(), preferencesFile("shell"));
+    shell::StatusBar *statusBarService = statusBar.get();
+    auto *bar = m_shell->addComponent(
+            std::make_unique<shell::StatusBarWindow>(m_shell.get(), std::move(statusBar)));
+    bar->setWallpaper(wallpaper);
+    if (m_computerControl) {
+        bar->setAgentControl(m_computerControl->isActive());
+        bar->onStopAgentControl = [this] { m_computerControl->stop(); };
+        m_statusBarAgentControl = m_computerControl->activeChanged.connect(
+                [bar](bool active) { bar->setAgentControl(active); });
+    }
+    bar->setMenuBar(std::make_unique<shell::MenuBarView>(m_shell.get(), bar->menuBarHost()));
+    bar->setRecording(screenshot->isRecording());
+    bar->onStopRecording = [screenshot] { screenshot->stopRecording(); };
+    m_shellSubscriptions.push_back(screenshot->recordingChanged.connect(
+            [bar, screenshot] { bar->setRecording(screenshot->isRecording()); }));
+    auto *controlCenter = m_shell->addComponent(
+            shell::ControlCenter::create(m_shell.get(), bar->statusBar(), &notifications->notifications().settings()));
+    bar->addPanels(controlCenter);
+    bar->setIndicators(controlCenter);
+    if (shell::DeviceUsage *usage = bar->deviceUsage()) {
+        controlCenter->setDeviceUsersSource([usage] {
+            std::vector<shell::DeviceUser> users;
+            for (const shell::DeviceUsage::Application &application : usage->applications())
+                users.push_back({application.name, application.icon, application.camera, application.microphone,
+                                 application.systemAudio});
+            return users;
+        });
+        m_shellSubscriptions.push_back(
+                usage->applicationsChanged.connect([controlCenter] { controlCenter->deviceUsersChanged(); }));
+    }
+    bar->addPanels(notifications);
+    m_shellSubscriptions.push_back(notifications->notifications().windowRequested.connect(
+            [bar] { bar->togglePanel(shell::StatusBarPanels::Panel::NotificationCenter); }));
+    // A development instance must not take the session's services over.
+    if (!m_options.noDrm) {
+        osd->registerService();
+        dockService->registerService();
+        clipboard->history().registerService();
+        screenshot->registerService();
+        secrets->start();
+        notifications->registerServices();
+        launcherService->registerService();
+        statusBarService->registerServices();
+    }
+}
+
+shell::ScreenCaptureServices CompositorShell::screenCaptureServices(shell::DockWindow *dockWindow,
+                                                                    shell::Wallpaper *wallpaper)
+{
+    shell::ScreenCaptureServices services;
+    if (m_globals)
+        services.grabber = shell::createScreenGrabber(m_globals->imageCapture(), m_globals->toplevelList());
+    services.selection = m_seat.selection();
+    services.settingsPath = preferencesFile("shell");
+    services.recorder = CUTEFISH_SCREEN_RECORDER;
+    // The recorder is a capture client of its own, on the public socket.
+    services.recorderEnvironment = childEnvironment();
+    std::erase_if(services.recorderEnvironment, [](const std::string &entry) {
+        return entry.starts_with("WAYLAND_DISPLAY=") || entry.starts_with("WAYLAND_SOCKET=");
+    });
+    services.recorderEnvironment.push_back("WAYLAND_DISPLAY=" + socketName());
+    services.dock = [dockWindow]() -> std::optional<shell::CaptureDock> {
+        shell::ShellWindow *window = dockWindow->window();
+        if (!window || !window->wmWindow())
+            return std::nullopt;
+        return shell::CaptureDock {window->wmWindow(), dockWindow->primaryGeometry(), dockWindow->cornerRadius(),
+                                   dockWindow->dock().settings().direction() == shell::DockSettings::Bottom};
+    };
+    services.desktop = [wallpaper](wm::Window *desktop, const std::string &output) {
+        return wallpaper->desktopCaptureSource(desktop, output);
+    };
+    return services;
 }
 
 bool CompositorShell::initWayland()
@@ -1022,7 +1173,7 @@ bool CompositorShell::initDisplay()
             m_server->display(), m_compositor, m_inputManager, m_windowManager, m_scene, m_cursor,
             m_cursorRouter.get(), m_updatingOutput);
     // The login screen is ready once its wallpaper and panel are drawn, the
-    // session once its desktop covers the screen.
+    // session once its wallpaper is up on every output.
     m_displayRuntime->carryOverWhileSecure = m_options.login;
     m_displayRuntime->setStartupCover(
             m_startupCover,
@@ -1031,7 +1182,7 @@ bool CompositorShell::initDisplay()
             m_options.login ? std::function<bool()>([this] {
                 return m_secureScene.isWallpaperReady() && m_authUi.isPanelDrawn();
             })
-                            : std::function<bool()>());
+                            : std::function<bool()>([this] { return m_wallpaper && m_wallpaper->isReady(); }));
     if (!m_options.login && m_displayRuntime->isStartupCoverShowing()) {
         m_dockLayout.setSessionStarting(true);
         m_compositorSubscriptions.push_back(m_compositor.frameStarted.connect([this](double) {
@@ -1045,6 +1196,7 @@ bool CompositorShell::initDisplay()
             m_xwayland->setScale(scale);
     };
 #endif
+    m_displayRuntime->backgroundReady = [this] { return !m_wallpaper || m_wallpaper->isReady(); };
     m_displayRuntime->lockRequested = [this] {
         m_sessionController.requestLock();
         m_secureScene.finishTransition();
@@ -1164,10 +1316,16 @@ CompositorShell::~CompositorShell()
     m_computerControlPolicy.setController(nullptr);
     m_computerControlService.reset();
     m_computerControlDrawn.reset();
+    m_statusBarAgentControl.reset();
     m_computerControl.reset();
     if (m_windowCycle)
         m_windowCycle->setView(nullptr);
     m_switcherView.reset();
+    // Its windows' input client goes before the seat shuts down, and their
+    // textures before the renderer.
+    m_secureScene.setPictureLoader({});
+    m_wallpaper = nullptr;
+    m_shell.reset();
     m_windowCycle.reset();
     m_inputManager.setGestureFilter(nullptr);
     m_gestureHandler.reset();

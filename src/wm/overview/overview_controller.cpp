@@ -297,10 +297,19 @@ void OverviewController::rebuild(bool animate, bool keepPlaces)
     updateNodes(animate);
 }
 
+void OverviewController::setWallpaperNodes(std::vector<const scene::Node *> nodes)
+{
+    m_wallpapers = std::move(nodes);
+}
+
 void OverviewController::updateNodes(bool animate)
 {
     const std::vector<Window *> &windows = m_manager->windows();
     std::vector<const scene::Node *> backdrop;
+    for (const scene::Node *wallpaper : m_wallpapers) {
+        if (wallpaper->isVisible())
+            backdrop.push_back(wallpaper);
+    }
     for (Window *window : windows) {
         if (layerFor(window) == StackingLayer::Desktop && window->isVisible() && window->node())
             backdrop.push_back(window->node());

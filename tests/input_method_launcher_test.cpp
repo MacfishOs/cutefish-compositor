@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <cstdlib>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,7 +11,6 @@
 #include "base/file.h"
 #include "base/strings.h"
 #include "clipboard_test_util.h"
-#include "core/process_environment.h"
 #include "temporary_directory.h"
 #include "wayland/input_method_launcher.h"
 #include "wayland/privileged_client.h"
@@ -142,21 +140,6 @@ TEST(InputMethodLauncher, RestartTakesTheCurrentEnvironment)
     h.launcher.restart();
     ASSERT_TRUE(h.until([&] {
         return lines(h.log) == Lines({"-", ":7"}) && h.launcher.isRunning();
-    }));
-}
-
-TEST(InputMethodLauncher, TheCompositorsOwnQtPlatformStaysWithIt)
-{
-    // The compositor's Qt renders offscreen; an input method's settings window
-    // started from it inherited that and opened nowhere.
-    unsetenv("QT_QPA_PLATFORM");
-    cutefish::setPrivateEnvironment("QT_QPA_PLATFORM", "offscreen");
-    ASSERT_TRUE(getenv("QT_QPA_PLATFORM"));
-    EXPECT_EQ(std::string_view(getenv("QT_QPA_PLATFORM")), "offscreen");
-    LauncherHarness h;
-    h.launcher.setCommand(h.command("platform"));
-    ASSERT_TRUE(h.until([&] {
-        return lines(h.log) == Lines({"-"}) && h.launcher.isRunning();
     }));
 }
 

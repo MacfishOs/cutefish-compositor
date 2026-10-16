@@ -55,7 +55,7 @@ cutefish::render::OutputRenderContext renderContext(const cutefish::compositor::
 // orientation compositor lock for up to 2.5 s; the shell redraws far faster.
 constexpr std::chrono::milliseconds kScreenTransitionTimeout(1000);
 
-// How long the startup cover waits for the shell's desktop. Upstream's booting
+// How long the startup cover waits for the desktop's wallpaper. Upstream's booting
 // animation waits at most 5 s for the device before it plays anyway.
 constexpr std::chrono::milliseconds kStartupCoverTimeout(5000);
 
@@ -476,7 +476,8 @@ void DisplayRuntime::captureOutgoingFrames()
 
     // Upstream extends the compositor lock until the wallpaper and apps have
     // resized. Here the shell's surfaces on a rotated output have to commit
-    // again, and every desktop has to cover its output.
+    // again, every desktop has to cover its output and the wallpaper has to be
+    // decoded at the new size.
     struct TrackedSurface {
         uint64_t window;
         uint64_t revision;
@@ -501,6 +502,8 @@ void DisplayRuntime::captureOutgoingFrames()
     if (!hasDesktop)
         covers.clear();
     const auto ready = [this, tracked = std::move(tracked), covers = std::move(covers)] {
+        if (backgroundReady && !backgroundReady())
+            return false;
         for (const auto &surface : tracked) {
             auto *window = windowManager.windowById(surface.window);
             const auto *node =

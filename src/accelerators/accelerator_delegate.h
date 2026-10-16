@@ -10,6 +10,8 @@
 #ifndef CUTEFISH_ACCELERATORS_ACCELERATOR_DELEGATE_H_
 #define CUTEFISH_ACCELERATORS_ACCELERATOR_DELEGATE_H_
 
+#include <functional>
+
 namespace cutefish::accelerators {
 
 class AcceleratorDelegate
@@ -45,6 +47,9 @@ public:
 class DBusAcceleratorDelegate : public AcceleratorDelegate
 {
 public:
+    // The launcher drawn in this process; unset, the call goes over D-Bus.
+    std::function<void()> launcherToggle;
+
     void toggleAppList() override;
     void takeScreenshot(bool toClipboard) override;
     void takePartialScreenshot(bool toClipboard) override;

@@ -36,6 +36,8 @@ GpuHost &gpuHost()
     return host;
 }
 
+void closeBatch();
+
 // The GPU for the context current now, made the first time.
 ui::EmbeddedGpu *currentGpu(const std::shared_ptr<render::EglContext> &context)
 {
@@ -44,6 +46,7 @@ ui::EmbeddedGpu *currentGpu(const std::shared_ptr<render::EglContext> &context)
         return nullptr;
     if (host.gpu && host.gpu->isAbandoned()) {
         CF_WARNING(cfCompositor) << "The panels' GPU context was lost; drawing them on the CPU";
+        closeBatch();
         host.gpu.reset();
         host.failed = true;
         return nullptr;
@@ -61,6 +64,38 @@ ui::EmbeddedGpu *currentGpu(const std::shared_ptr<render::EglContext> &context)
     return host.context == context ? host.gpu.get() : nullptr;
 }
 
+// The batch PanelBatch brackets: opened on the first GPU render inside it,
+// and closed before any GL work of the compositor's own in between.
+struct BatchState {
+    int depth = 0;
+    ui::EmbeddedGpu *gpu = nullptr;
+    bool open = false;
+};
+
+BatchState &batchState()
+{
+    static BatchState state;
+    return state;
+}
+
+void openBatch(ui::EmbeddedGpu *gpu)
+{
+    BatchState &state = batchState();
+    if (state.depth == 0 || state.open)
+        return;
+    state.gpu = gpu;
+    state.open = gpu->beginBatch();
+}
+
+void closeBatch()
+{
+    BatchState &state = batchState();
+    if (state.open)
+        state.gpu->endBatch();
+    state.open = false;
+    state.gpu = nullptr;
+}
+
 } // namespace
 
 ui::Application &application()
@@ -76,6 +111,16 @@ void setGpuRenderingAllowed(bool allowed)
     gpuHost().allowed = allowed;
 }
 
+void purgeGpuResources()
+{
+    GpuHost &host = gpuHost();
+    if (!host.gpu || host.gpu->isAbandoned() || !host.context || batchState().open)
+        return;
+    render::ScopedEglCurrent current(*host.context);
+    if (current.valid())
+        host.gpu->purgeResources();
+}
+
 void destroyWindow(std::unique_ptr<ui::EmbeddedWindow> &window)
 {
     if (!window)
@@ -89,6 +134,17 @@ void destroyWindow(std::unique_ptr<ui::EmbeddedWindow> &window)
     window.reset();
 }
 
+PanelBatch::PanelBatch()
+{
+    ++batchState().depth;
+}
+
+PanelBatch::~PanelBatch()
+{
+    if (--batchState().depth == 0)
+        closeBatch();
+}
+
 PanelTexture::PanelTexture(ui::EmbeddedWindow *window)
     : m_window(window)
 {
@@ -98,7 +154,7 @@ PanelTexture::~PanelTexture() = default;
 
 bool PanelTexture::renderImage()
 {
-    const ui::EmbeddedWindow::Frame &frame = m_window->render();
+    const ui::EmbeddedWindow::Frame &frame = m_window->render(m_frameTimeNs);
     if (!frame.pixels || frame.width <= 0 || frame.height <= 0)
         return false;
     m_gpuCurrent = false;
@@ -131,15 +187,27 @@ bool PanelTexture::renderImage()
 
 render::Texture *PanelTexture::texture(render::Renderer &renderer, bool dirty)
 {
-    if (render::Texture *texture = gpuTexture(renderer, dirty)) {
+    return sharedTexture(renderer, dirty).get();
+}
+
+std::shared_ptr<render::Texture> PanelTexture::sharedTexture(render::Renderer &renderer, bool dirty)
+{
+    const bool wasOnGpu = m_lastOnGpu;
+    m_lastDamage.clear();
+    if (std::shared_ptr<render::Texture> texture = gpuTexture(renderer, dirty)) {
         m_lastOnGpu = true;
+        if (!wasOnGpu)
+            m_lastDamage = base::Rect(base::Point(), texture->size());
         return texture;
     }
     m_lastOnGpu = false;
-    return cpuTexture(renderer, dirty);
+    std::shared_ptr<render::Texture> texture = cpuTexture(renderer, dirty);
+    if (texture && wasOnGpu)
+        m_lastDamage = base::Rect(base::Point(), texture->size());
+    return texture;
 }
 
-render::Texture *PanelTexture::gpuTexture(render::Renderer &renderer, bool dirty)
+std::shared_ptr<render::Texture> PanelTexture::gpuTexture(render::Renderer &renderer, bool dirty)
 {
     const base::Size size(m_window->pixelWidth(), m_window->pixelHeight());
     if (size.isEmpty() || &renderer == m_cpuRenderer || !gpuHost().allowed)
@@ -148,6 +216,8 @@ render::Texture *PanelTexture::gpuTexture(render::Renderer &renderer, bool dirty
     if (!texture || m_gpuTexture->size() != size) {
         m_gpuTexture.reset();
         m_gpuCurrent = false;
+        // The upload is the compositor's GL work, which a batch may not hold.
+        closeBatch();
         // Only to learn whether the renderer is GL, and on which context.
         const std::vector<uint8_t> clear(size_t(size.width()) * size.height() * 4, 0);
         m_gpuTexture = renderer.createTexture(size, clear.data(), size.width() * 4,
@@ -163,20 +233,29 @@ render::Texture *PanelTexture::gpuTexture(render::Renderer &renderer, bool dirty
     if (!gpu)
         return nullptr;
     if (!dirty && m_gpuCurrent)
-        return texture;
+        return m_gpuTexture;
+    const bool keepsLastFrame = m_gpuCurrent;
+    openBatch(gpu);
     const ui::EmbeddedWindow::Frame *frame = m_window->render(
-            *gpu, {texture->name(), size.width(), size.height(), m_gpuCurrent});
+            *gpu, {texture->name(), size.width(), size.height(), keepsLastFrame}, m_frameTimeNs);
     if (!frame) {
         m_gpuCurrent = false;
         return nullptr;
     }
+    if (keepsLastFrame) {
+        for (const ui::Rect &rect : frame->damage)
+            m_lastDamage |= base::Rect(rect.x, rect.y, rect.width, rect.height) & base::Rect(size);
+    } else {
+        m_lastDamage = base::Rect(size);
+    }
     m_gpuCurrent = true;
     m_imageBehind = true;
-    return texture;
+    return m_gpuTexture;
 }
 
-render::Texture *PanelTexture::cpuTexture(render::Renderer &renderer, bool dirty)
+std::shared_ptr<render::Texture> PanelTexture::cpuTexture(render::Renderer &renderer, bool dirty)
 {
+    closeBatch();
     if (dirty || m_image.isNull())
         renderImage();
     if (m_image.isNull())
@@ -191,15 +270,17 @@ render::Texture *PanelTexture::cpuTexture(render::Renderer &renderer, bool dirty
     } else {
         m_cpuTexture.reset();
     }
+    m_lastDamage = m_pendingUpload;
     if (!m_cpuTexture) {
         // The renderer uploads the texture's own size and cannot see the
         // image's, so a panel redrawn at another size needs a new one.
         m_cpuTexture = renderer.createTexture(m_image.size(), m_image.constBits(),
                                               int(m_image.stride()),
                                               render::PixelFormat::Rgba8888);
+        m_lastDamage = m_image.rect();
     }
     m_pendingUpload.clear();
-    return m_cpuTexture.get();
+    return m_cpuTexture;
 }
 
 void PanelTexture::releaseRenderResources()
@@ -210,6 +291,7 @@ void PanelTexture::releaseRenderResources()
     m_gpuCurrent = false;
     m_pendingUpload = m_image.rect();
     GpuHost &host = gpuHost();
+    closeBatch();
     if (host.gpu && host.context) {
         {
             render::ScopedEglCurrent current(*host.context);

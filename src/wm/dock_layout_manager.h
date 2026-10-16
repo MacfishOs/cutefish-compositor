@@ -55,7 +55,7 @@ enum class WorkspaceState {
     Fullscreen,
 };
 
-// Decides, for every dock and panel the trusted shell maps, whether it is on
+// Decides, for every dock and panel the shell maps, whether it is on
 // screen right now, and slides it off its screen edge when it is not. The dock
 // itself only draws: it never unmaps, and it learns nothing about the pointer.
 // A panel such as the status bar follows the same rules, minus the setting: it

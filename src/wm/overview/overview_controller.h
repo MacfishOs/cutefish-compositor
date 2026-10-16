@@ -75,6 +75,10 @@ public:
     scene::OverviewNode *node() const { return m_node; }
     scene::OverviewDeskBarNode *deskBar() const { return m_bar; }
 
+    // The outputs' wallpapers, drawn first under the dim with the desktop
+    // windows over them.
+    void setWallpaperNodes(std::vector<const scene::Node *> nodes);
+
     // Receives whatever the overview does not take.
     void setNext(input::EventSink *next) { m_next = next; }
 
@@ -217,6 +221,7 @@ private:
     WindowManager *m_manager = nullptr;
     scene::OverviewNode *m_node = nullptr;
     scene::OverviewDeskBarNode *m_bar = nullptr;
+    std::vector<const scene::Node *> m_wallpapers;
     input::EventSink *m_next = nullptr;
     State m_state = State::Hidden;
     std::vector<Item> m_items;

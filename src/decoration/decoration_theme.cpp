@@ -74,7 +74,7 @@ void Theme::setDarkMode(bool dark)
 
 void Theme::setCaptionPointSize(double points)
 {
-    // Points to logical pixels the way Qt does on Wayland (a fixed 96 dpi).
+    // Points to logical pixels at a fixed 96 dpi, as clients size text.
     const int pixels = std::clamp(base::roundToInt(points * 96.0 / 72.0), 1, 128);
     if (pixels == m_metrics.textPixelSize)
         return;

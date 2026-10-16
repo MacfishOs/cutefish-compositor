@@ -9,8 +9,7 @@
 
 // Connects through WAYLAND_SOCKET, appends "ime" or "none" to argv[2] depending
 // on whether the input-method global is visible, then exits or stays connected.
-// The "display" and "platform" modes append its DISPLAY or QT_QPA_PLATFORM
-// instead, or "-", and stay.
+// The "display" mode appends its DISPLAY instead, or "-", and stays.
 int main(int argc, char **argv)
 {
     if (argc < 3)
@@ -31,8 +30,6 @@ int main(int argc, char **argv)
     const char *logged = nullptr;
     if (!std::strcmp(argv[1], "display"))
         logged = "DISPLAY";
-    else if (!std::strcmp(argv[1], "platform"))
-        logged = "QT_QPA_PLATFORM";
     if (auto *file = std::fopen(argv[2], "a")) {
         if (logged)
             std::fprintf(file, "%s\n", std::getenv(logged) ? std::getenv(logged) : "-");

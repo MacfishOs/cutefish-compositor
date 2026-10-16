@@ -876,7 +876,7 @@ TEST_F(ShadowPixelTest, BottomCornersAreShadowedOnlyWhenTheSilhouetteIsRounded)
         return total;
     };
 
-    // FishUI's Theme.qml windowRadius. The compositor cannot ask a client for
+    // FishUI's window corner radius. The compositor cannot ask a client for
     // its radius, so the two have to be kept the same number here.
     EXPECT_EQ(metrics.cornerRadius, 14);
     EXPECT_EQ(WindowVisualStyle::radiusFor(kWindow), metrics.cornerRadius);

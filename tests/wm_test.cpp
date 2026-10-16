@@ -510,14 +510,11 @@ TEST_F(WmTest, ShellWindowsAreNeverPinged)
 {
     Window *panel = makeWindow(base::Rect(0, 0, 800, 30));
     panel->setRole(WindowRole::Panel);
-    Window *shellApp = mapManagedWindow(base::Size(300, 200), "cutefish-shell");
     int pings = 0;
-    for (Window *window : {panel, shellApp}) {
-        window->setPingCallback([&] {
-            ++pings;
-        });
-        window->ping();
-    }
+    panel->setPingCallback([&] {
+        ++pings;
+    });
+    panel->ping();
     EXPECT_EQ(0, pings);
 }
 

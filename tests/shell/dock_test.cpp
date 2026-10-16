@@ -1,0 +1,336 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include <filesystem>
+
+#include <gtest/gtest.h>
+#include <unistd.h>
+
+#include "base/settings.h"
+#include "dbus_test_client.h"
+#include "loop_test_util.h"
+#include "shell/common/app_launcher.h"
+#include "shell/common/file_thread.h"
+#include "shell/common/task_manager.h"
+#include "shell/dock/dock.h"
+#include "shell_test_util.h"
+#include "temporary_directory.h"
+
+using namespace cutefish;
+namespace dbus = base::dbus;
+using shell::DockModel;
+
+namespace {
+
+// The session's AppRuntime, as far as starting applications goes.
+class FakeAppRuntime
+{
+public:
+    explicit FakeAppRuntime(dbus::Connection *bus)
+        : object(bus, "/AppRuntime", "com.cutefish.AppRuntime")
+    {
+        object.addMethod("launchApplication",
+                         [this](const std::string &id, const std::vector<std::string> &, const std::string &) {
+                             launched.push_back(id);
+                             return uint32_t(1);
+                         });
+        object.addMethod("launchCommand", [this](const std::string &id, const std::vector<std::string> &,
+                                                 const std::string &, const std::string &) {
+            launched.push_back(id);
+            return uint32_t(1);
+        });
+        object.addMethod("quitApplication", [this](const std::string &id) {
+            quit.push_back(id);
+            return true;
+        });
+        EXPECT_TRUE(object.publish());
+        EXPECT_TRUE(bus->requestName("com.cutefish.AppRuntime"));
+    }
+
+    dbus::Object object;
+    std::vector<std::string> launched;
+    std::vector<std::string> quit;
+};
+
+class DockTest : public testing::Test
+{
+protected:
+    DockTest()
+    {
+        applications.addSimple("files", "Files", "files-icon");
+        applications.addSimple("terminal", "Terminal", "terminal-icon");
+        applications.addSimple("editor", "Editor", "editor-icon");
+        applications.scan();
+    }
+
+    void start(const std::string &settings = {})
+    {
+        if (!settings.empty())
+            directory.write("shell.conf", settings);
+        trashHome = directory.filePath("Trash");
+        dock = std::make_unique<shell::Dock>(
+                dbus::Connection::session(core::mainLoop()), tasks, launcher, directory.filePath("shell.conf"),
+                std::make_unique<shell::TrashMonitor>(directory.filePath("mountinfo"), trashHome));
+        ASSERT_TRUE(test::runUntil([this] { return model().isLoaded() && dock->settings().isReady(); }));
+    }
+
+    DockModel &model() { return dock->applications(); }
+
+    std::vector<std::string> ids()
+    {
+        std::vector<std::string> list;
+        for (const auto &item : model().items())
+            list.push_back(item->id);
+        return list;
+    }
+
+    std::vector<std::string> savedPins()
+    {
+        shell::waitForFileThread();
+        return base::Settings(directory.filePath("shell.conf")).stringListValue("Dock/Pinned");
+    }
+
+    uint64_t open(const std::string &appId, const std::string &title = "Window")
+    {
+        shell::TaskWindow window;
+        window.appId = appId;
+        window.title = title;
+        window.pid = 4242;
+        return windows.add(window);
+    }
+
+    test::TemporaryDirectory directory;
+    std::string trashHome;
+    test::FakeApplications applications;
+    test::FakeTaskWindows windows;
+    shell::TaskManager tasks{windows, applications, [](int64_t) { return shell::ProcessCommand(); }};
+    test::DBusTestClient runtimeClient;
+    FakeAppRuntime runtime{runtimeClient.connection.get()};
+    shell::ApplicationLauncher launcher{dbus::Connection::session(core::mainLoop())};
+    std::unique_ptr<shell::Dock> dock;
+};
+
+} // namespace
+
+TEST_F(DockTest, LoadsThePinsAndForgetsUninstalledOnes)
+{
+    start("[Dock]\nPinned=terminal, gone, files\n");
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "terminal", "files"}));
+    EXPECT_TRUE(model().at(0).fixed);
+    EXPECT_EQ(model().at(1).iconName, "terminal-icon");
+    EXPECT_EQ(model().pinnedCount(), 3);
+    EXPECT_EQ(savedPins(), (std::vector<std::string>{"terminal", "files"}));
+
+    // Missing keys were written with their defaults.
+    base::Settings settings(directory.filePath("shell.conf"));
+    EXPECT_EQ(settings.intValue("Dock/IconSize"), 54);
+    EXPECT_EQ(settings.intValue("Dock/Direction"), 1);
+    EXPECT_TRUE(settings.boolValue("Dock/MinimizedArea"));
+}
+
+TEST_F(DockTest, StartsFromTheDefaultPinsWithoutAList)
+{
+    applications.addSimple("cutefish-terminal", "Terminal");
+    applications.scan();
+    start();
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "cutefish-terminal"}));
+    // Nothing is written until the user changes the pins.
+    shell::waitForFileThread();
+    EXPECT_FALSE(base::Settings(directory.filePath("shell.conf")).contains("Dock/Pinned"));
+}
+
+TEST_F(DockTest, FollowsRunningApplications)
+{
+    start("[Dock]\nPinned=files\n");
+    const uint64_t first = open("files", "Home");
+    const uint64_t second = open("files", "Documents");
+    const uint64_t loose = open("unknown", "Tool");
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "files", "unknown"}));
+    EXPECT_EQ(model().at(1).windows, (std::vector<uint64_t>{first, second}));
+    EXPECT_EQ(model().at(2).visibleName, "Tool");
+    EXPECT_EQ(model().at(2).iconName, "unknown");
+    EXPECT_FALSE(model().at(2).pinnable());
+
+    windows.setActive(second);
+    EXPECT_TRUE(model().at(1).isActive);
+
+    // Clicks cycle through the windows.
+    windows.requests.clear();
+    model().clicked("files");
+    model().clicked("files");
+    EXPECT_EQ(windows.requests,
+              (std::vector<std::string>{"activate " + std::to_string(first), "activate " + std::to_string(second)}));
+
+    // A hidden application comes back whole.
+    windows.change(first, [](shell::TaskWindow &w) { w.hidden = true; }, shell::kStateChange);
+    windows.requests.clear();
+    model().clicked("files");
+    EXPECT_EQ(windows.requests.front(), "unhide " + std::to_string(first));
+
+    // Unpinned applications go with their last window; pinned ones stay.
+    windows.remove(loose);
+    windows.remove(first);
+    windows.remove(second);
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "files"}));
+    EXPECT_TRUE(model().at(1).windows.empty());
+}
+
+TEST_F(DockTest, LaunchesAndQuitsThroughTheRuntime)
+{
+    start("[Dock]\nPinned=editor\n");
+    bool hidden = false;
+    model().hideLauncher = [&] { hidden = true; };
+    model().clicked("editor");
+    EXPECT_TRUE(hidden);
+    ASSERT_TRUE(test::runUntil([&] { return !runtime.launched.empty(); }));
+    EXPECT_EQ(runtime.launched.front(), "editor");
+
+    bool toggled = false;
+    model().toggleLauncher = [&] { toggled = true; };
+    model().clicked(DockModel::kLauncherId);
+    EXPECT_TRUE(toggled);
+
+    const uint64_t window = open("editor");
+    model().quit("editor");
+    EXPECT_EQ(windows.requests.back(), "quit " + std::to_string(window));
+}
+
+TEST_F(DockTest, PinsMovesAndDrops)
+{
+    start("[Dock]\nPinned=files\n");
+    open("terminal");
+    open("editor");
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "files", "terminal", "editor"}));
+
+    model().pin("editor");
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "files", "editor", "terminal"}));
+    EXPECT_EQ(savedPins(), (std::vector<std::string>{"files", "editor"}));
+
+    // Within the pinned section; nothing goes before the launcher.
+    model().move(2, 1);
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "editor", "files", "terminal"}));
+    model().move(1, 0);
+    EXPECT_EQ(ids()[0], DockModel::kLauncherId);
+    // A pinned item does not cross the divider.
+    model().move(1, 3, true);
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "editor", "files", "terminal"}));
+
+    // An unpinned one dropped among the pins is pinned there.
+    EXPECT_TRUE(model().dropApplication("terminal", 1, true));
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "terminal", "editor", "files"}));
+    EXPECT_EQ(savedPins(), (std::vector<std::string>{"terminal", "editor", "files"}));
+
+    // Unpinning a running application moves it among the running ones.
+    model().unPin("terminal");
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "editor", "files", "terminal"}));
+    EXPECT_FALSE(model().at(3).isPinned);
+
+    // A desktop file inserted where a drag left a gap.
+    EXPECT_TRUE(model().insert("/usr/share/applications/terminal.desktop", 1));
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "terminal", "editor", "files"}));
+}
+
+TEST_F(DockTest, ServesComCutefishDock)
+{
+    start("[Dock]\nPinned=files\n");
+    ASSERT_TRUE(dock->registerService());
+    dock->primaryGeometry = [] { return base::Rect(10, 20, 300, 60); };
+
+    test::DBusTestClient settings;
+    settings.listen("com.cutefish.Dock");
+    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "add", std::string("editor"));
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "files", "editor"}));
+    EXPECT_TRUE(settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "pinned", std::string("editor"))
+                        .value<bool>()
+                        .value_or(false));
+    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "remove",
+                  std::string("/usr/share/applications/files.desktop"));
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "editor"}));
+
+    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "setDirection", int32_t(0));
+    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "setGlassTint", 3.0);
+    EXPECT_EQ(dock->settings().direction(), shell::DockSettings::Left);
+    EXPECT_EQ(dock->settings().glassTint(), 1.0);
+    EXPECT_TRUE(test::runUntil([&] { return !settings.signalsSeen.empty(); }));
+    EXPECT_EQ(settings.signalsSeen.front().member(), "directionChanged");
+
+    const auto geometry = settings.getProperty("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "primaryGeometry");
+    const auto rect = geometry.value<dbus::Variant>()
+                              .value_or(dbus::Variant())
+                              .get<std::tuple<int32_t, int32_t, int32_t, int32_t>>();
+    ASSERT_TRUE(rect.has_value());
+    EXPECT_EQ(std::get<2>(*rect), 300);
+    const auto direction = settings.getProperty("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "direction");
+    EXPECT_EQ(direction.value<dbus::Variant>().value_or(dbus::Variant()).value<int32_t>(), 0);
+
+    const std::string xml = settings.introspect("com.cutefish.Dock", "/Dock");
+    EXPECT_NE(xml.find("name=\"desktopFile\""), std::string::npos);
+
+    shell::waitForFileThread();
+    base::Settings saved(directory.filePath("shell.conf"));
+    EXPECT_EQ(saved.intValue("Dock/Direction", -1), 0);
+    EXPECT_EQ(saved.doubleValue("Dock/GlassTint"), 1.0);
+}
+
+TEST_F(DockTest, KeepsMinimizedWindowsBesideTheTrash)
+{
+    start();
+    shell::MinimizedWindows &minimized = dock->minimizedWindows();
+    const uint64_t window = open("editor", "Notes");
+    windows.change(window, [](shell::TaskWindow &w) {
+        w.minimized = true;
+        w.geometry = base::Rect(0, 0, 400, 200);
+    }, shell::kStateChange);
+    ASSERT_EQ(minimized.count(), 1);
+    EXPECT_FALSE(minimized.entries()[0].landed);
+    EXPECT_TRUE(minimized.entries()[0].flownIn);
+    EXPECT_EQ(minimized.title(0), "Notes");
+    EXPECT_EQ(minimized.iconName(0), "editor-icon");
+    EXPECT_DOUBLE_EQ(minimized.aspect(0), 2.0);
+    windows.minimizeLanded(window);
+    EXPECT_TRUE(minimized.entries()[0].landed);
+
+    windows.requests.clear();
+    minimized.restore(window);
+    EXPECT_EQ(windows.requests, (std::vector<std::string>{"activate " + std::to_string(window)}));
+    windows.change(window, [](shell::TaskWindow &w) { w.minimized = false; }, shell::kStateChange);
+    EXPECT_EQ(minimized.count(), 0);
+
+    // One that never lands still shows its thumbnail after a moment.
+    windows.change(window, [](shell::TaskWindow &w) { w.minimized = true; }, shell::kStateChange);
+    EXPECT_TRUE(test::runUntil([&] { return minimized.entries()[0].landed; }));
+
+    dock->settings().setMinimizedArea(false);
+    EXPECT_EQ(minimized.count(), 0);
+    dock->settings().setMinimizedArea(true);
+    ASSERT_EQ(minimized.count(), 1);
+    EXPECT_TRUE(minimized.entries()[0].landed);
+    EXPECT_FALSE(minimized.entries()[0].flownIn);
+}
+
+TEST_F(DockTest, SeesSomethingInAnyTrash)
+{
+    // A volume mounted at <directory>/volume with the user's trash on it.
+    const std::string volume = directory.filePath("volume");
+    std::filesystem::create_directories(volume);
+    directory.write("mountinfo", "36 35 98:0 / " + volume + " rw,noatime - ext4 /dev/sda1 rw\n"
+                                 "37 35 0:5 / /proc rw - proc proc rw\n");
+    start();
+    shell::TrashMonitor &trash = dock->trash();
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_TRUE(trash.isEmpty());
+
+    const std::string files = volume + "/.Trash-" + std::to_string(getuid()) + "/files";
+    std::filesystem::create_directories(files);
+    directory.write("volume/.Trash-" + std::to_string(getuid()) + "/files/note.txt", "x");
+    EXPECT_TRUE(test::runUntil([&] { return !trash.isEmpty(); }));
+
+    std::filesystem::remove(files + "/note.txt");
+    EXPECT_TRUE(test::runUntil([&] { return trash.isEmpty(); }));
+
+    std::filesystem::create_directories(trashHome + "/files");
+    test::runFor(std::chrono::milliseconds(100));
+    directory.write("Trash/files/old.txt", "x");
+    EXPECT_TRUE(test::runUntil([&] { return !trash.isEmpty(); }));
+}

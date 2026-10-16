@@ -323,6 +323,7 @@ void WindowManager::setExclusiveZone(const void *token, ScreenEdge edge, int thi
                     window->state()->onEvent(event);
             }
         }
+        exclusiveZonesChanged();
     }
 }
 
@@ -337,20 +338,7 @@ void WindowManager::clearExclusiveZone(const void *token)
                     window->state()->onEvent(event);
             }
         }
-    }
-}
-
-void WindowManager::clearAllExclusiveZones()
-{
-    if (m_exclusiveZones.clearAll()) {
-        applyExclusiveZones();
-        if (m_displayManager) {
-            const WMEvent event(WMEventType::WorkAreaChanged);
-            for (Window *window : std::vector<Window *>(m_stackingOrder)) {
-                if (hasWindow(window))
-                    window->state()->onEvent(event);
-            }
-        }
+        exclusiveZonesChanged();
     }
 }
 
@@ -418,9 +406,9 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     // The shell's metadata is applied before anything else looks at the window:
     // it decides the stacking layer this window is inserted into, whether it is
     // decorated, whether it is placed at all, and - because windowAdded is
-    // emitted at the end of this function - whether the window-management
-    // protocol ever announces it. Nothing here may be deferred to a signal
-    // handler running after windowAdded.
+    // emitted at the end of this function - whether the task list ever
+    // lists it. Nothing here may be deferred to a signal handler running
+    // after windowAdded.
     if (const ShellWindowMetadata *metadata = shellMetadata(rootSurface)) {
         window->setRole(metadata->role);
         window->setFocusPolicy(metadata->focusPolicy);
@@ -1014,7 +1002,9 @@ void WindowManager::forceQuit(Window *window)
 
 bool WindowManager::promptNotResponding(Window *window)
 {
-    return m_notRespondingPrompt && hasWindow(window) && m_notRespondingPrompt(window);
+    if (!hasWindow(window))
+        return false;
+    return m_notRespondingPrompt && m_notRespondingPrompt(window);
 }
 
 void WindowManager::hideApplication(Window *window)

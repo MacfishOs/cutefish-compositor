@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// End-to-end tests for the two private Cutefish shell protocols, driven through
-// real libwayland-client connections: one trusted shell connection created the
-// way the session creates it, and one ordinary application connection.
+// End-to-end tests for the private Cutefish shell protocol, which is down to the
+// desktop surface, driven through real libwayland-client connections: one
+// trusted connection created the way the session creates it, and one ordinary
+// application connection.
 
 #include <atomic>
 #include <chrono>
@@ -21,36 +22,26 @@
 #include <mutex>
 #include <poll.h>
 #include <string>
-#include <sys/mman.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 
-#include <appmenu-client-protocol.h>
-#include <cutefish-window-hints-v1-client-protocol.h>
-#include "ui/bitmap.h"
-#include "wayland/protocols/window_hints.h"
-#include "wm/mru_window_tracker.h"
 #include <cutefish-shell-v1-client-protocol.h>
-#include <ext-image-capture-source-v1-client-protocol.h>
-#include <cutefish-window-management-v1-client-protocol.h>
-#include <ext-image-capture-source-v1-server-protocol.h>
 #include <wayland-client.h>
 #include <wayland-server-core.h>
 #include <xdg-shell-client-protocol.h>
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "display/display_manager.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
 #include "scene/node.h"
 #include "scene/scene.h"
 #include "shm_test_util.h"
 #include "wayland/privileged_client.h"
-#include "wayland/protocols/application_menu.h"
 #include "wayland/protocols/cutefish_shell.h"
-#include "wayland/protocols/cutefish_window_management.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_seat.h"
 #include "wayland/protocols/wl_shm.h"
@@ -67,41 +58,7 @@ using namespace cutefish;
 
 namespace {
 
-struct RunningClient {
-    std::atomic<int> &count;
-
-    ~RunningClient() { --count; }
-};
-
 const base::Rect kOutput(0, 0, 800, 600);
-
-// What the client learned about one managed window.
-struct TrackedWindow {
-    cutefish_window_v1 *object = nullptr;
-    uint64_t id = 0;
-    uint64_t parentId = 0;
-    std::string title;
-    std::string appId;
-    std::string menuService;
-    std::string menuPath;
-    uint32_t pid = 0;
-    bool active = false;
-    bool minimized = false;
-    bool maximized = false;
-    bool fullscreen = false;
-    bool hidden = false;
-    bool skipTaskbar = false;
-    int skipTaskbarCount = 0;
-    base::Rect geometry;
-    ui::Bitmap thumbnail;
-    int doneCount = 0;
-    int parentCount = 0;
-    int minimizeLandedCount = 0;
-    uint32_t desk = 0;
-    bool responsive = true;
-    int notRespondingCount = 0;
-    bool closed = false;
-};
 
 struct Client;
 
@@ -135,73 +92,6 @@ const xdg_toplevel_listener toplevelListener = {
         [](void *, xdg_toplevel *, wl_array *) {},
 };
 
-const cutefish_window_v1_listener windowListener = {
-        [](void *data, cutefish_window_v1 *, const char *title) {
-            static_cast<TrackedWindow *>(data)->title = title;
-        },
-        [](void *data, cutefish_window_v1 *, const char *appId) {
-            static_cast<TrackedWindow *>(data)->appId = appId;
-        },
-        [](void *data, cutefish_window_v1 *, uint32_t pid) {
-            static_cast<TrackedWindow *>(data)->pid = pid;
-        },
-        [](void *data, cutefish_window_v1 *, uint32_t active, uint32_t minimized,
-           uint32_t maximized, uint32_t fullscreen, uint32_t hidden) {
-            auto *window = static_cast<TrackedWindow *>(data);
-            window->active = active != 0;
-            window->minimized = minimized != 0;
-            window->maximized = maximized != 0;
-            window->fullscreen = fullscreen != 0;
-            window->hidden = hidden != 0;
-        },
-        [](void *data, cutefish_window_v1 *, int32_t x, int32_t y, int32_t width, int32_t height) {
-            static_cast<TrackedWindow *>(data)->geometry = base::Rect(x, y, width, height);
-        },
-        [](void *data, cutefish_window_v1 *) {
-            ++static_cast<TrackedWindow *>(data)->doneCount;
-        },
-        [](void *data, cutefish_window_v1 *) {
-            static_cast<TrackedWindow *>(data)->closed = true;
-        },
-        [](void *data, cutefish_window_v1 *, const char *service, const char *path) {
-            auto *window = static_cast<TrackedWindow *>(data);
-            window->menuService = service;
-            window->menuPath = path;
-        },
-        [](void *data, cutefish_window_v1 *, int32_t fd, uint32_t width, uint32_t height) {
-            const size_t size = size_t(width) * height * 4;
-            void *pixels = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
-            close(fd);
-            ASSERT_NE(pixels, MAP_FAILED);
-            static_cast<TrackedWindow *>(data)->thumbnail =
-                    ui::Bitmap::copyOf(pixels, int(width), int(height), size_t(width) * 4,
-                                       ui::Bitmap::Format::Argb32Premultiplied);
-            munmap(pixels, size);
-        },
-        [](void *data, cutefish_window_v1 *) {
-            ++static_cast<TrackedWindow *>(data)->minimizeLandedCount;
-        },
-        [](void *data, cutefish_window_v1 *, uint32_t high, uint32_t low) {
-            auto *window = static_cast<TrackedWindow *>(data);
-            window->parentId = (uint64_t(high) << 32) | low;
-            ++window->parentCount;
-        },
-        [](void *data, cutefish_window_v1 *, uint32_t skip) {
-            auto *window = static_cast<TrackedWindow *>(data);
-            window->skipTaskbar = skip != 0;
-            ++window->skipTaskbarCount;
-        },
-        [](void *data, cutefish_window_v1 *, uint32_t desk) {
-            static_cast<TrackedWindow *>(data)->desk = desk;
-        },
-        [](void *data, cutefish_window_v1 *, uint32_t responsive) {
-            static_cast<TrackedWindow *>(data)->responsive = responsive != 0;
-        },
-        [](void *data, cutefish_window_v1 *) {
-            ++static_cast<TrackedWindow *>(data)->notRespondingCount;
-        },
-};
-
 struct Client {
     wl_display *display = nullptr;
     wl_registry *registry = nullptr;
@@ -209,21 +99,7 @@ struct Client {
     wl_shm *shm = nullptr;
     xdg_wm_base *wmBase = nullptr;
     cutefish_shell_v1 *shell = nullptr;
-    cutefish_window_management_v1 *management = nullptr;
-    std::vector<cutefish_window_management_v1 *> retiredManagements;
     std::map<std::string, std::pair<uint32_t, uint32_t>> globals;
-
-    std::vector<std::unique_ptr<TrackedWindow>> tracked;
-    uint64_t activeWindowId = 0;
-    int initialStateDone = 0;
-    struct Pick {
-        uint32_t kind = CUTEFISH_WINDOW_MANAGEMENT_V1_PICKED_KIND_NONE;
-        uint64_t id = 0;
-    };
-    std::map<uint32_t, Pick> picks;
-    std::vector<uint32_t> desks;
-    std::map<uint32_t, std::string> deskNames;
-    uint32_t activeDesk = 0;
 
     std::vector<std::unique_ptr<XdgWindow>> windows;
 
@@ -260,15 +136,6 @@ struct Client {
         for (auto &window : windows)
             destroyWindowObjects(window.get());
         windows.clear();
-        for (auto &window : tracked) {
-            if (window->object)
-                cutefish_window_v1_destroy(window->object);
-        }
-        tracked.clear();
-        if (management)
-            cutefish_window_management_v1_destroy(management);
-        for (cutefish_window_management_v1 *retired : retiredManagements)
-            cutefish_window_management_v1_destroy(retired);
         if (shell)
             cutefish_shell_v1_destroy(shell);
         xdg_wm_base_destroy(wmBase);
@@ -287,79 +154,6 @@ struct Client {
                 globals["cutefish_shell_v1"].second));
         sync();
         return true;
-    }
-
-    bool bindManagement()
-    {
-        if (!globals.contains("cutefish_window_management_v1"))
-            return false;
-        // A rebinding stands for a restarted shell; the first binding stays
-        // usable for the windows it announced and goes with the client.
-        if (management)
-            retiredManagements.push_back(management);
-        management = static_cast<cutefish_window_management_v1 *>(
-                wl_registry_bind(registry, globals["cutefish_window_management_v1"].first,
-                                 &cutefish_window_management_v1_interface, 1));
-        static const cutefish_window_management_v1_listener listener = {
-                [](void *data, cutefish_window_management_v1 *, cutefish_window_v1 *object,
-                   uint32_t idHi, uint32_t idLo) {
-                    auto *client = static_cast<Client *>(data);
-                    client->tracked.push_back(std::make_unique<TrackedWindow>());
-                    TrackedWindow *window = client->tracked.back().get();
-                    window->object = object;
-                    window->id = (static_cast<uint64_t>(idHi) << 32) | idLo;
-                    cutefish_window_v1_add_listener(object, &windowListener, window);
-                },
-                [](void *data, cutefish_window_management_v1 *, uint32_t idHi, uint32_t idLo) {
-                    static_cast<Client *>(data)->activeWindowId =
-                            (static_cast<uint64_t>(idHi) << 32) | idLo;
-                },
-                [](void *data, cutefish_window_management_v1 *) {
-                    ++static_cast<Client *>(data)->initialStateDone;
-                },
-                [](void *data, cutefish_window_management_v1 *, uint32_t serial, uint32_t kind,
-                   uint32_t idHi, uint32_t idLo) {
-                    static_cast<Client *>(data)->picks[serial] = {
-                            kind, (static_cast<uint64_t>(idHi) << 32) | idLo};
-                },
-                [](void *data, cutefish_window_management_v1 *, uint32_t desk) {
-                    static_cast<Client *>(data)->desks.push_back(desk);
-                },
-                [](void *data, cutefish_window_management_v1 *, uint32_t desk) {
-                    auto *client = static_cast<Client *>(data);
-                    std::erase(client->desks, desk);
-                    client->deskNames.erase(desk);
-                },
-                [](void *data, cutefish_window_management_v1 *, uint32_t desk, const char *name) {
-                    static_cast<Client *>(data)->deskNames[desk] = name;
-                },
-                [](void *data, cutefish_window_management_v1 *, uint32_t desk) {
-                    static_cast<Client *>(data)->activeDesk = desk;
-                },
-        };
-        cutefish_window_management_v1_add_listener(management, &listener, this);
-        sync();
-        return true;
-    }
-
-    TrackedWindow *trackedById(uint64_t id)
-    {
-        for (auto &window : tracked) {
-            if (window->id == id && !window->closed)
-                return window.get();
-        }
-        return nullptr;
-    }
-
-    // Live entries only, in the order they were announced.
-    std::vector<TrackedWindow *> liveTracked()
-    {
-        std::vector<TrackedWindow *> live;
-        for (auto &window : tracked) {
-            if (!window->closed)
-                live.push_back(window.get());
-        }
-        return live;
     }
 
     wl_buffer *makeBuffer(const base::Size &size)
@@ -500,8 +294,6 @@ protected:
 
     std::mutex mutex;
     std::deque<std::function<void()>> pendingChecks;
-    // Runs on the window management object before the globals are created.
-    std::function<void(wayland::WaylandCutefishWindowManagement &)> configureManagement;
 
     void SetUp() override
     {
@@ -570,25 +362,13 @@ protected:
                                                                    &seat, server.serialTracker());
         auto cutefishShell =
                 std::make_unique<wayland::WaylandCutefishShell>(&windowManager, privileged.get());
-        auto management = std::make_unique<wayland::WaylandCutefishWindowManagement>(
-                &windowManager, privileged.get());
-        if (configureManagement)
-            configureManagement(*management);
 
         ASSERT_TRUE(wayland::createCompositorGlobal(server.display(), &compositor));
         ASSERT_TRUE(wayland::createSubcompositorGlobal(server.display()));
-        ASSERT_TRUE(wayland::createAppMenuGlobal(server.display()));
-        ASSERT_TRUE(wayland::createWindowHintsGlobal(server.display()));
         ASSERT_TRUE(wayland::createShmGlobal(server.display(), &compositor));
         ASSERT_TRUE(wayland::createSeatGlobal(server.display(), waylandSeat.get()));
         ASSERT_TRUE(wayland::createXdgShellGlobal(server.display(), xdgShell.get()));
         ASSERT_TRUE(wayland::createCutefishShellGlobal(server.display(), cutefishShell.get()));
-        ASSERT_TRUE(
-                wayland::createCutefishWindowManagementGlobal(server.display(), management.get()));
-        privileged->setShellDisconnectedCallback([this] {
-            windowManager.clearAllExclusiveZones();
-        });
-
         int shellFds[2];
         ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, shellFds));
         ASSERT_TRUE(privileged->adoptShellConnection(shellFds[0]));
@@ -664,11 +444,12 @@ protected:
 ////////////////////////////////////////////////////////////////////////////////
 // Privilege
 
-TEST_F(PrivateShellProtocolTest, TheTrustedClientSeesBothPrivateGlobals)
+TEST_F(PrivateShellProtocolTest, TheTrustedClientSeesThePrivateGlobal)
 {
     run([&](Client &c) {
         EXPECT_TRUE(c.globals.contains("cutefish_shell_v1"));
-        EXPECT_TRUE(c.globals.contains("cutefish_window_management_v1"));
+        // The rest of the private shell protocols are gone.
+        EXPECT_FALSE(c.globals.contains("cutefish_window_management_v1"));
         // Every public global is still there for it.
         EXPECT_TRUE(c.globals.contains("wl_compositor"));
         EXPECT_TRUE(c.globals.contains("xdg_wm_base"));
@@ -676,20 +457,19 @@ TEST_F(PrivateShellProtocolTest, TheTrustedClientSeesBothPrivateGlobals)
     });
 }
 
-TEST_F(PrivateShellProtocolTest, AnOrdinaryClientNeverSeesThePrivateGlobals)
+TEST_F(PrivateShellProtocolTest, AnOrdinaryClientNeverSeesThePrivateGlobal)
 {
     run({}, [&](Client &c) {
         EXPECT_FALSE(c.globals.contains("cutefish_shell_v1"));
-        EXPECT_FALSE(c.globals.contains("cutefish_window_management_v1"));
         EXPECT_TRUE(c.globals.contains("wl_compositor"));
         EXPECT_TRUE(c.globals.contains("xdg_wm_base"));
     });
 }
 
-TEST_F(PrivateShellProtocolTest, AnOrdinaryClientCannotBindThePrivateGlobalsByName)
+TEST_F(PrivateShellProtocolTest, AnOrdinaryClientCannotBindThePrivateGlobalByName)
 {
     // The name is guessed the way a hostile client would have to guess it: the
-    // shell learns the real one, and the application tries to bind it anyway.
+    // trusted client learns the real one, and the application tries to bind it.
     std::promise<std::pair<uint32_t, uint32_t>> namePromise;
     auto nameFuture = namePromise.get_future();
 
@@ -713,40 +493,102 @@ TEST_F(PrivateShellProtocolTest, AnOrdinaryClientCannotBindThePrivateGlobalsByNa
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Roles, position and stacking
+// The desktop
 
-TEST_F(PrivateShellProtocolTest, TheRoleIsSetBeforeTheWindowIsFirstMapped)
+namespace {
+
+XdgWindow *makeDesktop(Client &c)
+{
+    XdgWindow *desktop = c.makeToplevel("Desktop", "cutefish-filemanager");
+    desktop->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, desktop->surface);
+    cutefish_shell_surface_v1_set_role(desktop->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP);
+    return desktop;
+}
+
+} // namespace
+
+TEST_F(PrivateShellProtocolTest, TheDesktopIsPlacedAtItsOutputBelowApplications)
+{
+    run(
+            [&](Client &c) {
+                ASSERT_TRUE(c.bindShell());
+                XdgWindow *desktop = makeDesktop(c);
+                c.map(desktop, kOutput.size());
+                check([&] {
+                    wm::Window *window = windowWithRole(wm::WindowRole::Desktop);
+                    ASSERT_NE(nullptr, window);
+                    EXPECT_EQ(kOutput, window->bounds());
+                    EXPECT_FALSE(window->isDecorated());
+                    EXPECT_EQ(wm::StackingLayer::Desktop, wm::layerFor(window));
+                });
+            },
+            [&](Client &c) {
+                XdgWindow *window = c.makeToplevel("App", "app");
+                c.map(window, base::Size(300, 200));
+                ASSERT_TRUE(awaitRole(wm::WindowRole::Desktop));
+                check([&] {
+                    wm::Window *desktop = windowWithRole(wm::WindowRole::Desktop);
+                    ASSERT_NE(nullptr, desktop);
+                    // Raising the desktop never puts it over the application.
+                    windowManager.raise(desktop);
+                    EXPECT_EQ(desktop, windowManager.windows().front());
+                });
+            });
+}
+
+TEST_F(PrivateShellProtocolTest, AnUnknownRoleIsAnError)
 {
     run([&](Client &c) {
         ASSERT_TRUE(c.bindShell());
-        XdgWindow *window = c.makeToplevel("Dock", "cutefish-shell");
+        XdgWindow *window = c.makeToplevel("Panel", "cutefish-filemanager");
         window->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, window->surface);
-        cutefish_shell_surface_v1_set_role(window->shellSurface,
-                                           CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-        cutefish_shell_surface_v1_set_position(window->shellSurface, 100, 500);
-        c.map(window, base::Size(600, 60));
-
-        check([&] {
-            wm::Window *dock = windowWithRole(wm::WindowRole::Dock);
-            ASSERT_NE(nullptr, dock);
-            // Placed exactly where it asked, not cascaded, and undecorated.
-            EXPECT_EQ(base::Point(100, 500), dock->bounds().topLeft());
-            EXPECT_FALSE(dock->isDecorated());
-        });
+        // The panel role of the separate shell, which is gone.
+        cutefish_shell_surface_v1_set_role(window->shellSurface, 1);
+        EXPECT_EQ(uint32_t(CUTEFISH_SHELL_SURFACE_V1_ERROR_INVALID_ROLE), c.syncExpectingError());
+        // Nothing more can be sent on the broken connection.
+        for (auto &w : c.windows) {
+            for (wl_proxy *proxy : {reinterpret_cast<wl_proxy *>(w->shellSurface),
+                                    reinterpret_cast<wl_proxy *>(w->toplevel),
+                                    reinterpret_cast<wl_proxy *>(w->xdgSurface),
+                                    reinterpret_cast<wl_proxy *>(w->surface)}) {
+                if (proxy)
+                    wl_proxy_destroy(proxy);
+            }
+            w->shellSurface = nullptr;
+            w->toplevel = nullptr;
+            w->xdgSurface = nullptr;
+            w->surface = nullptr;
+        }
     });
 }
 
-TEST_F(PrivateShellProtocolTest, AShellSurfaceGetsNoConfigureBounds)
+TEST_F(PrivateShellProtocolTest, AnUnknownOutputIsAnError)
 {
     run([&](Client &c) {
         ASSERT_TRUE(c.bindShell());
-        // Qt clamps a size it picks itself to the bounds, which would shrink
+        XdgWindow *desktop = makeDesktop(c);
+        cutefish_shell_surface_v1_set_output(desktop->shellSurface, "nowhere");
+        EXPECT_EQ(uint32_t(CUTEFISH_SHELL_SURFACE_V1_ERROR_INVALID_OUTPUT), c.syncExpectingError());
+        for (wl_proxy *proxy : {reinterpret_cast<wl_proxy *>(desktop->shellSurface),
+                                reinterpret_cast<wl_proxy *>(desktop->toplevel),
+                                reinterpret_cast<wl_proxy *>(desktop->xdgSurface),
+                                reinterpret_cast<wl_proxy *>(desktop->surface)})
+            wl_proxy_destroy(proxy);
+        desktop->shellSurface = nullptr;
+        desktop->toplevel = nullptr;
+        desktop->xdgSurface = nullptr;
+        desktop->surface = nullptr;
+    });
+}
+
+TEST_F(PrivateShellProtocolTest, TheDesktopGetsNoConfigureBounds)
+{
+    run([&](Client &c) {
+        ASSERT_TRUE(c.bindShell());
+        // A client clamping a size it picks itself to the bounds would shrink
         // the desktop off the strip the dock reserves.
-        XdgWindow *desktop = c.makeToplevel("Desktop", "cutefish-shell");
-        desktop->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, desktop->surface);
-        cutefish_shell_surface_v1_set_role(desktop->shellSurface,
-                                           CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP);
-        c.map(desktop, base::Size(800, 600));
+        XdgWindow *desktop = makeDesktop(c);
+        c.map(desktop, kOutput.size());
         XdgWindow *app = c.makeToplevel("App", "app");
         c.map(app, base::Size(300, 200));
 
@@ -758,233 +600,48 @@ TEST_F(PrivateShellProtocolTest, AShellSurfaceGetsNoConfigureBounds)
     });
 }
 
-TEST_F(PrivateShellProtocolTest, RoleStackingOrdersTheShellAroundApplications)
-{
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.bindShell());
-                const std::pair<const char *, uint32_t> roles[] = {
-                        {"Desktop", CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP},
-                        {"Launcher", CUTEFISH_SHELL_SURFACE_V1_ROLE_LAUNCHER},
-                        {"Dock", CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK},
-                        {"Notification", CUTEFISH_SHELL_SURFACE_V1_ROLE_NOTIFICATION},
-                        {"Capture", CUTEFISH_SHELL_SURFACE_V1_ROLE_CAPTURE},
-                        {"Osd", CUTEFISH_SHELL_SURFACE_V1_ROLE_OSD},
-                };
-                for (const auto &[title, role] : roles) {
-                    XdgWindow *window = c.makeToplevel(title, "cutefish-shell");
-                    window->shellSurface =
-                            cutefish_shell_v1_get_shell_surface(c.shell, window->surface);
-                    cutefish_shell_surface_v1_set_role(window->shellSurface, role);
-                    cutefish_shell_surface_v1_set_position(window->shellSurface, 0, 0);
-                    c.map(window, base::Size(200, 100));
-                }
-
-                ASSERT_TRUE(awaitRole(wm::WindowRole::Normal));
-                check([&] {
-                    const std::vector<wm::Window *> &order = windowManager.windows();
-                    ASSERT_EQ(7u, order.size());
-                    std::vector<wm::WindowRole> roleOrder;
-                    for (wm::Window *window : order)
-                        roleOrder.push_back(window->role());
-                    EXPECT_EQ(std::vector<wm::WindowRole>({
-                                      wm::WindowRole::Desktop,
-                                      wm::WindowRole::Normal,
-                                      wm::WindowRole::Launcher,
-                                      wm::WindowRole::Dock,
-                                      wm::WindowRole::Notification,
-                                      wm::WindowRole::Osd,
-                                      wm::WindowRole::Capture,
-                              }),
-                              roleOrder);
-                });
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, ActivationNeverLiftsAWindowOutOfItsLayer)
-{
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.bindShell());
-                XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
-                dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
-                cutefish_shell_surface_v1_set_role(dock->shellSurface,
-                                                   CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-                cutefish_shell_surface_v1_set_position(dock->shellSurface, 0, 540);
-                c.map(dock, base::Size(800, 60));
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                ASSERT_TRUE(awaitRole(wm::WindowRole::Dock));
-                check([&] {
-                    wm::Window *app = nullptr;
-                    for (wm::Window *candidate : windowManager.windows()) {
-                        if (candidate->role() == wm::WindowRole::Normal)
-                            app = candidate;
-                    }
-                    ASSERT_NE(nullptr, app);
-                    // Mapping activated it; raising it again must not put it over
-                    // the dock.
-                    windowManager.raise(app);
-                    EXPECT_EQ(wm::WindowRole::Dock, windowManager.windows().back()->role());
-                });
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, FinishedPeerBodyRetainsItsMappedWindowThroughAssertions)
-{
-    std::atomic<bool> appBodyFinished = false;
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.waitFor([&] {
-                    return appBodyFinished.load();
-                }));
-                ASSERT_TRUE(awaitRole(wm::WindowRole::Normal));
-                check([&] {
-                    ASSERT_EQ(windowManager.windows().size(), 1u);
-                    EXPECT_EQ(windowManager.windows().front()->role(), wm::WindowRole::Normal);
-                });
-            },
-            [&](Client &c) {
-                auto *window = c.makeToplevel("Retained", "app");
-                c.map(window, base::Size(300, 200));
-                appBodyFinished = true;
-            });
-}
-
-// Qt destroys and recreates the cutefish_shell_surface_v1 every time it
-// recreates a window's wl_surface. Losing the role in between would drop the
-// dock into the normal layer, where the launcher covers it.
-TEST_F(PrivateShellProtocolTest, DestroyingTheShellSurfaceLeavesAMappedWindowInItsLayer)
+TEST_F(PrivateShellProtocolTest, DestroyingTheShellSurfaceLeavesTheMappedDesktopInItsLayer)
 {
     run([&](Client &c) {
         ASSERT_TRUE(c.bindShell());
-        XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
-        dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
-        cutefish_shell_surface_v1_set_role(dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-        cutefish_shell_surface_v1_set_position(dock->shellSurface, 0, 540);
-        cutefish_shell_surface_v1_set_exclusive_zone(dock->shellSurface,
-                                                     CUTEFISH_SHELL_SURFACE_V1_EDGE_BOTTOM, 60);
-        c.map(dock, base::Size(800, 60));
-        check([&] {
-            ASSERT_NE(nullptr, windowWithRole(wm::WindowRole::Dock));
-            EXPECT_EQ(base::Rect(0, 0, 800, 540), windowManager.workAreaFor(nullptr));
-        });
+        XdgWindow *desktop = makeDesktop(c);
+        c.map(desktop, kOutput.size());
+        check([&] { ASSERT_NE(nullptr, windowWithRole(wm::WindowRole::Desktop)); });
 
         // Only the extension object goes; the wl_surface and its xdg_toplevel
         // stay mapped.
-        cutefish_shell_surface_v1_destroy(dock->shellSurface);
-        dock->shellSurface = nullptr;
+        cutefish_shell_surface_v1_destroy(desktop->shellSurface);
+        desktop->shellSurface = nullptr;
         c.sync();
 
         check([&] {
-            wm::Window *window = windowWithRole(wm::WindowRole::Dock);
-            ASSERT_NE(nullptr, window) << "the mapped dock lost its role";
-            EXPECT_EQ(wm::StackingLayer::Dock, wm::layerFor(window));
-            // The reservation does go with the object that made it.
-            EXPECT_EQ(kOutput, windowManager.workAreaFor(nullptr));
+            wm::Window *window = windowWithRole(wm::WindowRole::Desktop);
+            ASSERT_NE(nullptr, window) << "the mapped desktop lost its role";
+            EXPECT_EQ(wm::StackingLayer::Desktop, wm::layerFor(window));
         });
     });
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Focus
-
-TEST_F(PrivateShellProtocolTest, ANoFocusDockNeverTakesTheKeyboardFromAnApplication)
-{
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.bindShell());
-                XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
-                dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
-                cutefish_shell_surface_v1_set_role(dock->shellSurface,
-                                                   CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-                cutefish_shell_surface_v1_set_focus_policy(
-                        dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_FOCUS_POLICY_NO_FOCUS);
-                cutefish_shell_surface_v1_set_position(dock->shellSurface, 0, 540);
-                c.map(dock, base::Size(800, 60));
-
-                check([&] {
-                    wm::Window *dockWindow = windowWithRole(wm::WindowRole::Dock);
-                    ASSERT_NE(nullptr, dockWindow);
-                    EXPECT_FALSE(dockWindow->isActive());
-                    // Even an explicit activation is refused.
-                    windowManager.activation()->activate(dockWindow);
-                    EXPECT_FALSE(dockWindow->isActive());
-                });
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                check([&] {
-                    wm::Window *active = windowManager.activation()->activeWindow();
-                    ASSERT_NE(nullptr, active);
-                    EXPECT_EQ(wm::WindowRole::Normal, active->role());
-                });
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, AnOsdNeverTakesTheKeyboardWhateverItsFocusPolicy)
-{
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.bindShell());
-                XdgWindow *osd = c.makeToplevel("Osd", "cutefish-shell");
-                osd->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, osd->surface);
-                cutefish_shell_surface_v1_set_role(osd->shellSurface,
-                                                   CUTEFISH_SHELL_SURFACE_V1_ROLE_OSD);
-                cutefish_shell_surface_v1_set_position(osd->shellSurface, 300, 480);
-                c.map(osd, base::Size(200, 50));
-
-                cutefish_shell_surface_v1_activate(osd->shellSurface);
-                c.sync();
-                check([&] {
-                    wm::Window *osdWindow = windowWithRole(wm::WindowRole::Osd);
-                    ASSERT_NE(nullptr, osdWindow);
-                    EXPECT_FALSE(osdWindow->isActive());
-                    EXPECT_NE(osdWindow->rootSurface(), seat.focusedSurface());
-                    windowManager.activation()->activate(osdWindow);
-                    EXPECT_FALSE(osdWindow->isActive());
-                });
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                check([&] {
-                    wm::Window *active = windowManager.activation()->activeWindow();
-                    ASSERT_NE(nullptr, active);
-                    EXPECT_EQ(wm::WindowRole::Normal, active->role());
-                });
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, TheLauncherTakesFocusThroughActivate)
+TEST_F(PrivateShellProtocolTest, TheDesktopTakesTheKeyboardThroughActivate)
 {
     run([&](Client &c) {
         ASSERT_TRUE(c.bindShell());
-        XdgWindow *launcher = c.makeToplevel("Launcher", "cutefish-shell");
-        launcher->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, launcher->surface);
-        cutefish_shell_surface_v1_set_role(launcher->shellSurface,
-                                           CUTEFISH_SHELL_SURFACE_V1_ROLE_LAUNCHER);
-        cutefish_shell_surface_v1_set_position(launcher->shellSurface, 0, 0);
-        c.map(launcher, base::Size(800, 600));
+        XdgWindow *desktop = makeDesktop(c);
+        cutefish_shell_surface_v1_set_focus_policy(desktop->shellSurface,
+                                                   CUTEFISH_SHELL_SURFACE_V1_FOCUS_POLICY_NORMAL);
+        c.map(desktop, kOutput.size());
 
         check([&] {
-            wm::Window *window = windowWithRole(wm::WindowRole::Launcher);
+            wm::Window *window = windowWithRole(wm::WindowRole::Desktop);
             ASSERT_NE(nullptr, window);
             windowManager.activation()->activate(nullptr);
             EXPECT_FALSE(window->isActive());
         });
 
-        cutefish_shell_surface_v1_activate(launcher->shellSurface);
+        cutefish_shell_surface_v1_activate(desktop->shellSurface);
         c.sync();
         check([&] {
-            wm::Window *window = windowWithRole(wm::WindowRole::Launcher);
+            wm::Window *window = windowWithRole(wm::WindowRole::Desktop);
             ASSERT_NE(nullptr, window);
             EXPECT_TRUE(window->isActive());
             EXPECT_EQ(window->rootSurface(), seat.focusedSurface());
@@ -992,1198 +649,115 @@ TEST_F(PrivateShellProtocolTest, TheLauncherTakesFocusThroughActivate)
     });
 }
 
-TEST_F(PrivateShellProtocolTest, TheCaptureInterfaceTakesTheKeyboardAndStaysOutOfCaptures)
-{
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.bindShell());
-                ASSERT_TRUE(awaitRole(wm::WindowRole::Normal));
-                XdgWindow *overlay = c.makeToplevel("Capture", "cutefish-shell");
-                overlay->shellSurface =
-                        cutefish_shell_v1_get_shell_surface(c.shell, overlay->surface);
-                cutefish_shell_surface_v1_set_role(overlay->shellSurface,
-                                                   CUTEFISH_SHELL_SURFACE_V1_ROLE_CAPTURE);
-                cutefish_shell_surface_v1_set_position(overlay->shellSurface, 0, 0);
-                c.map(overlay, kOutput.size());
-                ASSERT_TRUE(awaitRole(wm::WindowRole::Capture));
-                // Mapped, it has the keys: an activate sent before the first
-                // commit finds no window yet.
-                check([&] {
-                    wm::Window *capture = windowWithRole(wm::WindowRole::Capture);
-                    ASSERT_NE(nullptr, capture);
-                    EXPECT_EQ(capture->rootSurface(), seat.focusedSurface());
-                });
-
-                cutefish_shell_surface_v1_activate(overlay->shellSurface);
-                c.sync();
-                check([&] {
-                    wm::Window *capture = windowWithRole(wm::WindowRole::Capture);
-                    wm::Window *app = windowWithRole(wm::WindowRole::Normal);
-                    ASSERT_NE(nullptr, capture);
-                    ASSERT_NE(nullptr, app);
-                    // The window being captured keeps looking active.
-                    EXPECT_FALSE(capture->isActive());
-                    EXPECT_TRUE(app->isActive());
-                    EXPECT_EQ(capture->rootSurface(), seat.focusedSurface());
-                    EXPECT_TRUE(seat.focusIsBorrowed());
-                    EXPECT_EQ(capture, windowManager.windows().back());
-                    EXPECT_TRUE(capture->node()->isExcludedFromCapture());
-                    EXPECT_FALSE(app->node()->isExcludedFromCapture());
-                });
-
-                // Hiding the interface hands the keyboard back.
-                wl_surface_attach(overlay->surface, nullptr, 0, 0);
-                wl_surface_commit(overlay->surface);
-                c.sync();
-                check([&] {
-                    wm::Window *app = windowWithRole(wm::WindowRole::Normal);
-                    ASSERT_NE(nullptr, app);
-                    EXPECT_TRUE(app->isActive());
-                    EXPECT_EQ(app->rootSurface(), seat.focusedSurface());
-                });
-
-                c.map(overlay, kOutput.size());
-                cutefish_shell_surface_v1_activate(overlay->shellSurface);
-                c.sync();
-                check([&] {
-                    wm::Window *capture = windowWithRole(wm::WindowRole::Capture);
-                    ASSERT_NE(nullptr, capture);
-                    EXPECT_EQ(capture->rootSurface(), seat.focusedSurface());
-                });
-
-                // A press that passes through it, as while it counts down,
-                // takes the keyboard back to the already active window.
-                wl_region *none = wl_compositor_create_region(c.compositor);
-                wl_surface_set_input_region(overlay->surface, none);
-                wl_region_destroy(none);
-                wl_surface_commit(overlay->surface);
-                c.sync();
-                check([&] {
-                    wm::Window *app = windowWithRole(wm::WindowRole::Normal);
-                    ASSERT_NE(nullptr, app);
-                    const base::PointF inside = base::RectF(app->bounds()).center();
-                    windowManager.onPointerButton(std::chrono::steady_clock::now(), inside,
-                                                  BTN_LEFT, true);
-                    windowManager.onPointerButton(std::chrono::steady_clock::now(), inside,
-                                                  BTN_LEFT, false);
-                    EXPECT_TRUE(app->isActive());
-                    EXPECT_EQ(app->rootSurface(), seat.focusedSurface());
-                });
-
-                cutefish_shell_surface_v1_activate(overlay->shellSurface);
-                c.sync();
-
-                // So does closing it.
-                c.destroyWindowObjects(overlay);
-                c.sync();
-                check([&] {
-                    wm::Window *app = windowWithRole(wm::WindowRole::Normal);
-                    ASSERT_NE(nullptr, app);
-                    EXPECT_EQ(nullptr, windowWithRole(wm::WindowRole::Capture));
-                    EXPECT_TRUE(app->isActive());
-                    EXPECT_EQ(app->rootSurface(), seat.focusedSurface());
-                });
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-            });
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Work area
-
-TEST_F(PrivateShellProtocolTest, ExclusiveZonesCompose)
+TEST_F(PrivateShellProtocolTest, ADesktopHearsItsWorkArea)
 {
     run([&](Client &c) {
         ASSERT_TRUE(c.bindShell());
-        XdgWindow *statusBar = c.makeToplevel("Status Bar", "cutefish-shell");
-        statusBar->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, statusBar->surface);
-        cutefish_shell_surface_v1_set_role(statusBar->shellSurface,
-                                           CUTEFISH_SHELL_SURFACE_V1_ROLE_PANEL);
-        cutefish_shell_surface_v1_set_exclusive_zone(statusBar->shellSurface,
-                                                     CUTEFISH_SHELL_SURFACE_V1_EDGE_TOP, 30);
-        c.map(statusBar, base::Size(800, 30));
-
-        XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
-        dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
-        cutefish_shell_surface_v1_set_role(dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-        cutefish_shell_surface_v1_set_exclusive_zone(dock->shellSurface,
-                                                     CUTEFISH_SHELL_SURFACE_V1_EDGE_BOTTOM, 60);
-        c.map(dock, base::Size(800, 60));
+        static const cutefish_shell_surface_v1_listener listener = {
+            [](void *data, cutefish_shell_surface_v1 *, int32_t x, int32_t y, int32_t width,
+               int32_t height) {
+                static_cast<std::vector<base::Rect> *>(data)->push_back(base::Rect(x, y, width, height));
+            },
+        };
+        std::vector<base::Rect> areas;
+        XdgWindow *desktop = c.makeToplevel("Desktop", "cutefish-filemanager");
+        desktop->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, desktop->surface);
+        cutefish_shell_surface_v1_add_listener(desktop->shellSurface, &listener, &areas);
+        cutefish_shell_surface_v1_set_role(desktop->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP);
         c.sync();
+        // As soon as it is a desktop, before anything is mapped.
+        ASSERT_EQ(1u, areas.size());
+        EXPECT_EQ(base::Rect(0, 0, 800, 600), areas.back());
+        c.map(desktop, kOutput.size());
 
-        check([&] {
-            EXPECT_EQ(base::Rect(0, 30, 800, 510), windowManager.workAreaFor(nullptr));
-        });
-
-        // Changing the dock's thickness updates the reservation in place.
-        cutefish_shell_surface_v1_set_exclusive_zone(dock->shellSurface,
-                                                     CUTEFISH_SHELL_SURFACE_V1_EDGE_BOTTOM, 100);
+        // The compositor's own reservations: the status bar's and the dock's.
+        int bar = 0;
+        int dock = 0;
+        check([&] { windowManager.setExclusiveZone(&bar, wm::ScreenEdge::Top, 32); });
         c.sync();
-        check([&] {
-            EXPECT_EQ(base::Rect(0, 30, 800, 470), windowManager.workAreaFor(nullptr));
-        });
-
-        // Auto-hiding the dock gives the space back.
-        cutefish_shell_surface_v1_clear_exclusive_zone(dock->shellSurface);
+        ASSERT_EQ(2u, areas.size());
+        EXPECT_EQ(base::Rect(0, 32, 800, 568), areas.back());
+        check([&] { windowManager.setExclusiveZone(&dock, wm::ScreenEdge::Bottom, 92); });
         c.sync();
+        ASSERT_EQ(3u, areas.size());
+        EXPECT_EQ(base::Rect(0, 32, 800, 476), areas.back());
+
+        // Unchanged reservations send nothing.
+        check([&] { windowManager.setExclusiveZone(&bar, wm::ScreenEdge::Top, 32); });
+        c.sync();
+        EXPECT_EQ(3u, areas.size());
         check([&] {
-            EXPECT_EQ(base::Rect(0, 30, 800, 570), windowManager.workAreaFor(nullptr));
+            windowManager.clearExclusiveZone(&dock);
+            windowManager.clearExclusiveZone(&bar);
         });
+        c.sync();
+        EXPECT_EQ(base::Rect(0, 0, 800, 600), areas.back());
     });
 }
 
-TEST_F(PrivateShellProtocolTest, MaximizedFollowsTheWorkAreaAndFullscreenDoesNot)
+// The session's case: named outputs from the display manager, the desktop of
+// the file manager on one of them, and the compositor's status bar and dock
+// reserving their strips of it by name, before and after the desktop exists.
+TEST_F(PrivateShellProtocolTest, ADesktopOnANamedOutputHearsTheShellsReservations)
 {
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.bindShell());
-                XdgWindow *statusBar = c.makeToplevel("Status Bar", "cutefish-shell");
-                statusBar->shellSurface =
-                        cutefish_shell_v1_get_shell_surface(c.shell, statusBar->surface);
-                cutefish_shell_surface_v1_set_role(statusBar->shellSurface,
-                                                   CUTEFISH_SHELL_SURFACE_V1_ROLE_PANEL);
-                cutefish_shell_surface_v1_set_exclusive_zone(
-                        statusBar->shellSurface, CUTEFISH_SHELL_SURFACE_V1_EDGE_TOP, 30);
-                c.map(statusBar, base::Size(800, 30));
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                ASSERT_TRUE(awaitRole(wm::WindowRole::Panel));
+    display::DisplayManager displays;
+    display::DisplaySnapshot physical;
+    physical.sessionId = display::DisplayId("a");
+    physical.persistentKey = "edid-a";
+    physical.portKey = "port-a";
+    physical.connectorName = "a";
+    physical.devicePath = "/dev/dri/card0";
+    physical.physicalSizeMm = {600, 340};
+    physical.modes = {{kOutput.size(), 60000, 148500, kOutput.width() + 100, kOutput.height() + 50, 0, "mode", true}};
+    physical.currentMode = physical.modes.front();
+    ASSERT_TRUE(displays.installHardware({"instance", "seat0", 1, {physical}}));
+    const display::LogicalDisplay logical {display::DisplayId("a"),
+                                           {display::DisplayId("a")},
+                                           "Cutefish-a",
+                                           kOutput,
+                                           kOutput,
+                                           *compositor::OutputScale::fromNumerator(120),
+                                           display::DisplayRotation::Normal,
+                                           true};
+    ASSERT_TRUE(displays.installApplied({"instance", 1, 1, {}, {logical}, {}}));
+    windowManager.setDisplayManager(&displays);
 
-                xdg_toplevel_set_maximized(window->toplevel);
-                c.sync();
-                check([&] {
-                    wm::Window *app = nullptr;
-                    for (wm::Window *candidate : windowManager.windows()) {
-                        if (candidate->role() == wm::WindowRole::Normal)
-                            app = candidate;
-                    }
-                    ASSERT_NE(nullptr, app);
-                    EXPECT_EQ(base::Rect(0, 30, 800, 570), app->bounds());
-                });
+    // The status bar is up before the file manager starts.
+    int bar = 0;
+    int dock = 0;
+    windowManager.setExclusiveZone(&bar, wm::ScreenEdge::Top, 32, "Cutefish-a");
 
-                xdg_toplevel_set_fullscreen(window->toplevel, nullptr);
-                c.sync();
-                check([&] {
-                    wm::Window *app = nullptr;
-                    for (wm::Window *candidate : windowManager.windows()) {
-                        if (candidate->role() == wm::WindowRole::Normal)
-                            app = candidate;
-                    }
-                    ASSERT_NE(nullptr, app);
-                    EXPECT_EQ(kOutput, app->bounds());
-                });
-            });
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Window management
-
-TEST_F(PrivateShellProtocolTest, TheManagerEnumeratesExistingApplicationWindows)
-{
-    std::promise<void> appMapped;
-    auto appMappedFuture = appMapped.get_future();
-    std::promise<void> shellDone;
-    auto shellDoneFuture = shellDone.get_future();
-
-    run(
-            [&](Client &c) {
-                ASSERT_EQ(appMappedFuture.wait_for(std::chrono::seconds(5)),
-                          std::future_status::ready);
-                ASSERT_TRUE(c.bindManagement());
-                c.sync();
-                EXPECT_EQ(1, c.initialStateDone);
-                std::vector<TrackedWindow *> live = c.liveTracked();
-                ASSERT_EQ(1u, live.size());
-                EXPECT_EQ("App", live[0]->title);
-                EXPECT_EQ("app", live[0]->appId);
-                EXPECT_NE(0u, live[0]->pid);
-                EXPECT_EQ(0u, live[0]->parentId);
-                EXPECT_GT(live[0]->parentCount, 0);
-                EXPECT_TRUE(live[0]->active);
-                EXPECT_EQ(live[0]->id, c.activeWindowId);
-                shellDone.set_value();
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                appMapped.set_value();
-                ASSERT_TRUE(c.waitFor([&] {
-                    return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
-                            == std::future_status::ready;
-                }));
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, DesksAndTheWindowsOnThemReachTheShell)
-{
-    std::promise<void> appMapped;
-    auto appMappedFuture = appMapped.get_future();
-    std::promise<void> shellDone;
-    auto shellDoneFuture = shellDone.get_future();
-
-    run(
-            [&](Client &c) {
-                ASSERT_EQ(appMappedFuture.wait_for(std::chrono::seconds(5)),
-                          std::future_status::ready);
-                ASSERT_TRUE(c.bindManagement());
-                c.sync();
-                // The desks come before the windows on them.
-                ASSERT_EQ(1u, c.desks.size());
-                const uint32_t first = c.desks[0];
-                EXPECT_NE(0u, first);
-                EXPECT_EQ(first, c.activeDesk);
-                std::vector<TrackedWindow *> live = c.liveTracked();
-                ASSERT_EQ(1u, live.size());
-                TrackedWindow *task = live[0];
-                EXPECT_EQ(first, task->desk);
-
-                cutefish_window_management_v1_create_desk(c.management, 0);
-                c.sync();
-                ASSERT_EQ(2u, c.desks.size());
-                const uint32_t second = c.desks[1];
-                EXPECT_EQ(first, c.activeDesk);
-                EXPECT_TRUE(c.deskNames.empty());
-
-                cutefish_window_management_v1_set_desk_name(c.management, second, "Work");
-                c.sync();
-                EXPECT_EQ("Work", c.deskNames[second]);
-
-                // Sent to the other desk, the window leaves; the user stays.
-                cutefish_window_v1_move_to_desk(task->object, second);
-                c.sync();
-                EXPECT_EQ(second, task->desk);
-                EXPECT_EQ(first, c.activeDesk);
-                EXPECT_FALSE(task->active);
-
-                // Activating it takes the user to its desk.
-                cutefish_window_v1_activate(task->object);
-                c.sync();
-                EXPECT_EQ(second, c.activeDesk);
-                EXPECT_TRUE(task->active);
-
-                // Zero is every desk, and a desk takes it back.
-                cutefish_window_v1_move_to_desk(task->object, 0);
-                c.sync();
-                EXPECT_EQ(0u, task->desk);
-                cutefish_window_v1_move_to_desk(task->object, second);
-                c.sync();
-                EXPECT_EQ(second, task->desk);
-
-                cutefish_window_management_v1_activate_desk(c.management, first);
-                c.sync();
-                EXPECT_EQ(first, c.activeDesk);
-
-                // A removed desk hands its window to the one on its left.
-                cutefish_window_management_v1_remove_desk(c.management, second);
-                c.sync();
-                ASSERT_EQ(1u, c.desks.size());
-                EXPECT_EQ(first, task->desk);
-                EXPECT_EQ(0u, c.deskNames.count(second));
-                // The only desk stays.
-                cutefish_window_management_v1_remove_desk(c.management, first);
-                c.sync();
-                EXPECT_EQ(1u, c.desks.size());
-                shellDone.set_value();
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                appMapped.set_value();
-                ASSERT_TRUE(c.waitFor([&] {
-                    return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
-                            == std::future_status::ready;
-                }));
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, APickLooksThroughTheCaptureInterface)
-{
-    std::promise<void> appMapped;
-    auto appMappedFuture = appMapped.get_future();
-    std::promise<void> shellDone;
-    auto shellDoneFuture = shellDone.get_future();
-
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.bindShell());
-                const std::tuple<const char *, uint32_t, base::Point, base::Size> surfaces[] = {
-                        {"Desktop", CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP, base::Point(0, 0),
-                         kOutput.size()},
-                        {"Dock", CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK, base::Point(200, 540),
-                         base::Size(400, 50)},
-                        {"Capture", CUTEFISH_SHELL_SURFACE_V1_ROLE_CAPTURE, base::Point(0, 0),
-                         kOutput.size()},
-                };
-                for (const auto &[title, role, position, size] : surfaces) {
-                    XdgWindow *window = c.makeToplevel(title, "cutefish-shell");
-                    window->shellSurface =
-                            cutefish_shell_v1_get_shell_surface(c.shell, window->surface);
-                    cutefish_shell_surface_v1_set_role(window->shellSurface, role);
-                    cutefish_shell_surface_v1_set_position(window->shellSurface, position.x(),
-                                                           position.y());
-                    c.map(window, size);
-                }
-                ASSERT_TRUE(awaitRole(wm::WindowRole::Capture));
-                ASSERT_EQ(appMappedFuture.wait_for(std::chrono::seconds(5)),
-                          std::future_status::ready);
-                ASSERT_TRUE(c.bindManagement());
-                c.sync();
-                std::vector<TrackedWindow *> live = c.liveTracked();
-                ASSERT_EQ(1u, live.size());
-                const base::Point app = wm::centerPixel(live[0]->geometry);
-                ASSERT_FALSE(live[0]->geometry.contains(base::Point(790, 10)));
-
-                cutefish_window_management_v1_pick(c.management, 1, app.x(), app.y());
-                cutefish_window_management_v1_pick(c.management, 2, 250, 560);
-                cutefish_window_management_v1_pick(c.management, 3, 790, 10);
-                c.sync();
-                ASSERT_EQ(3u, c.picks.size());
-                EXPECT_EQ(uint32_t(CUTEFISH_WINDOW_MANAGEMENT_V1_PICKED_KIND_WINDOW),
-                          c.picks[1].kind);
-                EXPECT_EQ(live[0]->id, c.picks[1].id);
-                EXPECT_EQ(uint32_t(CUTEFISH_WINDOW_MANAGEMENT_V1_PICKED_KIND_DOCK),
-                          c.picks[2].kind);
-                EXPECT_EQ(0u, c.picks[2].id);
-                EXPECT_EQ(uint32_t(CUTEFISH_WINDOW_MANAGEMENT_V1_PICKED_KIND_DESKTOP),
-                          c.picks[3].kind);
-                shellDone.set_value();
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                appMapped.set_value();
-                ASSERT_TRUE(c.waitFor([&] {
-                    return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
-                            == std::future_status::ready;
-                }));
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, ShellRoleWindowsAreNotInTheTaskList)
-{
     run([&](Client &c) {
         ASSERT_TRUE(c.bindShell());
-        ASSERT_TRUE(c.bindManagement());
-        XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
-        dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
-        cutefish_shell_surface_v1_set_role(dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-        c.map(dock, base::Size(800, 60));
+        static const cutefish_shell_surface_v1_listener listener = {
+            [](void *data, cutefish_shell_surface_v1 *, int32_t x, int32_t y, int32_t width,
+               int32_t height) {
+                static_cast<std::vector<base::Rect> *>(data)->push_back(base::Rect(x, y, width, height));
+            },
+        };
+        std::vector<base::Rect> areas;
+        XdgWindow *desktop = c.makeToplevel("Desktop", "cutefish-filemanager");
+        desktop->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, desktop->surface);
+        cutefish_shell_surface_v1_add_listener(desktop->shellSurface, &listener, &areas);
+        cutefish_shell_surface_v1_set_role(desktop->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DESKTOP);
+        cutefish_shell_surface_v1_set_output(desktop->shellSurface, "Cutefish-a");
         c.sync();
-        EXPECT_TRUE(c.liveTracked().empty());
-    });
-}
+        // The bar's strip is already left out of the first one.
+        ASSERT_FALSE(areas.empty());
+        EXPECT_EQ(base::Rect(0, 32, 800, 568), areas.front());
+        EXPECT_EQ(1u, areas.size());
+        c.map(desktop, kOutput.size());
 
-TEST_F(PrivateShellProtocolTest, LiveChangesAndCommandsReachTheWindow)
-{
-    std::promise<void> appMapped;
-    auto appMappedFuture = appMapped.get_future();
-    std::promise<void> shellDone;
-    auto shellDoneFuture = shellDone.get_future();
-
-    run(
-            [&](Client &c) {
-                ASSERT_EQ(appMappedFuture.wait_for(std::chrono::seconds(5)),
-                          std::future_status::ready);
-                ASSERT_TRUE(c.bindManagement());
-                c.sync();
-                std::vector<TrackedWindow *> live = c.liveTracked();
-                ASSERT_EQ(1u, live.size());
-                TrackedWindow *task = live[0];
-
-                cutefish_window_v1_minimize(task->object);
-                c.sync();
-                EXPECT_TRUE(task->minimized);
-
-                cutefish_window_v1_restore(task->object);
-                c.sync();
-                EXPECT_FALSE(task->minimized);
-
-                cutefish_window_v1_toggle_maximize(task->object);
-                c.sync();
-                EXPECT_TRUE(task->maximized);
-                cutefish_window_v1_toggle_maximize(task->object);
-                c.sync();
-                EXPECT_FALSE(task->maximized);
-
-                cutefish_window_v1_activate(task->object);
-                c.sync();
-                EXPECT_TRUE(task->active);
-
-                // Hiding drops the focus but keeps the state; a hidden window
-                // that is minimized stays minimized underneath. Activating
-                // brings it all the way back.
-                cutefish_window_v1_hide(task->object);
-                c.sync();
-                EXPECT_TRUE(task->hidden);
-                EXPECT_FALSE(task->active);
-                cutefish_window_v1_minimize(task->object);
-                c.sync();
-                EXPECT_TRUE(task->hidden);
-                EXPECT_TRUE(task->minimized);
-                EXPECT_TRUE(task->thumbnail.isNull());
-                cutefish_window_v1_unhide(task->object);
-                c.sync();
-                EXPECT_FALSE(task->hidden);
-                EXPECT_TRUE(task->minimized);
-                EXPECT_FALSE(task->active);
-                cutefish_window_v1_hide(task->object);
-                cutefish_window_v1_activate(task->object);
-                c.sync();
-                EXPECT_FALSE(task->hidden);
-                EXPECT_FALSE(task->minimized);
-                EXPECT_TRUE(task->active);
-
-                // The application menu's Hide and Hide Others act on whole
-                // applications; Hide Others keeps the one it is given.
-                cutefish_window_management_v1_hide_other_applications(c.management, task->object);
-                c.sync();
-                EXPECT_FALSE(task->hidden);
-                cutefish_window_management_v1_hide_application(c.management, task->object);
-                c.sync();
-                EXPECT_TRUE(task->hidden);
-                cutefish_window_v1_activate(task->object);
-                c.sync();
-                cutefish_window_management_v1_hide_other_applications(c.management, nullptr);
-                c.sync();
-                EXPECT_TRUE(task->hidden);
-                cutefish_window_v1_activate(task->object);
-                c.sync();
-                EXPECT_FALSE(task->hidden);
-
-                // Quit asks the application's windows to close; it never
-                // terminates the compositor's own process, which these
-                // in-process clients share.
-                cutefish_window_management_v1_quit_application(c.management, task->object);
-                c.sync();
-
-                // A window this client does not own still accepts the trusted
-                // command; the application decides what close means.
-                cutefish_window_v1_close(task->object);
-                c.sync();
-
-                cutefish_window_v1_start_move(task->object);
-                c.sync();
-
-                shellDone.set_value();
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                appMapped.set_value();
-                ASSERT_TRUE(c.waitFor([&] {
-                    return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
-                            == std::future_status::ready;
-                }));
-                ASSERT_TRUE(c.waitFor([&] {
-                    return window->closes > 1;
-                }));
-                EXPECT_EQ(2, window->closes);
-
-                // Retitling reaches the shell as a live change.
-                xdg_toplevel_set_title(window->toplevel, "Renamed");
-                c.sync();
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, AMinimizedWindowSendsItsThumbnailToEveryManager)
-{
-    std::promise<void> appMapped;
-    auto appMappedFuture = appMapped.get_future();
-    std::promise<void> shellDone;
-    auto shellDoneFuture = shellDone.get_future();
-
-    ui::Bitmap snapshot(6, 4, ui::Bitmap::Format::Argb32Premultiplied);
-    snapshot.fill(0);
-    snapshot.setPixel(0, 0, 0xffff0000);
-    snapshot.setPixel(5, 3, 0xff0000ff);
-
-    run(
-            [&](Client &c) {
-                ASSERT_EQ(appMappedFuture.wait_for(std::chrono::seconds(5)),
-                          std::future_status::ready);
-                ASSERT_TRUE(c.bindManagement());
-                std::vector<TrackedWindow *> live = c.liveTracked();
-                ASSERT_EQ(1u, live.size());
-                TrackedWindow *task = live[0];
-
-                cutefish_window_v1_minimize(task->object);
-                c.sync();
-                ASSERT_TRUE(task->minimized);
-                EXPECT_TRUE(task->thumbnail.isNull());
-
-                // What rendering hands over once the funnel has its last frame.
-                const int done = task->doneCount;
-                check([&] {
-                    windowManager.windowById(task->id)->setMinimizedSnapshot(snapshot);
-                });
-                c.sync();
-                EXPECT_EQ(task->thumbnail, snapshot);
-                EXPECT_EQ(done + 1, task->doneCount);
-
-                // A restarted shell gets it with the initial enumeration.
-                const size_t before = c.tracked.size();
-                ASSERT_TRUE(c.bindManagement());
-                ASSERT_EQ(before + 1, c.tracked.size());
-                EXPECT_TRUE(c.tracked.back()->minimized);
-                EXPECT_EQ(c.tracked.back()->thumbnail, snapshot);
-
-                cutefish_window_v1_restore(task->object);
-                c.sync();
-                EXPECT_FALSE(task->minimized);
-                check([&] {
-                    EXPECT_TRUE(windowManager.windowById(task->id)->minimizedSnapshot().isNull());
-                });
-
-                shellDone.set_value();
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                appMapped.set_value();
-                ASSERT_TRUE(c.waitFor([&] {
-                    return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
-                            == std::future_status::ready;
-                }));
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, ClosingAnApplicationWindowClosesItsTask)
-{
-    std::promise<void> appMapped;
-    auto appMappedFuture = appMapped.get_future();
-    std::promise<void> managerReady;
-    auto managerReadyFuture = managerReady.get_future();
-    std::promise<void> shellDone;
-    auto shellDoneFuture = shellDone.get_future();
-
-    run(
-            [&](Client &c) {
-                ASSERT_EQ(appMappedFuture.wait_for(std::chrono::seconds(5)),
-                          std::future_status::ready);
-                ASSERT_TRUE(c.bindManagement());
-                c.sync();
-                ASSERT_EQ(1u, c.liveTracked().size());
-                managerReady.set_value();
-
-                ASSERT_TRUE(c.waitFor([&] {
-                    return c.liveTracked().empty();
-                }));
-                EXPECT_TRUE(c.liveTracked().empty());
-                EXPECT_EQ(0u, c.activeWindowId);
-                shellDone.set_value();
-            },
-            [&](Client &c) {
-                XdgWindow *window = c.makeToplevel("App", "app");
-                c.map(window, base::Size(300, 200));
-                appMapped.set_value();
-                ASSERT_EQ(managerReadyFuture.wait_for(std::chrono::seconds(5)),
-                          std::future_status::ready);
-                c.destroyWindowObjects(window);
-                c.sync();
-                ASSERT_TRUE(c.waitFor([&] {
-                    return shellDoneFuture.wait_for(std::chrono::milliseconds(0))
-                            == std::future_status::ready;
-                }));
-            });
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Shell lifetime
-
-TEST_F(PrivateShellProtocolTest, ShellDisconnectClearsItsReservationsAndKeepsApplicationsAlive)
-{
-    auto privileged = std::make_unique<wayland::PrivilegedClients>(server.display());
-    auto waylandSeat = std::make_unique<wayland::WaylandSeat>(&seat, server.serialTracker());
-    auto xdgShell = std::make_unique<wayland::WaylandXdgShell>(&compositor, &windowManager, &seat,
-                                                               server.serialTracker());
-    auto cutefishShell =
-            std::make_unique<wayland::WaylandCutefishShell>(&windowManager, privileged.get());
-    auto management = std::make_unique<wayland::WaylandCutefishWindowManagement>(&windowManager,
-                                                                                 privileged.get());
-
-    ASSERT_TRUE(wayland::createCompositorGlobal(server.display(), &compositor));
-    ASSERT_TRUE(wayland::createSubcompositorGlobal(server.display()));
-    ASSERT_TRUE(wayland::createShmGlobal(server.display(), &compositor));
-    ASSERT_TRUE(wayland::createSeatGlobal(server.display(), waylandSeat.get()));
-    ASSERT_TRUE(wayland::createXdgShellGlobal(server.display(), xdgShell.get()));
-    ASSERT_TRUE(wayland::createCutefishShellGlobal(server.display(), cutefishShell.get()));
-    ASSERT_TRUE(wayland::createCutefishWindowManagementGlobal(server.display(), management.get()));
-    privileged->setShellDisconnectedCallback([this] {
-        windowManager.clearAllExclusiveZones();
-    });
-
-    // The application outlives both shell generations.
-    int appFds[2];
-    ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, appFds));
-    ASSERT_TRUE(wl_client_create(server.display(), appFds[0]));
-
-    std::promise<void> appMapped;
-    auto appMappedFuture = appMapped.get_future();
-    std::promise<void> finished;
-    auto finishedFuture = finished.get_future();
-
-    std::atomic<int> running = 2;
-    std::thread appThread([&] {
-        RunningClient runningClient {running};
-        {
-            Client c(appFds[1]);
-            XdgWindow *window = c.makeToplevel("App", "app");
-            c.map(window, base::Size(300, 200));
-            appMapped.set_value();
-            ASSERT_TRUE(c.waitFor([&] {
-                return finishedFuture.wait_for(std::chrono::milliseconds(0))
-                        == std::future_status::ready;
-            }));
-        }
-    });
-
-    std::thread driver([&] {
-        RunningClient runningClient {running};
-        ASSERT_EQ(appMappedFuture.wait_for(std::chrono::seconds(5)), std::future_status::ready);
-
-        // First shell generation: reserve work area, then disconnect.
-        int firstFds[2];
-        ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, firstFds));
-        check([&] {
-            ASSERT_TRUE(privileged->adoptShellConnection(firstFds[0]));
-        });
-
-        cutefish_shell_surface_v1 *zone = nullptr;
-        {
-            Client c(firstFds[1]);
-            ASSERT_TRUE(c.bindShell());
-            ASSERT_TRUE(c.bindManagement());
-            c.sync();
-            EXPECT_EQ(1u, c.liveTracked().size());
-
-            XdgWindow *bar = c.makeToplevel("Status Bar", "cutefish-shell");
-            bar->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, bar->surface);
-            cutefish_shell_surface_v1_set_role(bar->shellSurface,
-                                               CUTEFISH_SHELL_SURFACE_V1_ROLE_PANEL);
-            cutefish_shell_surface_v1_set_exclusive_zone(bar->shellSurface,
-                                                         CUTEFISH_SHELL_SURFACE_V1_EDGE_TOP, 30);
-            c.map(bar, base::Size(800, 30));
-            c.sync();
-            check([&] {
-                EXPECT_EQ(base::Rect(0, 30, 800, 570), windowManager.workAreaFor(nullptr));
-            });
-            zone = bar->shellSurface;
-        }
-        (void)zone;
-
-        // Closing the socket is asynchronous: the compositor notices only when
-        // it next dispatches. Poll until the destroy listener has run.
-        bool gone = false;
-        const auto destroyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!gone && std::chrono::steady_clock::now() < destroyDeadline) {
-            check([&] {
-                gone = privileged->shellClient() == nullptr;
-            });
-        }
-        EXPECT_TRUE(gone);
-
-        check([&] {
-            EXPECT_EQ(kOutput, windowManager.workAreaFor(nullptr));
-            // Only the application's window is left.
-            ASSERT_EQ(1u, windowManager.windows().size());
-            EXPECT_EQ(wm::WindowRole::Normal, windowManager.windows().front()->role());
-        });
-
-        // Second generation: a fresh connection re-enumerates everything.
-        int secondFds[2];
-        ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, secondFds));
-        check([&] {
-            ASSERT_TRUE(privileged->adoptShellConnection(secondFds[0]));
-        });
-        {
-            Client c(secondFds[1]);
-            ASSERT_TRUE(c.bindManagement());
-            c.sync();
-            EXPECT_EQ(1, c.initialStateDone);
-            ASSERT_EQ(1u, c.liveTracked().size());
-            EXPECT_EQ("App", c.liveTracked()[0]->title);
-        }
-
-        finished.set_value();
-    });
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-    while (running > 0) {
-        server.dispatch(std::chrono::milliseconds(1));
-        server.flush();
-        std::function<void()> work;
-        {
-            std::lock_guard lock(mutex);
-            if (!pendingChecks.empty()) {
-                work = std::move(pendingChecks.front());
-                pendingChecks.pop_front();
-            }
-        }
-        if (work)
-            work();
-        if (std::chrono::steady_clock::now() > deadline) {
-            ADD_FAILURE() << "timed out";
-            break;
-        }
-    }
-    driver.join();
-    appThread.join();
-    wl_display_destroy_clients(server.display());
-}
-
-TEST_F(PrivateShellProtocolTest, PerSurfaceMenusReachShellBeforeMapAndOnReplacement)
-{
-    run(
-            [&](Client &c) {
-                ASSERT_TRUE(c.globals.contains("org_kde_kwin_appmenu_manager"));
-                EXPECT_FALSE(c.globals.contains("gtk_shell1"));
-                auto *menus = static_cast<org_kde_kwin_appmenu_manager *>(wl_registry_bind(
-                        c.registry, c.globals.at("org_kde_kwin_appmenu_manager").first,
-                        &org_kde_kwin_appmenu_manager_interface, 2));
-                auto *first = c.makeToplevel("First", "org.test.App");
-                auto *second = c.makeToplevel("Second", "org.test.App");
-                auto *firstMenu = org_kde_kwin_appmenu_manager_create(menus, first->surface);
-                auto *secondMenu = org_kde_kwin_appmenu_manager_create(menus, second->surface);
-                org_kde_kwin_appmenu_set_address(firstMenu, ":1.123", "/first");
-                org_kde_kwin_appmenu_set_address(secondMenu, ":1.123", "/second");
-                c.map(first, base::Size(180, 120));
-                c.map(second, base::Size(180, 120));
-                ASSERT_TRUE(c.bindManagement());
-                ASSERT_EQ(c.liveTracked().size(), 2u);
-                TrackedWindow *a = nullptr;
-                TrackedWindow *b = nullptr;
-                for (auto *window : c.liveTracked()) {
-                    if (window->title == "First")
-                        a = window;
-                    if (window->title == "Second")
-                        b = window;
-                }
-                ASSERT_TRUE(a);
-                ASSERT_TRUE(b);
-                EXPECT_EQ(a->pid, b->pid);
-                EXPECT_EQ(a->menuService, ":1.123");
-                EXPECT_EQ(a->menuPath, "/first");
-                EXPECT_EQ(b->menuPath, "/second");
-                int done = a->doneCount;
-                org_kde_kwin_appmenu_set_address(firstMenu, ":1.124", "/replacement");
-                c.sync();
-                EXPECT_EQ(a->menuService, ":1.124");
-                EXPECT_EQ(a->menuPath, "/replacement");
-                EXPECT_GT(a->doneCount, done);
-                EXPECT_EQ(b->menuPath, "/second");
-                auto *duplicate = org_kde_kwin_appmenu_manager_create(menus, first->surface);
-                org_kde_kwin_appmenu_set_address(duplicate, ":1.125", "/newest");
-                c.sync();
-                EXPECT_EQ(a->menuPath, "/newest");
-                org_kde_kwin_appmenu_release(duplicate);
-                org_kde_kwin_appmenu_manager_release(menus);
-                c.sync();
-                EXPECT_EQ(a->menuPath, "/replacement");
-                org_kde_kwin_appmenu_release(firstMenu);
-                c.sync();
-                EXPECT_TRUE(a->menuService.empty());
-                EXPECT_TRUE(a->menuPath.empty());
-                c.destroyWindowObjects(second);
-                c.sync();
-                org_kde_kwin_appmenu_set_address(secondMenu, ":1.123", "/inert");
-                org_kde_kwin_appmenu_release(secondMenu);
-                EXPECT_GE(c.roundtrip(), 0);
-                EXPECT_TRUE(b->closed);
-            },
-            [](Client &app) {
-                EXPECT_TRUE(app.globals.contains("org_kde_kwin_appmenu_manager"));
-                EXPECT_FALSE(app.globals.contains("cutefish_window_management_v1"));
-            });
-}
-
-TEST_F(PrivateShellProtocolTest, AppMenuVersionOneValidatesAndClearsAddresses)
-{
-    run([](Client &c) {
-        auto *manager = static_cast<org_kde_kwin_appmenu_manager *>(
-                wl_registry_bind(c.registry, c.globals.at("org_kde_kwin_appmenu_manager").first,
-                                 &org_kde_kwin_appmenu_manager_interface, 1));
-        auto *window = c.makeToplevel("Menu", "org.test.App");
-        auto *menu = org_kde_kwin_appmenu_manager_create(manager, window->surface);
-        org_kde_kwin_appmenu_manager_destroy(manager);
-        org_kde_kwin_appmenu_set_address(menu, "org.test.App", "/");
-        c.map(window, base::Size(180, 120));
-        ASSERT_TRUE(c.bindManagement());
-        ASSERT_EQ(c.liveTracked().size(), 1u);
-        auto *tracked = c.liveTracked().front();
-        EXPECT_EQ(tracked->menuService, "org.test.App");
-        EXPECT_EQ(tracked->menuPath, "/");
-        for (const auto &address :
-             std::vector<std::pair<const char *, const char *>> {{"", ""},
-                                                                 {"invalid", "/menu"},
-                                                                 {"1.invalid", "/menu"},
-                                                                 {"org.test.App", "invalid"},
-                                                                 {"org.test.App", "/menu/"},
-                                                                 {"org.test.App", "/bad-path"}}) {
-            org_kde_kwin_appmenu_set_address(menu, address.first, address.second);
-            c.sync();
-            EXPECT_TRUE(tracked->menuService.empty());
-            EXPECT_TRUE(tracked->menuPath.empty());
-            org_kde_kwin_appmenu_set_address(menu, ":1.42", "/menu");
-            c.sync();
-            EXPECT_EQ(tracked->menuService, ":1.42");
-            EXPECT_EQ(tracked->menuPath, "/menu");
-        }
-        org_kde_kwin_appmenu_release(menu);
+        // The dock comes up after the desktop.
+        check([&] { windowManager.setExclusiveZone(&dock, wm::ScreenEdge::Bottom, 92, "Cutefish-a"); });
         c.sync();
-        EXPECT_TRUE(tracked->menuPath.empty());
-    });
-}
-
-TEST_F(PrivateShellProtocolTest, ActiveSurfaceCanBeDestroyedBeforeItsMenuResource)
-{
-    run([](Client &c) {
-        auto *manager = static_cast<org_kde_kwin_appmenu_manager *>(
-                wl_registry_bind(c.registry, c.globals.at("org_kde_kwin_appmenu_manager").first,
-                                 &org_kde_kwin_appmenu_manager_interface, 2));
-        auto *window = c.makeToplevel("Menu", "org.test.App");
-        auto *menu = org_kde_kwin_appmenu_manager_create(manager, window->surface);
-        org_kde_kwin_appmenu_set_address(menu, ":1.42", "/menu");
-        c.map(window, base::Size(180, 120));
-        ASSERT_TRUE(c.bindManagement());
-        ASSERT_EQ(c.liveTracked().size(), 1u);
-        auto *tracked = c.liveTracked().front();
-        cutefish_window_v1_activate(tracked->object);
+        EXPECT_EQ(base::Rect(0, 32, 800, 476), areas.back());
+        check([&] { windowManager.clearExclusiveZone(&dock); });
         c.sync();
-        ASSERT_EQ(c.activeWindowId, tracked->id);
-        wl_surface_destroy(window->surface);
-        window->surface = nullptr;
-        ASSERT_GE(c.roundtrip(), 0);
-        EXPECT_TRUE(tracked->closed);
-        EXPECT_EQ(c.activeWindowId, 0u);
-        org_kde_kwin_appmenu_set_address(menu, ":1.42", "/inert");
-        org_kde_kwin_appmenu_release(menu);
-        org_kde_kwin_appmenu_manager_release(manager);
-        EXPECT_GE(c.roundtrip(), 0);
+        EXPECT_EQ(base::Rect(0, 32, 800, 568), areas.back());
     });
+    windowManager.clearExclusiveZone(&bar);
+    windowManager.setDisplayManager(nullptr);
 }
 
 } // namespace
-
-TEST_F(PrivateShellProtocolTest, ManagedPopupsAreNotAnnouncedAsTasks)
-{
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindManagement());
-        check([&] {
-            wm::WindowInit init;
-            init.type = wm::WindowType::Popup;
-            init.requestedSize = base::Size(120, 90);
-            auto *popup = windowManager.createWindow(nullptr, init);
-            EXPECT_FALSE(windowManager.activation()->canActivate(popup));
-            windowManager.destroyWindow(popup);
-        });
-        c.sync();
-        EXPECT_TRUE(c.tracked.empty());
-        EXPECT_EQ(0u, c.activeWindowId);
-    });
-}
-
-TEST_F(PrivateShellProtocolTest, WindowHintsApplyBeforeMapAndUpdateWithoutChangingFocus)
-{
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindManagement());
-        ASSERT_TRUE(c.globals.contains("cutefish_window_hints_v1"));
-        auto *hints = static_cast<cutefish_window_hints_v1 *>(wl_registry_bind(
-                c.registry, c.globals["cutefish_window_hints_v1"].first,
-                &cutefish_window_hints_v1_interface, 1));
-        auto *window = c.makeToplevel("Helper", "arbitrary-app-id");
-        cutefish_window_hints_v1_set_skip_taskbar(hints, window->surface, 1);
-        c.map(window, base::Size(300, 200));
-        ASSERT_EQ(c.liveTracked().size(), 1u);
-        auto *tracked = c.liveTracked().front();
-        EXPECT_TRUE(tracked->skipTaskbar);
-        EXPECT_GT(tracked->skipTaskbarCount, 0);
-        EXPECT_EQ(c.activeWindowId, tracked->id);
-        check([&] {
-            auto *model = windowManager.windowById(tracked->id);
-            ASSERT_TRUE(model);
-            EXPECT_TRUE(model->skipTaskbar());
-            EXPECT_FALSE(wm::canIncludeWindowInMruList(model));
-        });
-
-        cutefish_window_hints_v1_set_skip_taskbar(hints, window->surface, 0);
-        c.sync();
-        EXPECT_FALSE(tracked->skipTaskbar);
-        EXPECT_EQ(c.activeWindowId, tracked->id);
-        check([&] {
-            EXPECT_TRUE(wm::canIncludeWindowInMruList(windowManager.windowById(tracked->id)));
-        });
-        cutefish_window_hints_v1_set_skip_taskbar(hints, window->surface, 1);
-        cutefish_window_hints_v1_destroy(hints);
-        c.sync();
-        EXPECT_TRUE(tracked->skipTaskbar);
-
-        cutefish_window_management_v1_destroy(c.management);
-        c.management = nullptr;
-        const size_t oldCount = c.tracked.size();
-        ASSERT_TRUE(c.bindManagement());
-        ASSERT_GT(c.tracked.size(), oldCount);
-        EXPECT_TRUE(c.tracked.back()->skipTaskbar);
-    });
-}
-
-TEST_F(PrivateShellProtocolTest, ShellApplicationWindowsStayOutOfManagementAndPreserveContext)
-{
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindManagement());
-        auto *app = c.makeToplevel("App", "ordinary-app");
-        c.map(app, base::Size(300, 200));
-        ASSERT_EQ(c.liveTracked().size(), 1u);
-        const uint64_t appId = c.liveTracked().front()->id;
-        EXPECT_EQ(c.activeWindowId, appId);
-
-        auto *helper = c.makeToplevel("Properties", "cutefish-shell");
-        c.map(helper, base::Size(200, 100));
-        ASSERT_EQ(c.liveTracked().size(), 1u);
-        EXPECT_EQ(c.activeWindowId, appId);
-        check([&] {
-            auto *active = windowManager.activation()->activeWindow();
-            ASSERT_TRUE(active);
-            EXPECT_TRUE(active->isShellApplication());
-            EXPECT_FALSE(active->isShellWindow());
-            EXPECT_TRUE(active->skipTaskbar());
-            EXPECT_FALSE(wm::canIncludeWindowInMruList(active));
-        });
-
-        cutefish_window_management_v1_destroy(c.management);
-        c.management = nullptr;
-        const size_t before = c.tracked.size();
-        ASSERT_TRUE(c.bindManagement());
-        ASSERT_EQ(c.tracked.size(), before + 1);
-        EXPECT_EQ(c.tracked.back()->id, appId);
-        EXPECT_EQ(c.activeWindowId, appId);
-
-        c.destroyWindowObjects(app);
-        c.sync();
-        EXPECT_TRUE(c.tracked.back()->closed);
-        EXPECT_EQ(c.activeWindowId, 0u);
-    });
-}
-
-TEST_F(PrivateShellProtocolTest, ChangingTheShellAppIdClosesAndReannouncesTheTask)
-{
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindManagement());
-        auto *app = c.makeToplevel("App", "ordinary-app");
-        c.map(app, base::Size(300, 200));
-        const uint64_t appId = c.liveTracked().front()->id;
-        auto *helper = c.makeToplevel("Helper", "cutefish-shell");
-        c.map(helper, base::Size(200, 100));
-        ASSERT_EQ(c.liveTracked().size(), 1u);
-
-        xdg_toplevel_set_app_id(helper->toplevel, "other-application");
-        c.sync();
-        ASSERT_EQ(c.liveTracked().size(), 2u);
-        auto *task = c.tracked.back().get();
-        const uint64_t helperId = task->id;
-        EXPECT_FALSE(task->skipTaskbar);
-        EXPECT_EQ(c.activeWindowId, helperId);
-        check([&] {
-            EXPECT_TRUE(wm::canIncludeWindowInMruList(windowManager.windowById(helperId)));
-        });
-
-        xdg_toplevel_set_app_id(helper->toplevel, "cutefish-shell");
-        c.sync();
-        EXPECT_TRUE(task->closed);
-        ASSERT_EQ(c.liveTracked().size(), 1u);
-        EXPECT_EQ(c.activeWindowId, appId);
-
-        xdg_toplevel_set_app_id(helper->toplevel, "other-application");
-        c.sync();
-        ASSERT_EQ(c.liveTracked().size(), 2u);
-        EXPECT_EQ(c.tracked.back()->id, helperId);
-        EXPECT_EQ(c.activeWindowId, helperId);
-    });
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Windows that stop responding
-
-TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAWindowComesFromImageCapture)
-{
-    static const struct ext_image_capture_source_v1_interface sourceImplementation = {
-            [](wl_client *, wl_resource *resource) {
-                wl_resource_destroy(resource);
-            }};
-    std::atomic<uint64_t> exported = 0;
-    std::atomic<int> exports = 0;
-    configureManagement = [&](wayland::WaylandCutefishWindowManagement &management) {
-        management.setCaptureSourceExporter(
-                [&](wl_client *client, uint32_t id, wm::Window *window) {
-                    ++exports;
-                    exported = window ? window->id() : 0;
-                    wl_resource *source = wl_resource_create(
-                            client, &ext_image_capture_source_v1_interface, 1, id);
-                    ASSERT_NE(source, nullptr);
-                    wl_resource_set_implementation(source, &sourceImplementation, nullptr,
-                                                   nullptr);
-                });
-    };
-
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindShell());
-        ASSERT_TRUE(c.bindManagement());
-        XdgWindow *app = c.makeToplevel("Editor", "editor");
-        c.map(app, base::Size(400, 300));
-        ASSERT_EQ(1u, c.liveTracked().size());
-        TrackedWindow *task = c.liveTracked().front();
-
-        auto *source = cutefish_window_v1_create_capture_source(task->object);
-        c.sync();
-        EXPECT_EQ(exports, 1);
-        EXPECT_EQ(exported, task->id);
-        ext_image_capture_source_v1_destroy(source);
-        c.sync();
-        EXPECT_EQ(wl_display_get_error(c.display), 0);
-
-        // A closed window still answers, with a source that cannot be painted.
-        c.destroyWindowObjects(app);
-        c.sync();
-        EXPECT_TRUE(task->closed);
-        source = cutefish_window_v1_create_capture_source(task->object);
-        c.sync();
-        EXPECT_EQ(exports, 2);
-        EXPECT_EQ(exported, 0u);
-        ext_image_capture_source_v1_destroy(source);
-        c.sync();
-        EXPECT_EQ(wl_display_get_error(c.display), 0);
-    });
-}
-
-TEST_F(PrivateShellProtocolTest, ACaptureSourceOfAShellSurfaceComesFromImageCapture)
-{
-    static const struct ext_image_capture_source_v1_interface sourceImplementation = {
-            [](wl_client *, wl_resource *resource) {
-                wl_resource_destroy(resource);
-            }};
-    std::atomic<uint64_t> exported = 0;
-    std::atomic<int> exports = 0;
-    configureManagement = [&](wayland::WaylandCutefishWindowManagement &management) {
-        management.setCaptureSourceExporter(
-                [&](wl_client *client, uint32_t id, wm::Window *window) {
-                    ++exports;
-                    exported = window ? window->id() : 0;
-                    wl_resource *source = wl_resource_create(
-                            client, &ext_image_capture_source_v1_interface, 1, id);
-                    ASSERT_NE(source, nullptr);
-                    wl_resource_set_implementation(source, &sourceImplementation, nullptr,
-                                                   nullptr);
-                });
-    };
-
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindShell());
-        ASSERT_TRUE(c.bindManagement());
-        XdgWindow *dock = c.makeToplevel("Dock", "cutefish-shell");
-        dock->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, dock->surface);
-        cutefish_shell_surface_v1_set_role(dock->shellSurface, CUTEFISH_SHELL_SURFACE_V1_ROLE_DOCK);
-
-        // Before the first commit there is no window to paint.
-        auto *source = cutefish_window_management_v1_create_surface_capture_source(
-                c.management, dock->surface);
-        c.sync();
-        EXPECT_EQ(exports, 1);
-        EXPECT_EQ(exported, 0u);
-        ext_image_capture_source_v1_destroy(source);
-
-        c.map(dock, base::Size(800, 60));
-        ASSERT_TRUE(awaitRole(wm::WindowRole::Dock));
-        uint64_t dockId = 0;
-        check([&] {
-            dockId = windowWithRole(wm::WindowRole::Dock)->id();
-        });
-        source = cutefish_window_management_v1_create_surface_capture_source(c.management,
-                                                                             dock->surface);
-        c.sync();
-        EXPECT_EQ(exports, 2);
-        EXPECT_EQ(exported, dockId);
-        ext_image_capture_source_v1_destroy(source);
-        c.sync();
-        EXPECT_EQ(wl_display_get_error(c.display), 0);
-    });
-}
-
-TEST_F(PrivateShellProtocolTest, WithoutImageCaptureAWindowSourceOnlyStops)
-{
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindShell());
-        ASSERT_TRUE(c.bindManagement());
-        XdgWindow *app = c.makeToplevel("Editor", "editor");
-        c.map(app, base::Size(400, 300));
-        ASSERT_EQ(1u, c.liveTracked().size());
-
-        auto *source = cutefish_window_v1_create_capture_source(c.liveTracked().front()->object);
-        c.sync();
-        ext_image_capture_source_v1_destroy(source);
-        c.sync();
-        EXPECT_EQ(wl_display_get_error(c.display), 0);
-    });
-}
-
-TEST_F(PrivateShellProtocolTest, AnUnresponsiveWindowAsksTheShellAndTakesASheet)
-{
-    run([&](Client &c) {
-        ASSERT_TRUE(c.bindShell());
-        ASSERT_TRUE(c.bindManagement());
-        XdgWindow *app = c.makeToplevel("Editor", "editor");
-        c.map(app, base::Size(400, 300));
-        ASSERT_EQ(1u, c.liveTracked().size());
-        TrackedWindow *task = c.liveTracked().front();
-        EXPECT_TRUE(task->responsive);
-
-        // What a ping timeout does.
-        check([&] {
-            windowManager.windowById(task->id)->setResponsive(false);
-        });
-        c.sync();
-        EXPECT_FALSE(task->responsive);
-
-        // The application is not asked to close: the shell is asked to offer
-        // force quit.
-        cutefish_window_v1_close(task->object);
-        c.sync();
-        EXPECT_EQ(1, task->notRespondingCount);
-        EXPECT_EQ(0, app->closes);
-
-        XdgWindow *sheet = c.makeToplevel("Not Responding", "cutefish-shell");
-        sheet->shellSurface = cutefish_shell_v1_get_shell_surface(c.shell, sheet->surface);
-        cutefish_shell_surface_v1_set_role(sheet->shellSurface,
-                                           CUTEFISH_SHELL_SURFACE_V1_ROLE_SHEET);
-        cutefish_shell_surface_v1_set_parent(sheet->shellSurface, uint32_t(task->id >> 32),
-                                             uint32_t(task->id));
-        c.map(sheet, base::Size(200, 100));
-
-        check([&] {
-            wm::Window *parent = windowManager.windowById(task->id);
-            wm::Window *sheetWindow = windowWithRole(wm::WindowRole::Sheet);
-            ASSERT_NE(nullptr, sheetWindow);
-            EXPECT_EQ(parent, sheetWindow->transientParent());
-            EXPECT_TRUE(sheetWindow->isModal());
-            EXPECT_EQ(sheetWindow, windowManager.activation()->activeWindow());
-            EXPECT_EQ(sheetWindow, windowManager.windows().back());
-            const base::Rect bounds = parent->bounds();
-            EXPECT_EQ(wm::centerPixel(bounds), wm::centerPixel(sheetWindow->bounds()));
-            parent->setBounds(bounds.translated(30, 40));
-            EXPECT_EQ(wm::centerPixel(bounds.translated(30, 40)),
-                      wm::centerPixel(sheetWindow->bounds()));
-        });
-        // The sheet is not a task of its own, and the window it hangs from
-        // stays the active application.
-        EXPECT_EQ(1u, c.liveTracked().size());
-        EXPECT_EQ(task->id, c.activeWindowId);
-
-        check([&] {
-            windowManager.windowById(task->id)->setResponsive(true);
-        });
-        c.sync();
-        EXPECT_TRUE(task->responsive);
-    });
-}

@@ -44,6 +44,21 @@ class Buffer;
 class ShmPool;
 class Surface;
 
+// Surface contents the compositor draws itself, such as the shell's internal
+// windows. Produced on the renderer's context at the start of every output
+// frame, before the surfaces' textures are updated, so their commits are part
+// of the frame being composed.
+class ContentProducer
+{
+public:
+    // Whether a frame of the output showing `viewport` has content to produce.
+    virtual bool hasPendingContent(const base::Rect &viewport) const = 0;
+    virtual void produceContent(render::Renderer &renderer) = 0;
+
+protected:
+    virtual ~ContentProducer() = default;
+};
+
 // Creates the compositor-side objects the Wayland protocol layer hands out, and
 // owns the relationship between committed surface state and presented frames.
 // Deliberately not a place for protocol handling or for window management.
@@ -114,7 +129,12 @@ public:
     // walks the scene in stacking order.
     Surface *surfaceForNode(const scene::Node *node) const;
 
-    // Uploads every surface whose contents changed since the last frame.
+    // Null for none. The producer outlives the compositor or unsets itself.
+    void setContentProducer(ContentProducer *producer) { m_contentProducer = producer; }
+    ContentProducer *contentProducer() const { return m_contentProducer; }
+
+    // Produces the compositor's own content, then uploads every surface whose
+    // contents changed since the last frame.
     void updateTextures(render::Renderer &renderer);
 
     // Snapshot callbacks immediately before composition. Roll back on failed
@@ -158,6 +178,7 @@ private:
     scene::Node *m_surfaceContainer = nullptr;
     scene::Node *m_inputMethodContainer = nullptr;
     render::DmaBufDevice *m_dmaBufDevice = nullptr;
+    ContentProducer *m_contentProducer = nullptr;
     std::vector<Surface *> m_surfaces;
     // Hit testing asks this for every node it passes.
     std::unordered_map<const scene::Node *, Surface *> m_surfaceByNode;

@@ -10,7 +10,7 @@
 // compositor types and ownership.
 //
 // Trimmed for Cutefish: no globals are registered yet, and the fd is watched by
-// the Qt event loop instead of base::MessagePumpForUI.
+// the compositor's own main loop instead of base::MessagePumpForUI.
 
 #ifndef CUTEFISH_WAYLAND_SERVER_H_
 #define CUTEFISH_WAYLAND_SERVER_H_

@@ -61,18 +61,6 @@ TEST(ExclusiveZonesTest, ZeroThicknessReleasesTheReservation)
     EXPECT_EQ(kOutput, zones.apply(kOutput));
 }
 
-TEST(ExclusiveZonesTest, ClearAllIsWhatAShellDisconnectDoes)
-{
-    ExclusiveZones zones;
-    const int a = 1;
-    const int b = 2;
-    zones.set(&a, ScreenEdge::Top, 30);
-    zones.set(&b, ScreenEdge::Bottom, 70);
-    EXPECT_TRUE(zones.clearAll());
-    EXPECT_FALSE(zones.clearAll());
-    EXPECT_EQ(kOutput, zones.apply(kOutput));
-}
-
 TEST(ExclusiveZonesTest, AReservationLargerThanTheOutputIsIgnored)
 {
     ExclusiveZones zones;

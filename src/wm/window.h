@@ -94,7 +94,6 @@ public:
 
     void setApplicationId(const std::string &id);
 
-    bool isShellApplication() const;
     bool skipTaskbar() const;
 
     // The process behind the Wayland connection the window's shell surface was
@@ -106,10 +105,10 @@ public:
 
     // --- Shell role ---
     //
-    // Everything but Normal comes from the trusted shell through
-    // cutefish_shell_v1 and is adapted into these plain WM concepts before the
-    // window is announced. Set once, before the window manager places the
-    // window or emits windowAdded.
+    // Everything but Normal is one of the compositor's shell windows, or the
+    // trusted desktop client's surface (cutefish_shell_v1), adapted into these
+    // plain WM concepts before the window is announced. Set once, before the
+    // window manager places the window or emits windowAdded.
 
     WindowRole role() const { return m_role; }
 

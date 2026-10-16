@@ -1,0 +1,230 @@
+// Copyright 2026 Reion Wong <reionwong@gmail.com>
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "shell/shell.h"
+
+#include <malloc.h>
+
+#include <algorithm>
+#include <chrono>
+
+#include "base/dbus.h"
+#include "base/settings.h"
+#include "core/preferences.h"
+#include "decoration/decoration_theme.h"
+#include "display/display_manager.h"
+#include "shell/common/app_launcher.h"
+#include "shell/common/applications.h"
+#include "shell/common/file_thread.h"
+#include "shell/common/task_manager.h"
+#include "shell/common/wm_task_windows.h"
+#include "shell/shell_host.h"
+#include "shell/shell_input.h"
+#include "shell/window_renderer.h"
+#include "toolkit/toolkit_host.h"
+#include "ui/theme.h"
+#include "wm/window_manager.h"
+
+namespace cutefish::shell {
+
+// FishUI's Theme: dark mode and accent from the
+// Appearance service, as the compositor's own theme follows them, and the
+// icon theme and the font from services.conf.
+class Shell::ThemeFollower : public decoration::ThemeObserver
+{
+public:
+    ThemeFollower(decoration::Theme *theme, const std::string &settingsPath)
+        : m_theme(theme)
+    {
+        const base::Settings settings(settingsPath.empty() ? preferencesFile("services")
+                                                           : settingsPath);
+        m_iconTheme = settings.stringValue("Appearance/IconTheme", "Cutefish");
+        m_fontFamily = settings.stringValue("Appearance/Font", "");
+        m_fontPointSize = settings.doubleValue("Appearance/FontSize", 9);
+        if (m_theme)
+            m_theme->addObserver(this);
+        apply();
+    }
+
+    ~ThemeFollower() override
+    {
+        if (m_theme)
+            m_theme->removeObserver(this);
+    }
+
+    void onThemeChanged() override { apply(); }
+
+private:
+    void apply()
+    {
+        static constexpr ui::Color kAccents[] = {ui::accent::blue,   ui::accent::red,
+                                                 ui::accent::green,  ui::accent::purple,
+                                                 ui::accent::pink,   ui::accent::orange,
+                                                 ui::accent::grey};
+        const bool dark = m_theme && m_theme->darkMode();
+        ui::Theme theme = dark ? ui::Theme::dark() : ui::Theme::light();
+        const int accent = m_theme ? m_theme->accentColor() : 0;
+        if (accent >= 0 && accent < int(std::size(kAccents)))
+            theme.highlight = kAccents[accent];
+        theme.iconTheme = m_iconTheme;
+        theme.fontFamily = m_fontFamily;
+        theme.fontPointSize = m_fontPointSize > 0 ? m_fontPointSize : 9;
+        theme.continuousCorners = ui::Theme::current().continuousCorners;
+        ui::Theme::setCurrent(theme);
+    }
+
+    decoration::Theme *m_theme;
+    std::string m_iconTheme;
+    std::string m_fontFamily;
+    double m_fontPointSize = 9;
+};
+
+Shell::Shell(const ShellEnvironment &environment)
+    : m_environment(environment)
+{
+    // Before any window: it sets the toolkit up on the main loop.
+    toolkit::application();
+    m_renderer = std::make_unique<WindowRenderer>(m_environment.compositor);
+    m_input = std::make_unique<ShellInput>(this);
+    m_host = std::make_unique<ShellHost>(this, m_environment.inputMethod);
+    m_theme = std::make_unique<ThemeFollower>(m_environment.theme, m_environment.servicesSettings);
+    m_outputsChanged = windowManager()->outputsChanged.connect([this] { updateOutputs(); });
+    updateOutputs();
+    m_trimTimer.setSingleShot(true);
+    m_trimTimer.onTimeout = [] {
+        // Trimming walks every arena; the main thread waits only for its own.
+        fileThread().post([] { malloc_trim(0); });
+    };
+    // Startup decodes icons, parses SVGs and compiles shaders.
+    releaseFreedMemorySoon();
+}
+
+Shell::~Shell()
+{
+    // Components first, while the windows they own can still reach the input
+    // client and the renderer.
+    while (!m_components.empty())
+        m_components.pop_back();
+    m_outputsChanged.reset();
+    m_launcher.reset();
+    m_tasks.reset();
+    m_taskWindows.reset();
+    m_applications.reset();
+    m_theme.reset();
+    m_host.reset();
+    m_input.reset();
+    m_renderer.reset();
+}
+
+display::DisplayManager *Shell::displayManager() const
+{
+    return windowManager()->displayManager();
+}
+
+ui::Application &Shell::application() const
+{
+    return toolkit::application();
+}
+
+const Shell::Output *Shell::output(const std::string &name) const
+{
+    if (m_outputs.empty())
+        return nullptr;
+    const auto it = std::find_if(m_outputs.begin(), m_outputs.end(),
+                                 [&](const Output &output) { return output.name == name; });
+    return it != m_outputs.end() ? &*it : &m_outputs.front();
+}
+
+const Shell::Output *Shell::outputAt(const base::Point &point) const
+{
+    if (m_outputs.empty())
+        return nullptr;
+    const auto it = std::find_if(m_outputs.begin(), m_outputs.end(),
+                                 [&](const Output &output) { return output.bounds.contains(point); });
+    return it != m_outputs.end() ? &*it : &m_outputs.front();
+}
+
+Applications &Shell::applications()
+{
+    if (!m_applications)
+        m_applications = std::make_unique<RegistryApplications>();
+    return *m_applications;
+}
+
+TaskWindows &Shell::taskWindows()
+{
+    if (!m_taskWindows)
+        m_taskWindows = std::make_unique<WmTaskWindows>(*windowManager());
+    return *m_taskWindows;
+}
+
+TaskManager &Shell::tasks()
+{
+    if (!m_tasks)
+        m_tasks = std::make_unique<TaskManager>(taskWindows(), applications());
+    return *m_tasks;
+}
+
+ApplicationLauncher &Shell::launcher()
+{
+    if (!m_launcher)
+        m_launcher = std::make_unique<ApplicationLauncher>(bus());
+    return *m_launcher;
+}
+
+void Shell::setApplications(std::unique_ptr<Applications> applications)
+{
+    m_applications = std::move(applications);
+}
+
+void Shell::setTaskWindows(std::unique_ptr<TaskWindows> windows)
+{
+    m_taskWindows = std::move(windows);
+}
+
+base::Rect Shell::workArea(const Output &output) const
+{
+    return windowManager()->workAreaForOutput(output.bounds);
+}
+
+void Shell::releaseFreedMemorySoon()
+{
+    m_trimTimer.start(std::chrono::seconds(10));
+}
+
+void Shell::addWindow(ShellWindow *window)
+{
+    m_windows.push_back(window);
+}
+
+void Shell::removeWindow(ShellWindow *window)
+{
+    m_windows.erase(std::remove(m_windows.begin(), m_windows.end(), window), m_windows.end());
+}
+
+void Shell::updateOutputs()
+{
+    std::vector<Output> outputs;
+    const display::DisplayManager *displays = displayManager();
+    if (displays && displays->applied()) {
+        for (const auto &logical : displays->applied()->logicalDisplays) {
+            if (logical.bounds.isEmpty())
+                continue;
+            outputs.push_back(
+                    {logical.waylandName, logical.bounds, logical.scale.value(), logical.primary});
+        }
+    }
+    if (outputs.empty()) {
+        for (const wm::WindowManager::OutputArea &area : windowManager()->outputAreas())
+            outputs.push_back({{}, area.bounds, area.scale, outputs.empty()});
+    }
+    std::stable_partition(outputs.begin(), outputs.end(),
+                          [](const Output &output) { return output.primary; });
+    if (outputs == m_outputs)
+        return;
+    m_outputs = std::move(outputs);
+    outputsChanged();
+}
+
+} // namespace cutefish::shell

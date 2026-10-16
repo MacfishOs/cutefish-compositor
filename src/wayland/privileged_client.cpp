@@ -81,8 +81,6 @@ void PrivilegedClients::onConnectionDestroyed(wl_listener *listener, void *)
     connection->listening = false;
     connection->client = nullptr;
     CF_INFO(cfWayland) << "Trusted" << connection->label << "client disconnected";
-    if (connection->disconnected)
-        connection->disconnected();
 }
 
 void PrivilegedClients::forget(TrustedConnection &connection)
@@ -106,8 +104,6 @@ wl_client *PrivilegedClients::adopt(TrustedConnection &connection, int fd)
         wl_client *previous = connection.client;
         forget(connection);
         wl_client_destroy(previous);
-        if (connection.disconnected)
-            connection.disconnected();
     }
 
     wl_client *client = wl_client_create(m_display, fd);

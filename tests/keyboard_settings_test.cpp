@@ -184,9 +184,8 @@ TEST(KeyboardSettings, DBusPropertiesAndMethods)
     EXPECT_EQ(proxy.property<std::string>("shortcutConvention"), "command");
 }
 
-// The argument names are those QtDBus took from the slots' parameters. QtDBus
-// left return values unnamed; sd-bus names all arguments or none, so they are
-// "result".
+// The argument names are the methods' parameter names, kept for existing
+// callers. sd-bus names all arguments or none, so return values are "result".
 TEST(KeyboardSettings, IntrospectionNamesTheArguments)
 {
     EventLoop loop;

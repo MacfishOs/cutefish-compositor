@@ -5,8 +5,8 @@
 // Upstream: chromium/src/ui/display/manager/display_manager_unittest.cc
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: tests cover immutable applied batches and global Qt
-// coordinates without Ash display objects.
+// Adapted for Cutefish: tests cover immutable applied batches and global
+// logical coordinates without Ash display objects.
 
 #include <gtest/gtest.h>
 

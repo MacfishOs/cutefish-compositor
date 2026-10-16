@@ -5,7 +5,7 @@
 // Upstream: chromium/src/ui/display/manager/test/fake_display_delegate.h
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 //
-// Adapted for Cutefish: callbacks and snapshots use the native Qt display
+// Adapted for Cutefish: callbacks and snapshots use the native display
 // contract without Chromium task runners.
 
 #pragma once

@@ -15,7 +15,6 @@
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
 #include <ext-image-capture-source-v1-client-protocol.h>
-#include <cutefish-window-management-v1-client-protocol.h>
 #include <ext-data-control-v1-client-protocol.h>
 #include <ext-foreign-toplevel-list-v1-client-protocol.h>
 #include <ext-idle-notify-v1-client-protocol.h>
@@ -90,7 +89,6 @@ inline const std::map<std::string, const wl_interface *> &knownInterfaces()
                      &ext_image_copy_capture_manager_v1_interface,
                      &ext_foreign_toplevel_list_v1_interface,
                      &cutefish_shell_v1_interface,
-                     &cutefish_window_management_v1_interface,
                      &qt_hardware_integration_interface,
              })
             map.emplace(interface->name, interface);

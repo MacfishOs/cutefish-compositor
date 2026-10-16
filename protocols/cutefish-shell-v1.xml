@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <protocol name="cutefish_shell_v1">
 
-  <description summary="private shell surface roles for cutefish-shell">
-    This protocol lets the trusted Cutefish shell process describe what its
-    surfaces are for: a desktop background, a panel, a dock, the launcher, a
-    notification banner, the on-screen display, a picker or the screen
-    capture interface.
+  <description summary="the desktop surface of the trusted session client">
+    This protocol lets the trusted client the session starts on its own
+    connection (the file manager's daemon) say that a surface is the desktop
+    of an output: below every window, kept to the output, told the work area
+    its icons go in.
 
     It is an *extension* of an ordinary wl_surface, not a replacement for
-    xdg-shell. The shell keeps creating xdg_toplevel objects through
+    xdg-shell. The client keeps creating xdg_toplevel objects through
     xdg_wm_base exactly like any other Wayland client; this protocol only adds
-    the role, the stacking behaviour, the global position, the focus policy and
-    the work-area reservation that plain xdg-shell cannot express.
+    the role, the output, the focus policy and the work area that plain
+    xdg-shell cannot express.
 
-    The compositor only advertises this global to the one trusted shell client
+    The compositor only advertises this global on the one trusted connection
     it was handed by the session. Ordinary applications never see it.
 
     Warning! Not a standard protocol. Backward-incompatible changes are made by
@@ -50,32 +50,6 @@
       <arg name="id" type="new_id" interface="cutefish_shell_surface_v1"/>
       <arg name="surface" type="object" interface="wl_surface"/>
     </request>
-
-    <request name="get_drag">
-      <description summary="follow a drag this client starts">
-        Creates a cutefish_shell_drag_v1 that follows the drag-and-drop
-        operation this client has in progress, or else the next one it starts
-        with wl_data_device.start_drag. Drags started by other clients are
-        never followed.
-      </description>
-      <arg name="id" type="new_id" interface="cutefish_shell_drag_v1"/>
-    </request>
-
-    <request name="send_paste">
-      <description summary="paste into the window holding the keyboard">
-        Sends the paste shortcut to the window that holds keyboard focus:
-        Ctrl+Shift+V to a terminal, Ctrl+V to any other application. The keys
-        reach the client as it sees keys, so the shortcut convention does not
-        rewrite them.
-
-        Requests are handled in order, so a selection set and a picker hidden
-        before this request are in place when the keys arrive.
-
-        Keys and pointer buttons still held, such as the key that chose what
-        to paste, are waited for, up to two seconds. Ignored while the session
-        is locked and when the focused window is not an application's.
-      </description>
-    </request>
   </interface>
 
   <interface name="cutefish_shell_surface_v1" version="1">
@@ -88,60 +62,16 @@
 
     <enum name="error">
       <entry name="invalid_role" value="0" summary="unknown role value"/>
-      <entry name="invalid_edge" value="1" summary="unknown exclusive-zone edge"/>
-      <entry name="invalid_behavior" value="2" summary="unknown panel behavior"/>
       <entry name="invalid_focus_policy" value="3" summary="unknown focus policy"/>
       <entry name="invalid_output" value="4" summary="unknown logical output"/>
     </enum>
 
     <enum name="role">
       <description summary="what the surface is">
-        The role decides which stacking layer the window lives in and how the
-        window manager places it. Roles other than desktop are always kept in
-        their own layer: activation can never move a window between layers.
-
-        A capture surface and its popups are shown on screen but never
-        painted into an image or a video the compositor captures, so the
-        interface that takes a screenshot is never part of it.
-
-        A capture surface never becomes the active window: activating it only
-        takes the keyboard, and the window that was active stays active.
-
-        An osd surface never takes the keyboard, whatever its focus policy,
-        and it stays above the notification banners.
-
-        A sheet surface is window-modal for the window given by set_parent:
-        it is stacked right above that window, kept centred on it as the window
-        moves or either of them resizes, shown and hidden with it and kept on
-        its desk. Its position is the compositor's.
-
-        A picker surface, like a capture surface, only borrows the keyboard
-        and never becomes the active window. It is stacked above the osd and
-        below capture surfaces. It gives the keyboard back when it is hidden,
-        when a press lands outside it, or when another window is activated.
+        The desktop of its output: stacked below every window, over the
+        compositor's wallpaper, and covering the output.
       </description>
-      <entry name="desktop" value="0" summary="the desktop background, below everything"/>
-      <entry name="panel" value="1" summary="a panel such as the status bar"/>
-      <entry name="dock" value="2" summary="the dock"/>
-      <entry name="launcher" value="3" summary="the full screen launcher"/>
-      <entry name="notification" value="4" summary="a notification banner"/>
-      <entry name="capture" value="5"
-             summary="the screen capture interface, above everything else"/>
-      <entry name="osd" value="6"
-             summary="the on-screen display of a volume or brightness change"/>
-      <entry name="sheet" value="7"
-             summary="a dialog hanging from an application window, see set_parent"/>
-      <entry name="picker" value="8"
-             summary="a chooser that borrows the keyboard, such as the clipboard history"/>
-    </enum>
-
-    <enum name="panel_behavior">
-      <description summary="how a panel or dock relates to ordinary windows">
-        Only meaningful for the panel and dock roles.
-      </description>
-      <entry name="stay_above" value="0" summary="always above ordinary windows"/>
-      <entry name="windows_can_cover" value="1"
-             summary="ordinary windows and the launcher may be stacked over it"/>
+      <entry name="desktop" value="0" summary="the desktop, below everything"/>
     </enum>
 
     <enum name="focus_policy">
@@ -150,18 +80,9 @@
              summary="the window receives pointer input but never keyboard focus"/>
     </enum>
 
-    <enum name="edge">
-      <description summary="which screen edge an exclusive zone is measured from"/>
-      <entry name="top" value="0"/>
-      <entry name="bottom" value="1"/>
-      <entry name="left" value="2"/>
-      <entry name="right" value="3"/>
-    </enum>
-
     <request name="destroy" type="destructor">
       <description summary="drop the shell metadata">
-        The surface goes back to being an ordinary window, and any exclusive
-        zone it reserved is released.
+        The surface goes back to being an ordinary window.
       </description>
     </request>
 
@@ -174,47 +95,15 @@
       <arg name="role" type="uint" enum="role"/>
     </request>
 
-    <request name="set_position">
-      <description summary="place the surface in global coordinates">
-        The position of the surface's top left corner in the compositor's
-        global coordinate space. A shell surface is never subject to the
-        window manager's ordinary placement policy: this position is
-        authoritative.
-      </description>
-      <arg name="x" type="int"/>
-      <arg name="y" type="int"/>
-    </request>
-
-    <request name="set_panel_behavior">
-      <arg name="behavior" type="uint" enum="panel_behavior"/>
-    </request>
-
     <request name="set_focus_policy">
       <arg name="policy" type="uint" enum="focus_policy"/>
     </request>
 
-    <request name="set_exclusive_zone">
-      <description summary="reserve work area along a screen edge">
-        Asks the compositor to keep a strip of `thickness` logical pixels along
-        `edge` clear of maximized and normally placed windows.
-
-        Reservations from every shell surface compose: a status bar at the top
-        and a dock at the bottom shrink the work area from both ends. A
-        thickness of zero is the same as clear_exclusive_zone.
-      </description>
-      <arg name="edge" type="uint" enum="edge"/>
-      <arg name="thickness" type="int"/>
-    </request>
-
-    <request name="clear_exclusive_zone">
-      <description summary="release this surface's work-area reservation"/>
-    </request>
-
     <request name="activate">
       <description summary="give this surface the keyboard focus">
-        The trusted way for the launcher to take focus. No serial is required:
-        the shell is trusted, and its own activations do not come from an
-        input event it can point at.
+        The trusted way for the desktop to take the keyboard, as it does once
+        when first shown. No serial is required: the client is trusted, and
+        this activation does not come from an input event it can point at.
 
         Ignored while the surface has no window, or while its focus policy is
         no_focus.
@@ -223,108 +112,27 @@
 
     <request name="set_output">
       <description summary="associate this surface with a logical output">
-        Selects the logical output by its stable wl_output name. Positions stay
-        in global coordinates. Exclusive zones apply only to this output.
+        Selects the logical output by its stable wl_output name. A desktop is
+        placed at its output's origin, by default the primary output's, and
+        follows it when the layout changes; the client sizes it to the
+        output.
       </description>
       <arg name="name" type="string" summary="wl_output name"/>
     </request>
 
-    <request name="set_parent">
-      <description summary="the application window a sheet belongs to">
-        The identifier cutefish_window_management_v1.window announced the
-        window with. Only meaningful for the sheet role, and best sent before
-        the first commit; a mapped sheet moves to its new parent. A window
-        that is gone, or zero, leaves the sheet on its own, placed like any
-        other shell surface.
+    <event name="work_area">
+      <description summary="where a desktop lays out its content">
+        Sent to a desktop surface: its output's bounds less what the
+        compositor's own panels and every exclusive zone reserve, where
+        windows are laid out. In surface-local logical pixels, the surface
+        being placed at its output's origin. Sent once the surface is a
+        desktop, before its first configure, and again whenever the work area
+        or the surface's output changes.
       </description>
-      <arg name="id_hi" type="uint"/>
-      <arg name="id_lo" type="uint"/>
-    </request>
-  </interface>
-
-  <interface name="cutefish_shell_drag_v1" version="1">
-    <description summary="where a drag of the shell's goes and how it ends">
-      Reports the pointer of one drag in global coordinates, wherever it is
-      and whatever surface is under it, and tells a drop from a cancel.
-      After dropped or cancelled only returned may follow, and the object
-      should then be destroyed.
-
-      Where the shell's drag may go is the shell's to say: while the drag is
-      over nothing that takes the drop, the pointer keeps its default shape
-      rather than showing that it cannot drop there.
-    </description>
-
-    <request name="destroy" type="destructor">
-      <description summary="stop following the drag">
-        Also lets go of an icon that is sliding back or waits where it
-        arrived; see returned.
-      </description>
-    </request>
-
-    <request name="set_icon_opacity">
-      <description summary="how opaque the drag icon is drawn">
-        From 0 to 1. It holds for the rest of the drag the object follows,
-        and may be sent before that drag starts.
-      </description>
-      <arg name="opacity" type="fixed"/>
-    </request>
-
-    <request name="set_returns_home">
-      <description summary="whether an untaken drag's icon goes back">
-        Nonzero makes the drag icon slide back to where it was when the drag
-        started if the drag ends with nothing taking the data: cancelled, or
-        let go over nothing that accepts it. The returned event tells when it
-        is back. Zero, the initial value, lets the icon go where the drag
-        ends. What counts is the value when the drag ends; it may be sent
-        before the drag starts.
-      </description>
-      <arg name="returns" type="uint"/>
-    </request>
-
-    <request name="set_home">
-      <description summary="where a returning drag goes back to">
-        The point, in global logical coordinates, the drag's pointer
-        position goes back to when its icon returns; the icon keeps its
-        offset from it. Until this is sent, it is where the drag started.
-      </description>
-      <arg name="x" type="fixed"/>
-      <arg name="y" type="fixed"/>
-    </request>
-
-    <event name="motion">
-      <description summary="the drag moved">
-        Sent when the drag starts and whenever its pointer moves, in global
-        logical coordinates.
-      </description>
-      <arg name="x" type="fixed"/>
-      <arg name="y" type="fixed"/>
-    </event>
-
-    <event name="dropped">
-      <description summary="the drag was let go">
-        Sent where the drag was let go, whether or not a target takes the
-        data, and before any wl_data_source event about the drop.
-      </description>
-      <arg name="x" type="fixed"/>
-      <arg name="y" type="fixed"/>
-    </event>
-
-    <event name="cancelled">
-      <description summary="the drag ended without a drop">
-        Escape, or the drag's source or origin surface went away.
-      </description>
-    </event>
-
-    <event name="returned">
-      <description summary="the icon is back where the drag started">
-        Sent after dropped or cancelled when the drag ended with nothing
-        taking the data while set_returns_home was nonzero, once the icon
-        has slid back; at once when the drag had no icon to slide.
-
-        The icon then stays where it arrived until this object is destroyed,
-        so the client can destroy it once a frame of its own shows the icon
-        there, and no frame shows both or neither.
-      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
     </event>
   </interface>
 </protocol>

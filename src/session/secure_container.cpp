@@ -162,6 +162,21 @@ public:
         : Node("lock-wallpaper")
         , m_container(container)
     {
+        setGeometry(base::Rect(size));
+        const SecureContainer::PictureLoader &loader = container->pictureLoader();
+        const std::string picture = container->picture();
+        if (loader && !picture.empty()) {
+            // The desktop's decode of the same picture at the same size.
+            const base::Size target(std::max(1, base::roundToInt(size.width() * scale)),
+                                    std::max(1, base::roundToInt(size.height() * scale)));
+            m_request = loader(picture, target, [this](const ui::Bitmap &image) {
+                m_image = image;
+                m_format = render::PixelFormat::Bgra8888;
+                m_loaded = true;
+                notifyChanged();
+            });
+            return;
+        }
         m_loader = base::ThreadPool::global().run(
                 [size, scale] { return loadWallpaper(size, scale); },
                 [this](ui::Bitmap image) {
@@ -169,7 +184,6 @@ public:
                     m_loaded = true;
                     notifyChanged();
                 });
-        setGeometry(base::Rect(size));
     }
 
     Content content() const override { return Content::Translucent; }
@@ -186,7 +200,7 @@ protected:
         if (!m_texture)
             m_texture = renderer.createTexture(m_image.size(),
                                                m_image.constBits(), int(m_image.stride()),
-                                               render::PixelFormat::Rgba8888);
+                                               m_format);
         if (m_texture)
             renderer.drawTexture(m_texture.get(), bounds, m_container->sample(renderer).backdrop);
     }
@@ -194,7 +208,9 @@ protected:
 private:
     const SecureContainer *m_container;
     base::Job m_loader;
+    std::shared_ptr<void> m_request;
     ui::Bitmap m_image;
+    render::PixelFormat m_format = render::PixelFormat::Rgba8888;
     bool m_loaded = false;
     mutable std::unique_ptr<render::Texture> m_texture;
 };
@@ -366,6 +382,7 @@ void SecureContainer::refreshWallpaper()
         follow(settings.path(), m_watchedSettings, m_settingsWatch);
         follow(file, m_watchedWallpaper, m_wallpaperWatch);
     }
+    m_picture = settings.intValue("Appearance/BackgroundType", 0) == 0 ? file : std::string();
     const std::string key = path + '|' + settings.stringValue("Appearance/BackgroundType", "0")
             + '|' + settings.stringValue("Appearance/BackgroundColor", kDefaultBackgroundColor)
             + '|' + std::to_string(modifiedMs(file));

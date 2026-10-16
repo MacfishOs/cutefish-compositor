@@ -13,6 +13,7 @@
 #include "base/geometry.h"
 #include "render/shape_mask.h"
 #include "ui/bitmap_painter.h"
+#include "scene/wallpaper_node.h"
 #include "scene/window_animation.h"
 
 namespace cutefish::scene {
@@ -849,6 +850,9 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
             const base::RectF geometry = node->absoluteGeometry();
             if (window && geometry.intersects(output))
                 window->renderPresented(renderer, {mapped(geometry, output, bounds)});
+            else if (const auto *wallpaper = dynamic_cast<const WallpaperNode *>(node);
+                     wallpaper && geometry.intersects(output))
+                wallpaper->renderMapped(renderer, mapped(geometry, output, bounds));
         };
         for (const Node *node : m_backdrop)
             place(node);

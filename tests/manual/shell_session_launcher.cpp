@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Development harness: does what cutefish-session does for the shell, without
-// starting a compositor or a session.
+// Development harness: does what cutefish-session does for the file manager's
+// desktop, without starting a compositor or a session.
 //
 // It connects to the compositor's shell control socket, creates a Wayland
 // socketpair, hands one end to the compositor over SCM_RIGHTS and execs the
-// given program with the other end as WAYLAND_SOCKET. That makes it possible to
-// run the real cutefish-shell against a headless compositor from a test script.
+// given program with `--desktop-socket <fd>` appended for the other end. That
+// makes it possible to run `cutefish-filemanager --daemon` against a headless
+// compositor from a test script.
 //
 // Usage: cutefish-shell-session-launcher <control-socket> <program> [args...]
 //
@@ -23,6 +24,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -101,7 +103,7 @@ int main(int argc, char* argv[])
     close(pair[0]);
 
     // The compositor has to have turned the fd into a wl_client before the
-    // shell writes its first request, which it does as soon as it starts.
+    // program writes its first request, which it does as soon as it starts.
     usleep(200 * 1000);
 
     // Only the exec'd program keeps the connection.
@@ -109,10 +111,14 @@ int main(int argc, char* argv[])
         std::perror("fcntl");
         return 1;
     }
-    const std::string fd = std::to_string(pair[1]);
-    setenv("WAYLAND_SOCKET", fd.c_str(), 1);
+    std::string fd = std::to_string(pair[1]);
+    std::vector<char *> arguments(argv + 2, argv + argc);
+    std::string flag = "--desktop-socket";
+    arguments.push_back(flag.data());
+    arguments.push_back(fd.data());
+    arguments.push_back(nullptr);
 
-    execvp(argv[2], argv + 2);
+    execvp(arguments.front(), arguments.data());
     std::perror("execvp");
     return 1;
 }

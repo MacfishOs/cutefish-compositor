@@ -52,7 +52,6 @@ class SecurityDelegate;
 class Server;
 class WaylandComputerControl;
 class WaylandCutefishShell;
-class WaylandCutefishWindowManagement;
 class WaylandXdgActivation;
 class WaylandXdgShell;
 struct WaylandSeat;
@@ -123,6 +122,8 @@ public:
 
     ImageCaptureManager *imageCapture() { return m_imageCapture.get(); }
 
+    ForeignToplevelList *toplevelList() { return m_toplevelList.get(); }
+
     InputMethodLauncher *inputMethodLauncher() { return m_inputMethodLauncher.get(); }
 
     InputMethodManager *inputMethod() { return m_inputMethod.get(); }
@@ -156,7 +157,6 @@ private:
     std::unique_ptr<ForeignToplevelList> m_toplevelList;
     std::unique_ptr<WaylandComputerControl> m_computerControl;
     std::unique_ptr<WaylandCutefishShell> m_cutefishShell;
-    std::unique_ptr<WaylandCutefishWindowManagement> m_windowManagement;
     wl_global *m_qtHardwareIntegration = nullptr;
 };
 

@@ -65,6 +65,10 @@ public:
 
     // Bound to the focused surface; the relay additionally checks seat focus.
     virtual bool attached() const = 0;
+    // For a text input with no resource, the compositor's own: whether
+    // `surface`, the keyboard-focused one, is its window's. A resource's
+    // client decides for the others.
+    virtual bool ownsSurface(const compositor::Surface *) const { return false; }
     virtual void sendEdit(const TextInputEdit &edit) = 0;
 
     // Another text input took over the input method.

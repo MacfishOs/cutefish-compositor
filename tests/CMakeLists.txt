@@ -337,6 +337,8 @@ cutefish_add_test(desk_switch_pixel_test cutefish-scene cutefish-render)
 set_tests_properties(desk_switch_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 cutefish_add_test(overview_pixel_test cutefish-scene cutefish-render)
 set_tests_properties(overview_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
+cutefish_add_test(wallpaper_pixel_test cutefish-scene cutefish-render)
+set_tests_properties(wallpaper_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 set_tests_properties(image_capture_test PROPERTIES TIMEOUT 15)
 
 add_dependencies(image_capture_test cutefish-screenshot)
@@ -353,6 +355,14 @@ cutefish_add_test(idle_notify_protocol_test cutefish-wayland-input PkgConfig::Wa
 
 cutefish_add_test(auth_controller_test cutefish-auth)
 cutefish_add_test(switcher_view_test cutefish-switcher)
+cutefish_add_test(shell_test cutefish-shell)
+cutefish_add_test(shell_gpu_pixel_test cutefish-shell cutefish-render)
+set_tests_properties(shell_gpu_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
+# The shell components' memory, step by step; by hand.
+add_executable(cutefish-shell-memory-bench manual/shell_memory_bench.cpp)
+target_include_directories(cutefish-shell-memory-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cutefish-shell-memory-bench PRIVATE cutefish-shell-osd cutefish-shell-dock-view
+    cutefish-decoration cutefish-render cutefish-test-loop)
 cutefish_add_test(panel_gpu_pixel_test cutefish-auth cutefish-render)
 target_include_directories(panel_gpu_pixel_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(panel_gpu_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
@@ -401,3 +411,5 @@ if(NOT CUTEFISH_TEST_TIMEOUT_SCALE EQUAL 1)
         endif()
     endforeach()
 endif()
+
+add_subdirectory(shell)

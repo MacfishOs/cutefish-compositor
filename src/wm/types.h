@@ -41,9 +41,9 @@ constexpr bool isRoundedStateType(WindowStateType type)
     return type == WindowStateType::Normal || isSnappedStateType(type);
 }
 
-// What a window is for. Everything but Normal is a surface the trusted shell
-// claimed through cutefish_shell_v1; the window manager only ever sees the
-// adapted concept, never the protocol object.
+// What a window is for. Everything but Normal is one of the compositor's shell
+// windows or the trusted desktop client's surface; the window manager only ever
+// sees the adapted concept, never a protocol object.
 enum class WindowRole {
     Normal,
     Desktop,

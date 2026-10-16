@@ -120,7 +120,8 @@ TEST_F(DisplayConfigServiceTest, OtherWritesStillNeedTheSessionOnScreen)
     EXPECT_EQ(reply.error().name, "com.cutefish.DisplayConfig1.Error.Unauthorized");
 }
 
-// What Qt marshalled: the XML once listed one string too few after `as`.
+// The signature clients expect: the XML once listed one string too few after
+// `as`.
 TEST_F(DisplayConfigServiceTest, StateKeepsItsSignature)
 {
     Service service;

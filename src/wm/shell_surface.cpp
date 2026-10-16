@@ -647,7 +647,9 @@ void ShellSurface::onWindowBoundsChanged(Window *window, const base::Rect &)
     const base::Rect oldContent = m_configuredContentBounds;
     m_configuredContentBounds = newContent;
 
-    if (newContent.size() != oldContent.size() && !m_applyingClientBounds) {
+    // Without a configure callback (the compositor's own windows) nothing
+    // acknowledges a size, so there is no in-flight content to hold in place.
+    if (newContent.size() != oldContent.size() && !m_applyingClientBounds && m_configureCallback) {
         // The window manager has already moved and resized the window; hold the
         // client's current contents where they are until it catches up. The
         // offset is handed back at the commit that follows the acknowledgement.

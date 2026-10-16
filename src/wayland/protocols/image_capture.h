@@ -28,6 +28,10 @@ namespace cutefish::scene {
 class Node;
 }
 
+namespace cutefish::ui {
+class Bitmap;
+}
+
 namespace cutefish::wayland {
 
 class ImageCaptureManager
@@ -88,11 +92,23 @@ public:
     void setToplevelSourceResolver(ToplevelSourceResolver resolver);
 
     // Creates the ext_image_capture_source_v1 `id` of `source` for a request
-    // of another protocol, as cutefish_window_v1.create_capture_source does.
+    // of another protocol.
     // A null source, or a client that may not capture, gets a source whose
     // sessions stop at once.
     void exportSource(wl_client *client, uint32_t id,
                       std::shared_ptr<compositor::CaptureSource> source);
+
+    // A picture for the compositor itself, as the shell's screenshots take
+    // them: a frame of `source` rendered as a session's would be, at the next
+    // composition of its output and under the same lock rules. `done` runs on
+    // the main loop with the image in the output's buffer orientation and
+    // the wl_output transform that turns it upright, or a null image when
+    // the frame failed. Dropping the returned handle abandons the request.
+    using CaptureDone = std::function<void(ui::Bitmap image, uint32_t transform)>;
+    [[nodiscard]] std::shared_ptr<void> capture(std::shared_ptr<compositor::CaptureSource> source,
+                                                bool cursors, CaptureDone done);
+    // The whole of the output named `output`, for capture().
+    static std::shared_ptr<compositor::CaptureSource> outputSource(const std::string &output);
 
     // DMA-BUF capture targets are advertised from this renderer's probe; null
     // keeps every session SHM-only.

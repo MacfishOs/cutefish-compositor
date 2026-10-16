@@ -36,7 +36,7 @@ public:
     HeadlessBackend(const HeadlessBackend &) = delete;
     HeadlessBackend &operator=(const HeadlessBackend &) = delete;
 
-    // Describes the primary output and returns any further ones. A Qt or GTK
+    // Describes the primary output and returns any further ones. A toolkit
     // client with no output has no screen to place itself on, so headless mode
     // would be untestable with real toolkit clients without these.
     std::vector<std::unique_ptr<compositor::Output>> createOutputs(compositor::Output *primary);

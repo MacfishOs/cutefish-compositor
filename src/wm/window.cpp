@@ -627,14 +627,9 @@ void Window::setTitle(const std::string &title)
     });
 }
 
-bool Window::isShellApplication() const
-{
-    return applicationId() == "cutefish-shell";
-}
-
 bool Window::skipTaskbar() const
 {
-    return isShellWindow() || isPopup() || isShellApplication()
+    return isShellWindow() || isPopup()
             || (rootSurface() && rootSurface()->skipTaskbar());
 }
 
@@ -715,7 +710,7 @@ void Window::setPingCallback(PingCallback callback)
 
 void Window::ping()
 {
-    if (!m_pingCallback || isShellWindow() || isShellApplication())
+    if (!m_pingCallback || isShellWindow())
         return;
     m_pingCallback();
     if (!m_responsive)

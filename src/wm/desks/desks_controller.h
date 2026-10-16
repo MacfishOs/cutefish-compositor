@@ -40,7 +40,7 @@ class WindowManager;
 
 enum class DesksCreationRemovalSource {
     Keyboard,
-    // The shell, over cutefish_window_management_v1.
+    // A programmatic request.
     Api,
     DesksRestore,
     // The overview's new-desk button, or a window dropped on it.

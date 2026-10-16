@@ -150,7 +150,7 @@ Image renderCaptionIcon(CaptionButtonType type, bool restore, int size,
 
 Image renderButtonHighlight(int buttonSize, const render::Color& color)
 {
-    // FishUI RoundImageButton.qml rounds its 10% background margin.
+    // FishUI's round image button rounds its 10% background margin.
     const int diameter = buttonSize - 2 * static_cast<int>(std::lround(buttonSize * 0.1));
     Image image(base::Size(diameter, diameter));
     if (diameter <= 0)

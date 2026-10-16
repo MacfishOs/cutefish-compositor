@@ -26,7 +26,7 @@ struct ForeignToplevelList::Entry {
     wm::Window *window = nullptr;
     std::string identifier;
     std::shared_ptr<compositor::CaptureSource> source;
-    // The window with its shadow, for cutefish_window_v1.create_capture_source.
+    // The window with its shadow, for the screenshot interface.
     std::shared_ptr<compositor::CaptureSource> shadowed;
     // Announced to the list's clients; a shell window only has its sources.
     bool listed = false;
@@ -169,8 +169,8 @@ ForeignToplevelList::Entry &ForeignToplevelList::entryFor(wm::Window *window)
         return *it->second;
     auto entry = std::make_unique<Entry>();
     entry->window = window;
-    // The window id is never reused, and the shell names windows to its
-    // capture clients by it (cutefish_window_management_v1.window).
+    // The window id is never reused, so the identifier names one window for
+    // the life of the compositor.
     entry->identifier = "cutefish-" + std::to_string(window->id());
     entry->source = std::make_shared<compositor::CaptureSource>();
     entry->source->kind = compositor::CaptureSource::Kind::Window;

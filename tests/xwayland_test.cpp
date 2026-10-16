@@ -8,7 +8,6 @@
 #include <csignal>
 #include <cstdlib>
 #include <ext-image-capture-source-v1-client-protocol.h>
-#include <cutefish-window-management-v1-client-protocol.h>
 #include <drm_fourcc.h>
 #include <filesystem>
 #include <future>
@@ -51,7 +50,6 @@
 #include "shm_test_util.h"
 #include "temporary_directory.h"
 #include "wayland/privileged_client.h"
-#include "wayland/protocols/cutefish_window_management.h"
 #include "wayland/protocols/primary_selection.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_output.h"
@@ -65,6 +63,7 @@
 #include "wayland/server.h"
 #include "wm/activation.h"
 #include "wm/window.h"
+#include "wm/window_state.h"
 #include "wm/window_manager.h"
 #include "wm/window_modality_controller.h"
 #include "xwayland/surface_association.h"
@@ -2072,107 +2071,17 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
     ASSERT_TRUE(until([&] {
         return manager->windows().size() == 1;
     }));
-    wayland::WaylandCutefishWindowManagement management(manager.get(), privileged.get());
-    auto *managementGlobal =
-            wayland::createCutefishWindowManagementGlobal(server->display(), &management);
-    int shellSockets[2];
-    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, shellSockets), 0);
-    auto *shellServer = privileged->adoptShellConnection(shellSockets[0]);
-    auto *shellClient = wl_display_connect_to_fd(shellSockets[1]);
-    auto *registry = wl_display_get_registry(shellClient);
-
-    struct Task {
-        cutefish_window_management_v1 *manager = nullptr;
-        cutefish_window_v1 *window = nullptr;
-        std::string title, app;
-        bool minimized = false, closed = false;
-        int announcements = 0;
-        uint64_t parentId = 0;
-        int parentCount = 0;
-    } task;
-
-    static const cutefish_window_v1_listener taskListener = {
-            [](void *p, auto *, const char *title) {
-                static_cast<Task *>(p)->title = title;
-            },
-            [](void *p, auto *, const char *app) {
-                static_cast<Task *>(p)->app = app;
-            },
-            [](void *, auto *, uint32_t) {},
-            [](void *p, auto *, uint32_t, uint32_t minimized, uint32_t, uint32_t, uint32_t) {
-                static_cast<Task *>(p)->minimized = minimized;
-            },
-            [](void *, auto *, int32_t, int32_t, int32_t, int32_t) {},
-            [](void *, auto *) {},
-            [](void *p, auto *) {
-                static_cast<Task *>(p)->closed = true;
-            },
-            [](void *, auto *, const char *, const char *) {},
-            [](void *, auto *, int32_t fd, uint32_t, uint32_t) {
-                close(fd);
-            },
-            [](void *, auto *) {},
-            [](void *p, auto *, uint32_t high, uint32_t low) {
-                auto *task = static_cast<Task *>(p);
-                task->parentId = (uint64_t(high) << 32) | low;
-                ++task->parentCount;
-            },
-            [](void *, auto *, uint32_t) {},
-            [](void *, auto *, uint32_t) {},
-            [](void *, auto *, uint32_t) {},
-            [](void *, auto *) {},
-    };
-    static const cutefish_window_management_v1_listener managementListener = {
-            [](void *p, auto *, cutefish_window_v1 *window, uint32_t, uint32_t) {
-                auto *task = static_cast<Task *>(p);
-                task->window = window;
-                ++task->announcements;
-                cutefish_window_v1_add_listener(window, &taskListener, task);
-            },
-            [](void *, auto *, uint32_t, uint32_t) {},
-            [](void *, auto *) {},
-            [](void *, auto *, uint32_t, uint32_t, uint32_t, uint32_t) {},
-            [](void *, auto *, uint32_t) {},
-            [](void *, auto *, uint32_t) {},
-            [](void *, auto *, uint32_t, const char *) {},
-            [](void *, auto *, uint32_t) {},
-    };
-    static const wl_registry_listener registryListener = {
-            [](void *p, wl_registry *registry, uint32_t id, const char *name, uint32_t) {
-                if (strcmp(name, "cutefish_window_management_v1") != 0)
-                    return;
-                auto *task = static_cast<Task *>(p);
-                task->manager = static_cast<cutefish_window_management_v1 *>(wl_registry_bind(
-                        registry, id, &cutefish_window_management_v1_interface, 1));
-                cutefish_window_management_v1_add_listener(task->manager, &managementListener,
-                                                           task);
-            },
-            [](void *, auto *, uint32_t) {},
-    };
-    wl_registry_add_listener(registry, &registryListener, &task);
-    auto shellSync = [&] {
-        return xcbReply([&] {
-            return wl_display_roundtrip(shellClient);
-        });
-    };
-    ASSERT_GE(shellSync(), 0);
-    ASSERT_GE(shellSync(), 0);
-    ASSERT_NE(task.window, nullptr);
-    EXPECT_EQ(task.announcements, 1);
-    EXPECT_EQ(task.parentId, 0u);
-    EXPECT_GT(task.parentCount, 0);
-    EXPECT_EQ(task.title, "Changed");
-    EXPECT_EQ(task.app, "cutefishtest");
-    cutefish_window_v1_minimize(task.window);
-    ASSERT_GE(shellSync(), 0);
-    EXPECT_TRUE(task.minimized);
-    EXPECT_FALSE(task.closed);
+    // What the dock does to the remapped window: minimize, restore, close.
+    window = manager->windows()[0];
+    EXPECT_EQ(window->transientParent(), nullptr);
+    EXPECT_EQ(window->title(), "Changed");
+    EXPECT_EQ(window->applicationId(), "cutefishtest");
+    window->minimize();
+    EXPECT_TRUE(window->state()->isMinimized());
     EXPECT_EQ(manager->windows().size(), 1u);
-    cutefish_window_v1_restore(task.window);
-    ASSERT_GE(shellSync(), 0);
-    EXPECT_FALSE(task.minimized);
-    cutefish_window_v1_close(task.window);
-    ASSERT_GE(shellSync(), 0);
+    window->restore();
+    EXPECT_FALSE(window->state()->isMinimized());
+    window->requestClose();
     bool closed = false;
     ASSERT_TRUE(until([&] {
         while (auto *event = xcb_poll_for_event(c)) {
@@ -2190,15 +2099,6 @@ TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
     ASSERT_TRUE(until([&] {
         return manager->windows().empty();
     }));
-    ASSERT_GE(shellSync(), 0);
-    EXPECT_TRUE(task.closed);
-    cutefish_window_v1_destroy(task.window);
-    cutefish_window_management_v1_destroy(task.manager);
-    wl_registry_destroy(registry);
-    wl_display_disconnect(shellClient);
-    wl_client_destroy(shellServer);
-    privileged->removePrivateGlobal(managementGlobal);
-    wl_global_destroy(managementGlobal);
     xcb_disconnect(c);
 }
 
