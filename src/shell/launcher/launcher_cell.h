@@ -96,8 +96,8 @@ private:
     // One drag per press.
     bool m_dragArmed = false;
     ui::PointF m_pressPoint;
-    LauncherTween m_moveX;
-    LauncherTween m_moveY;
+    LauncherSpring m_moveX;
+    LauncherSpring m_moveY;
 };
 
 } // namespace cutefish::shell

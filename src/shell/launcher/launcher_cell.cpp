@@ -17,7 +17,6 @@ namespace cutefish::shell {
 
 // How far a press moves before it starts a drag.
 static constexpr double kStartDragDistance = 10;
-static constexpr std::chrono::milliseconds kMoveDuration {260};
 
 static int jsRound(double value)
 {
@@ -170,12 +169,8 @@ void LauncherCell::moveTo(const ui::PointF &position, bool animate)
         return;
     if (current.x == position.x && current.y == position.y && !isMoving())
         return;
-    m_moveX.start(window(), current.x, position.x, kMoveDuration, easing::outQuint, [this, place](double x) {
-        place(x, geometry().y);
-    });
-    m_moveY.start(window(), current.y, position.y, kMoveDuration, easing::outQuint, [this, place](double y) {
-        place(geometry().x, y);
-    });
+    m_moveX.start(window(), current.x, position.x, [this, place](double x) { place(x, geometry().y); });
+    m_moveY.start(window(), current.y, position.y, [this, place](double y) { place(geometry().x, y); });
 }
 
 void LauncherCell::finishMove()
