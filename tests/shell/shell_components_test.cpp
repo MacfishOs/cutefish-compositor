@@ -745,3 +745,46 @@ TEST_F(ShellComponentsTest, MinimizedWindowsSwapUnderADragAndTheirBadgeFadesIn)
     EXPECT_FALSE(first->isDragHidden());
     EXPECT_EQ(ids[0], minimized.entries()[1].id);
 }
+
+TEST_F(ShellComponentsTest, AMinimizingWindowAimsAtWhereItsThumbnailComesToRest)
+{
+    auto *dock = openDock("[Dock]\nPinned=files\n");
+    shell::TaskWindow window;
+    window.appId = "terminal";
+    window.title = "One";
+    window.geometry = base::Rect(100, 100, 400, 200);
+    const uint64_t id = windows->add(window);
+    windows->m_snapshots[id] = ui::Bitmap(base::Size(40, 20), ui::Bitmap::Format::Argb32Premultiplied);
+    frame();
+    const base::Rect aimed = dock->minimizeTarget(id);
+    ASSERT_FALSE(aimed.isEmpty());
+
+    // The slot opens and the dock recentres under the flying window without
+    // moving where it lands.
+    windows->change(id, [](shell::TaskWindow &w) { w.minimized = true; }, shell::kStateChange);
+    bool opening = false;
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        EXPECT_EQ(dock->minimizeTarget(id), aimed);
+        // The window itself is what flies in; the slot only opens.
+        if (shell::DockIcon *icon = dock->minimizedIcon(id))
+            EXPECT_EQ(icon->presentationOpacity(), 0);
+        opening = opening || dock->minimizedPresentation()->isRunning();
+        return opening && !dock->minimizedPresentation()->isRunning();
+    }));
+
+    // Landed, it becomes its thumbnail whole, which follows the slot and sits
+    // where it was aimed.
+    windows->minimizeLanded(id);
+    frame();
+    ASSERT_TRUE(dock->dock().minimizedWindows().entries()[0].landed);
+    shell::DockIcon *icon = dock->minimizedIcon(id);
+    EXPECT_EQ(icon->presentationOpacity(), 1);
+    EXPECT_EQ(icon->presentationScale(), 1);
+    EXPECT_EQ(dock->minimizeTarget(id), aimed);
+
+    // Restored, the window flies out of the slot itself.
+    windows->change(id, [](shell::TaskWindow &w) { w.minimized = false; }, shell::kStateChange);
+    frame();
+    EXPECT_EQ(icon->presentationOpacity(), 0);
+}

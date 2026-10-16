@@ -488,6 +488,7 @@ void DockWindow::rebuild()
         icon->setThumbnail(minimized.thumbnail(row), minimized.aspect(row));
         icon->setBadgeOpacity(entry.landed ? 1 : 0);
         windowIcons[entry.id] = icon;
+        m_minimizedStates[entry.id] = entry;
     }
     for (const auto &[id, icon] : m_minimizedIcons) {
         if (!windowIcons.contains(id))
@@ -705,8 +706,14 @@ void DockWindow::layoutItems()
         const double position = along(minimizedStart + m_minimized->position(entry),
                                       settledMinimizedStart + m_minimized->targetPosition(entry))
                 + (entry.leaving ? 0 : itemGrowth);
-        placeIcon(icon, position, m_minimized->iconScale(entry), m_minimized->appearance(entry),
-                  entry.leaving);
+        // A window that flies in arrives in its slot itself and becomes its
+        // thumbnail whole; one shown again from hidden is revealed like an
+        // icon, and a closed one shrinks away with its slot.
+        const auto state = m_minimizedStates.find(id);
+        const bool landed = state == m_minimizedStates.end() || state->second.landed;
+        const bool revealed = entry.leaving || state == m_minimizedStates.end() || !state->second.flownIn;
+        placeIcon(icon, position, revealed ? m_minimized->iconScale(entry) : 1,
+                  !landed ? 0 : revealed ? m_minimized->appearance(entry) : 1, entry.leaving);
         icon->setEnabled(!entry.leaving);
     }
     for (auto it = m_minimizedIcons.begin(); it != m_minimizedIcons.end();) {
@@ -719,6 +726,7 @@ void DockWindow::layoutItems()
         if (m_menuIcon == it->second)
             m_menuIcon = nullptr;
         retire(it->second);
+        m_minimizedStates.erase(it->first);
         it = m_minimizedIcons.erase(it);
     }
 
@@ -750,6 +758,8 @@ void DockWindow::layoutItems()
     m_panel->setGeometry({0, 0, double(m_windowRect.width()), double(m_windowRect.height())});
     m_panel->requestPaint();
     updatePanelRect(panel);
+    // Landed windows follow their sliding thumbnails.
+    updateMinimizeTargets();
     if (m_tooltipOwner)
         showTooltip(m_tooltipOwner);
 }
@@ -878,14 +888,23 @@ void DockWindow::updateMinimizeTargets()
                     target = applicationSlot(m_applications->targetPosition(entry));
             }
         } else if (window->minimized) {
-            // A minimized window stays aimed at its own thumbnail.
+            const auto &entries = minimized.entries();
+            const auto entry = std::find_if(entries.begin(), entries.end(),
+                                            [id](const MinimizedWindows::Entry &e) { return e.id == id; });
             const DockIcon *icon = minimizedIcon(id);
-            if (!icon)
+            if (entry == entries.end() || !icon)
                 continue;
-            const ui::RectF rect = icon->iconRect();
-            target = base::Rect(int(std::lround(icon->geometry().x + rect.x)),
-                                int(std::lround(icon->geometry().y + rect.y)), int(rect.width),
-                                int(rect.height));
+            if (!entry->landed) {
+                // Still flying: aimed at where its slot comes to rest, not at
+                // the slot opening under it, which would move the landing.
+                target = minimizedSlot(int(entry - entries.begin()), minimized.count());
+            } else {
+                // Landed: follows its thumbnail, which it restores from.
+                const ui::RectF rect = icon->iconRect();
+                target = base::Rect(int(std::lround(icon->geometry().x + rect.x)),
+                                    int(std::lround(icon->geometry().y + rect.y)), int(rect.width),
+                                    int(rect.height));
+            }
         } else {
             target = next;
         }

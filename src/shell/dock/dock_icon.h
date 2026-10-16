@@ -69,6 +69,8 @@ public:
     ui::RectF iconRect() const { return m_iconRect; }
     void setIconSize(double size);
     void setPresentation(double scale, double opacity, bool leading);
+    double presentationScale() const { return m_scale; }
+    double presentationOpacity() const { return m_opacity; }
     // The running dot, in this view.
     void setDotRect(const ui::RectF &rect);
     ui::RectF dotRect() const { return m_dotRect; }

@@ -18,6 +18,7 @@
 #include "render/glass.h"
 #include "shell/dock/dock_icon.h"
 #include "shell/dock/dock_metrics.h"
+#include "shell/dock/minimized_windows.h"
 #include "ui/bitmap.h"
 #include "ui/geometry.h"
 #include "shell/shell.h"
@@ -70,6 +71,12 @@ public:
     DockIcon *applicationIcon(const std::string &id) const;
     DockIcon *minimizedIcon(uint64_t window) const;
     DockIcon *trashIcon() const { return m_trash; }
+    // The minimize target last sent for a window, in dock coordinates. For tests.
+    base::Rect minimizeTarget(uint64_t window) const
+    {
+        const auto it = m_sentTargets.find(window);
+        return it != m_sentTargets.end() ? it->second : base::Rect();
+    }
     // The dividers after the pinned and after the running applications,
     // in panel coordinates; empty while absent.
     base::RectF divider() const { return m_divider; }
@@ -184,6 +191,8 @@ private:
     std::unique_ptr<DockPresentation> m_minimized;
     std::map<std::string, DockIcon *> m_applicationIcons;
     std::map<uint64_t, DockIcon *> m_minimizedIcons;
+    // The last model state of each slot, kept while a removed one leaves.
+    std::map<uint64_t, MinimizedWindows::Entry> m_minimizedStates;
     DockIcon *m_trash = nullptr;
     DockMetrics m_metrics;
     DrawnDockMetrics m_fromMetrics;
