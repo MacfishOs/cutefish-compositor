@@ -17,7 +17,8 @@ namespace cutefish::xwayland {
 
 // A descriptor watched on the main loop while enabled; created disabled.
 // Disabled means not watched at all: epoll reports a hang-up or an error
-// whatever events are asked for.
+// whatever events are asked for. It goes before its descriptor is closed: epoll
+// keeps watching a closed descriptor whose file another process still holds.
 class FdWatch
 {
 public:

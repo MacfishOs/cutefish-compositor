@@ -54,6 +54,7 @@ struct SelectionBridge::Save {
 
     ~Save()
     {
+        notifier.reset();
         if (fd >= 0)
             close(fd);
     }
@@ -95,6 +96,7 @@ struct SelectionBridge::Transfer {
 
     ~Transfer()
     {
+        notifier.reset();
         if (fd >= 0)
             close(fd);
     }
@@ -546,8 +548,8 @@ void SelectionBridge::readSave()
         }
     }
     save.data.clear();
-    close(std::exchange(save.fd, -1));
     save.notifier.reset();
+    close(std::exchange(save.fd, -1));
     ++save.index;
     saveNext();
 }

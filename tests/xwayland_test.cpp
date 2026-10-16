@@ -10,13 +10,16 @@
 #include <ext-image-capture-source-v1-client-protocol.h>
 #include <drm_fourcc.h>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <gbm.h>
 #include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
 #include <optional>
 #include <string_view>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <wayland-client.h>
 #include <xcb/shape.h>
@@ -1594,6 +1597,125 @@ TEST_F(XwaylandTest, ClipboardBothDirectionsAndIncrementalTransfers)
             EXPECT_EQ(received, payload);
         }
     }
+}
+
+TEST_F(XwaylandTest, AStalledTransferIsNoLongerWatchedOnceItEnds)
+{
+    ASSERT_TRUE(start());
+    ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server->display(), waylandSeat.get()));
+    clipboard_test::Client native(*server);
+    auto pump = [&] {
+        native.pump();
+    };
+    ASSERT_TRUE(until([&] {
+        pump();
+        return native.manager && native.compositor && native.seat;
+    }));
+    native.initialize();
+    ASSERT_TRUE(until([&] {
+        pump();
+        return wl_client_get_object(native.serverClient,
+                                    wl_proxy_get_id(reinterpret_cast<wl_proxy *>(native.surface)))
+                != nullptr;
+    }));
+    auto *resource = wl_client_get_object(
+            native.serverClient, wl_proxy_get_id(reinterpret_cast<wl_proxy *>(native.surface)));
+    seat->setFocusedSurface(wayland::getUserDataAs<compositor::Surface>(resource));
+    ASSERT_TRUE(until([&] {
+        pump();
+        return native.serial != 0;
+    }));
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
+    auto *c = xcbReply([&] {
+        return xcb_connect(xwayland->display().c_str(), nullptr);
+    });
+    ASSERT_EQ(xcb_connection_has_error(c), 0);
+    base::ScopeGuard cleanup([&] {
+        xcb_disconnect(c);
+    });
+    auto root = xcb_setup_roots_iterator(xcb_get_setup(c)).data->root;
+    auto window = xcb_generate_id(c);
+    xcb_create_window(c, 0, window, root, 0, 0, 1, 1, 0, XCB_WINDOW_CLASS_INPUT_ONLY,
+                      XCB_COPY_FROM_PARENT, 0, nullptr);
+    auto clipboard = intern(c, "CLIPBOARD");
+    auto targets = intern(c, "TARGETS");
+    auto utf8 = intern(c, "UTF8_STRING");
+    const std::string mime = "text/plain;charset=utf-8";
+    const std::string payload(65535, 'x');
+    native.selection = nullptr;
+    xcb_set_selection_owner(c, window, clipboard, XCB_CURRENT_TIME);
+    xcb_flush(c);
+    auto serve = [&] {
+        pump();
+        while (auto *e = xcb_poll_for_event(c)) {
+            if ((e->response_type & 0x7f) == XCB_SELECTION_REQUEST) {
+                auto *r = reinterpret_cast<xcb_selection_request_event_t *>(e);
+                xcb_selection_notify_event_t n {};
+                n.response_type = XCB_SELECTION_NOTIFY;
+                n.requestor = r->requestor;
+                n.selection = r->selection;
+                n.target = r->target;
+                n.property = r->property;
+                n.time = r->time;
+                if (r->target == targets) {
+                    xcb_atom_t offered[] = {targets, utf8};
+                    xcb_change_property(c, XCB_PROP_MODE_REPLACE, r->requestor, r->property,
+                                        XCB_ATOM_ATOM, 32, 2, offered);
+                } else if (r->target == utf8) {
+                    xcb_change_property(c, XCB_PROP_MODE_REPLACE, r->requestor, r->property, utf8,
+                                        8, payload.size(), payload.data());
+                } else {
+                    n.property = XCB_ATOM_NONE;
+                }
+                xcb_send_event(c, 0, r->requestor, 0, reinterpret_cast<const char *>(&n));
+            }
+            free(e);
+        }
+        xcb_flush(c);
+    };
+    ASSERT_TRUE(until([&] {
+        serve();
+        return native.selection != nullptr;
+    }));
+
+    // The receiver holds on to its own copy of the write end, as a process
+    // that forked or handed it on does, and reads nothing.
+    int fds[2];
+    ASSERT_EQ(pipe2(fds, O_CLOEXEC | O_NONBLOCK), 0);
+    base::ScopeGuard closePipe([&] {
+        close(fds[0]);
+        close(fds[1]);
+    });
+    const int capacity = fcntl(fds[1], F_SETPIPE_SZ, 4096);
+    ASSERT_GT(capacity, 0);
+    ASSERT_LT(size_t(capacity), payload.size());
+    wl_data_offer_receive(native.selection, mime.c_str(), fds[1]);
+    ASSERT_TRUE(until([&] {
+        serve();
+        int queued = 0;
+        return ioctl(fds[0], FIONREAD, &queued) == 0 && queued == capacity;
+    }));
+    struct stat file {};
+    ASSERT_EQ(fstat(fds[1], &file), 0);
+    char inode[32];
+    std::snprintf(inode, sizeof(inode), " ino:%lx ", static_cast<unsigned long>(file.st_ino));
+    const auto watched = [&] {
+        for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+            std::error_code error;
+            if (std::filesystem::read_symlink(entry.path(), error) != "anon_inode:[eventpoll]")
+                continue;
+            std::ifstream info("/proc/self/fdinfo/" + entry.path().filename().string());
+            for (std::string line; std::getline(info, line);) {
+                if (line.starts_with("tfd:") && (line + ' ').find(inode) != std::string::npos)
+                    return true;
+            }
+        }
+        return false;
+    };
+    EXPECT_TRUE(watched());
+
+    xwayland->stop();
+    EXPECT_FALSE(watched());
 }
 
 TEST_F(XwaylandTest, ClipboardManagerRejectsFailedConversion)
