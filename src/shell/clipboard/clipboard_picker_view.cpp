@@ -485,6 +485,11 @@ void ClipboardPickerView::removeCurrent()
 
 void ClipboardPickerView::modelChanged()
 {
+    // Thumbnails of entries the history dropped go with them.
+    const auto dropped = [this](const std::string &key) { return m_history.store().indexOf(key) < 0; };
+    std::erase_if(m_thumbnails, [&dropped](const auto &item) { return dropped(item.first); });
+    std::erase_if(m_thumbnailJobs, [&dropped](const auto &item) { return dropped(item.first); });
+
     ClipboardHistoryModel &model = m_history.model();
     m_list->setRowCount(size_t(model.count()));
     m_list->reload();

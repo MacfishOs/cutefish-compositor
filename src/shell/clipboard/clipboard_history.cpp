@@ -90,6 +90,8 @@ void ClipboardHistoryModel::rebuild()
 
 void ClipboardHistoryModel::lookUpIcons()
 {
+    std::erase_if(m_icons, [this](const auto &item) { return m_store.indexOf(item.first) < 0; });
+
     std::vector<std::pair<std::string, std::string>> wanted;
     for (const ClipboardEntry &entry : m_store.entries()) {
         if (entry.kind == ClipboardEntry::Kind::Files && !entry.files.empty() && !m_icons.count(entry.key))
