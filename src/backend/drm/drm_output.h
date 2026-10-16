@@ -20,6 +20,7 @@
 #include "base/signal.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
+#include "compositor/output.h"
 #include "core/main_loop.h"
 #include "backend/drm/drm_plane.h"
 #include "backend/drm/drm_properties.h"
@@ -142,7 +143,7 @@ public:
 
     base::Size physicalSizeMm() const { return m_config.physicalSizeMm; }
 
-    int subpixel() const { return m_config.subpixel; }
+    compositor::Output::Subpixel subpixel() const;
 
     double refreshRate() const;
 

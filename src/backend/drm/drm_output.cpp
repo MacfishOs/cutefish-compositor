@@ -187,6 +187,25 @@ base::Size DrmOutput::size() const
     return base::Size(m_config.mode.hdisplay, m_config.mode.vdisplay);
 }
 
+compositor::Output::Subpixel DrmOutput::subpixel() const
+{
+    using S = compositor::Output::Subpixel;
+    switch (m_config.subpixel) {
+    case DRM_MODE_SUBPIXEL_NONE:
+        return S::None;
+    case DRM_MODE_SUBPIXEL_HORIZONTAL_RGB:
+        return S::HorizontalRgb;
+    case DRM_MODE_SUBPIXEL_HORIZONTAL_BGR:
+        return S::HorizontalBgr;
+    case DRM_MODE_SUBPIXEL_VERTICAL_RGB:
+        return S::VerticalRgb;
+    case DRM_MODE_SUBPIXEL_VERTICAL_BGR:
+        return S::VerticalBgr;
+    default:
+        return S::Unknown;
+    }
+}
+
 double DrmOutput::refreshRate() const
 {
     return cutefish::backend::refreshRate(m_config.mode);

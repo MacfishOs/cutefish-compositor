@@ -1125,6 +1125,7 @@ bool CompositorShell::initDrm()
     const auto populateOutputModel = [](auto *output, auto *model) {
         model->pixelSize = output->size();
         model->physicalSizeMm = output->physicalSizeMm();
+        model->subpixel = output->subpixel();
         model->name = output->publicName();
         model->model = output->name();
         model->refreshMilliHz = base::roundToInt(output->refreshRate() * 1000);

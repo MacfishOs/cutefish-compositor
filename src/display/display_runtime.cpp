@@ -355,6 +355,7 @@ std::optional<HardwareSnapshot> DisplayRuntime::reprobe()
         model->model = output->name();
         model->pixelSize = output->size();
         model->physicalSizeMm = output->physicalSizeMm();
+        model->subpixel = output->subpixel();
         models.push_back(model.get());
         replacement.push_back(std::move(model));
     }
