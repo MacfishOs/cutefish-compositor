@@ -8,6 +8,8 @@
 #include <map>
 #include <memory>
 
+#include "base/event_loop.h"
+#include "core/main_loop.h"
 #include "ui/check_box.h"
 #include "ui/dialog_window.h"
 #include "ui/text_field.h"
@@ -179,8 +181,10 @@ void VpnPasswordDialog::build(ui::View *frame)
 
 void VpnPasswordDialog::rebuildFields()
 {
+    // Return in a field answers the request, and the next one rebuilds the
+    // fields from inside that field's key handling: they go on the next turn.
     for (ui::TextField *field : m_fields)
-        std::unique_ptr<ui::View> gone = m_frame->takeChild(field);
+        core::mainLoop()->post([gone = std::shared_ptr<ui::View>(m_frame->takeChild(field))] {});
     m_fields.clear();
     m_fieldInfo = m_agent->fields();
 

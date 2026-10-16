@@ -43,6 +43,8 @@
 #include "temporary_directory.h"
 #include "ui/check_box.h"
 #include "ui/dialog_window.h"
+#include "ui/embedded_window.h"
+#include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/text_field.h"
 #include "wm/window.h"
@@ -438,11 +440,12 @@ protected:
     // NetworkManager asks the agent, from its own connection.
     base::dbus::PendingCall getSecrets(const Settings &connection, const std::string &setting, uint32_t flags,
                                        std::optional<base::dbus::Reply> *reply,
-                                       const std::vector<std::string> &hints = {})
+                                       const std::vector<std::string> &hints = {},
+                                       const std::string &connectionPath = kConnectionPath)
     {
         base::dbus::Message message = networkManager->bus->newMethodCall(systemBus->uniqueName(), kAgentPath,
                                                                          kAgentInterface, "GetSecrets");
-        message.append(connection, ObjectPath {kConnectionPath}, setting, hints, flags);
+        message.append(connection, ObjectPath {connectionPath}, setting, hints, flags);
         return networkManager->bus->callAsync(message, [reply](const base::dbus::Reply &r) { *reply = r; });
     }
 
@@ -783,6 +786,45 @@ TEST_F(SecretPromptsTest, VpnSecretsAreAskedForInTheirOwnWindowAndKept)
     ASSERT_TRUE(test::runUntil([&quiet] { return quiet.has_value(); }));
     EXPECT_FALSE(quiet->isError());
     EXPECT_TRUE(vpnSecretsOf(*quiet).empty());
+}
+
+TEST_F(SecretPromptsTest, ReturnInAVpnFieldMovesOnToTheNextRequest)
+{
+    start();
+    std::optional<base::dbus::Reply> first;
+    auto pendingFirst = getSecrets(vpnConnection(kPasswordData), "vpn", kAllowInteraction, &first);
+    ASSERT_TRUE(test::runUntil([this] { return agent->pending(); }));
+    std::optional<base::dbus::Reply> second;
+    auto pendingSecond = getSecrets(vpnConnection(kPasswordData), "vpn", kAllowInteraction, &second, {},
+                                    "/org/freedesktop/NetworkManager/Settings/8");
+    // Nothing stored: both are asked for, the second after the first.
+    ASSERT_TRUE(test::runUntil([this] { return secrets->count("Close") == 2; }));
+    test::runFor(std::chrono::milliseconds(50));
+
+    // The next request rebuilds the fields while the first request's field
+    // still handles the key.
+    shell::VpnPasswordDialog *dialog = prompts->vpnDialog();
+    ASSERT_TRUE(dialog->isOpen());
+    ASSERT_EQ(1u, dialog->fields().size());
+    ui::TextField *field = dialog->fields()[0];
+    ASSERT_TRUE(field->hasFocus());
+    field->setText("s3cret");
+    // Runs after onAccepted, on the field.
+    bool finished = false;
+    field->onEditingFinished = [&finished] { finished = true; };
+    auto *window = static_cast<ui::EmbeddedWindow *>(dialog->window()->window());
+    window->key(ui::KeyEvent {ui::key::Return, KEY_ENTER, "\r"}, true);
+    window->key(ui::KeyEvent {ui::key::Return, KEY_ENTER, "\r"}, false);
+
+    ASSERT_TRUE(test::runUntil([&first] { return first.has_value(); }));
+    EXPECT_EQ("s3cret", vpnSecretsOf(*first)["password"]);
+    EXPECT_TRUE(finished);
+    EXPECT_TRUE(dialog->isOpen());
+    ASSERT_EQ(1u, dialog->fields().size());
+    EXPECT_NE(field, dialog->fields()[0]);
+    dialog->cancelButton()->onClicked();
+    ASSERT_TRUE(test::runUntil([&second] { return second.has_value(); }));
+    EXPECT_TRUE(second->isError());
 }
 
 TEST_F(SecretPromptsTest, ALockedKeyringIsUnlockedThroughItsPrompt)
