@@ -789,6 +789,16 @@ void OverviewDeskBarNode::setBars(std::vector<Bar> bars)
             return bar.output == leaving.bar.output;
         });
     });
+    // No bars only takes the overview down; the previews wait for its return.
+    if (!bars.empty()) {
+        std::erase_if(m_previews, [&](const auto &entry) {
+            return std::none_of(bars.begin(), bars.end(), [&](const Bar &bar) {
+                return std::any_of(bar.desks.begin(), bar.desks.end(), [&](const Desk &desk) {
+                    return previewKey(bar, desk.id) == entry.first;
+                });
+            });
+        });
+    }
     m_bars = std::move(bars);
     m_motions = std::move(motions);
     notifyChanged();

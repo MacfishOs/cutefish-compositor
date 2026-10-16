@@ -603,3 +603,75 @@ TEST(OverviewNode, ARemovedDeskFadesOutWhereItWasUnderTheRest)
     ASSERT_EQ(1, f.renderer.outlines.size());
     EXPECT_EQ(base::RectF(400, 20, 100, 60), f.renderer.outlines[0].bounds);
 }
+
+namespace {
+
+// Counts the textures alive, as many as the bar keeps for its desks.
+class PreviewTexture : public render::Texture
+{
+public:
+    PreviewTexture(base::Size size, int &live)
+        : m_size(size)
+        , m_live(live)
+    {
+        ++m_live;
+    }
+
+    ~PreviewTexture() override { --m_live; }
+
+    base::Size size() const override { return m_size; }
+
+private:
+    base::Size m_size;
+    int &m_live;
+};
+
+class PreviewRenderer : public FrameRenderer
+{
+public:
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
+                         const std::function<void()> &paint) override
+    {
+        if (bounds.size() != base::Size(100, 60))
+            return FrameRenderer::renderToTexture(texture, bounds, paint);
+        paint();
+        if (!texture || texture->size() != bounds.size())
+            texture = std::make_unique<PreviewTexture>(bounds.size(), previews);
+        return true;
+    }
+
+    int previews = 0;
+};
+
+} // namespace
+
+TEST(OverviewNode, APreviewGoesWithItsDeskAndItsOutput)
+{
+    Fixture f;
+    PreviewRenderer renderer;
+    auto *deskBar = static_cast<DeskBar *>(
+            f.container->addChild(std::make_unique<DeskBar>(f.node)));
+    const auto paint = [&] {
+        renderer.setOutputContext({"out", kViewport, kViewport.size(), 1, 0, 0, {}});
+        renderer.frameTime = double(f.now);
+        f.container->render(renderer);
+        f.now += 16;
+    };
+    f.node->jumpTo(1);
+    deskBar->setBars({bar({barDesk(1, 340), barDesk(2, 450)}, 560)});
+    paint();
+    paint();
+    EXPECT_EQ(2, renderer.previews);
+
+    // Taken down and put up again without the second desk, removed meanwhile.
+    deskBar->setBars({});
+    EXPECT_EQ(2, renderer.previews);
+    deskBar->setBars({bar({barDesk(1, 400)}, 510)});
+    EXPECT_EQ(1, renderer.previews);
+
+    // The output's bounds changed.
+    Bar moved = bar({barDesk(1, 400)}, 510);
+    moved.output = base::Rect(0, 0, 1200, 800);
+    deskBar->setBars({moved});
+    EXPECT_EQ(0, renderer.previews);
+}
