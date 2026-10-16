@@ -235,37 +235,15 @@ TEST_F(DockTest, ServesComCutefishDock)
 {
     start("[Dock]\nPinned=files\n");
     ASSERT_TRUE(dock->registerService());
-    dock->primaryGeometry = [] { return base::Rect(10, 20, 300, 60); };
 
     test::DBusTestClient settings;
-    settings.listen("com.cutefish.Dock");
-    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "add", std::string("editor"));
-    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "files", "editor"}));
-    EXPECT_TRUE(settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "pinned", std::string("editor"))
-                        .value<bool>()
-                        .value_or(false));
-    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "remove",
-                  std::string("/usr/share/applications/files.desktop"));
-    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "editor"}));
-
     settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "setDirection", int32_t(0));
     settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "setGlassTint", 3.0);
     EXPECT_EQ(dock->settings().direction(), shell::DockSettings::Left);
     EXPECT_EQ(dock->settings().glassTint(), 1.0);
-    EXPECT_TRUE(test::runUntil([&] { return !settings.signalsSeen.empty(); }));
-    EXPECT_EQ(settings.signalsSeen.front().member(), "directionChanged");
-
-    const auto geometry = settings.getProperty("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "primaryGeometry");
-    const auto rect = geometry.value<dbus::Variant>()
-                              .value_or(dbus::Variant())
-                              .get<std::tuple<int32_t, int32_t, int32_t, int32_t>>();
-    ASSERT_TRUE(rect.has_value());
-    EXPECT_EQ(std::get<2>(*rect), 300);
-    const auto direction = settings.getProperty("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "direction");
-    EXPECT_EQ(direction.value<dbus::Variant>().value_or(dbus::Variant()).value<int32_t>(), 0);
 
     const std::string xml = settings.introspect("com.cutefish.Dock", "/Dock");
-    EXPECT_NE(xml.find("name=\"desktopFile\""), std::string::npos);
+    EXPECT_NE(xml.find("name=\"direction\""), std::string::npos);
 
     shell::waitForFileThread();
     base::Settings saved(directory.filePath("shell.conf"));

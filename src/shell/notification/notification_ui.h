@@ -20,8 +20,7 @@ class Notifications;
 // The notifications component: the server, history and settings
 // (Notifications) with their views, the banners and the notification
 // centre. The status bar opens the centre from its clock, as its
-// NotificationCenter panel, and for com.cutefish.Notification.showWindow()
-// (Notifications::windowRequested).
+// NotificationCenter panel.
 class NotificationUi : public Component, public StatusBarPanels
 {
 public:

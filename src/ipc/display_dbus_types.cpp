@@ -66,11 +66,9 @@ std::vector<PhysicalDisplay> toWire(const std::vector<display::DisplaySnapshot>&
         item.pathTopology = value.pathTopology;
         item.make = value.make;
         item.model = value.model;
-        item.serialNumber = value.serialNumber;
         item.physicalWidthMm = value.physicalSizeMm.width();
         item.physicalHeightMm = value.physicalSizeMm.height();
         item.connectionType = uint32_t(value.connectionType);
-        item.panelOrientation = uint32_t(value.panelOrientation);
         item.capabilities = value.capabilities.toInt();
         item.recommendedScale120 = recommendedScale(value).numerator();
         for (const auto& mode : value.modes) {

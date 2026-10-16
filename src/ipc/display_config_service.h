@@ -24,8 +24,7 @@
 
 namespace cutefish::display::ipc {
 
-// com.cutefish.DisplayConfig1 at /com/cutefish/DisplayConfig1; the members
-// and their signatures are in com.cutefish.DisplayConfig1.xml.
+// com.cutefish.DisplayConfig1 at /com/cutefish/DisplayConfig1.
 class DisplayConfigService
 {
 public:
@@ -38,8 +37,6 @@ public:
 
     DisplayConfigService(const DisplayConfigService&) = delete;
     DisplayConfigService& operator=(const DisplayConfigService&) = delete;
-
-    static constexpr uint32_t protocolVersion = 1;
 
     // Publishes the object, then takes the bus name.
     bool registerService(const std::string& serviceName);
@@ -56,9 +53,6 @@ private:
     // The caller owns this session, whether or not it is on screen.
     bool authorizeCaller(base::dbus::MethodCall& call);
     std::string reject(DisplayErrorCode code, const std::string& message);
-    DisplayConfiguration defaultConfiguration(const std::string& instanceId,
-                                              uint64_t topologyGeneration,
-                                              uint64_t appliedRevision) const;
     uint64_t topologyGeneration() const;
     uint64_t appliedRevision() const;
 

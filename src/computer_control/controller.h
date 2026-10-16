@@ -146,7 +146,6 @@ public:
 
     // A control is granted.
     bool isActive() const;
-    std::string agentName() const;
 
     // `owner` holds the granted control, so it may read the screen.
     bool allowsCapture(const void *owner) const;
@@ -243,8 +242,7 @@ private:
         Revoked,
     };
 
-    Control(Controller *controller, ControlClient *client, const void *owner,
-            const std::string &agentName);
+    Control(Controller *controller, ControlClient *client, const void *owner);
 
     void stroke(const input::KeyStroke &stroke);
     void changeWindow(uint32_t handle, bool guarded,
@@ -253,7 +251,6 @@ private:
     Controller *m_controller;
     ControlClient *const m_client;
     const void *const m_owner;
-    const std::string m_agentName;
     State m_state = State::Pending;
     uint64_t m_serial = 0;
     std::function<void()> m_withdrawConsent;

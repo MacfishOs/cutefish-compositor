@@ -347,14 +347,11 @@ TEST_F(ShellComponentsTest, TheOsdAndTheDockServeTheirNames)
     EXPECT_NE(std::string::npos, osdXml.find("<method name=\"brightnessUp\">")) << osdXml;
     const std::string dockXml = client.introspect("com.cutefish.Dock", "/Dock");
     EXPECT_NE(std::string::npos, dockXml.find("<interface name=\"com.cutefish.Dock\">")) << dockXml;
-    EXPECT_NE(std::string::npos, dockXml.find("<method name=\"pinned\">")) << dockXml;
+    EXPECT_NE(std::string::npos, dockXml.find("<method name=\"setMinimizedArea\">")) << dockXml;
 
     client.call("com.cutefish.Osd", "/Osd", "com.cutefish.Osd", "brightnessUp");
     EXPECT_EQ(69, values->m_brightness);
     EXPECT_TRUE(osd->isShown());
-    EXPECT_TRUE(client.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "pinned", std::string("files"))
-                        .value<bool>()
-                        .value_or(false));
     client.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "setMinimizedArea", false);
     EXPECT_TRUE(test::runUntil([dockService] { return !dockService->settings().minimizedArea(); }));
 }

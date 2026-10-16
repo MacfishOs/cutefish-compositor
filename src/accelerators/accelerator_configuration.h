@@ -16,7 +16,6 @@
 
 #include <map>
 #include <optional>
-#include <set>
 #include <span>
 #include <vector>
 
@@ -34,8 +33,6 @@ namespace cutefish::accelerators {
 // ash::mojom::AcceleratorConfigResult.
 enum class AcceleratorConfigResult {
     Success,
-    ActionLocked,
-    AcceleratorLocked,
     Conflict,
     ConflictCanOverride,
     NotFound,
@@ -78,8 +75,6 @@ public:
     std::optional<std::vector<Accelerator>> acceleratorsForAction(AcceleratorActionId id) const;
 
     const AcceleratorAction *findAcceleratorAction(const Accelerator &accelerator) const;
-
-    bool isAcceleratorLocked(const Accelerator &accelerator) const;
 
     // The action `accelerator` is a system default for, if any.
     std::optional<AcceleratorAction> idForDefaultAccelerator(const Accelerator &accelerator) const;
@@ -155,8 +150,6 @@ private:
     // The system defaults, never modified after initialize().
     ActionIdToAcceleratorsMap m_defaultIdToAccelerators;
     AcceleratorActionMap m_defaultAcceleratorsToId;
-
-    std::set<Accelerator> m_lockedAccelerators;
 };
 
 } // namespace cutefish::accelerators

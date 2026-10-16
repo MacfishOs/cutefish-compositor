@@ -140,7 +140,6 @@ base::json::Value AcceleratorService::acceleratorToJson(const Accelerator &accel
                                                                            : "released");
     object.insert("keyText", keysymText(accelerator.keysym()));
     object.insert("keysym", int64_t(accelerator.keysym()));
-    object.insert("locked", m_configuration->isAcceleratorLocked(accelerator));
     object.insert("modifiers", int64_t(accelerator.modifiers()));
     const auto defaultId = m_configuration->idForDefaultAccelerator(accelerator);
     object.insert("type", defaultId && toActionId(*defaultId) == id ? "default" : "user");

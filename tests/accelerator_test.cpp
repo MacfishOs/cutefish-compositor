@@ -1847,7 +1847,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
         EXPECT_EQ(accelerators, action["defaults"]);
         // What Settings has always read: the members in sorted order.
         EXPECT_EQ(R"({"keyName":"Up","keyState":"pressed","keyText":"","keysym":65362,)"
-                  R"("locked":false,"modifiers":8,"type":"default"})",
+                  R"("modifiers":8,"type":"default"})",
                   metaUp.serialize());
     }
     EXPECT_TRUE(sawMaximize);

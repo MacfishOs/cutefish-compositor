@@ -61,7 +61,7 @@ Controller::~Controller()
 std::unique_ptr<Control> Controller::request(ControlClient *client, const void *owner,
                                              const std::string &agentName)
 {
-    std::unique_ptr<Control> control(new Control(this, client, owner, agentName));
+    std::unique_ptr<Control> control(new Control(this, client, owner));
     m_controls.insert(control.get());
 
     const auto refuse = [&](RevokeReason reason) {
@@ -91,11 +91,6 @@ std::unique_ptr<Control> Controller::request(ControlClient *client, const void *
 bool Controller::isActive() const
 {
     return m_current && m_current->m_state == Control::State::Granted;
-}
-
-std::string Controller::agentName() const
-{
-    return isActive() ? m_current->m_agentName : std::string();
 }
 
 bool Controller::allowsCapture(const void *owner) const
@@ -267,12 +262,10 @@ void Controller::inject(const std::function<void()> &event)
     event();
 }
 
-Control::Control(Controller *controller, ControlClient *client, const void *owner,
-                 const std::string &agentName)
+Control::Control(Controller *controller, ControlClient *client, const void *owner)
     : m_controller(controller)
     , m_client(client)
     , m_owner(owner)
-    , m_agentName(agentName)
 {
 }
 

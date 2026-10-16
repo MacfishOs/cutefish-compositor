@@ -120,8 +120,7 @@ std::optional<Modification> modificationFromJson(const base::json::Value &object
 
 void setLookupMaps(std::span<const AcceleratorData> accelerators,
                    ActionIdToAcceleratorsMap &idToAccelerator,
-                   AcceleratorMap<AcceleratorAction> &acceleratorToId,
-                   std::set<Accelerator> &lockedAccelerators)
+                   AcceleratorMap<AcceleratorAction> &acceleratorToId)
 {
     for (const AcceleratorData &data : accelerators) {
         Accelerator accelerator(data.keysym, data.modifiers);
@@ -132,8 +131,6 @@ void setLookupMaps(std::span<const AcceleratorData> accelerators,
             continue;
         }
         idToAccelerator[toActionId(data.action)].push_back(accelerator);
-        if (data.acceleratorLocked)
-            lockedAccelerators.insert(accelerator);
     }
 }
 
@@ -144,10 +141,6 @@ const char *toString(AcceleratorConfigResult result)
     switch (result) {
     case AcceleratorConfigResult::Success:
         return "success";
-    case AcceleratorConfigResult::ActionLocked:
-        return "action-locked";
-    case AcceleratorConfigResult::AcceleratorLocked:
-        return "accelerator-locked";
     case AcceleratorConfigResult::Conflict:
         return "conflict";
     case AcceleratorConfigResult::ConflictCanOverride:
@@ -206,10 +199,8 @@ void AcceleratorConfiguration::initialize(std::span<const AcceleratorData> accel
     m_acceleratorToId.clear();
     m_defaultAcceleratorsToId.clear();
     m_defaultIdToAccelerators.clear();
-    m_lockedAccelerators.clear();
 
-    setLookupMaps(accelerators, m_defaultIdToAccelerators, m_defaultAcceleratorsToId,
-                  m_lockedAccelerators);
+    setLookupMaps(accelerators, m_defaultIdToAccelerators, m_defaultAcceleratorsToId);
     // Actions without a default are still actions the user can bind.
     for (const AcceleratorAction action : allAcceleratorActions()) {
         m_defaultIdToAccelerators.try_emplace(toActionId(action));
@@ -220,7 +211,7 @@ void AcceleratorConfiguration::initialize(std::span<const AcceleratorData> accel
 
 void AcceleratorConfiguration::addAccelerators(std::span<const AcceleratorData> accelerators)
 {
-    setLookupMaps(accelerators, m_idToAccelerators, m_acceleratorToId, m_lockedAccelerators);
+    setLookupMaps(accelerators, m_idToAccelerators, m_acceleratorToId);
     updateAndNotifyAccelerators();
 }
 
@@ -237,11 +228,6 @@ const AcceleratorAction *
 AcceleratorConfiguration::findAcceleratorAction(const Accelerator &accelerator) const
 {
     return m_acceleratorToId.find(accelerator);
-}
-
-bool AcceleratorConfiguration::isAcceleratorLocked(const Accelerator &accelerator) const
-{
-    return m_lockedAccelerators.contains(accelerator);
 }
 
 std::optional<AcceleratorAction>

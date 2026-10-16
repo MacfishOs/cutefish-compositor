@@ -21,7 +21,7 @@ namespace cutefish::shell {
 
 // The dock as the rest of the session sees it, without its view: its
 // applications, minimized windows, trash, settings, and com.cutefish.Dock at
-// /Dock, which Settings and the launcher call.
+// /Dock, through which Settings changes the dock's settings.
 class Dock
 {
 public:

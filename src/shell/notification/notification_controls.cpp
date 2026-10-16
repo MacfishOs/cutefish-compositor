@@ -72,7 +72,6 @@ static void paintCross(ui::Painter &painter, ui::PointF centre, double length, u
 
 ClearButton::ClearButton(ui::Window *window, Kind kind)
     : m_kind(kind)
-    , m_surface(ui::Theme::current().background)
     , m_confirm(kind == Kind::Clear)
     , m_progress(std::make_unique<Tween>(window, std::chrono::milliseconds(240), outCubic))
 {
@@ -90,14 +89,6 @@ ClearButton::ClearButton(ui::Window *window, Kind kind)
 }
 
 ClearButton::~ClearButton() = default;
-
-void ClearButton::setSurfaceColor(ui::Color color)
-{
-    if (color == m_surface)
-        return;
-    m_surface = color;
-    requestPaint();
-}
 
 void ClearButton::setConfirm(bool confirm)
 {
@@ -218,7 +209,7 @@ void ClearButton::paint(ui::Painter &painter)
     const ui::RectF rect = localRect();
     const double radius = rect.height / 2;
     if (m_kind == Kind::Clear) {
-        painter.drawSmoothRectangle(rect, radius, pillFill(m_surface, m_hovered, m_pressed));
+        painter.drawSmoothRectangle(rect, radius, pillFill(theme.background, m_hovered, m_pressed));
     } else if ((m_hovered || progress() > 0) && m_tint) {
         // Not snapped: the glyph is not either.
         painter.drawSmoothRectangle(rect, radius, m_tint(m_pressed ? 2 : 1));
@@ -235,8 +226,8 @@ void ClearButton::paint(ui::Painter &painter)
         const double length = 7 * std::sqrt(2.0);
         const double x = std::round((side - length) / 2);
         const double y = std::round((side - 1) / 2);
-        const bool dark = inkIsDark(m_surface);
-        paintCross(painter, {x + length / 2, y + 0.5}, length, inkOn(m_surface, dark ? 0.85 : 0.65));
+        const bool dark = inkIsDark(theme.background);
+        paintCross(painter, {x + length / 2, y + 0.5}, length, inkOn(theme.background, dark ? 0.85 : 0.65));
     } else {
         painter.multiplyOpacity(0.7);
         paintCross(painter, {side / 2, side / 2}, 8 * std::sqrt(2.0), theme.text);
@@ -245,17 +236,10 @@ void ClearButton::paint(ui::Painter &painter)
 }
 
 PillButton::PillButton(std::string text)
-    : m_surface(ui::Theme::current().background)
 {
     m_label = addChild<ui::Label>(std::move(text));
     m_label->setWeight(500);
     m_label->setElide(ui::Label::Elide::None);
-}
-
-void PillButton::setSurfaceColor(ui::Color color)
-{
-    m_surface = color;
-    requestPaint();
 }
 
 double PillButton::preferredWidth() const
@@ -305,7 +289,7 @@ void PillButton::layout()
 void PillButton::paint(ui::Painter &painter)
 {
     const ui::RectF rect = localRect();
-    painter.drawSmoothRectangle(rect, rect.height / 2, pillFill(m_surface, m_hovered, m_pressed));
+    painter.drawSmoothRectangle(rect, rect.height / 2, pillFill(ui::Theme::current().background, m_hovered, m_pressed));
 }
 
 } // namespace cutefish::shell

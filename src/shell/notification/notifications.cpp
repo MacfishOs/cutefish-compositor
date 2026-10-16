@@ -52,7 +52,6 @@ bool Notifications::registerServices()
         return true;
 
     auto object = std::make_unique<dbus::Object>(m_bus, "/Notification", "com.cutefish.Notification");
-    object->addMethod("showWindow", [this] { windowRequested(); });
     object->addMethod("setDoNotDisturb", [this](bool enabled) { m_settings.setDoNotDisturb(enabled); },
                       dbus::ArgumentNames{{"enabled"}, {}});
     object->addMethod("applications", [this] {

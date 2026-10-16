@@ -57,7 +57,6 @@ class LibseatSession;
 } // namespace backend
 
 namespace computer_control {
-class ComputerControlService;
 class Controller;
 class PermissionConsent;
 } // namespace computer_control
@@ -319,7 +318,6 @@ private:
     // it; the controller goes before the input manager it injects into.
     std::unique_ptr<computer_control::PermissionConsent> m_computerControlConsent;
     std::unique_ptr<computer_control::Controller> m_computerControl;
-    std::unique_ptr<computer_control::ComputerControlService> m_computerControlService;
 
     compositor::Output m_outputModel;
     std::vector<std::unique_ptr<compositor::Output>> m_additionalOutputModels;

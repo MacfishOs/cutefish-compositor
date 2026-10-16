@@ -60,7 +60,7 @@ struct RequestedMode {
     }
 };
 
-// (sssssssassssiiuuuua(iiiiiiubbs))
+// (sssssssasssiiuuua(iiiiiiubbs))
 struct PhysicalDisplay {
     std::string sessionId;
     std::string persistentKey;
@@ -72,11 +72,9 @@ struct PhysicalDisplay {
     std::vector<std::string> pathTopology;
     std::string make;
     std::string model;
-    std::string serialNumber;
     int32_t physicalWidthMm = 0;
     int32_t physicalHeightMm = 0;
     uint32_t connectionType = 0;
-    uint32_t panelOrientation = 0;
     uint32_t capabilities = 0;
     uint32_t recommendedScale120 = 120;
     std::vector<Mode> modes;
@@ -84,8 +82,8 @@ struct PhysicalDisplay {
     auto tie()
     {
         return std::tie(sessionId, persistentKey, portKey, edidKey, connectorName, devicePath,
-                        baseConnectorKey, pathTopology, make, model, serialNumber, physicalWidthMm,
-                        physicalHeightMm, connectionType, panelOrientation, capabilities,
+                        baseConnectorKey, pathTopology, make, model, physicalWidthMm,
+                        physicalHeightMm, connectionType, capabilities,
                         recommendedScale120, modes);
     }
 };

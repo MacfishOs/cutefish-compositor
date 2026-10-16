@@ -49,10 +49,6 @@ public:
     NotificationHistory &history() { return m_history; }
     NotificationBanners &banners() { return m_banners; }
 
-    // com.cutefish.Notification.showWindow(): the status bar toggles the
-    // notification centre.
-    base::Signal<> windowRequested;
-
 private:
     base::dbus::Connection *m_bus;
     NotificationSettings m_settings;

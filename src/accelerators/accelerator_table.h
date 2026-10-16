@@ -33,9 +33,6 @@ struct AcceleratorData {
     uint32_t keysym;
     uint32_t modifiers;
     AcceleratorAction action;
-    // The user may not change this particular combination, even though the
-    // action itself stays editable.
-    bool acceleratorLocked = false;
 };
 
 // There are three classes of accelerators, as in Ash:

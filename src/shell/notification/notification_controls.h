@@ -45,8 +45,6 @@ public:
     // The plate's fill for hover (1) and press (2), for the card's close
     // button; the card's own button tint.
     void setTint(std::function<ui::Color(int state)> tint) { m_tint = std::move(tint); }
-    // What a Clear button sits on, for the ink it is drawn in.
-    void setSurfaceColor(ui::Color color);
 
     // A first click arms, a second one clicks.
     void setConfirm(bool confirm);
@@ -85,7 +83,6 @@ private:
 
     Kind m_kind;
     std::function<ui::Color(int)> m_tint;
-    ui::Color m_surface;
     bool m_confirm = false;
     bool m_armed = false;
     bool m_hovered = false;
@@ -100,7 +97,6 @@ class PillButton : public ui::View
 public:
     explicit PillButton(std::string text);
 
-    void setSurfaceColor(ui::Color color);
     double preferredWidth() const;
 
     std::function<void()> onClicked;
@@ -116,7 +112,6 @@ protected:
     void paint(ui::Painter &painter) override;
 
 private:
-    ui::Color m_surface;
     bool m_hovered = false;
     bool m_pressed = false;
     ui::Label *m_label = nullptr;

@@ -25,7 +25,6 @@
 #include "base/dbus.h"
 #include "base/event_loop.h"
 #include "compositor/surface.h"
-#include "computer_control/computer_control_service.h"
 #include "computer_control/controller.h"
 #include "computer_control/permission_consent.h"
 #include "base/uuid.h"
@@ -344,11 +343,6 @@ void CompositorShell::initComputerControl()
         if (m_computerControl)
             m_computerControl->drawn();
     });
-
-    m_computerControlService =
-            std::make_unique<computer_control::ComputerControlService>(m_computerControl.get());
-    if (!m_computerControlService->registerService())
-        CF_WARNING(cfWayland) << "The computer control service is unavailable";
 }
 
 void CompositorShell::initAccelerators()
@@ -722,8 +716,6 @@ void CompositorShell::initShell()
                 usage->applicationsChanged.connect([controlCenter] { controlCenter->deviceUsersChanged(); }));
     }
     bar->addPanels(notifications);
-    m_shellSubscriptions.push_back(notifications->notifications().windowRequested.connect(
-            [bar] { bar->togglePanel(shell::StatusBarPanels::Panel::NotificationCenter); }));
     // A development instance must not take the session's services over.
     if (!m_options.noDrm) {
         osd->registerService();
@@ -1318,7 +1310,6 @@ CompositorShell::~CompositorShell()
     m_acceleratorController.reset();
     // With input stopped, so what the agent holds is left to the seat's teardown.
     m_computerControlPolicy.setController(nullptr);
-    m_computerControlService.reset();
     m_computerControlDrawn.reset();
     m_statusBarAgentControl.reset();
     m_computerControl.reset();

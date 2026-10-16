@@ -149,11 +149,9 @@ struct DisplaySnapshot {
     std::vector<std::string> pathTopology;
     std::string make;
     std::string model;
-    std::string serialNumber;
     // Negative while unknown, which makes the snapshot invalid.
     base::Size physicalSizeMm {-1, -1};
     DisplayConnectionType connectionType = DisplayConnectionType::Unknown;
-    DisplayRotation panelOrientation = DisplayRotation::Normal;
     DisplayCapabilities capabilities;
     std::vector<DisplayMode> modes;
     std::optional<DisplayMode> currentMode;

@@ -621,8 +621,6 @@ set_target_properties(cutefish-session PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # An agent driving the seat once the user agrees, over
 # cutefish-computer-control-v1: consent, injection, and the pause on real input.
 add_library(cutefish-computer-control STATIC
-    src/computer_control/computer_control_service.cpp
-    src/computer_control/computer_control_service.h
     src/computer_control/controller.cpp
     src/computer_control/controller.h
     src/computer_control/permission_consent.cpp

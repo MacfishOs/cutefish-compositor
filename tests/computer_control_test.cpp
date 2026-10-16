@@ -239,7 +239,6 @@ TEST_F(ComputerControlTest, NothingIsInjectedBeforeTheUserAgrees)
     answer(ConsentResult::Allowed);
     EXPECT_EQ(1, client.granteds);
     EXPECT_TRUE(controller->isActive());
-    EXPECT_EQ("Agent", controller->agentName());
     EXPECT_EQ(std::vector<bool> {true}, activeChanges);
 
     control->motion(base::PointF(10, 20));

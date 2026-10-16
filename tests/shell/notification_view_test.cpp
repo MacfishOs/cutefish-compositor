@@ -612,11 +612,3 @@ TEST_F(NotificationViewTest, ClosingCommitsPendingRemovalsAndFoldsGroups)
     EXPECT_FALSE(centre().rows()[0]->isDetailed());
     EXPECT_TRUE(centre().groupHeaders().empty());
 }
-
-TEST_F(NotificationViewTest, ShowWindowAsksTheStatusBar)
-{
-    int requests = 0;
-    base::Subscription subscription = notifications->windowRequested.connect([&] { ++requests; });
-    client.call("com.cutefish.Notification", "/Notification", "com.cutefish.Notification", "showWindow");
-    EXPECT_EQ(1, requests);
-}

@@ -130,7 +130,7 @@ TEST_F(DisplayConfigServiceTest, StateKeepsItsSignature)
     const auto reply = call("GetState");
     ASSERT_FALSE(reply.isError()) << reply.error().name;
     EXPECT_EQ(reply.message().signature(),
-              "sstta(sssssssassssiiuuuua(iiiiiiubbs))a(ssasiiiiiiiiuub)a(ssui)st");
+              "sstta(sssssssasssiiuuua(iiiiiiubbs))a(ssasiiiiiiiiuub)a(ssui)st");
 }
 
 // Introspection names every argument, as the interface XML does.
@@ -150,7 +150,7 @@ TEST_F(DisplayConfigServiceTest, IntrospectionNamesTheArguments)
     for (const char *argument :
          {R"x(type="a(sb(iiiiiiubs)uu)" name="displays" direction="in")x",
           R"x(type="s" name="operationToken" direction="out")x",
-          R"x(type="a(sssssssassssiiuuuua(iiiiiiubbs))" name="physicalDisplays" direction="out")x",
+          R"x(type="a(sssssssasssiiuuua(iiiiiiubbs))" name="physicalDisplays" direction="out")x",
           R"x(type="t" name="previewDeadlineMs" direction="out")x",
           R"x(type="d" name="strength" direction="in")x",
           R"x(type="as" name="affectedDisplayIds")x", R"x(type="t" name="deadlineMs")x"})

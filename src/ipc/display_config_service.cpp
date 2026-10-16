@@ -104,8 +104,6 @@ uint64_t DisplayConfigService::appliedRevision() const
 
 void DisplayConfigService::addMethods()
 {
-    m_object->addProperty("ProtocolVersion", [] { return protocolVersion; });
-
     m_object->addMethod("GetState", [this] {
         const auto hardware = m_manager->hardware();
         const auto applied = m_manager->applied();
@@ -147,7 +145,6 @@ void DisplayConfigService::addMethods()
                         mirrorGroups);
     };
 
-    // As in com.cutefish.DisplayConfig1.xml, which introspection has always shown.
     const dbus::ArgumentNames configurationNames {
             {"instanceId", "topologyGeneration", "appliedRevision", "displays", "primary",
              "placements", "mirrorGroups"},
@@ -192,18 +189,6 @@ void DisplayConfigService::addMethods()
         m_controller->revert(token, call.message().sender());
         call.reply();
     }, dbus::ArgumentNames {{"previewToken"}, {}});
-
-    m_object->addMethod("ResetConfiguration", "stt", "s", [this](dbus::MethodCall& call) {
-        std::string instanceId;
-        uint64_t generation = 0;
-        uint64_t revision = 0;
-        call.read(instanceId, generation, revision);
-        if (!authorizeWrite(call))
-            return;
-        call.reply(m_controller->apply(defaultConfiguration(instanceId, generation, revision),
-                                       call.message().sender()));
-    }, dbus::ArgumentNames {{"instanceId", "topologyGeneration", "appliedRevision"},
-                            {"operationToken"}});
 
     m_object->addMethod("SetDisplayPower", "asu", "s", [this](dbus::MethodCall& call) {
         std::vector<std::string> displayIds;
@@ -313,32 +298,6 @@ std::string DisplayConfigService::reject(DisplayErrorCode code, const std::strin
         m_object->emitSignal("OperationFinished", token, false, false, uint32_t(code), message,
                              std::vector<std::string>(), topologyGeneration(), appliedRevision());
     return token;
-}
-
-DisplayConfiguration DisplayConfigService::defaultConfiguration(const std::string& instanceId,
-                                                                uint64_t topologyGeneration,
-                                                                uint64_t appliedRevision) const
-{
-    DisplayConfiguration result;
-    result.base = {instanceId, topologyGeneration, appliedRevision};
-    if (!m_manager->hardware())
-        return result;
-    DisplayId parent;
-    for (const auto& display : m_manager->hardware()->displays) {
-        const auto mode = display.nativeMode ? display.nativeMode : display.currentMode;
-        if (!mode)
-            continue;
-        result.displays.push_back({display.sessionId, true, *mode, recommendedScale(display),
-                                   DisplayRotation::Normal});
-        if (!result.primary.isValid()) {
-            result.primary = display.sessionId;
-            parent = display.sessionId;
-        } else {
-            result.placements.push_back({display.sessionId, parent, LayoutEdge::Right, 0});
-            parent = display.sessionId;
-        }
-    }
-    return result;
 }
 
 } // namespace cutefish::display::ipc
