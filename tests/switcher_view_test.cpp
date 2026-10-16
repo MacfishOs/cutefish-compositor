@@ -185,6 +185,21 @@ TEST(SwitcherViewTest, ThePanelCastsAShadow)
     EXPECT_EQ(shadow->radius(), switcher::SwitcherView::kRadius);
 }
 
+TEST(SwitcherViewTest, LeavesNoNodesBehindInTheScene)
+{
+    Desktop desktop;
+    wm::Window *window = desktop.open("one", "");
+    decoration::Theme theme;
+    {
+        switcher::SwitcherView view(desktop.switcher, &desktop.manager, &theme);
+        view.showWindowCycle({window}, 0, std::string());
+        EXPECT_EQ(desktop.switcher->children().size(), 2u);
+    }
+    EXPECT_TRUE(desktop.switcher->children().empty());
+    // The compositor releases the scene after the view is gone.
+    desktop.scene.root()->releaseRenderResources();
+}
+
 TEST(SwitcherViewTest, ShrinksTheCellsToFitTheOutput)
 {
     Desktop desktop;

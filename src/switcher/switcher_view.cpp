@@ -291,6 +291,10 @@ void SwitcherView::preloadAfter(std::chrono::milliseconds delay)
 
 SwitcherView::~SwitcherView()
 {
+    // The panel node calls back into this view; the scene outlives it.
+    m_panel->parent()->removeChild(m_panel);
+    if (m_shadow)
+        m_shadow->parent()->removeChild(m_shadow);
     m_panelTexture.reset();
     toolkit::destroyWindow(m_window);
 }
