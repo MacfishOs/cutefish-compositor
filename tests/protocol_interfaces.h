@@ -20,7 +20,6 @@
 #include <ext-idle-notify-v1-client-protocol.h>
 #include <ext-image-copy-capture-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
-#include <hardware-integration-client-protocol.h>
 #include <idle-inhibit-unstable-v1-client-protocol.h>
 #include <input-method-unstable-v2-client-protocol.h>
 #include <keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h>
@@ -89,7 +88,6 @@ inline const std::map<std::string, const wl_interface *> &knownInterfaces()
                      &ext_image_copy_capture_manager_v1_interface,
                      &ext_foreign_toplevel_list_v1_interface,
                      &cutefish_shell_v1_interface,
-                     &qt_hardware_integration_interface,
              })
             map.emplace(interface->name, interface);
         return map;

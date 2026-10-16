@@ -123,8 +123,6 @@ cutefish_wayland_protocol(wlr-data-control-unstable-v1
 cutefish_wayland_protocol(primary-selection-unstable-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/primary-selection/primary-selection-unstable-v1.xml)
 cutefish_wayland_protocol(appmenu ${CMAKE_CURRENT_SOURCE_DIR}/protocols/appmenu.xml)
-cutefish_wayland_protocol(hardware-integration
-    ${CMAKE_CURRENT_SOURCE_DIR}/protocols/hardware-integration.xml)
 cutefish_wayland_protocol(ext-image-capture-source-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/ext-image-capture-source/ext-image-capture-source-v1.xml)
 cutefish_wayland_protocol(ext-image-copy-capture-v1
@@ -154,7 +152,6 @@ add_library(cutefish-protocols STATIC
     ${ext-foreign-toplevel-list-v1_SOURCES}
     ${xdg-activation-v1_SOURCES}
     ${appmenu_SOURCES}
-    ${hardware-integration_SOURCES}
     ${primary-selection-unstable-v1_SOURCES}
     ${presentation-time_SOURCES}
     ${viewporter_SOURCES}
@@ -677,8 +674,6 @@ add_library(cutefish-wayland-shell STATIC
     src/wayland/protocols/xdg_activation.cpp
     src/wayland/protocols/xdg_activation.h
     src/wayland/protocols/application_menu.cpp
-    src/wayland/protocols/qt_hardware_integration.cpp
-    src/wayland/protocols/qt_hardware_integration.h
     src/wayland/protocols/xdg_positioner.cpp
     src/wayland/protocols/xdg_positioner.h
     src/wayland/protocols/xdg_shell.cpp
@@ -701,14 +696,6 @@ target_link_libraries(cutefish-wayland-shell
     PUBLIC cutefish-wm cutefish-wayland cutefish-protocols cutefish-wayland-input
            cutefish-wayland-dmabuf)
 set_target_properties(cutefish-wayland-shell PROPERTIES POSITION_INDEPENDENT_CODE ON)
-# Where the host's Qt 6 libraries and plugins are, for the cutefish-egl check.
-set(CUTEFISH_QT_LIBRARY_DIR "${CMAKE_INSTALL_FULL_LIBDIR}" CACHE PATH
-    "Directory of the host's Qt 6 libraries")
-set(CUTEFISH_QT_PLUGIN_DIR "${CMAKE_INSTALL_FULL_LIBDIR}/qt6/plugins" CACHE PATH
-    "Directory of the host's Qt 6 plugins")
-target_compile_definitions(cutefish-wayland-shell PRIVATE
-    CUTEFISH_QT_LIBRARY_DIR="${CUTEFISH_QT_LIBRARY_DIR}"
-    CUTEFISH_QT_PLUGIN_DIR="${CUTEFISH_QT_PLUGIN_DIR}")
 
 # The private shell protocols. Above the window manager, like xdg-shell: all
 # policy stays in wm/, and no wl_resource crosses into it.

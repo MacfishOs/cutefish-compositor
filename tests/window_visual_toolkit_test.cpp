@@ -78,15 +78,10 @@ std::string environmentVariable(const char *name)
     return value ? value : "";
 }
 
-bool fishUiInstalled()
-{
-    return std::filesystem::exists(std::string(QT_QML_IMPORTS_PATH) + "/FishUI/qmldir");
-}
-
 void acceptClient(const std::string &program, std::vector<std::string> arguments,
                   scene::WindowVisualMode expected,
                   bool exerciseResize = false, bool interactiveResize = false,
-                  bool eglResize = false, double bufferScale = 1.0, bool exerciseDamage = false)
+                  double bufferScale = 1.0, bool exerciseDamage = false)
 {
     test::TemporaryDirectory runtime;
     ASSERT_TRUE(runtime.isValid());
@@ -184,16 +179,6 @@ void acceptClient(const std::string &program, std::vector<std::string> arguments
             {"GSK_RENDERER", "cairo"},
             {"NO_AT_BRIDGE", "1"},
             {"WAYLAND_DEBUG", "1"}};
-    if (interactiveResize && !eglResize)
-        env["QT_QUICK_BACKEND"] = "software";
-    if (eglResize) {
-        env.erase("QT_QUICK_BACKEND");
-        removed.push_back("QT_QUICK_BACKEND");
-        env["QSG_RHI_BACKEND"] = "opengl";
-        const std::string libraries = environmentVariable("CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH");
-        if (libraries != "system")
-            env["LD_LIBRARY_PATH"] = libraries;
-    }
     if (exerciseDamage) {
         env["CUTEFISH_TEST_SCROLL"] = "1";
         env["QT_QUICK_BACKEND"] = "software";
@@ -281,10 +266,9 @@ void acceptClient(const std::string &program, std::vector<std::string> arguments
                                                                 - base::Point(step * 3, step * 2));
                     }
                     h.compositor.updateTextures(*renderer);
-                    if (eglResize)
-                        EXPECT_EQ(surface->bufferSize(),
-                                  base::Size(base::roundToInt(surface->contentSize().width() * bufferScale),
-                                             base::roundToInt(surface->contentSize().height() * bufferScale)));
+                    EXPECT_EQ(surface->bufferSize(),
+                              base::Size(base::roundToInt(surface->contentSize().width() * bufferScale),
+                                         base::roundToInt(surface->contentSize().height() * bufferScale)));
                     renderer->clear({0, 0, 0, 0});
                     window->node()->render(*renderer);
                     checkRoundedCorners();
@@ -484,22 +468,12 @@ TEST(WindowVisualToolkit, ElectronClientChrome)
                  scene::WindowVisualMode::ServerExterior);
 }
 
-TEST(WindowVisualToolkit, FishUiInteractiveResize)
+TEST(WindowVisualToolkit, ToolkitInteractiveResize)
 {
-    if (!fishUiInstalled())
-        GTEST_SKIP() << "FishUI is not installed";
-    acceptClient(FISHUI_RESIZE_CLIENT, {}, scene::WindowVisualMode::ServerExterior,
-                 false, true);
-}
-
-TEST(WindowVisualToolkit, FishUiEglInteractiveResize)
-{
-    if (!std::getenv("CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH"))
-        GTEST_SKIP() << "Set CUTEFISH_TEST_QT_WAYLAND_LIBRARY_PATH to the test runtime or system";
     for (const double scale : {1.0, 1.25, 1.5, 1.75, 2.0}) {
         SCOPED_TRACE(scale);
-        acceptClient(FISHUI_RESIZE_CLIENT, {},
-                     scene::WindowVisualMode::ServerExterior, false, true, true, scale);
+        acceptClient(TOOLKIT_RESIZE_CLIENT, {},
+                     scene::WindowVisualMode::ServerExterior, false, true, scale);
     }
 }
 
@@ -507,23 +481,21 @@ TEST(WindowVisualToolkit, QtScrollingDamage)
 {
     for (double scale : {1.25, 1.5})
         acceptClient(QT_SCALE_CLIENT, {}, scene::WindowVisualMode::ServerFrame,
-                     false, false, false, scale, true);
+                     false, false, scale, true);
 }
 
 TEST(WindowVisualToolkit, QuickScrollingDamage)
 {
     for (double scale : {1.25, 1.5})
         acceptClient(QT_QUICK_SCALE_CLIENT, {},
-                     scene::WindowVisualMode::ServerFrame, false, false, false, scale, true);
+                     scene::WindowVisualMode::ServerFrame, false, false, scale, true);
 }
 
-TEST(WindowVisualToolkit, FishUiScrollingDamage)
+TEST(WindowVisualToolkit, ToolkitScrollingDamage)
 {
-    if (!fishUiInstalled())
-        GTEST_SKIP() << "FishUI is not installed";
     for (double scale : {1.25, 1.5})
-        acceptClient(FISHUI_RESIZE_CLIENT, {},
-                     scene::WindowVisualMode::ServerExterior, false, true, false, scale, true);
+        acceptClient(TOOLKIT_RESIZE_CLIENT, {"--scroll"},
+                     scene::WindowVisualMode::ServerExterior, false, true, scale, true);
 }
 
 TEST(WindowVisualToolkit, ChromiumScrollingDamage)
@@ -541,5 +513,5 @@ TEST(WindowVisualToolkit, ChromiumScrollingDamage)
                       "--no-default-browser-check", "--disable-background-networking",
                       "--disable-dev-shm-usage", "--user-data-dir=@PROFILE@",
                       "--window-size=640,480", page},
-                     scene::WindowVisualMode::ServerExterior, true, false, false, scale, true);
+                     scene::WindowVisualMode::ServerExterior, true, false, scale, true);
 }

@@ -135,7 +135,6 @@ private:
     bool registerCapture();
     bool registerComputerControl();
     bool registerPrivateShell();
-    bool registerQtHardwareIntegration();
 
     const Dependencies m_deps;
     bool m_inputMethodStarted = false;
@@ -157,7 +156,6 @@ private:
     std::unique_ptr<ForeignToplevelList> m_toplevelList;
     std::unique_ptr<WaylandComputerControl> m_computerControl;
     std::unique_ptr<WaylandCutefishShell> m_cutefishShell;
-    wl_global *m_qtHardwareIntegration = nullptr;
 };
 
 } // namespace wayland

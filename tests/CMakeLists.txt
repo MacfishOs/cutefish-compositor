@@ -88,7 +88,6 @@ cutefish_add_test(subsurface_output_protocol_test cutefish-compositor-core PkgCo
 cutefish_add_test(seat_protocol_test cutefish-wayland-input cutefish-wm
     PkgConfig::WaylandClient PkgConfig::Xkbcommon)
 cutefish_add_test(xdg_positioner_test cutefish-wayland-shell)
-cutefish_add_test(qt_hardware_integration_test cutefish-wayland-shell)
 cutefish_add_test(shell_surface_test cutefish-decoration)
 cutefish_add_test(decoration_test cutefish-decoration)
 cutefish_add_test(text_test cutefish-decoration PkgConfig::TitleText)
@@ -289,19 +288,18 @@ set_tests_properties(drm_output_test PROPERTIES TIMEOUT 60 ENVIRONMENT "LIBGL_AL
 cutefish_add_test(window_visual_test cutefish-decoration)
 cutefish_add_test(window_visual_pixel_test cutefish-decoration cutefish-render)
 set_tests_properties(window_visual_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
+add_executable(toolkit-resize-client visuals/toolkit_client.cpp)
+target_link_libraries(toolkit-resize-client PRIVATE Cutefish::Toolkit)
 if(Qt6Widgets_FOUND AND Qt6Quick_FOUND)
-    add_executable(fishui-resize-client visuals/fishui_client.cpp)
-    target_link_libraries(fishui-resize-client PRIVATE Qt6::Quick)
     cutefish_add_test(window_visual_toolkit_test cutefish-wayland-input cutefish-wayland-shell
         cutefish-decoration cutefish-render PkgConfig::WaylandClient)
     target_compile_definitions(window_visual_toolkit_test PRIVATE
         QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"
         QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>"
-        FISHUI_RESIZE_CLIENT="$<TARGET_FILE:fishui-resize-client>"
-        QT_QML_IMPORTS_PATH="${QT6_INSTALL_PREFIX}/${QT6_INSTALL_QML}"
+        TOOLKIT_RESIZE_CLIENT="$<TARGET_FILE:toolkit-resize-client>"
         ELECTRON_VISUAL_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/visuals/electron_client.js")
     add_dependencies(window_visual_toolkit_test scaling-qt-client scaling-quick-client
-        fishui-resize-client)
+        toolkit-resize-client)
     set_tests_properties(window_visual_toolkit_test PROPERTIES TIMEOUT 70
         ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 endif()

@@ -24,7 +24,6 @@
 #include "wayland/protocols/image_capture.h"
 #include "wayland/protocols/input_method.h"
 #include "wayland/protocols/primary_selection.h"
-#include "wayland/protocols/qt_hardware_integration.h"
 #include "wayland/protocols/surface_blur.h"
 #include "wayland/protocols/window_hints.h"
 #include "wayland/protocols/wl_compositor.h"
@@ -72,8 +71,7 @@ ProtocolGlobals::~ProtocolGlobals()
 bool ProtocolGlobals::initialize()
 {
     return registerCoreGlobals() && registerInputMethod() && registerClipboard()
-            && registerCapture() && registerComputerControl() && registerPrivateShell()
-            && registerQtHardwareIntegration();
+            && registerCapture() && registerComputerControl() && registerPrivateShell();
 }
 
 bool ProtocolGlobals::registerCoreGlobals()
@@ -243,19 +241,6 @@ bool ProtocolGlobals::registerPrivateShell()
     return true;
 }
 
-bool ProtocolGlobals::registerQtHardwareIntegration()
-{
-    m_qtHardwareIntegration = createQtHardwareIntegrationGlobal(m_deps.server->display());
-    if (!m_qtHardwareIntegration)
-        return false;
-    m_privileged->addRestrictedGlobal(m_qtHardwareIntegration,
-                                      [privileged = m_privileged.get()](const wl_client *client) {
-                                          return canLoadCutefishEgl(client,
-                                                                    privileged->isTrusted(client));
-                                      });
-    return true;
-}
-
 static std::vector<std::string> inputMethodEnvironment(const std::string &waylandDisplay,
                                                        const std::string &x11Display,
                                                        const std::string &x11Authority)
@@ -336,8 +321,6 @@ void ProtocolGlobals::shutdown()
     if (m_privileged && m_computerControl)
         m_privileged->removeRestrictedGlobal(m_computerControl->global());
     m_computerControl.reset();
-    if (m_privileged && m_qtHardwareIntegration)
-        m_privileged->removeRestrictedGlobal(m_qtHardwareIntegration);
     if (m_imageCapture)
         m_imageCapture->shutdown();
     if (m_toplevelList)
