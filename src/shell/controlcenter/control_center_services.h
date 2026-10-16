@@ -157,6 +157,8 @@ public:
 
     // Anything above changed.
     base::Signal<> changed;
+    // A VPN went down on its own, with the profile's name and why.
+    base::Signal<const std::string &, const std::string &> vpnFailed;
     // The applications behind the privacy dot, from whoever owns the uses
     // (the bar's DeviceUsage); none while unset.
     std::function<std::vector<DeviceUser>()> deviceUsersSource;

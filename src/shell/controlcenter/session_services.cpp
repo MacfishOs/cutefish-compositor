@@ -79,6 +79,8 @@ public:
         }
         m_subscriptions.push_back(m_networks->changed.connect(notify));
         m_subscriptions.push_back(m_handler->hotspotActiveChanged.connect(notify));
+        m_subscriptions.push_back(m_handler->vpnFailed.connect(
+                [this](const std::string &name, const std::string &message) { vpnFailed.emit(name, message); }));
         if (m_bluetooth) {
             m_subscriptions.push_back(m_bluetooth->changed.connect(notify));
             m_subscriptions.push_back(m_bluetooth->enabledChanged.connect(notify));

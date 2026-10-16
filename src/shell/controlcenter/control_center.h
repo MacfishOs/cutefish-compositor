@@ -59,6 +59,9 @@ public:
     void setDeviceUsersSource(std::function<std::vector<DeviceUser>()> source);
     void deviceUsersChanged();
 
+    // The services' vpnFailed, for the bar's VpnNotifier.
+    base::Signal<const std::string &, const std::string &> vpnFailed;
+
     // While open.
     ControlCenterView *controlCenterView() const;
     StatusPanelView *statusPanel(Panel panel) const;

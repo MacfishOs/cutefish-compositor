@@ -70,6 +70,8 @@ ControlCenter::ControlCenter(Shell *shell, std::unique_ptr<ControlCenterServices
     , m_powerActions(powerActions)
 {
     m_subscriptions.push_back(m_services->changed.connect([this] { refresh(); }));
+    m_subscriptions.push_back(m_services->vpnFailed.connect(
+            [this](const std::string &name, const std::string &message) { vpnFailed.emit(name, message); }));
     if (m_powerActions) {
         m_subscriptions.push_back(m_powerActions->pendingChanged.connect([this] { updatePower(); }));
         m_subscriptions.push_back(m_powerActions->requested.connect([this] { updatePower(); }));

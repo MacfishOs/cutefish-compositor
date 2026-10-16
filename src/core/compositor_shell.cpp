@@ -69,6 +69,7 @@
 #include "shell/statusbar/device_usage.h"
 #include "shell/statusbar/status_bar.h"
 #include "shell/statusbar/status_bar_window.h"
+#include "shell/statusbar/vpn_notifier.h"
 #include "shell/wallpaper/wallpaper.h"
 #include "switcher/switcher_view.h"
 #include "wayland/idle_inhibition.h"
@@ -707,6 +708,8 @@ void CompositorShell::initShell()
             shell::ControlCenter::create(m_shell.get(), bar->statusBar(), &notifications->notifications().settings()));
     bar->addPanels(controlCenter);
     bar->setIndicators(controlCenter);
+    m_shellSubscriptions.push_back(controlCenter->vpnFailed.connect(
+            [bar](const std::string &name, const std::string &message) { bar->vpnNotifier().vpnFailed(name, message); }));
     if (shell::DeviceUsage *usage = bar->deviceUsage()) {
         controlCenter->setDeviceUsersSource([usage] {
             std::vector<shell::DeviceUser> users;
