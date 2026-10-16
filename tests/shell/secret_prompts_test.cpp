@@ -35,6 +35,7 @@
 #include "shell/secrets/network_dialogs.h"
 #include "shell/secrets/network_secret_agent.h"
 #include "shell/secrets/secret_prompts.h"
+#include "shell/secrets/secret_store.h"
 #include "shell/secrets/vpn_secret_fields.h"
 #include "shell/shell.h"
 #include "shell/shell_window.h"
@@ -241,6 +242,8 @@ public:
     }
 
     std::map<std::string, Item> items;
+    // Unlocking asks the user through a prompt, which grants it.
+    bool locked = false;
 
 protected:
     bool handle(MethodCall &call) override
@@ -267,8 +270,18 @@ protected:
             }
             call.reply(found, std::vector<ObjectPath>());
         } else if (member == "Unlock") {
-            call.reply(message.argument<std::vector<ObjectPath>>(0).value_or(std::vector<ObjectPath>()),
-                       ObjectPath {"/"});
+            const auto objects = message.argument<std::vector<ObjectPath>>(0).value_or(std::vector<ObjectPath>());
+            if (locked) {
+                m_unlocking = objects;
+                call.reply(std::vector<ObjectPath>(), ObjectPath {kPrompt});
+            } else {
+                call.reply(objects, ObjectPath {"/"});
+            }
+        } else if (member == "Prompt" && path == kPrompt) {
+            call.reply();
+            locked = false;
+            bus->emitSignal(kPrompt, "org.freedesktop.Secret.Prompt", "Completed", false,
+                            Variant(std::exchange(m_unlocking, {})));
         } else if (member == "ReadAlias") {
             call.reply(ObjectPath {"/org/freedesktop/secrets/collection/login"});
         } else if (member == "CreateItem") {
@@ -298,7 +311,10 @@ protected:
     }
 
 private:
+    static constexpr const char *kPrompt = "/org/freedesktop/secrets/prompt/1";
+
     int m_next = 0;
+    std::vector<ObjectPath> m_unlocking;
 };
 
 const std::string kAdapter = "/org/bluez/hci0";
@@ -767,6 +783,20 @@ TEST_F(SecretPromptsTest, VpnSecretsAreAskedForInTheirOwnWindowAndKept)
     ASSERT_TRUE(test::runUntil([&quiet] { return quiet.has_value(); }));
     EXPECT_FALSE(quiet->isError());
     EXPECT_TRUE(vpnSecretsOf(*quiet).empty());
+}
+
+TEST_F(SecretPromptsTest, ALockedKeyringIsUnlockedThroughItsPrompt)
+{
+    secrets->locked = true;
+    shell::SecretStore store(base::dbus::Connection::session(core::mainLoop()));
+    bool saved = false;
+    store.save(kUuid, "Cafe", kWirelessSecurity, "psk", "hunter22", [&saved] { saved = true; });
+    ASSERT_TRUE(test::runUntil([&saved] { return saved; }));
+    EXPECT_EQ(1, secrets->count("Prompt"));
+    ASSERT_EQ(1u, secrets->items.size());
+    EXPECT_EQ("hunter22", secrets->items.begin()->second.value);
+    // What the prompt held goes on the next turn.
+    test::runFor(std::chrono::milliseconds(10));
 }
 
 TEST_F(SecretPromptsTest, BluetoothPairingIsConfirmedInTheDialog)

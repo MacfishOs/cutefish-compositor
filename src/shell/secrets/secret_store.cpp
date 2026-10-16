@@ -306,11 +306,16 @@ void SecretStore::prompt(const std::string &prompt, std::function<void(bool dism
     state->done = std::move(done);
     std::weak_ptr<char> alive = m_alive;
     const auto finish = [this, id, state, alive](bool dismissed, const Paths &result) {
-        if (alive.expired() || !state->done)
+        if (!state->done)
             return;
         auto callback = std::move(state->done);
         state->done = nullptr;
         state->timer.stop();
+        // The timer's callback holds the state; it lets go once this one,
+        // which may be that callback, has returned.
+        core::mainLoop()->post([state] { state->timer.onTimeout = nullptr; });
+        if (alive.expired())
+            return;
         // The match goes after the callback returns.
         base::dbus::Match match;
         if (auto it = m_prompts.find(id); it != m_prompts.end()) {
