@@ -41,9 +41,6 @@ public:
     bool isReady() const { return m_rootReady && m_playerReady; }
 
     std::string identity() const;
-    std::string desktopEntry() const;
-    bool canQuit() const;
-    bool canRaise() const;
 
     PlaybackStatus playbackStatus() const;
     bool canControl() const;
@@ -51,9 +48,6 @@ public:
     bool canGoPrevious() const;
     bool canPlay() const;
     bool canPause() const;
-    bool canSeek() const;
-    double volume() const;
-    const base::dbus::VariantMap &metadata() const { return m_metadata; }
     // xesam:title, xesam:artist joined by ", ", mpris:artUrl.
     std::string title() const;
     std::string artist() const;
@@ -63,11 +57,8 @@ public:
     void play();
     void pause();
     void playPause();
-    void stop();
     void next();
     void previous();
-    void raise();
-    void quit();
 
     // Any property changed.
     base::Signal<> changed;
@@ -106,19 +97,12 @@ public:
     MprisManager(const MprisManager &) = delete;
     MprisManager &operator=(const MprisManager &) = delete;
 
-    // Keeps the shown player even when another starts playing.
-    bool singleService() const { return m_singleService; }
-    void setSingleService(bool single) { m_singleService = single; }
-
     MprisPlayer *current() const { return m_current.get(); }
     std::string currentService() const;
     // The shown player first.
     std::vector<std::string> availableServices() const;
-    // Shows this player.
-    void setCurrentService(const std::string &service);
 
     base::Signal<> currentChanged;
-    base::Signal<> availableServicesChanged;
     // Something of the shown player changed.
     base::Signal<> currentPlayerChanged;
 
@@ -131,7 +115,6 @@ private:
     void track(const std::shared_ptr<MprisPlayer> &player);
 
     base::dbus::Connection *m_bus;
-    bool m_singleService = false;
     std::shared_ptr<MprisPlayer> m_current;
     std::vector<std::shared_ptr<MprisPlayer>> m_available;
     // Playing, but not shown: the first takes over when the shown one stops.

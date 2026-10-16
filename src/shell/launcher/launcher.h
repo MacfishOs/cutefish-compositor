@@ -63,10 +63,7 @@ public:
     // The view lost activation.
     void deactivated();
 
-    base::Signal<> shownChanged;
     base::Signal<const std::string &> applicationOpened;
-    // A drag that took the launcher's activation ended.
-    base::Signal<> dragFinished;
 
 private:
     void noteApplicationOpened(const std::string &application);

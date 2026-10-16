@@ -55,14 +55,12 @@ public:
     // Rasterises the icons on the pool at the size and scale they show at,
     // when they or the window's size or scale changed.
     void preloadIcons();
-    bool isShown() const { return m_shown; }
 
     // --- State, for the window and tests ---
 
     int pageTotal() const { return int(m_pages.size()); }
     int currentPage() const { return m_currentPage; }
     double contentX() const { return m_contentX; }
-    bool isSwiping() const { return m_swiping; }
     // An index into the model's rows; -1 for none.
     int selectedIndex() const { return m_selectedIndex; }
     void setSelectedIndex(int index);

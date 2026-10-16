@@ -544,11 +544,6 @@ protected:
 class NetworkPanel::List final : public ui::View
 {
 public:
-    explicit List(NetworkPanel *panel)
-        : m_panel(panel)
-    {
-    }
-
     double heightForWidth(double) const override
     {
         double height = 0;
@@ -574,9 +569,6 @@ protected:
             y += height + kListSpacing;
         }
     }
-
-private:
-    NetworkPanel *m_panel;
 };
 
 NetworkPanel::NetworkPanel(ControlCenterServices &services)
@@ -594,7 +586,7 @@ NetworkPanel::NetworkPanel(ControlCenterServices &services)
 
     m_scroll = body()->addChild<ui::ScrollView>();
     m_scroll->setScrollDirections(false, true);
-    m_list = m_scroll->setContent<List>(this);
+    m_list = m_scroll->setContent<List>();
     m_hotspot = m_list->addChild<PanelRow>();
     m_hotspot->setGlyph("network-wireless-hotspot");
     m_hotspot->setActive(true);

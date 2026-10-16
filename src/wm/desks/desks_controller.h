@@ -49,7 +49,6 @@ enum class DesksCreationRemovalSource {
 
 enum class DesksSwitchSource {
     NewDeskShortcut,
-    DeskRemoved,
     DeskSwitchShortcut,
     WindowActivated,
     DeskSwitchTouchpad,
@@ -58,14 +57,6 @@ enum class DesksSwitchSource {
     DeskRestored,
     // A desk clicked in the overview's desk bar.
     MiniViewButton,
-};
-
-enum class DesksMoveWindowFromActiveDeskSource {
-    Shortcut,
-    SendToDesk,
-    VisibleOnAllDesks,
-    // Dropped on a desk in the overview's desk bar.
-    DragAndDrop,
 };
 
 class DesksObserver
@@ -140,8 +131,7 @@ public:
     void updateSwipeAnimation(double deskDelta, double timeMs);
     void endSwipeAnimation(double timeMs);
 
-    bool moveWindowFromActiveDeskTo(Window *window, Desk *target,
-                                    DesksMoveWindowFromActiveDeskSource source);
+    bool moveWindowFromActiveDeskTo(Window *window, Desk *target);
     // Upstream SendToDeskAtIndex: with the move animation, from the active desk.
     void sendToDeskAtIndex(Window *window, int index);
 
@@ -202,9 +192,8 @@ private:
     void onAnimationFinished(DeskAnimationBase *animation);
     void launchActivationAnimation(Desk *desk, DesksSwitchSource source);
     void activateDeskInternal(Desk *desk, bool updateWindowActivation);
-    void removeDeskInternal(Desk *desk, DesksCreationRemovalSource source, bool deskSwitched);
-    bool moveWindowFromSourceDeskTo(Window *window, Desk *source, Desk *target,
-                                    DesksMoveWindowFromActiveDeskSource sourceOfMove);
+    void removeDeskInternal(Desk *desk, bool deskSwitched);
+    bool moveWindowFromSourceDeskTo(Window *window, Desk *source, Desk *target);
     void performWindowMoveToDeskAnimation(Window *window, bool goingLeft);
 
     // Puts `window`'s tree on `desk`, or on every desk when null.

@@ -60,7 +60,6 @@ public:
     const_iterator end() const { return m_map.end(); }
 
     size_t size() const { return m_map.size(); }
-    bool empty() const { return m_map.empty(); }
 
     void setUsePositionalLookup(bool use) { m_usePositionalLookup = use; }
 

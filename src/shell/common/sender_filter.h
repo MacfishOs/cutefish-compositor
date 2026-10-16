@@ -20,7 +20,6 @@ class SenderFilter
 {
 public:
     SenderFilter(base::dbus::Connection *bus, const std::string &service)
-        : m_service(service)
     {
         // A unique name is its own owner.
         if (service.starts_with(':')) {
@@ -39,10 +38,7 @@ public:
         return !m_owner.empty() && message.sender() == m_owner;
     }
 
-    const std::string &owner() const { return m_owner; }
-
 private:
-    std::string m_service;
     std::string m_owner;
     base::dbus::NameWatch m_watch;
 };

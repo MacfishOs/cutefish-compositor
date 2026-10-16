@@ -91,13 +91,6 @@ public:
     // toplevel list owns; it installs the lookup here.
     void setToplevelSourceResolver(ToplevelSourceResolver resolver);
 
-    // Creates the ext_image_capture_source_v1 `id` of `source` for a request
-    // of another protocol.
-    // A null source, or a client that may not capture, gets a source whose
-    // sessions stop at once.
-    void exportSource(wl_client *client, uint32_t id,
-                      std::shared_ptr<compositor::CaptureSource> source);
-
     // A picture for the compositor itself, as the shell's screenshots take
     // them: a frame of `source` rendered as a session's would be, at the next
     // composition of its output and under the same lock rules. `done` runs on

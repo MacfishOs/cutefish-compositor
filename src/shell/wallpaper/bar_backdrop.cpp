@@ -8,7 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <iterator>
 
 #include "ui/bitmap.h"
 
@@ -124,16 +123,6 @@ BarBackdrop::Style BarBackdrop::styleForSample(const Sample &sample)
         style.gradientColor = style.useLightForeground ? ui::Color {0, 0, 0, 77} : ui::Color {255, 255, 255, 115};
     }
     return style;
-}
-
-double BarBackdrop::gradientStrength(double position)
-{
-    static constexpr double kStops[] = {1.0, 0.896, 0.648, 0.352, 0.104, 0.0};
-    static constexpr int kLast = int(std::size(kStops)) - 1;
-    const double at = std::clamp(position, 0.0, 1.0) * kLast;
-    const int index = std::min(int(at), kLast - 1);
-    const double t = at - index;
-    return kStops[index] + (kStops[index + 1] - kStops[index]) * t;
 }
 
 } // namespace cutefish::shell

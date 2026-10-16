@@ -904,13 +904,13 @@ void CompositorShell::initXwayland()
     // display would start it at login. It runs without X11 until Xwayland
     // does, then restarts with the display to serve X11 clients as well.
     m_xwayland->ready = [this] {
-        m_globals->startInputMethod({}, {});
+        m_globals->startInputMethod();
     };
     m_xwayland->started = [this] {
         m_globals->setInputMethodX11Display(m_xwayland->display(), m_xwayland->authority());
     };
     m_xwayland->failure = [this](const std::string &) {
-        m_globals->startInputMethod({}, {});
+        m_globals->startInputMethod();
     };
     if (m_options.xwayland) {
         // The saved display configuration may already be applied, with a
@@ -929,10 +929,10 @@ void CompositorShell::initXwayland()
         options.lazy = true;
         m_xwayland->start(options);
     } else {
-        m_globals->startInputMethod({}, {});
+        m_globals->startInputMethod();
     }
 #else
-    m_globals->startInputMethod({}, {});
+    m_globals->startInputMethod();
 #endif
 }
 

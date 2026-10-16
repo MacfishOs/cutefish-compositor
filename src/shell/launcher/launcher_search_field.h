@@ -35,15 +35,10 @@ public:
     // and a reset while hidden do not animate.
     void setAnimated(bool animated) { m_animated = animated; }
 
-    ui::TextField *textField() const;
     const std::string &text() const;
     void setText(std::string text);
     bool hasFieldFocus() const;
     void focusField();
-
-    // The placeholder's place in the field, for tests.
-    ui::RectF placeholderRect() const;
-    bool isPlaceholderLabelVisible() const;
 
     // The text changed, from the user, an input method or setText().
     std::function<void()> onTextChanged;

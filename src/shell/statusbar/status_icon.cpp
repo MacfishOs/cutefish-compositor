@@ -189,11 +189,6 @@ void ClockItem::setText(const std::string &text)
         onPreferredWidthChanged();
 }
 
-const std::string &ClockItem::text() const
-{
-    return m_label->text();
-}
-
 double ClockItem::preferredWidth() const
 {
     return BarContext::kItemGap / 2 + m_label->sizeHint().width + BarContext::kSmallSpacing * 2

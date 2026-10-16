@@ -54,7 +54,6 @@ public:
     WaylandXdgShell& operator=(const WaylandXdgShell&) = delete;
     ~WaylandXdgShell();
 
-    compositor::Compositor* compositor() const { return m_compositor; }
     wm::WindowManager* windowManager() const { return m_windowManager; }
     input::Seat* seat() const { return m_seat; }
     SerialTracker* serialTracker() const { return m_serialTracker; }
@@ -70,7 +69,6 @@ public:
     bool hasXdgSurfaceForClient(wl_client* client) const;
 
 private:
-    compositor::Compositor* m_compositor = nullptr;
     wm::WindowManager* m_windowManager = nullptr;
     input::Seat* m_seat = nullptr;
     SerialTracker* m_serialTracker = nullptr;

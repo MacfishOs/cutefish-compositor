@@ -41,7 +41,6 @@ public:
     std::string userName() const { return m_userName; }
     std::string displayName() const { return m_displayName; }
     std::string iconSource() const { return m_iconSource; }
-    std::string prompt() const { return m_prompt; }
     std::string errorMessage() const { return m_errorMessage; }
 
     bool busy() const { return m_state == Authenticating; }
@@ -73,13 +72,12 @@ public:
     void start();
     // Wipes the password it is given once it holds it as a Secret.
     void authenticate(std::string password);
-    // Back to Idle: clears the error and the prompt. Called when the user
+    // Back to Idle: clears the error. Called when the user
     // starts typing again after a rejection.
     void reset();
 
     base::Signal<> stateChanged;
     base::Signal<> userChanged;
-    base::Signal<> promptChanged;
     base::Signal<> sessionChanged;
     base::Signal<> sessionsChanged;
     base::Signal<> usersChanged;
@@ -100,7 +98,6 @@ private:
     std::string m_userName;
     std::string m_displayName;
     std::string m_iconSource;
-    std::string m_prompt;
     std::string m_errorMessage;
     std::vector<std::string> m_users;
     std::vector<LoginSession> m_sessions;

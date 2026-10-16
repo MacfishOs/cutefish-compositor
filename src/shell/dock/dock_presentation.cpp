@@ -267,9 +267,9 @@ void DockPresentation::apply(Tween &tween, double target, bool animate)
         begin(tween);
 }
 
-void DockPresentation::retarget(bool animate)
+void DockPresentation::retarget()
 {
-    animate = animate && m_animationsEnabled;
+    const bool animate = m_animationsEnabled;
     const int removed = removedRow() >= 0 ? 1 : 0;
     const int removedPinned = removedRow() >= 0 && removedRow() < m_sectionRow ? 1 : 0;
     const int placeholder = m_placeholder >= 0 ? 1 : 0;

@@ -11,7 +11,6 @@
 #include <gbm.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cstring>
 #include <map>
 #include <utility>
@@ -23,8 +22,6 @@
 namespace cutefish::backend {
 
 namespace {
-
-std::atomic_int g_instanceCount {0};
 
 // drmPrimeFDToHandle hands out the same GEM handle for the same underlying
 // buffer, so closing one framebuffer's handle would pull it out from under any
@@ -84,7 +81,6 @@ DrmFramebuffer::DrmFramebuffer(DrmDeviceApi *device, uint32_t id, const base::Si
     , m_modifier(modifier)
     , m_ownedHandles(std::move(ownedHandles))
 {
-    ++g_instanceCount;
 }
 
 DrmFramebuffer::~DrmFramebuffer()
@@ -99,12 +95,6 @@ DrmFramebuffer::~DrmFramebuffer()
         gbm_bo_destroy(m_importedBo);
     if (m_dumbHandle)
         m_device->destroyDumbBuffer(m_dumbHandle);
-    --g_instanceCount;
-}
-
-int DrmFramebuffer::instanceCount()
-{
-    return g_instanceCount.load();
 }
 
 void DrmFramebuffer::destroyCallback(gbm_bo *, void *data)

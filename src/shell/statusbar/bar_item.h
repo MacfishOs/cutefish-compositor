@@ -16,7 +16,6 @@
 
 namespace cutefish::ui {
 class Icon;
-class ThemeIcon;
 } // namespace cutefish::ui
 
 namespace cutefish::shell {
@@ -62,10 +61,7 @@ public:
     void setChecked(bool checked);
     bool isChecked() const { return m_checked; }
     void setContextMenuPressed(bool pressed);
-    // Press feedback driven from outside, as the menu bar's own MouseArea.
-    void setDown(bool down);
 
-    bool containsMouse() const { return m_containsMouse; }
     bool containsPress() const { return m_pressed && m_containsMouse; }
     bool isPressed() const { return m_pressed; }
     // Forgets the held press, which a drag took over.
@@ -82,7 +78,6 @@ public:
     std::function<void(const ui::PointerEvent &)> onClicked;
     std::function<void(const ui::PointerEvent &)> onPressed;
     std::function<void(const ui::PointerEvent &)> onDoubleClicked;
-    std::function<void()> onReleased;
     std::function<void(const ui::PointerEvent &)> onPositionChanged;
     std::function<void()> onEntered;
 
@@ -113,7 +108,6 @@ private:
     double m_glyphWidth = 0;
     bool m_checked = false;
     bool m_contextMenuPressed = false;
-    bool m_down = false;
     bool m_containsMouse = false;
     bool m_pressed = false;
     bool m_doubleClicked = false;
@@ -133,8 +127,6 @@ public:
     void setSource(std::string file, bool monochrome = false);
     // A FishUI glyph, in place of the file.
     void setGlyph(std::string name);
-    // A theme icon, as the tray's IconItem: in its own colours, or tinted.
-    void setThemeIcon(std::string name);
     void setColor(ui::Color color);
     void setDropShadow(bool shadow);
 
@@ -149,7 +141,6 @@ private:
     std::string m_file;
     bool m_monochrome = false;
     std::string m_glyph;
-    std::string m_themeIcon;
     ui::Color m_color;
     bool m_dropShadow = false;
     // The black copy, blurred, under the icon (MultiEffect, blurMax 6, blur 0.5).

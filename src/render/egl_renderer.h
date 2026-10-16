@@ -139,10 +139,6 @@ public:
 
     EGLConfig eglConfig() const { return m_context->config(); }
 
-    const std::string &eglVendor() const { return m_context->vendor(); }
-
-    const std::string &eglVersion() const { return m_context->version(); }
-
     const std::string &glesRenderer() const { return m_context->renderer(); }
 
     const std::string &glesVersion() const { return m_context->glVersion(); }

@@ -67,7 +67,6 @@ bool CaptureClipboard::setImage(const ui::Bitmap &image)
     source->offer(kPngType);
     if (!m_selection->setSource(source))
         return false;
-    m_source = source;
     m_encode = base::runInThread([image] { return image.encodePng().value_or(std::string()); },
                                  [weak = std::weak_ptr<PngSource>(source)](std::string png) {
                                      if (const auto source = weak.lock())

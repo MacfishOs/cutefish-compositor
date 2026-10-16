@@ -96,7 +96,6 @@ public:
 
     // Oldest first, as the model's rows.
     const std::vector<std::unique_ptr<Banner>> &banners() const { return m_banners; }
-    Banner *bannerFor(uint32_t id) const;
 
     // Places every banner again, newest first.
     void positionPopups();

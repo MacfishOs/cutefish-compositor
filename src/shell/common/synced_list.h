@@ -56,13 +56,6 @@ public:
         }
     }
 
-    // Rows changed without the list knowing, as a reset.
-    void reset(std::vector<T> rows)
-    {
-        m_rows = std::move(rows);
-        m_signals.modelReset();
-    }
-
 private:
     int indexOfKey(const std::string &key) const
     {

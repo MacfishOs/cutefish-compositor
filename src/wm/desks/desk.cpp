@@ -117,7 +117,7 @@ void Desk::moveWindowsToDesk(Desk *target)
     }
 }
 
-void Desk::moveWindowToDesk(Window *window, Desk *target, bool unminimize)
+void Desk::moveWindowToDesk(Window *window, Desk *target)
 {
     // Always the root of the transient tree: a transient child is never left
     // behind by its parent, nor moved without it.
@@ -128,7 +128,7 @@ void Desk::moveWindowToDesk(Window *window, Desk *target, bool unminimize)
     // Upstream FixWindowStackingAccordingToGlobalMru: the window was the one in
     // use, so it goes on top of the target desk's windows.
     m_controller->windowManager()->raise(root);
-    if (unminimize && root->state()->isMinimized())
+    if (root->state()->isMinimized())
         root->restore();
 }
 

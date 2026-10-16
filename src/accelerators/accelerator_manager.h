@@ -59,8 +59,6 @@ public:
 
     bool hasPriorityHandler(const Accelerator &accelerator) const;
 
-    bool isEmpty() const { return m_accelerators.empty(); }
-
     void setUsePositionalLookup(bool use) { m_accelerators.setUsePositionalLookup(use); }
 
 private:

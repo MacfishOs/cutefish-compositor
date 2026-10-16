@@ -61,9 +61,7 @@ public:
     void update();
 
     ShellWindow *window() const { return m_window.get(); }
-    View *view() const { return m_view; }
     CaptureToolbar *toolbar() const;
-    ScreenCapture *capture() const { return m_capture; }
     Shape shape() const { return m_shape; }
     // The toolbar's rect in the overlay's coordinates, empty while it is not
     // shown here.

@@ -93,7 +93,6 @@ public:
         return nullptr;
     }
 
-    const std::vector<shell::DesktopEntryPtr> &entries() const override { return m_entries; }
     const std::vector<shell::DesktopEntryPtr> &applications() const override { return m_applications; }
 
 private:

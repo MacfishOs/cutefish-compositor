@@ -611,12 +611,6 @@ void Window::endMinimizeHandoff()
         m_manager->compositor()->scheduleRepaint();
 }
 
-bool Window::isMinimizeHandoffPending() const
-{
-    auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node);
-    return animation && animation->isHolding();
-}
-
 void Window::setTitle(const std::string &title)
 {
     if (title == m_title)
@@ -672,7 +666,6 @@ void Window::setPanelBehavior(PanelBehavior behavior)
 
 void Window::setClientPosition(const base::Point &position)
 {
-    m_hasClientPosition = true;
     if (m_clientPosition == position && m_bounds.topLeft() == position)
         return;
     m_clientPosition = position;

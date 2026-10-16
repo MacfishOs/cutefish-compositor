@@ -367,7 +367,6 @@ public:
 
     // --- Battery ---
 
-    bool batteryAvailable() const override { return m_statusBar.battery().isAvailable(); }
     int chargePercent() const override { return m_statusBar.battery().chargePercent(); }
     bool onBattery() const override { return m_statusBar.battery().onBattery(); }
     std::string batteryStatus() const override { return m_statusBar.battery().statusString(); }

@@ -33,7 +33,6 @@ public:
     // follows the system's dark mode.
     bool isValid() const { return m_valid; }
     bool useLightForeground() const { return m_style.useLightForeground; }
-    const Style &style() const { return m_style; }
 
     // Follows what the desktop shows; null stops.
     void follow(Wallpaper *wallpaper);
@@ -49,11 +48,6 @@ public:
         return BarBackdrop::sampleImage(screenImage, barHeight);
     }
     static Style styleForSample(const Sample &sample) { return BarBackdrop::styleForSample(sample); }
-    static double relativeLuminance(double red, double green, double blue)
-    {
-        return BarBackdrop::relativeLuminance(red, green, blue);
-    }
-    static bool prefersWhite(double luminance) { return BarBackdrop::prefersWhite(luminance); }
 
 private:
     Wallpaper *m_wallpaper = nullptr;

@@ -43,11 +43,6 @@ void CallbackNativeDisplayDelegate::takeDisplayControl(ControlCallback callback)
     callback(true);
 }
 
-void CallbackNativeDisplayDelegate::relinquishDisplayControl(ControlCallback callback)
-{
-    callback(true);
-}
-
 void CallbackNativeDisplayDelegate::queryHardware(QueryCallback callback)
 {
     if (m_snapshot.isValid())

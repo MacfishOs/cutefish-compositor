@@ -148,8 +148,6 @@ public:
     void onScanoutAcquired();
     void onScanoutReleased(render::SyncFence fence);
 
-    uint32_t scanoutCount() const { return m_scanoutCount; }
-
     uint32_t attachCount() const { return m_attachCount; }
 
     bool contentsInUse() const { return m_contentsInUse; }

@@ -36,7 +36,6 @@ public:
     void hide();
     bool isShown() const;
     const std::string &text() const { return m_text; }
-    ui::Window *window() const { return m_window.get(); }
 
 private:
     DockWindow *m_dock;

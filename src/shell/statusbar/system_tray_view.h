@@ -117,7 +117,6 @@ public:
     // application's icon (name or file), else application-x-desktop.
     void setIcon(const std::string &name, const std::vector<ui::Bitmap> &pixmaps,
                  const std::string &fallback);
-    bool isMonochrome() const { return m_monochrome; }
     // The bar's look changed.
     void updateLook();
     // The icon as a drag shows it, at a scale.

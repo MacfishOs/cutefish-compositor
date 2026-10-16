@@ -46,7 +46,6 @@ public:
 
     ui::TextField *codeField() const { return m_field; }
     ui::Label *code() const { return m_code; }
-    ui::Label *entered() const { return m_entered; }
     ui::Label *error() const { return m_error; }
 
 protected:

@@ -36,8 +36,6 @@ public:
 
     EGLSurface eglSurface() const { return m_surface; }
 
-    gbm_surface *gbmSurface() const { return m_gbmSurface; }
-
     static std::unique_ptr<EglRenderTarget> create(EGLDisplay display, EGLConfig config,
                                                    gbm_surface *surface, const base::Size &size);
     static std::unique_ptr<EglRenderTarget> createPbuffer(EGLDisplay display, EGLConfig config,

@@ -16,8 +16,6 @@ class SelectionController;
 
 namespace cutefish::shell {
 
-class PngSource;
-
 // A picture on the clipboard as image/png, through the seat's selection
 // controller. A whole screen takes about a second to compress, so the selection
 // is offered at once and encoded on a worker; a reader that asks before that
@@ -33,7 +31,6 @@ public:
 
 private:
     clipboard::SelectionController *m_selection;
-    std::weak_ptr<PngSource> m_source;
     base::Job m_encode;
 };
 

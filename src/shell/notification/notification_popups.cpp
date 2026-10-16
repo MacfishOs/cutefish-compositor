@@ -227,15 +227,6 @@ NotificationPopups::~NotificationPopups()
     m_banners.clear();
 }
 
-NotificationPopups::Banner *NotificationPopups::bannerFor(uint32_t id) const
-{
-    for (const auto &banner : m_banners) {
-        if (banner->id() == id)
-            return banner.get();
-    }
-    return nullptr;
-}
-
 void NotificationPopups::insert(int first, int count)
 {
     const auto &rows = m_model.notifications();

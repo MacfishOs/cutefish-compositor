@@ -68,8 +68,6 @@ public:
 
     void setBlocked(bool blocked);
 
-    bool isBlocked() const { return m_blocked; }
-
     // Brings the lock screen in (covered) or takes it away. Without `animate`
     // it is there at once, as at the login screen.
     void setCovered(bool covered, bool animate);
@@ -86,8 +84,6 @@ public:
     // Whether a frame drawn at `frameTime` shows the transition over. A lock is
     // not in place until such a frame is on screen.
     bool isSettled(double frameTime) const;
-
-    double lastSampleTime() const { return m_lastSample; }
 
     // Asks every node the transition moves for another frame.
     void requestAnimationFrame() const;
@@ -133,7 +129,6 @@ private:
     bool m_animating = false;
     double m_requested = 0;
     mutable std::optional<double> m_start;
-    mutable double m_lastSample = -1;
 };
 
 } // namespace cutefish::session

@@ -73,7 +73,6 @@ private:
     int m_readWatch = 0;
     base::Timer m_deadline;
     std::string m_ownKey;
-    std::weak_ptr<clipboard::DataSource> m_ownSource;
 };
 
 } // namespace cutefish::shell

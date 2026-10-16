@@ -159,7 +159,6 @@ ClipboardStore::ClipboardStore(std::string directory, size_t limit)
                 if (copiedMeanwhile)
                     save();
                 changed();
-                loaded();
             });
 }
 

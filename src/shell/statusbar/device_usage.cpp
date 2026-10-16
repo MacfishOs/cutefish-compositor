@@ -95,7 +95,6 @@ struct PipeWireCapture::Hooks {
 static const pw_core_events kCoreEvents = [] {
     pw_core_events events {};
     events.version = PW_VERSION_CORE_EVENTS;
-    events.info = [](void *data, const pw_core_info *) { static_cast<PipeWireCapture *>(data)->setConnected(); };
     events.error = [](void *data, uint32_t id, int, int result, const char *) {
         if (id == PW_ID_CORE && (result == -EPIPE || result == -ECONNRESET))
             static_cast<PipeWireCapture *>(data)->failSoon();
@@ -165,11 +164,6 @@ PipeWireCapture::~PipeWireCapture()
     pw_deinit();
 }
 
-void PipeWireCapture::setConnected()
-{
-    m_connected = true;
-}
-
 void PipeWireCapture::failSoon()
 {
     if (m_failurePending)
@@ -235,7 +229,6 @@ void PipeWireCapture::disconnectFromDaemon()
         pw_core_disconnect(m_core);
         m_core = nullptr;
     }
-    m_connected = false;
     update();
 }
 

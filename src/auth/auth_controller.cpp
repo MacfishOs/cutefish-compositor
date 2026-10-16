@@ -62,16 +62,6 @@ AuthController::AuthController(Mode mode, AuthBackend *backend)
     , m_backend(backend)
 {
     assert(m_backend);
-    m_backendSubscriptions.push_back(m_backend->promptChanged.connect([this](const std::string &prompt) {
-        if (m_prompt == prompt)
-            return;
-        m_prompt = prompt;
-        promptChanged();
-    }));
-    m_backendSubscriptions.push_back(m_backend->busyChanged.connect([this](bool busy) {
-        if (busy && m_state != Authenticating)
-            setState(Authenticating);
-    }));
     m_backendSubscriptions.push_back(m_backend->failed.connect([this](const std::string &message) {
         if (m_state == Succeeded)
             return;
@@ -224,10 +214,6 @@ void AuthController::reset()
     if (m_state == Succeeded || m_state == Authenticating)
         return;
     m_backend->reset();
-    if (!m_prompt.empty()) {
-        m_prompt.clear();
-        promptChanged();
-    }
     setState(Idle);
 }
 

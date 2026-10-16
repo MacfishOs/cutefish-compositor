@@ -34,14 +34,14 @@ public:
     // Creates a fresh timeline the compositor owns. Used for tests.
     static std::shared_ptr<DrmSyncobj> create(int drmFd);
 
-    // Whether `point` already has a fence attached, so exportFence() will not
-    // have to wait for the client to submit its work.
+    // Whether `point` already has a fence attached, so exportFence() can
+    // export it without waiting for the client to submit its work.
     bool isMaterialized(uint64_t point) const;
 
     // A sync_file for `point`. Returns an invalid fence when the point has no
-    // fence yet and `waitMs` elapses first, which the caller must treat as
-    // "synchronize some other way" rather than "already signalled".
-    SyncFence exportFence(uint64_t point, int waitMs = 0) const;
+    // fence yet, which the caller must treat as "synchronize some other way"
+    // rather than "already signalled".
+    SyncFence exportFence(uint64_t point) const;
 
     // An eventfd that turns readable once `point` signals, also when the
     // client submits its fence only later. Invalid when the kernel cannot.
@@ -50,9 +50,6 @@ public:
     // Signals `point`, immediately when `fence` is invalid, otherwise when
     // `fence` signals. Returns false if the kernel rejected it.
     bool signal(uint64_t point, const SyncFence& fence);
-
-    uint32_t handle() const { return m_handle; }
-    int drmFd() const { return m_drmFd; }
 
 private:
     DrmSyncobj(int drmFd, uint32_t handle);

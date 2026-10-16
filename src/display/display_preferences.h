@@ -23,8 +23,6 @@ class DisplayPreferences
 public:
     explicit DisplayPreferences(std::string path = {});
 
-    const std::string &path() const { return m_path; }
-
     bool save(const HardwareSnapshot &hardware, const DisplayConfiguration &configuration,
               DisplayError *error = nullptr) const;
     std::optional<DisplayConfiguration> restore(const HardwareSnapshot &hardware,

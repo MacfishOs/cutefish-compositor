@@ -40,9 +40,6 @@ void ApplicationLauncher::launch(const base::DesktopEntry &entry, const std::vec
         return;
     }
 
-    // A single-instance application hands the token to its running instance,
-    // which can then be activated on another desk.
-    const std::string token = activationToken ? activationToken() : std::string();
     m_calls.track([&](std::function<void()> finished) {
         return m_runtime.callAsync(
                 "launchApplication",
@@ -55,7 +52,7 @@ void ApplicationLauncher::launch(const base::DesktopEntry &entry, const std::vec
                     }
                     finished();
                 },
-                id, arguments, token);
+                id, arguments, std::string());
     });
 }
 
@@ -74,7 +71,6 @@ void ApplicationLauncher::launchCommand(const std::vector<std::string> &command,
         return;
     }
 
-    const std::string token = activationToken ? activationToken() : std::string();
     m_calls.track([&](std::function<void()> finished) {
         return m_runtime.callAsync(
                 "launchCommand",
@@ -85,7 +81,7 @@ void ApplicationLauncher::launchCommand(const std::vector<std::string> &command,
                         done(started);
                     finished();
                 },
-                appId, command, workingDirectory, token);
+                appId, command, workingDirectory, std::string());
     });
 }
 

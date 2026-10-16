@@ -65,8 +65,6 @@ public:
     static std::unique_ptr<DrmFramebuffer> fromDmaBuf(DrmDeviceApi *device,
                                                       const render::DmaBufAttributes &attributes);
 
-    // Live framebuffer objects; used by tests and leak checks.
-    static int instanceCount();
     static std::unique_ptr<DrmFramebuffer> fromPixels(DrmDeviceApi *device, const base::Size &size,
                                                       const uint8_t *pixels, uint32_t stride);
 

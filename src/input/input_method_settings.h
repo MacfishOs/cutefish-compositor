@@ -40,8 +40,6 @@ public:
     // The selected desktop file id, or empty when none is selected or installed.
     std::string inputMethod() const;
 
-    bool running() const { return m_running; }
-
     std::vector<std::string> command() const;
     void setRunning(bool running);
     // Launches `id` for this session only; the saved selection is unchanged.

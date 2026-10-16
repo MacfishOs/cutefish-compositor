@@ -55,8 +55,6 @@ public:
     // Activates the target for the accelerator; true once one handled it.
     bool process(const Accelerator &accelerator);
 
-    bool isRegistered(const Accelerator &accelerator) const;
-
     // A reserved accelerator is always handled and never passed to a window.
     bool isReserved(const Accelerator &accelerator) const;
 
@@ -89,12 +87,6 @@ public:
 
     AcceleratorLauncherStateMachine *launcherStateMachine() { return &m_launcherStateMachine; }
 
-    AcceleratorConfiguration *configuration() const { return m_configuration; }
-
-    const CommandContext &context() const { return m_context; }
-
-    void setContext(const CommandContext &context) { m_context = context; }
-
     // AcceleratorTarget:
     bool acceleratorPressed(const Accelerator &accelerator) override;
     bool canHandleAccelerators() const override { return true; }
@@ -104,7 +96,6 @@ private:
     void registerAccelerators(std::vector<Accelerator> accelerators);
     void onAcceleratorsUpdated();
 
-    bool isActionForAcceleratorEnabled(const Accelerator &accelerator) const;
     bool canPerformAction(AcceleratorAction action, const Accelerator &accelerator) const;
     void performAction(AcceleratorAction action, const Accelerator &accelerator);
     Restriction acceleratorProcessingRestriction(AcceleratorAction action) const;

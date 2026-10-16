@@ -61,7 +61,6 @@ public:
     ui::Color controlTint(int state) const;
     // Backs an armed close button out unless the window point is on it.
     void disarmUnless(ui::PointF windowPoint);
-    bool isCloseArmed() const;
     ClearButton *closeButton() const { return m_close; }
     // The action buttons, in the card's coordinates.
     std::vector<ui::RectF> actionRects() const;
@@ -112,7 +111,6 @@ private:
     void updateBody();
     ui::Color secondaryTextColor() const;
 
-    ui::Window *m_window;
     Notification m_notification;
     std::string m_timeText;
     std::string m_moreText;

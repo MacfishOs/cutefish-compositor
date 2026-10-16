@@ -44,13 +44,10 @@ public:
     ~Decoration() override;
 
     wm::Window* window() const { return m_window; }
-    Theme* theme() const { return m_theme; }
 
     // --- What the node draws ---
 
     bool isActive() const;
-    // Exterior rounding is disabled when the window fills the work area.
-    bool hasRoundedCorners() const;
     std::string title() const;
     const std::vector<CaptionButton>& buttons() const { return m_buttons; }
     // Where the caption may be drawn, in frame coordinates.

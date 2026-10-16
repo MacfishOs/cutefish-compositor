@@ -604,7 +604,6 @@ void ScreenCapture::notifyChanged()
 {
     for (const auto &overlay : m_overlays)
         overlay->update();
-    changed();
 }
 
 base::Rect ScreenCapture::defaultSelection() const

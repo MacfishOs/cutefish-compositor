@@ -66,7 +66,6 @@ bool Launcher::registerService()
 void Launcher::show()
 {
     m_shown = true;
-    shownChanged();
     if (showWindow)
         showWindow();
 }
@@ -75,7 +74,6 @@ void Launcher::hide()
 {
     m_shown = false;
     setDragging(false);
-    shownChanged();
     if (hideWindow)
         hideWindow();
 }
@@ -129,11 +127,7 @@ std::vector<std::string> Launcher::takeOpenedApplications()
 
 void Launcher::setDragging(bool dragging)
 {
-    if (m_dragging == dragging)
-        return;
     m_dragging = dragging;
-    if (!dragging)
-        dragFinished();
 }
 
 } // namespace cutefish::shell

@@ -540,26 +540,6 @@ void NetworkSecretAgent::connectWireless(const std::string &devicePath, const st
     requestChanged.emit();
 }
 
-void NetworkSecretAgent::showForTesting(const Prompt &prompt)
-{
-    Request request;
-    request.id = ++m_nextId;
-    request.kind = prompt.kind;
-    request.connectionName = prompt.connectionName;
-    request.identity = prompt.identity;
-    request.retry = prompt.retry;
-    request.interactive = true;
-    request.serverMessage = prompt.message;
-    request.settingName = prompt.kind == Kind::VpnSecrets ? "vpn" : kWirelessSecurity;
-    request.key = "psk";
-    for (const Field &field : prompt.fields) {
-        request.fields.push_back({field.key, field.label, field.secret});
-        request.values[field.key] = field.value;
-    }
-    m_requests.push_front(request);
-    requestChanged.emit();
-}
-
 void NetworkSecretAgent::respond(const std::string &secret)
 {
     if (m_requests.empty())

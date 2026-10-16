@@ -14,10 +14,6 @@
 #include "base/timer.h"
 #include "input/event_sink.h"
 
-namespace cutefish::compositor {
-class Surface;
-}
-
 namespace cutefish::input {
 class InputManager;
 }
@@ -32,10 +28,6 @@ class DemoController : public input::EventSink
 public:
     DemoController(WindowManager* manager, input::InputManager* input);
     ~DemoController() override;
-
-    // Creates a Window for every mapped, roleless root surface that does not
-    // have one yet. Wired to the compositor's repaint signal.
-    void adoptNewSurfaces();
 
     // Runs the whole window-manager API as a timed sequence instead of waiting
     // for keys, so the hardware run can be driven over SSH. Each step logs what
@@ -74,7 +66,6 @@ private:
     size_t m_scriptStep = 0;
     int m_scriptIntervalMs = 0;
     base::Timer m_scriptTimer;
-    bool m_scriptRunning = false;
 };
 
 } // namespace cutefish::wm

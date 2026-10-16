@@ -63,8 +63,7 @@ struct CrossGpuCapabilities {
     int64_t framePixels = 0;
 };
 
-CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities& capabilities,
-                                        int64_t maximumCpuCopyPixels = kMaximumCpuCopyPixels);
+CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities& capabilities);
 
 struct DrmTileSnapshot {
     uint32_t connectorId = 0;

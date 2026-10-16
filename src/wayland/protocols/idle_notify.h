@@ -7,10 +7,6 @@
 struct wl_display;
 struct wl_global;
 
-namespace cutefish::input {
-class InputManager;
-}
-
 namespace cutefish::wayland {
 class IdleInhibition;
 wl_global *createIdleNotifierGlobal(wl_display *display, IdleInhibition *inhibition);

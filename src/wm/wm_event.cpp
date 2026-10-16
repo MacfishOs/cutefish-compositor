@@ -13,32 +13,6 @@ WMEvent::WMEvent(WMEventType type)
 
 WMEvent::~WMEvent() = default;
 
-bool WMEvent::isTransitionEvent() const
-{
-    switch (m_type) {
-    case WMEventType::Normal:
-    case WMEventType::Maximize:
-    case WMEventType::Minimize:
-    case WMEventType::Fullscreen:
-    case WMEventType::SnapPrimary:
-    case WMEventType::SnapSecondary:
-    case WMEventType::Restore:
-        return true;
-    default:
-        return false;
-    }
-}
-
-bool WMEvent::isCompoundEvent() const
-{
-    return m_type == WMEventType::ToggleMaximize || m_type == WMEventType::ToggleFullscreen;
-}
-
-bool WMEvent::isBoundsEvent() const
-{
-    return m_type == WMEventType::SetBounds;
-}
-
 SetBoundsWMEvent::SetBoundsWMEvent(const base::Rect &bounds)
     : WMEvent(WMEventType::SetBounds)
     , m_requestedBounds(bounds)

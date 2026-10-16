@@ -58,8 +58,7 @@ public:
     };
 
     struct Stats {
-        uint64_t requests = 0, coalesced = 0, renders = 0, submissions = 0;
-        uint64_t completions = 0, failures = 0, staleCompletions = 0, skips = 0;
+        uint64_t requests = 0, coalesced = 0, failures = 0, staleCompletions = 0, skips = 0;
         // Frames that landed at least a refresh after the one they were aimed at.
         uint64_t missed = 0;
         // Those begun past their draw point for demand that came late, counted
@@ -98,8 +97,6 @@ public:
     // the one refresh it overran rather than that and the next one too. One is
     // double buffering: rendering waits for the flip.
     void setMaxPendingFrames(unsigned count);
-
-    unsigned maxPendingFrames() const { return m_maxPending; }
 
     unsigned pendingFrames() const { return unsigned(m_pending.size()); }
 

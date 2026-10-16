@@ -30,7 +30,6 @@ public:
     void invalidateSnapshots();
     void setSnapshot(HardwareSnapshot snapshot);
     void takeDisplayControl(ControlCallback callback) override;
-    void relinquishDisplayControl(ControlCallback callback) override;
     void queryHardware(QueryCallback callback) override;
     void configure(const DisplayConfiguration &configuration, ConfigureMode mode,
                    ConfigureCallback callback) override;

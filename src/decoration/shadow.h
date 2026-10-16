@@ -57,12 +57,6 @@ public:
 
     base::Size canonicalSize() const { return m_canonicalSize; }
 
-    int topRadius() const { return m_radius; }
-
-    Corners corners() const { return m_corners; }
-
-    int rasterScale() const { return m_scale; }
-
     base::Insets margins() const { return m_margins; }
 
     std::string key() const;

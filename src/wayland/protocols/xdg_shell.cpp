@@ -927,8 +927,7 @@ void bindXdgShell(wl_client* client, void* data, uint32_t version, uint32_t id)
 WaylandXdgShell::WaylandXdgShell(compositor::Compositor* compositor,
                                  wm::WindowManager* windowManager, input::Seat* seat,
                                  SerialTracker* serialTracker)
-    : m_compositor(compositor)
-    , m_windowManager(windowManager)
+    : m_windowManager(windowManager)
     , m_seat(seat)
     , m_serialTracker(serialTracker)
 {

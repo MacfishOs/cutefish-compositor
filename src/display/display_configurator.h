@@ -29,7 +29,6 @@ public:
     DisplayConfigurator(const DisplayConfigurator&) = delete;
     DisplayConfigurator& operator=(const DisplayConfigurator&) = delete;
 
-    bool busy() const { return m_busy; }
     void test(const HardwareSnapshot& hardware, uint64_t revision,
               const DisplayConfiguration& request, Completion completion);
     void apply(const HardwareSnapshot& hardware, uint64_t revision,

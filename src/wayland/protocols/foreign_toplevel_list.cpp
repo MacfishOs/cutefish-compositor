@@ -112,8 +112,7 @@ void ForeignToplevelListEvents::bind(wl_client *wlClient, void *data, uint32_t v
 
 ForeignToplevelList::ForeignToplevelList(wl_display *display, wm::WindowManager *manager,
                                          compositor::Compositor *compositor, Authorize authorize)
-    : m_display(display)
-    , m_manager(manager)
+    : m_manager(manager)
     , m_compositor(compositor)
     , m_authorize(std::move(authorize))
 {

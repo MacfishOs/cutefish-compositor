@@ -34,9 +34,6 @@ public:
 
     // Blends `color` over the pixel with the given coverage, 0..1.
     void blend(int x, int y, const render::Color& color, float coverage);
-    // Clears the pixel to transparent, so whatever is behind the texture shows
-    // through. Used to punch the notch out of the restore icon.
-    void erase(int x, int y, float coverage);
 
 private:
     base::Size m_size;
@@ -60,16 +57,6 @@ void fillRoundedRect(Image& image, const base::RectF& rect, double radius, const
 // Window silhouettes use continuous corners; decoration controls keep circular arcs.
 void fillContinuousRoundedRect(Image& image, const base::RectF& rect, double radius,
                                const render::Color& color, const Corners& corners = Corners::all());
-
-// `width` is grown inwards from `rect`.
-void strokeRoundedRect(Image& image, const base::RectF& rect, double radius, double width,
-                       const render::Color& color, const Corners& corners = Corners::all());
-
-void eraseRoundedRect(Image& image, const base::RectF& rect, double radius);
-
-// A round-capped line, which is what the icon artwork uses.
-void strokeLine(Image& image, const base::PointF& from, const base::PointF& to, double width,
-                const render::Color& color);
 
 } // namespace cutefish::decoration
 

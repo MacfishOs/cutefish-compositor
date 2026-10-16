@@ -44,10 +44,6 @@ public:
     ShellInput &operator=(const ShellInput &) = delete;
     ~ShellInput();
 
-    input::Pointer *pointer() const { return m_pointer.get(); }
-    input::Keyboard *keyboard() const { return m_keyboard.get(); }
-    input::Touch *touch() const { return m_touch.get(); }
-
     // The shell window owning `surface`, if any.
     ShellWindow *windowForSurface(const compositor::Surface *surface) const;
     // Where the pointer and the keyboard are, among the shell's windows.

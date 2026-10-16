@@ -36,11 +36,6 @@ DesktopEntryPtr RegistryApplications::resolveWindow(const std::string &appId, co
     return m_registry.resolveWindow(appId, windowClass, executablePath, executableName);
 }
 
-const std::vector<DesktopEntryPtr> &RegistryApplications::entries() const
-{
-    return m_registry.entries();
-}
-
 const std::vector<DesktopEntryPtr> &RegistryApplications::applications() const
 {
     return m_registry.applications();

@@ -63,7 +63,6 @@ public:
     }
 
     ui::DialogButton *cancel() const { return m_cancel; }
-    ui::DialogButton *confirm() const { return m_confirm; }
 
     void setAction(Action action)
     {
@@ -189,16 +188,6 @@ std::string PowerDialog::confirmText(Action action)
 bool PowerDialog::isOpen() const
 {
     return m_window && m_window->isShown();
-}
-
-ui::DialogButton *PowerDialog::cancelButton() const
-{
-    return m_content ? m_content->cancel() : nullptr;
-}
-
-ui::DialogButton *PowerDialog::confirmButton() const
-{
-    return m_content ? m_content->confirm() : nullptr;
 }
 
 void PowerDialog::open(Action action)

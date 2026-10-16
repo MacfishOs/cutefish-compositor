@@ -91,8 +91,6 @@ public:
     void invokeDefaultAction(uint32_t id);
     void invokeAction(uint32_t id, const std::string &actionKey);
 
-    base::Signal<> bannersSuppressedChanged;
-
 private:
     void add(const Notification &notification);
     void replace(uint32_t id, const Notification &notification);

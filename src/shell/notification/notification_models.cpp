@@ -285,8 +285,6 @@ void NotificationBanners::setBannersSuppressed(bool suppressed)
         for (uint32_t id : ids)
             m_server.closeNotification(id, NotificationServer::CloseReason::Expired);
     }
-
-    bannersSuppressedChanged();
 }
 
 void NotificationBanners::expired(uint32_t id)

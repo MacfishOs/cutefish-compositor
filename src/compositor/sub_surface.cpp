@@ -18,8 +18,8 @@ std::unique_ptr<SubSurface> SubSurface::create(Surface* surface, Surface* parent
 {
     // Display::CreateSubSurface: parent must not be contained in child's tree,
     // and the surface must not already have a role object.
-    // hasRole() rather than subSurface(): a surface already serving as a
-    // pointer cursor may not take the subsurface role either.
+    // hasRole() rather than only an existing subsurface: a surface already
+    // serving as a pointer cursor may not take the subsurface role either.
     if (!surface || !parent || surface->hasRole())
         return nullptr;
     for (auto* ancestor = parent; ancestor; ancestor = ancestor->parentSurface())

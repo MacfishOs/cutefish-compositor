@@ -49,7 +49,6 @@ public:
 
     // A theme icon's name, or an SVG file for the launcher.
     void setIcon(std::string name, bool file = false);
-    const std::string &iconName() const { return m_iconName; }
     void setToolTip(std::string text) { m_toolTip = std::move(text); }
     const std::string &toolTipText() const { return m_toolTip; }
     void setRunning(bool running);
@@ -62,18 +61,16 @@ public:
     void setBadgeOpacity(double opacity);
     double badgeOpacity() const { return m_badgeOpacity; }
 
-    // Where the icon is in this view, its size, and how the slot draws it:
+    // Where the icon is in this view, and how the slot draws it:
     // the appearance animation's scale (about the icon's centre, or its
     // leading edge while leaving) and opacity.
     void setIconRect(const ui::RectF &rect);
     ui::RectF iconRect() const { return m_iconRect; }
-    void setIconSize(double size);
     void setPresentation(double scale, double opacity, bool leading);
     double presentationScale() const { return m_scale; }
     double presentationOpacity() const { return m_opacity; }
     // The running dot, in this view.
     void setDotRect(const ui::RectF &rect);
-    ui::RectF dotRect() const { return m_dotRect; }
 
     // Pressed, or holding its open menu: the icon is dimmed, except while
     // it is dragged.

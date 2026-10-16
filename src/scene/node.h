@@ -208,8 +208,6 @@ class ColorNode : public Node
 public:
     explicit ColorNode(const render::Color &color, std::string name = {});
 
-    render::Color color() const { return m_color; }
-
     void setColor(const render::Color &color);
 
     Content content() const override

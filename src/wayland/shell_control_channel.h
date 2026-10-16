@@ -39,8 +39,6 @@ public:
     // without a shell in that case.
     bool listen(const std::string &path);
 
-    const std::string &path() const { return m_path; }
-
     // A new Wayland connection fd for the trusted client this channel serves.
     // The receiver takes ownership of `fd`.
     std::function<void(int fd)> connectionReceived;

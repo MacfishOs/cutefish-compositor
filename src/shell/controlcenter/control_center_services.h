@@ -145,7 +145,6 @@ public:
     virtual void setDefaultOutput(uint32_t id) = 0;
 
     // --- Battery (UPower) and power profiles ---
-    virtual bool batteryAvailable() const = 0;
     virtual int chargePercent() const = 0;
     virtual bool onBattery() const = 0;
     virtual std::string batteryStatus() const = 0;

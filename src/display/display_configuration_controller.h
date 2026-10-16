@@ -54,8 +54,6 @@ public:
 
     int64_t previewDeadlineMs() const { return m_preview ? m_preview->deadlineMs : 0; }
 
-    std::string previewOwner() const;
-
     // The operation's token and its result.
     base::Signal<const std::string &, const ConfigurationResult &> operationFinished;
     // The preview's token and its deadline in milliseconds since the epoch;

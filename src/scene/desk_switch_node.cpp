@@ -100,7 +100,6 @@ void DeskSwitchNode::startRemoval(int desks, int removedDesk, int endingDesk, Fr
     m_desks = desks;
     m_startingDesk = removedDesk;
     m_endingDesk = endingDesk;
-    m_removedDesk = removedDesk;
     m_width = std::max(1, width);
     for (const std::string &output : outputs)
         m_frames[output];
@@ -416,7 +415,6 @@ void DeskSwitchNode::stop()
     m_frames.clear();
     m_stillFrames.clear();
     m_strip.clear();
-    m_removedDesk = -1;
     m_captureDesk = -1;
     m_motion = Motion::Still;
     m_position = 0;

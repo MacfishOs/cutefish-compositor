@@ -33,7 +33,6 @@ public:
     const ClipboardEntry &entry(int row) const;
     std::string keyAt(int row) const;
 
-    const std::string &filterText() const { return m_filterText; }
     void setFilterText(const std::string &text);
     bool historyEmpty() const { return m_store.entries().empty(); }
 
@@ -46,8 +45,6 @@ public:
     std::string detail(int row) const;
     // The icon of the first file's type; empty for others, or until known.
     std::string iconName(int row) const;
-
-    base::Signal<> filterTextChanged;
 
 private:
     void rebuild();
@@ -79,7 +76,6 @@ public:
     bool registerService();
 
     ClipboardStore &store() { return m_store; }
-    ClipboardMonitor &monitor() { return m_monitor; }
     ClipboardHistoryModel &model() { return m_model; }
 
     // The view's.

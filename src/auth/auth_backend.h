@@ -42,19 +42,12 @@ public:
     // backend starts one; the others ignore it.
     virtual void setSession(const LoginSession &) { }
 
-    // The service asked something. Informational: the UI shows one password
-    // field regardless, and an empty prompt means "the default".
-    base::Signal<const std::string &> promptChanged;
-
     // The credential was accepted. accept() may now be called, exactly once.
     base::Signal<> succeeded;
 
     // The credential was rejected, or the conversation failed. The UI clears
     // the field and shows `message`, which never contains the credential.
     base::Signal<const std::string &> failed;
-
-    // Whether a check is in flight. The UI disables input while it is.
-    base::Signal<bool> busyChanged;
 };
 
 } // namespace cutefish::auth

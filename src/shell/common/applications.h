@@ -37,8 +37,6 @@ public:
     virtual DesktopEntryPtr resolveWindow(const std::string &appId, const std::string &windowClass,
                                           const std::string &executablePath,
                                           const std::string &executableName) const = 0;
-    // Every entry, the ones menus leave out included.
-    virtual const std::vector<DesktopEntryPtr> &entries() const = 0;
     // What menus show, sorted by name.
     virtual const std::vector<DesktopEntryPtr> &applications() const = 0;
 
@@ -58,7 +56,6 @@ public:
     DesktopEntryPtr resolveWindow(const std::string &appId, const std::string &windowClass,
                                   const std::string &executablePath,
                                   const std::string &executableName) const override;
-    const std::vector<DesktopEntryPtr> &entries() const override;
     const std::vector<DesktopEntryPtr> &applications() const override;
 
 private:

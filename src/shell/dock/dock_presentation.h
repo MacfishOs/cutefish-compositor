@@ -116,7 +116,7 @@ private:
     double slotIndex(int row) const;
     void snapToSlot(Entry &entry);
     bool settledForDrop(const std::string &landing) const;
-    void retarget(bool animate = true);
+    void retarget();
     void apply(Tween &tween, double target, bool animate);
     void begin(Tween &tween);
     void beginResize(bool animate);

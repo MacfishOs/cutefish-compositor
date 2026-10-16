@@ -53,21 +53,6 @@ bool insideRoundedRect(const base::RectF& rect, double radius, const Corners& co
     return dx * dx + dy * dy <= rx * rx;
 }
 
-double distanceToSegment(const base::PointF& point, const base::PointF& from, const base::PointF& to)
-{
-    const base::PointF direction = to - from;
-    const double lengthSquared =
-        direction.x() * direction.x() + direction.y() * direction.y();
-    double t = 0.0;
-    if (lengthSquared > 0.0) {
-        t = ((point.x() - from.x()) * direction.x() + (point.y() - from.y()) * direction.y())
-            / lengthSquared;
-        t = std::clamp(t, 0.0, 1.0);
-    }
-    const base::PointF closest = from + direction * t;
-    return std::hypot(point.x() - closest.x(), point.y() - closest.y());
-}
-
 // Runs `test` over a 4x4 grid inside pixel (x, y) and returns the fraction that
 // passed.
 template<typename F>
@@ -94,19 +79,6 @@ base::Rect pixelBounds(const Image& image, const base::RectF& rect, double margi
         static_cast<int>(std::ceil(rect.right() + margin)) + 1,
         static_cast<int>(std::ceil(rect.bottom() + margin)) + 1);
     return bounds.intersected(base::Rect(image.size()));
-}
-
-template<typename F>
-void rasterize(Image& image, const base::RectF& area, F&& test, const render::Color& color)
-{
-    const base::Rect bounds = pixelBounds(image, area);
-    for (int y = bounds.top(); y < bounds.bottom(); ++y) {
-        for (int x = bounds.left(); x < bounds.right(); ++x) {
-            const float alpha = coverage(x, y, test);
-            if (alpha > 0.0f)
-                image.blend(x, y, color, alpha);
-        }
-    }
 }
 
 // Whole pixels no corner reaches, which every sample of a fill would hit.
@@ -177,16 +149,6 @@ void Image::blend(int x, int y, const render::Color& color, float coverage)
     pixel[3] = toByte(alpha + pixel[3] / 255.0f * inverse);
 }
 
-void Image::erase(int x, int y, float coverage)
-{
-    if (x < 0 || y < 0 || x >= m_size.width() || y >= m_size.height())
-        return;
-    const float keep = 1.0f - std::clamp(coverage, 0.0f, 1.0f);
-    uint8_t* pixel = &m_pixels[(static_cast<size_t>(y) * m_size.width() + x) * 4];
-    for (int channel = 0; channel < 4; ++channel)
-        pixel[channel] = toByte(pixel[channel] / 255.0f * keep);
-}
-
 void fillRoundedRect(Image& image, const base::RectF& rect, double radius, const render::Color& color,
                      const Corners& corners)
 {
@@ -205,52 +167,6 @@ void fillContinuousRoundedRect(Image& image, const base::RectF& rect, double rad
         image, rect, SolidPixels(rect, radius, true),
         [&](double x, double y) {
             return insideRoundedRect(rect, radius, corners, x, y, true);
-        },
-        color);
-}
-
-void strokeRoundedRect(Image& image, const base::RectF& rect, double radius, double width,
-                       const render::Color& color, const Corners& corners)
-{
-    // A stroke wider than half the rect leaves no inside to cut out.
-    const bool hollow = rect.width() >= 2 * width && rect.height() >= 2 * width;
-    const base::RectF inner = hollow ? rect.adjusted(width, width, -width, -width) : base::RectF();
-    const double innerRadius = std::max(0.0, radius - width);
-    rasterize(
-        image, rect,
-        [&](double x, double y) {
-            return insideRoundedRect(rect, radius, corners, x, y)
-                && !(hollow && insideRoundedRect(inner, innerRadius, corners, x, y));
-        },
-        color);
-}
-
-void eraseRoundedRect(Image& image, const base::RectF& rect, double radius)
-{
-    const base::Rect bounds = pixelBounds(image, rect);
-    const Corners corners = Corners::all();
-    for (int y = bounds.top(); y < bounds.bottom(); ++y) {
-        for (int x = bounds.left(); x < bounds.right(); ++x) {
-            const float alpha = coverage(x, y, [&](double px, double py) {
-                return insideRoundedRect(rect, radius, corners, px, py);
-            });
-            if (alpha > 0.0f)
-                image.erase(x, y, alpha);
-        }
-    }
-}
-
-void strokeLine(Image& image, const base::PointF& from, const base::PointF& to, double width,
-                const render::Color& color)
-{
-    const double half = width / 2.0;
-    const base::RectF area = base::RectF::fromEdges(
-        std::min(from.x(), to.x()) - half, std::min(from.y(), to.y()) - half,
-        std::max(from.x(), to.x()) + half, std::max(from.y(), to.y()) + half);
-    rasterize(
-        image, area,
-        [&](double x, double y) {
-            return distanceToSegment(base::PointF(x, y), from, to) <= half;
         },
         color);
 }

@@ -39,10 +39,6 @@ public:
     bool supports(const char *extension) const;
     bool supportsGl(const char *extension) const;
 
-    const std::string &vendor() const { return m_eglVendor; }
-
-    const std::string &version() const { return m_eglVersion; }
-
     const std::string &renderer() const { return m_glesRenderer; }
 
     const std::string &glVersion() const { return m_glesVersion; }

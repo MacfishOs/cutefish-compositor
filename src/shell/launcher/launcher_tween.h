@@ -29,12 +29,6 @@ inline double outCubic(double t)
     return u * u * u + 1;
 }
 
-inline double outQuint(double t)
-{
-    const double u = t - 1;
-    return u * u * u * u * u + 1;
-}
-
 // Out back with an overshoot of 1.70158.
 inline double outBack(double t)
 {
@@ -110,7 +104,6 @@ public:
     }
 
     bool isRunning() const { return m_running; }
-    double value() const { return m_value; }
     double target() const { return m_to; }
 
 private:
@@ -132,7 +125,7 @@ public:
     LauncherSpring(const LauncherSpring &) = delete;
     LauncherSpring &operator=(const LauncherSpring &) = delete;
 
-    // From `from` to `to`, moving at velocity() if already running; `update`
+    // From `from` to `to`, keeping its speed if already running; `update`
     // hears each value, the last one `to`.
     void start(ui::Window *window, double from, double to, std::function<void(double)> update)
     {
@@ -173,8 +166,6 @@ public:
     }
 
     bool isRunning() const { return m_running; }
-    double value() const { return m_value; }
-    double velocity() const { return m_velocity; }
     double target() const { return m_to; }
 
 private:

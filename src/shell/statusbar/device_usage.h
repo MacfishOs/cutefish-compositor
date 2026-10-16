@@ -55,7 +55,6 @@ public:
     PipeWireCapture(const PipeWireCapture &) = delete;
     PipeWireCapture &operator=(const PipeWireCapture &) = delete;
 
-    bool isConnected() const { return m_connected; }
     const DeviceUses &uses() const { return m_uses; }
 
     base::Signal<> usesChanged;
@@ -65,7 +64,6 @@ public:
     void addGlobal(uint32_t id, const char *type, uint32_t version, const void *properties);
     void removeGlobal(uint32_t id);
     void scheduleUpdate();
-    void setConnected();
     void failSoon();
 
 private:
@@ -88,7 +86,6 @@ private:
     // Link id to its output and input node.
     std::map<uint32_t, std::pair<uint32_t, uint32_t>> m_links;
     DeviceUses m_uses;
-    bool m_connected = false;
     bool m_iterating = false;
     bool m_updatePending = false;
     bool m_failurePending = false;

@@ -321,11 +321,6 @@ void DockIcon::setIconRect(const ui::RectF &rect)
     requestPaint();
 }
 
-void DockIcon::setIconSize(double size)
-{
-    setIconRect({m_iconRect.x, m_iconRect.y, size, size});
-}
-
 void DockIcon::setPresentation(double scale, double opacity, bool leading)
 {
     if (scale == m_scale && opacity == m_opacity && leading == m_leading)

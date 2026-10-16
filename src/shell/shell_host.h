@@ -39,7 +39,6 @@ public:
     // The shell window hosting `window`, a toplevel's or a popup's.
     ShellWindow *windowFor(const ui::EmbeddedWindow *window) const;
     ShellDrag *drag() const { return m_drag.get(); }
-    ShellTextInput *textInput() const { return m_textInput.get(); }
 
     // Called by ShellWindow; not part of the public API.
     void windowDestroying(ShellWindow *window);

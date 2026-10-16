@@ -38,7 +38,6 @@ public:
     void add(double timeMs, double position);
     void clear() { m_samples.clear(); }
     bool empty() const { return m_samples.empty(); }
-    const Sample &newest() const { return m_samples.back(); }
 
     // Moves every position by `by`, as when what the positions count from moves.
     void shift(double by);

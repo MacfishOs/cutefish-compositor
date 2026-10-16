@@ -66,7 +66,6 @@ public:
     // The panel's toolkit window, made with the controller on the first
     // refresh with an output.
     ui::EmbeddedWindow *window() const { return m_window.get(); }
-    AuthScreen *screen() const { return m_screen; }
     // The view that has the keyboard, for tests.
     ui::View *focusView() const;
 
@@ -102,8 +101,6 @@ public:
     render::Texture *panelTexture(render::Renderer &renderer);
     void releaseRenderResources();
     void refresh();
-    // Seconds since the epoch the clock shows instead of the time, for tests.
-    void setClockForTesting(std::time_t now);
     // The cursor the session shows while it is blocked.
     base::Signal<input::CursorShape> cursorShapeChanged;
 
@@ -137,7 +134,6 @@ private:
     AuthScreen *m_screen = nullptr;
     // The cursor the panel's views ask for, shown while the session is blocked.
     input::CursorShape m_viewCursor = input::CursorShape::Default;
-    std::optional<std::time_t> m_clockForTesting;
     double m_scale = 1;
     bool m_sized = false;
     scene::Node *m_node = nullptr;

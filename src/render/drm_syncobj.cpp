@@ -92,24 +92,13 @@ bool DrmSyncobj::isMaterialized(uint64_t point) const
         == 0;
 }
 
-SyncFence DrmSyncobj::exportFence(uint64_t point, int waitMs) const
+SyncFence DrmSyncobj::exportFence(uint64_t point) const
 {
     if (!m_handle)
         return SyncFence();
 
-    if (waitMs <= 0 && !isMaterialized(point))
+    if (!isMaterialized(point))
         return SyncFence();
-
-    if (waitMs > 0) {
-        uint32_t handle = m_handle;
-        uint64_t value = point;
-        const int64_t timeout = static_cast<int64_t>(waitMs) * 1000000;
-        if (drmSyncobjTimelineWait(m_drmFd, &handle, &value, 1, timeout,
-                                   DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE, nullptr)
-            != 0) {
-            return SyncFence();
-        }
-    }
 
     ScopedSyncobj binary(m_drmFd);
     if (!binary.isValid())

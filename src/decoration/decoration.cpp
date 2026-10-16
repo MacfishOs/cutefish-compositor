@@ -85,11 +85,6 @@ bool Decoration::isActive() const
     return m_window && m_window->isActive();
 }
 
-bool Decoration::hasRoundedCorners() const
-{
-    return m_window && wm::isRoundedStateType(m_window->decoratedStateType());
-}
-
 std::string Decoration::title() const
 {
     // The window's title is the only copy; this reads it.

@@ -136,7 +136,6 @@ public:
     base::Rect selection() const { return m_selection; }
     base::Rect hoveredWindow() const { return m_picked.geometry; }
     double hoveredWindowRadius() const { return m_picked.radius; }
-    PickedKind pickedKind() const { return m_picked.kind; }
     // The output the toolbar is on, and where on it the toolbar goes when it
     // was never moved.
     std::string toolbarOutput() const;
@@ -165,8 +164,6 @@ public:
     // Options > Other Location.
     void chooseFolder();
 
-    // Something the overlays show changed.
-    base::Signal<> changed;
     base::Signal<> recordingChanged;
     // Tests: where a saved picture went, or why it did not.
     std::function<void(const std::vector<std::string> &paths)> onSaved;
@@ -176,8 +173,6 @@ public:
     struct SavingNames;
 
 private:
-    friend class ScreenCaptureTest;
-
     enum class Style {
         Toolbar,
         Selection,

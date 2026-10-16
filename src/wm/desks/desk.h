@@ -47,9 +47,6 @@ public:
 
     bool isActive() const { return m_active; }
 
-    bool isBeingRemoved() const { return m_beingRemoved; }
-    void setBeingRemoved(bool removed) { m_beingRemoved = removed; }
-
     // Shows this desk's windows. With `updateWindowActivation`, the one most
     // recently used before the user left the desk becomes active again.
     void activate(bool updateWindowActivation);
@@ -63,7 +60,7 @@ public:
     void moveWindowsToDesk(Desk *target);
 
     // Moves the transient tree of `window`, which must be on this desk.
-    void moveWindowToDesk(Window *window, Desk *target, bool unminimize);
+    void moveWindowToDesk(Window *window, Desk *target);
 
 private:
     friend class DesksController;
@@ -77,7 +74,6 @@ private:
     std::string m_name;
     bool m_nameSetByUser = false;
     bool m_active = false;
-    bool m_beingRemoved = false;
 };
 
 } // namespace cutefish::wm

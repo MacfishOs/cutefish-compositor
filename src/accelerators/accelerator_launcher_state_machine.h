@@ -46,8 +46,6 @@ public:
 
     LauncherState currentState() const { return m_state; }
 
-    void setCanHandleLauncherForTesting(bool canHandle);
-
 private:
     LauncherState m_state = LauncherState::Start;
     std::function<bool()> m_anyKeysPressed;

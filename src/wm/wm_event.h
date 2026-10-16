@@ -52,12 +52,6 @@ public:
 
     WMEventType type() const { return m_type; }
 
-    // A direct request for one specific state.
-    bool isTransitionEvent() const;
-    // Resolves to a state only once the current state is known.
-    bool isCompoundEvent() const;
-    bool isBoundsEvent() const;
-
 private:
     WMEventType m_type;
 };

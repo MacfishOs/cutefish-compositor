@@ -109,8 +109,7 @@ private:
 class DeskRemovalAnimation : public DeskAnimationBase
 {
 public:
-    DeskRemovalAnimation(DesksController *controller, int deskToRemove, int deskToActivate,
-                         DesksCreationRemovalSource source);
+    DeskRemovalAnimation(DesksController *controller, int deskToRemove, int deskToActivate);
 
 protected:
     bool startNode() override;
@@ -119,7 +118,6 @@ protected:
 
 private:
     const int m_deskToRemove;
-    const DesksCreationRemovalSource m_source;
 };
 
 } // namespace cutefish::wm

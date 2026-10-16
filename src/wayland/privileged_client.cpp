@@ -67,12 +67,6 @@ void PrivilegedClients::addPrivateGlobal(wl_global *global)
     }
 }
 
-void PrivilegedClients::removePrivateGlobal(wl_global *global)
-{
-    m_privateGlobals.erase(std::remove(m_privateGlobals.begin(), m_privateGlobals.end(), global),
-                           m_privateGlobals.end());
-}
-
 void PrivilegedClients::onConnectionDestroyed(wl_listener *listener, void *)
 {
     auto *connection = reinterpret_cast<DestroyListener *>(listener)->connection;

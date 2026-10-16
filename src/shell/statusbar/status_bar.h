@@ -46,7 +46,6 @@ public:
     // com.canonical.AppMenu.Registrar; false when one is taken.
     bool registerServices();
 
-    StatusNotifierWatcher &statusNotifierWatcher() { return m_watcher; }
     SystemTrayModel &systemTray() { return m_tray; }
     AppMenuRegistrar &appMenuRegistrar() { return m_registrar; }
     MprisManager &mpris() { return m_mpris; }

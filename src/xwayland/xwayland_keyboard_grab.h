@@ -27,8 +27,6 @@ public:
                          wl_client* client, input::Seat* seat);
     ~XwaylandKeyboardGrab();
 
-    bool valid() const { return m_global; }
-
 private:
     static void bind(wl_client*, void*, uint32_t, uint32_t);
     wl_global* m_global = nullptr;

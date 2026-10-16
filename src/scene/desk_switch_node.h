@@ -203,7 +203,6 @@ private:
     std::set<int> m_strip;
     mutable std::map<std::string, std::map<int, std::unique_ptr<render::Texture>>> m_frames;
     std::map<std::string, std::unique_ptr<render::Texture>> m_stillFrames;
-    int m_removedDesk = -1;
     mutable int m_captureDesk = -1;
     Motion m_motion = Motion::Still;
     double m_position = 0;

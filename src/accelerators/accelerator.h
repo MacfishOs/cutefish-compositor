@@ -76,8 +76,6 @@ public:
 
     constexpr void setKeyState(KeyState state) { m_keyState = state; }
 
-    constexpr bool isEmpty() const { return m_keysym == 0 && m_modifiers == NoModifier; }
-
     constexpr bool isShiftDown() const { return m_modifiers & ShiftDown; }
 
     constexpr bool isControlDown() const { return m_modifiers & ControlDown; }

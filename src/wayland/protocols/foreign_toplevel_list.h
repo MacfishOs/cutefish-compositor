@@ -85,7 +85,6 @@ private:
     void onWindowApplicationIdChanged(wm::Window *window) override;
     void onWindowTitleChanged(wm::Window *window) override;
 
-    wl_display *m_display;
     wm::WindowManager *m_manager;
     compositor::Compositor *m_compositor;
     Authorize m_authorize;

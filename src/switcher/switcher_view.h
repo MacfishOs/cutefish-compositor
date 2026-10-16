@@ -106,7 +106,6 @@ public:
     // drawn on the GPU where the renderer allows.
     render::Texture *panelTexture(render::Renderer &renderer);
     void releaseRenderResources();
-    uint64_t imageGeneration() const { return m_imageGeneration; }
     base::Rect bounds() const { return m_bounds; }
     // The selected entry's own glass, in global logical coordinates; empty
     // with nothing selected.
@@ -140,7 +139,6 @@ private:
     std::unique_ptr<ui::EmbeddedWindow> m_window;
     std::unique_ptr<toolkit::PanelTexture> m_panelTexture;
     SwitcherContent *m_content = nullptr;
-    double m_scale = 1;
     decoration::ShadowNode *m_shadow = nullptr;
     scene::Node *m_panel = nullptr;
     base::Rect m_bounds;
@@ -150,7 +148,6 @@ private:
     int m_selected = -1;
     bool m_shown = false;
     bool m_dirty = false;
-    uint64_t m_imageGeneration = 0;
     base::Subscription m_windowAdded;
 };
 

@@ -46,7 +46,6 @@ public:
     void addPrivateGlobal(wl_global *global);
     void addRestrictedGlobal(wl_global *global, std::function<bool(const wl_client *)> authorize);
     void removeRestrictedGlobal(wl_global *global);
-    void removePrivateGlobal(wl_global *global);
 
 private:
     struct TrustedConnection;

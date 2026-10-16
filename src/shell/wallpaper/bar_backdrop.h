@@ -50,9 +50,6 @@ public:
     // keeps a contrast of 3:1 against it.
     static double relativeLuminance(double red, double green, double blue);
     static bool prefersWhite(double luminance);
-    // How much of the gradient's colour shows at `position` (0 at the top,
-    // 1 at its lower end): the gradient's stops along a smoothstep.
-    static double gradientStrength(double position);
 };
 
 } // namespace cutefish::shell

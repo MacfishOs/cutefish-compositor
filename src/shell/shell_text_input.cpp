@@ -38,9 +38,8 @@ uint32_t contentPurpose(ui::TextPurpose purpose)
 
 } // namespace
 
-ShellTextInput::ShellTextInput(Shell *shell, wayland::InputMethodRelay *relay)
+ShellTextInput::ShellTextInput(wayland::InputMethodRelay *relay)
     : wayland::TextInput(relay)
-    , m_shell(shell)
 {
     m_relay->add(this);
 }

@@ -70,7 +70,6 @@ public:
     // component goes).
     StatusBarMenuBarHost menuBarHost();
     void setMenuBar(std::unique_ptr<StatusBarMenuBar> menuBar);
-    StatusBarMenuBar *menuBar() const { return m_menuBar; }
 
     void addPanels(StatusBarPanels *panels);
     void removePanels(StatusBarPanels *panels);

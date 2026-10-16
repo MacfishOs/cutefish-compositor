@@ -59,7 +59,6 @@ public:
     bool isChecked() const { return m_checked; }
     void setTitle(std::string title);
     void setStatus(std::string status);
-    bool isPressed() const { return m_pressed; }
 
     std::function<void()> onClicked;
     std::function<void()> onPressAndHold;
@@ -97,9 +96,6 @@ public:
     void setFile(std::string file);
     // What the button sits on, for the ink of its plate.
     void setSurfaceColor(ui::Color color);
-    bool isPressed() const { return m_pressed; }
-    // Between the button's edge and its icon's.
-    double iconInset() const;
 
     std::function<void()> onClicked;
 

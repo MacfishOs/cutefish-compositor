@@ -122,11 +122,6 @@ display::DisplayManager *Shell::displayManager() const
     return windowManager()->displayManager();
 }
 
-ui::Application &Shell::application() const
-{
-    return toolkit::application();
-}
-
 const Shell::Output *Shell::output(const std::string &name) const
 {
     if (m_outputs.empty())

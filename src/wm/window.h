@@ -126,10 +126,6 @@ public:
 
     // Where the client asked to be put, in output coordinates. Authoritative
     // for a shell window; ordinary applications never set it.
-    bool hasClientPosition() const { return m_hasClientPosition; }
-
-    base::Point clientPosition() const { return m_clientPosition; }
-
     void setClientPosition(const base::Point &position);
 
     // Where a minimize animation should end: the task-list entry the shell
@@ -149,8 +145,6 @@ public:
     // shows the thumbnail there, or kMinimizeHandoffTimeoutMs pass.
     void beginMinimizeHandoff();
     void endMinimizeHandoff();
-
-    bool isMinimizeHandoffPending() const;
 
     static constexpr int kMinimizeHandoffTimeoutMs = 250;
 
@@ -479,7 +473,6 @@ private:
     uint64_t m_minimizedGeometryPanel = 0;
     ui::Bitmap m_minimizedSnapshot;
     uint64_t m_minimizeHandoff = 0;
-    bool m_hasClientPosition = false;
     CloseCallback m_closeCallback;
     PingCallback m_pingCallback;
     KillCallback m_killCallback;

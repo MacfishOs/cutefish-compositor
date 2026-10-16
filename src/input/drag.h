@@ -126,9 +126,6 @@ public:
 
     const std::shared_ptr<clipboard::DataSource>& source() const { return m_source; }
 
-    // Where the drag is, in output coordinates.
-    base::PointF location() const { return m_location; }
-
     // For the running drag only, the icon and its subsurfaces included.
     void setIconOpacity(float opacity);
 

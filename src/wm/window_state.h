@@ -66,8 +66,6 @@ public:
     // The state a Restore event would land in. Normal when there is no history.
     WindowStateType restoreStateType() const;
 
-    bool isRestoreHistoryEmpty() const { return m_restoreHistory.empty(); }
-
     // The dock slot moved: a running minimize lands on the new one.
     void updateMinimizeTarget();
 

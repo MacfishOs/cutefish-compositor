@@ -424,7 +424,6 @@ void SwitcherView::layout(const std::vector<ApplicationInfo> &entries, int selec
                                snapDown(area.y() + (area.height() - size.height()) / 2.0, step));
     m_bounds = base::Rect(position, size);
 
-    m_scale = scale;
     m_window->setScale(scale);
     m_window->setSize({double(size.width()), double(size.height())});
     m_content->setDarkMode(m_theme && m_theme->darkMode());
@@ -489,8 +488,7 @@ ui::Bitmap SwitcherView::renderImage()
         return {};
     if (m_dirty || m_panelTexture->image().isNull()) {
         m_dirty = false;
-        if (m_panelTexture->renderImage())
-            ++m_imageGeneration;
+        m_panelTexture->renderImage();
     }
     return m_panelTexture->image();
 }

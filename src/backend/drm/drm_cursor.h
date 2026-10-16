@@ -42,8 +42,6 @@ public:
     // cannot be allocated, in which case the caller composites the cursor.
     static std::unique_ptr<DrmCursor> create(DrmDeviceApi* device, uint32_t crtcId);
 
-    base::Size maxSize() const { return m_size; }
-
     // Uploads `pixels`, premultiplied ARGB32 (blue, green, red, alpha in memory).
     // Returns false when the image is larger than the plane can show; the
     // caller must then fall back to compositing it.
@@ -61,8 +59,6 @@ public:
     void move(const base::Point& position);
 
     bool isVisible() const { return m_visible; }
-
-    base::Point hotspot() const { return m_hotspot; }
 
 private:
     struct Buffer {

@@ -77,10 +77,6 @@ public:
 
     // Whether the desktop has the focus (ShellState::isDesktop).
     bool isDesktop() const { return m_desktop; }
-    ApplicationMenu &applicationMenu() { return *m_applicationMenu; }
-    // The menu the application rows come from: the application's or the
-    // desktop's; null for a bar with the name alone.
-    DBusMenu *shownMenu() const { return m_shown; }
 
     // The rows changed: the bar switched, the name changed, or the shown
     // menu gained, lost or renamed an entry.
@@ -120,6 +116,8 @@ private:
     bool m_desktopReady = false;
     std::vector<base::Subscription> m_desktopSubscriptions;
 
+    // The menu the application rows come from: the application's or the
+    // desktop's; null for a bar with the name alone.
     DBusMenu *m_shown = nullptr;
     std::vector<base::Subscription> m_shownSubscriptions;
     std::vector<Row> m_rows;

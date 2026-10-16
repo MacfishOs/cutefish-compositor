@@ -24,8 +24,6 @@ public:
                   SurfaceAssociation* association);
     ~XwaylandShell();
 
-    bool valid() const { return m_global; }
-
     void revokeClient();
 
     bool isBound() const { return m_bound; }

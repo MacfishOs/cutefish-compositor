@@ -32,7 +32,6 @@ public:
 
     double value() const { return m_value; }
     double target() const { return m_to; }
-    bool isRunning() const { return isTicking(); }
     void setDuration(std::chrono::milliseconds duration) { m_duration = duration; }
 
     void setTarget(double target, bool animate);

@@ -87,18 +87,6 @@ public:
     void connectWireless(const std::string &devicePath, const std::string &accessPointPath,
                          const std::string &name, bool wep);
 
-    // A request with no one waiting for the answer, put at the head of the
-    // queue: for rendering the prompts without NetworkManager.
-    struct Prompt {
-        Kind kind = Kind::WpaPassword;
-        std::string connectionName;
-        std::string identity;
-        bool retry = false;
-        std::vector<Field> fields;
-        std::string message;
-    };
-    void showForTesting(const Prompt &prompt);
-
     // The head of the queue changed: a prompt to show, change or close.
     base::Signal<> requestChanged;
 

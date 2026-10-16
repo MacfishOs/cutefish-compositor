@@ -74,7 +74,6 @@ public:
     static bool describe(const ClipboardPayload &payload, ClipboardEntry *entry);
     static std::string keyFor(const ClipboardPayload &payload);
 
-    const std::string &directory() const { return m_directory; }
     // The index has been read.
     bool isLoaded() const { return m_loaded; }
     const std::vector<ClipboardEntry> &entries() const { return m_entries; }
@@ -93,7 +92,6 @@ public:
 
     // The entries changed.
     base::Signal<> changed;
-    base::Signal<> loaded;
 
 private:
     void save();

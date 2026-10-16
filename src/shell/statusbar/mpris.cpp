@@ -96,21 +96,6 @@ std::string MprisPlayer::identity() const
     return stringOf(m_rootProperties, "Identity");
 }
 
-std::string MprisPlayer::desktopEntry() const
-{
-    return stringOf(m_rootProperties, "DesktopEntry");
-}
-
-bool MprisPlayer::canQuit() const
-{
-    return flagOf(m_rootProperties, "CanQuit", false);
-}
-
-bool MprisPlayer::canRaise() const
-{
-    return flagOf(m_rootProperties, "CanRaise", false);
-}
-
 MprisPlayer::PlaybackStatus MprisPlayer::playbackStatus() const
 {
     const std::string status = stringOf(m_playerProperties, "PlaybackStatus");
@@ -149,17 +134,6 @@ bool MprisPlayer::canPlay() const
 bool MprisPlayer::canPause() const
 {
     return playerFlag("CanPause");
-}
-
-bool MprisPlayer::canSeek() const
-{
-    return playerFlag("CanSeek");
-}
-
-double MprisPlayer::volume() const
-{
-    const auto it = m_playerProperties.find("Volume");
-    return it == m_playerProperties.end() ? 0.0 : it->second.value<double>();
 }
 
 std::string MprisPlayer::title() const
@@ -204,11 +178,6 @@ void MprisPlayer::playPause()
     callPlayer("PlayPause");
 }
 
-void MprisPlayer::stop()
-{
-    callPlayer("Stop");
-}
-
 void MprisPlayer::next()
 {
     callPlayer("Next");
@@ -217,18 +186,6 @@ void MprisPlayer::next()
 void MprisPlayer::previous()
 {
     callPlayer("Previous");
-}
-
-void MprisPlayer::raise()
-{
-    if (canRaise())
-        m_root.send("Raise");
-}
-
-void MprisPlayer::quit()
-{
-    if (canQuit())
-        m_root.send("Quit");
 }
 
 MprisManager::MprisManager(dbus::Connection *bus)
@@ -301,22 +258,6 @@ void MprisManager::track(const std::shared_ptr<MprisPlayer> &player)
     }));
 }
 
-void MprisManager::setCurrentService(const std::string &service)
-{
-    if (m_current && m_current->service() == service)
-        return;
-    if (!service.starts_with(kPrefix))
-        return;
-    std::shared_ptr<MprisPlayer> player = available(service);
-    if (player) {
-        std::erase(m_available, player);
-        m_available.insert(m_available.begin(), player);
-    } else {
-        player = std::make_shared<MprisPlayer>(m_bus, service);
-    }
-    setCurrent(player);
-}
-
 void MprisManager::setCurrent(std::shared_ptr<MprisPlayer> player)
 {
     if (player == m_current)
@@ -344,11 +285,10 @@ void MprisManager::appeared(const std::string &service)
 
     if (player == m_current) {
         m_available.insert(m_available.begin(), player);
-        availableServicesChanged();
         return;
     }
 
-    if (!m_singleService && m_current->playbackStatus() != MprisPlayer::PlaybackStatus::Playing) {
+    if (m_current->playbackStatus() != MprisPlayer::PlaybackStatus::Playing) {
         m_available.insert(m_available.begin(), player);
         setCurrent(player);
     } else {
@@ -356,7 +296,6 @@ void MprisManager::appeared(const std::string &service)
         if (player->playbackStatus() == MprisPlayer::PlaybackStatus::Playing)
             m_otherPlaying.push_front(player);
     }
-    availableServicesChanged();
 }
 
 void MprisManager::vanished(const std::string &service)
@@ -367,14 +306,8 @@ void MprisManager::vanished(const std::string &service)
         std::erase_if(m_subscriptions, [&player](const auto &entry) { return entry.first == player.get(); });
     }
 
-    if (m_current && m_current->service() == service) {
-        if (m_singleService) {
-            availableServicesChanged();
-            return;
-        }
+    if (m_current && m_current->service() == service)
         setCurrent(m_available.empty() ? nullptr : m_available.front());
-    }
-    availableServicesChanged();
 }
 
 void MprisManager::playbackStatusChanged(const std::string &service)
@@ -401,7 +334,7 @@ void MprisManager::playbackStatusChanged(const std::string &service)
         return;
     }
 
-    if (!m_singleService && (!m_current || m_current->playbackStatus() != MprisPlayer::PlaybackStatus::Playing)) {
+    if (!m_current || m_current->playbackStatus() != MprisPlayer::PlaybackStatus::Playing) {
         setCurrent(player);
     } else {
         std::erase(m_available, player);

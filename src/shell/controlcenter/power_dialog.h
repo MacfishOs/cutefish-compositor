@@ -9,10 +9,6 @@
 #include <memory>
 #include <string>
 
-namespace cutefish::ui {
-class DialogButton;
-}
-
 namespace cutefish::shell {
 
 class Shell;
@@ -46,8 +42,6 @@ public:
     Action action() const { return m_action; }
 
     ShellWindow *window() const { return m_window.get(); }
-    ui::DialogButton *cancelButton() const;
-    ui::DialogButton *confirmButton() const;
 
     std::function<void()> onAccepted;
     std::function<void()> onRejected;

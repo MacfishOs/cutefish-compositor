@@ -27,7 +27,6 @@ public:
                      DisplayRotation rotation);
 
     bool isValid() const;
-    base::Point logicalOrigin() const { return m_logicalOrigin; }
     base::Size nativeSize() const { return m_nativeSize; }
     base::Size rotatedNativeSize() const;
     base::Size logicalSize() const;

@@ -194,13 +194,6 @@ void AuthUi::clear()
     m_authenticated = false;
 }
 
-void AuthUi::setClockForTesting(std::time_t now)
-{
-    m_clockForTesting = now;
-    if (m_screen)
-        m_screen->setClockForTesting(now);
-}
-
 ui::View *AuthUi::focusView() const
 {
     return m_window ? m_window->focusView() : nullptr;
@@ -248,8 +241,6 @@ void AuthUi::refresh()
         m_window = std::make_unique<ui::EmbeddedWindow>();
         auto screen = std::make_unique<AuthScreen>(m_window.get(), m_controller.get());
         m_screen = screen.get();
-        if (m_clockForTesting)
-            m_screen->setClockForTesting(*m_clockForTesting);
         m_window->setContentView(std::move(screen));
         m_screen->focusPassword();
         m_panel = std::make_unique<toolkit::PanelTexture>(m_window.get());

@@ -88,8 +88,7 @@ private:
 };
 
 MenuBarView::MenuBarView(Shell *shell, StatusBarMenuBarHost host)
-    : m_shell(shell)
-    , m_host(std::move(host))
+    : m_host(std::move(host))
 {
     setName("menubar-view");
     StatusBar *statusBar = m_host.statusBar;

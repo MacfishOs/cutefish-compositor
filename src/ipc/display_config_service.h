@@ -33,7 +33,7 @@ public:
 
     DisplayConfigService(DisplayManager* manager, DisplayConfigurationController* controller,
                          base::dbus::Connection* connection,
-                         SessionActive sessionActive = [] { return true; });
+                         SessionActive sessionActive);
     ~DisplayConfigService();
 
     DisplayConfigService(const DisplayConfigService&) = delete;

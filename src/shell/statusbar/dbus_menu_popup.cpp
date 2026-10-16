@@ -18,8 +18,7 @@ struct DBusMenuPopup::State {
 };
 
 DBusMenuPopup::DBusMenuPopup(DBusMenu *menu, int32_t id)
-    : m_dbus(menu)
-    , m_id(id)
+    : m_id(id)
     , m_state(std::make_shared<State>())
     , m_menu(std::make_unique<ui::Menu>())
 {
@@ -39,13 +38,6 @@ DBusMenuPopup::~DBusMenuPopup()
 void DBusMenuPopup::detach()
 {
     m_state->dbus = nullptr;
-    m_dbus = nullptr;
-}
-
-bool DBusMenuPopup::isLoaded() const
-{
-    const DBusMenuItem *item = m_dbus ? m_dbus->item(m_id) : nullptr;
-    return item && item->childrenLoaded;
 }
 
 std::string DBusMenuPopup::plainLabel(const std::string &label)

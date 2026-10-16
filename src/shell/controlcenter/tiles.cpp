@@ -210,11 +210,6 @@ void IconButton::setSurfaceColor(ui::Color color)
     requestPaint();
 }
 
-double IconButton::iconInset() const
-{
-    return (geometry().height - geometry().height * 0.75) / 2;
-}
-
 void IconButton::layout()
 {
     const double size = geometry().height * 0.75;

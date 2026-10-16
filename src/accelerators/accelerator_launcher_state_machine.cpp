@@ -86,9 +86,4 @@ void AcceleratorLauncherStateMachine::onPointerButton(bool pressed)
     }
 }
 
-void AcceleratorLauncherStateMachine::setCanHandleLauncherForTesting(bool canHandle)
-{
-    m_state = canHandle ? LauncherState::Trigger : LauncherState::Start;
-}
-
 } // namespace cutefish::accelerators

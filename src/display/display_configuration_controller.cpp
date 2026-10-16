@@ -340,11 +340,6 @@ std::string DisplayConfigurationController::previewToken() const
     return m_preview ? m_preview->token : std::string();
 }
 
-std::string DisplayConfigurationController::previewOwner() const
-{
-    return m_preview ? m_preview->owner : std::string();
-}
-
 AppliedConfiguration
 DisplayConfigurationController::makeApplied(const HardwareSnapshot &hardware,
                                             const DisplayConfigurationValidator::Result &validated,

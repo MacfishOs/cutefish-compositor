@@ -37,30 +37,6 @@ DemoController::DemoController(WindowManager* manager, input::InputManager* inpu
 
 DemoController::~DemoController() = default;
 
-void DemoController::adoptNewSurfaces()
-{
-    compositor::Compositor* compositor = m_manager->compositor();
-    if (!compositor)
-        return;
-
-    for (compositor::Surface* surface : compositor->surfaces()) {
-        // Subsurfaces belong to their parent's window, and a surface with a
-        // role (the pointer cursor) is not a window at all.
-        if (surface->parentSurface() || surface->hasRole() || !surface->isMapped())
-            continue;
-        if (m_manager->windowForSurface(surface))
-            continue;
-
-        Window* window = m_manager->createWindow(surface);
-        // xdg_toplevel.set_min_size sets this for real clients. Without it the
-        // model's 1x1 default lets an interactive resize collapse the window.
-        window->setMinimumSize(base::Size(120, 90));
-        CF_INFO(cfCompositor) << "WM demo adopted a surface as a window at"
-                             << window->bounds();
-        m_manager->activation()->activate(window);
-    }
-}
-
 Window* DemoController::target() const
 {
     return m_manager->activation()->activeWindow();

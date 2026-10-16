@@ -55,7 +55,6 @@ public:
     const std::vector<LauncherItem> &allItems() const { return m_items; }
 
     void search(const std::string &key);
-    const std::string &searchKey() const { return m_searchKey; }
     // The index in allItems() of a desktop id or path; -1.
     int findById(const std::string &id) const;
     // Applications opened outside the launcher are no longer new either.

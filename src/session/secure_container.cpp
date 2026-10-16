@@ -304,7 +304,6 @@ CoverSample SecureContainer::sample(const render::Renderer &renderer) const
 CoverSample SecureContainer::sample(double frameTime, double framePeriod) const
 {
     const double time = frameTime >= 0 ? frameTime : steadyNow();
-    m_lastSample = time;
     const double duration = transitionDuration();
     if (m_animating && !m_start) {
         // Already moving in its first frame, as window animations do.

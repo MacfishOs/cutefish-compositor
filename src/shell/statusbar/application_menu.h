@@ -53,7 +53,6 @@ public:
     DBusMenu *menu() const { return m_menu; }
 
     // Whether the desktop has the focus, which has no application to quit.
-    bool isDesktop() const { return m_desktop; }
     void setDesktop(bool desktop);
 
     // Quit, Hide and Hide Others of the application the bar names.

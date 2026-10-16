@@ -79,9 +79,7 @@ public:
 
     // Where it is, global logical, while open.
     base::Rect geometry() const { return m_geometry; }
-    ui::Window *window() const { return m_window.get(); }
     ShellWindow *shellWindow() const;
-    ui::ScrollView *scrollView() const { return m_scroll; }
     ClearButton *clearButton() const { return m_clear; }
     // The rows as the history holds them.
     // Views of the popup, there once it was first opened.
@@ -130,7 +128,6 @@ private:
     void toggleDetail(Row *row);
     void commitRemovals();
     void disarmClears(std::optional<ui::PointF> windowPoint);
-    void updateTimes();
 
     Shell *m_shell;
     NotificationHistory &m_history;
@@ -198,7 +195,6 @@ public:
     double targetY() const { return m_y.target(); }
     // As drawn now.
     double contentOpacity() const { return m_opacity.value(); }
-    double contentScale() const { return m_scale.value(); }
     double frameHeight() const { return m_frameHeight.value(); }
     double peekOpacity(int index) const { return m_peeks[index]->value(); }
 
@@ -251,7 +247,6 @@ public:
     void moveTo(double y, bool animate);
     void disarmUnless(ui::PointF windowPoint);
     PillButton *showLessButton() const { return m_showLess; }
-    ClearButton *clearButton() const { return m_clear; }
 
 protected:
     void layout() override;

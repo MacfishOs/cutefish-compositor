@@ -39,9 +39,6 @@ public:
         call->kept = true;
     }
 
-    bool isEmpty() const { return m_calls.empty(); }
-    void clear() { m_calls.clear(); }
-
 private:
     struct Call {
         base::dbus::PendingCall pending;

@@ -63,14 +63,6 @@ void BarItem::setContextMenuPressed(bool pressed)
     requestPaint();
 }
 
-void BarItem::setDown(bool down)
-{
-    if (down == m_down)
-        return;
-    m_down = down;
-    requestPaint();
-}
-
 ui::RectF BarItem::centred(const ui::SizeF &size) const
 {
     const ui::RectF bounds = localRect();
@@ -92,7 +84,7 @@ bool BarItem::isPlateShown() const
 {
     // While a panel is open, only its own item stays lit.
     const bool hovered = m_containsMouse && !m_bar->panelOpen();
-    return m_checked || m_contextMenuPressed || m_down || hovered;
+    return m_checked || m_contextMenuPressed || hovered;
 }
 
 ui::RectF BarItem::plateRect() const
@@ -112,7 +104,7 @@ ui::Color BarItem::plateColor() const
     const bool light = m_bar->lightContents();
     if (m_checked || m_contextMenuPressed)
         return light ? ui::Color {255, 255, 255, 51} : ui::Color {0, 0, 0, 26};
-    if (m_down || containsPress())
+    if (containsPress())
         return light ? ui::Color {255, 255, 255, 77} : ui::Color {0, 0, 0, 51};
     return light ? ui::Color {255, 255, 255, 51} : ui::Color {0, 0, 0, 26};
 }
@@ -180,8 +172,6 @@ void BarItem::pointerRelease(const ui::PointerEvent &event)
     m_pressed = false;
     m_doubleClicked = false;
     requestPaint();
-    if (onReleased)
-        onReleased();
     if (click && onClicked) {
         ui::PointerEvent clicked = event;
         clicked.button = m_pressedButton;
@@ -216,12 +206,11 @@ public:
 };
 
 // The icon itself: a file drawn on whole device pixels as IconItem puts
-// its pixmap, a FishUI glyph, or a theme icon.
+// its pixmap, or a FishUI glyph.
 class BarIcon::Face final : public ui::View
 {
 public:
-    void set(const std::string &file, bool tinted, const std::string &glyph, const std::string &themeIcon,
-             ui::Color color)
+    void set(const std::string &file, bool tinted, const std::string &glyph, ui::Color color)
     {
         m_file = file;
         m_tinted = tinted;
@@ -232,13 +221,6 @@ public:
             m_glyph->setIconName(glyph);
             m_glyph->setColor(color);
             m_glyph->setVisible(!glyph.empty());
-        }
-        if (!themeIcon.empty() && !m_themeIcon)
-            m_themeIcon = addChild<ui::ThemeIcon>(themeIcon, 16);
-        if (m_themeIcon) {
-            m_themeIcon->setIconName(themeIcon);
-            m_themeIcon->setColor(tinted ? std::optional<ui::Color>(color) : std::nullopt);
-            m_themeIcon->setVisible(!themeIcon.empty());
         }
         requestLayout();
         requestPaint();
@@ -251,10 +233,6 @@ protected:
         if (m_glyph) {
             m_glyph->setSize(bounds.height);
             m_glyph->setGeometry(bounds);
-        }
-        if (m_themeIcon) {
-            m_themeIcon->setSize(bounds.height);
-            m_themeIcon->setGeometry(bounds);
         }
     }
 
@@ -276,7 +254,6 @@ private:
     bool m_tinted = false;
     ui::Color m_color;
     ui::Icon *m_glyph = nullptr;
-    ui::ThemeIcon *m_themeIcon = nullptr;
 };
 
 BarIcon::BarIcon()
@@ -292,23 +269,22 @@ BarIcon::BarIcon()
 
 void BarIcon::update()
 {
-    m_face->set(m_file, m_monochrome || !m_glyph.empty(), m_glyph, m_themeIcon, m_color);
+    m_face->set(m_file, m_monochrome || !m_glyph.empty(), m_glyph, m_color);
     m_shadow->setVisible(m_dropShadow);
     if (m_dropShadow) {
         // The copy is black wherever the icon has coverage.
-        m_shadowFace->set(m_file, true, m_glyph, m_themeIcon, ui::Color {0, 0, 0, 255});
+        m_shadowFace->set(m_file, true, m_glyph, ui::Color {0, 0, 0, 255});
         m_shadow->contentChanged();
     }
 }
 
 void BarIcon::setSource(std::string file, bool monochrome)
 {
-    if (file == m_file && monochrome == m_monochrome && m_glyph.empty() && m_themeIcon.empty())
+    if (file == m_file && monochrome == m_monochrome && m_glyph.empty())
         return;
     m_file = std::move(file);
     m_monochrome = monochrome;
     m_glyph.clear();
-    m_themeIcon.clear();
     update();
 }
 
@@ -317,18 +293,7 @@ void BarIcon::setGlyph(std::string name)
     if (name == m_glyph && m_file.empty())
         return;
     m_file.clear();
-    m_themeIcon.clear();
     m_glyph = std::move(name);
-    update();
-}
-
-void BarIcon::setThemeIcon(std::string name)
-{
-    if (name == m_themeIcon && m_file.empty())
-        return;
-    m_file.clear();
-    m_glyph.clear();
-    m_themeIcon = std::move(name);
     update();
 }
 

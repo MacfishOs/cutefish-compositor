@@ -75,7 +75,6 @@ void ClipboardHistoryModel::setFilterText(const std::string &text)
     m_filterText = text;
     rebuild();
     modelReset();
-    filterTextChanged();
 }
 
 void ClipboardHistoryModel::rebuild()

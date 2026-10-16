@@ -72,7 +72,6 @@ public:
     void setBusy(bool busy);
     void setLocked(bool locked);
     void setRowEnabled(bool enabled);
-    bool isPressed() const { return m_pressed; }
 
     std::function<void()> onClicked;
 
@@ -114,7 +113,6 @@ public:
 
     // The work area's height less the margins.
     void setMaximumHeight(double height);
-    double maximumHeight() const { return m_maximumHeight; }
     // Whole logical pixels, as a window's height.
     double contentHeight() const;
     double shownBottom() const { return m_shownBottom; }
@@ -126,7 +124,6 @@ public:
     virtual void refresh() = 0;
     virtual void opened() {}
 
-    ui::Label *titleLabel() const { return m_title; }
     ui::View *settingsLink() const;
 
     // shownBottom() changed: the window's glass and input follow it.
@@ -140,7 +137,6 @@ protected:
     // header's trailing end.
     void setAccessory(ui::View *accessory);
     void setBodyVisible(bool visible);
-    bool bodyVisible() const { return m_bodyVisible; }
     // What the body needs at the body column's width.
     virtual double bodyHeight() const = 0;
     // Places the body's views below `top`, in body()'s coordinates, whose x
@@ -203,7 +199,6 @@ public:
 
     ui::Switch *wirelessSwitch() const { return m_switch; }
     const std::vector<PanelRow *> &rows() const { return m_rows; }
-    PanelRow *hotspotRow() const { return m_hotspot; }
 
 protected:
     double bodyHeight() const override;
@@ -232,7 +227,6 @@ public:
 
     void refresh() override;
 
-    LevelSlider *slider() const { return m_slider; }
     const std::vector<PanelRow *> &rows() const { return m_rows; }
 
 protected:

@@ -35,7 +35,6 @@ public:
     void invalidate(uint64_t generation) { hardwareInvalidated(generation); }
 
     void takeDisplayControl(ControlCallback callback) override { callback(true); }
-    void relinquishDisplayControl(ControlCallback callback) override { callback(true); }
     void queryHardware(QueryCallback callback) override;
     void configure(const display::DisplayConfiguration& configuration, ConfigureMode mode,
                    ConfigureCallback callback) override;

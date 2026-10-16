@@ -63,8 +63,6 @@ public:
     // The width at the current progress.
     double currentWidth() const;
 
-    bool isPointerOver() const { return m_hovered; }
-
     std::function<void()> onClicked;
     // The width follows the progress; the owner places the button again.
     std::function<void()> onWidthChanged;

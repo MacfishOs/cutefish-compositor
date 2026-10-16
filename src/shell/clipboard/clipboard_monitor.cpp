@@ -97,7 +97,6 @@ bool ClipboardMonitor::setSelection(const ClipboardPayload &payload, const std::
     }
 
     m_ownKey = key;
-    m_ownSource = source;
     return m_selection.setSource(source);
 }
 

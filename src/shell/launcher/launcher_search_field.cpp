@@ -89,11 +89,6 @@ LauncherSearchField::LauncherSearchField()
 
 LauncherSearchField::~LauncherSearchField() = default;
 
-ui::TextField *LauncherSearchField::textField() const
-{
-    return m_field;
-}
-
 const std::string &LauncherSearchField::text() const
 {
     return m_field->text();
@@ -166,16 +161,6 @@ void LauncherSearchField::updatePlaceholder()
         return;
     m_label->setVisible(visible);
     layoutPlaceholder();
-}
-
-bool LauncherSearchField::isPlaceholderLabelVisible() const
-{
-    return m_label->isVisible();
-}
-
-ui::RectF LauncherSearchField::placeholderRect() const
-{
-    return m_placeholder->geometry();
 }
 
 void LauncherSearchField::layoutPlaceholder()

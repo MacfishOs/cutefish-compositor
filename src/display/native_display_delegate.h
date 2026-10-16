@@ -42,7 +42,6 @@ public:
     NativeDisplayDelegate& operator=(const NativeDisplayDelegate&) = delete;
 
     virtual void takeDisplayControl(ControlCallback callback) = 0;
-    virtual void relinquishDisplayControl(ControlCallback callback) = 0;
     virtual void queryHardware(QueryCallback callback) = 0;
     virtual void configure(const DisplayConfiguration& configuration, ConfigureMode mode,
                            ConfigureCallback callback) = 0;

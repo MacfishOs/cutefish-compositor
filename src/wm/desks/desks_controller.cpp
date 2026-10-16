@@ -149,12 +149,12 @@ void DesksController::removeDesk(Desk *desk, DesksCreationRemovalSource source)
         // right when it is the first.
         const int current = deskIndex(desk);
         const int target = current + (current > 0 ? -1 : 1);
-        m_animation = std::make_unique<DeskRemovalAnimation>(this, current, target, source);
+        m_animation = std::make_unique<DeskRemovalAnimation>(this, current, target);
         m_animation->launch();
         return;
     }
 
-    removeDeskInternal(desk, source, /*deskSwitched=*/false);
+    removeDeskInternal(desk, /*deskSwitched=*/false);
 }
 
 void DesksController::activateDesk(Desk *desk, DesksSwitchSource source)
@@ -164,7 +164,7 @@ void DesksController::activateDesk(Desk *desk, DesksSwitchSource source)
     if (desk == m_activeDesk)
         return;
 
-    if (source == DesksSwitchSource::DeskRemoved || source == DesksSwitchSource::DeskRestored) {
+    if (source == DesksSwitchSource::DeskRestored) {
         activateDeskInternal(desk, /*updateWindowActivation=*/true);
         return;
     }
@@ -238,10 +238,9 @@ void DesksController::endSwipeAnimation(double timeMs)
         notify([](DesksObserver *observer) { observer->onChosenDeskChanged(); });
 }
 
-bool DesksController::moveWindowFromActiveDeskTo(Window *window, Desk *target,
-                                                 DesksMoveWindowFromActiveDeskSource source)
+bool DesksController::moveWindowFromActiveDeskTo(Window *window, Desk *target)
 {
-    return moveWindowFromSourceDeskTo(window, m_activeDesk, target, source);
+    return moveWindowFromSourceDeskTo(window, m_activeDesk, target);
 }
 
 void DesksController::sendToDeskAtIndex(Window *window, int index)
@@ -257,16 +256,14 @@ void DesksController::sendToDeskAtIndex(Window *window, int index)
     const bool goingLeft = index < activeDeskIndex();
     if (!belongsToActiveDesk(window)) {
         if (Desk *source = deskOf(window))
-            moveWindowFromSourceDeskTo(window, source, target,
-                                       DesksMoveWindowFromActiveDeskSource::SendToDesk);
+            moveWindowFromSourceDeskTo(window, source, target);
         return;
     }
     performWindowMoveToDeskAnimation(window, goingLeft);
-    moveWindowFromActiveDeskTo(window, target, DesksMoveWindowFromActiveDeskSource::SendToDesk);
+    moveWindowFromActiveDeskTo(window, target);
 }
 
-bool DesksController::moveWindowFromSourceDeskTo(Window *window, Desk *source, Desk *target,
-                                                 DesksMoveWindowFromActiveDeskSource)
+bool DesksController::moveWindowFromSourceDeskTo(Window *window, Desk *source, Desk *target)
 {
     if (!window || !source || !target || source == target)
         return false;
@@ -276,7 +273,7 @@ bool DesksController::moveWindowFromSourceDeskTo(Window *window, Desk *source, D
         return false;
 
     const base::AutoReset modifying(m_modifying, true);
-    source->moveWindowToDesk(root, target, /*unminimize=*/true);
+    source->moveWindowToDesk(root, target);
     return true;
 }
 
@@ -488,8 +485,7 @@ void DesksController::activateDeskInternal(Desk *desk, bool updateWindowActivati
     });
 }
 
-void DesksController::removeDeskInternal(Desk *desk, DesksCreationRemovalSource,
-                                         bool deskSwitched)
+void DesksController::removeDeskInternal(Desk *desk, bool deskSwitched)
 {
     const int index = deskIndex(desk);
     if (index < 0 || !canRemoveDesks())
@@ -499,7 +495,6 @@ void DesksController::removeDeskInternal(Desk *desk, DesksCreationRemovalSource,
     const bool wasActive = desk->isActive() || deskSwitched;
     std::unique_ptr<Desk> removed = std::move(m_desks[index]);
     m_desks.erase(m_desks.begin() + index);
-    removed->setBeingRemoved(true);
 
     if (wasActive) {
         Desk *target = m_desks[index > 0 ? index - 1 : 0].get();

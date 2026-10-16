@@ -51,9 +51,6 @@ public:
     // The password field in panel coordinates, for the blur behind it; it
     // moves with the shake.
     base::RectF fieldBounds() const;
-    // The view keys go to: the password field's input unless the user moved
-    // the focus to the typed user name.
-    ui::View *passwordInput() const;
     // Seconds since the epoch the clock shows instead of the time, for tests.
     void setClockForTesting(std::time_t now);
 

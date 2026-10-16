@@ -141,9 +141,6 @@ public:
     bool acceptsFocus() const override { return true; }
 
     CaptureToolbar *toolbar() const { return m_toolbar; }
-    bool isDragging() const { return m_dragging; }
-    ui::RectF draft() const { return m_draft; }
-    ui::PointF pointer() const { return m_pointer; }
     OutlinedLabel *coordinates() const { return m_coordinates; }
 
     // --- What the overlay's views read ---

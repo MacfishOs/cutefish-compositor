@@ -45,7 +45,6 @@ public:
     // org.freedesktop.Notifications, then com.cutefish.Notification.
     bool registerServices();
 
-    NotificationServer &server() { return m_server; }
     NotificationSettings &settings() { return m_settings; }
     NotificationHistory &history() { return m_history; }
     NotificationBanners &banners() { return m_banners; }

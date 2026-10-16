@@ -34,13 +34,11 @@ public:
     void setRange(double from, double to, double stepSize);
     // The service's value.
     void setValue(double value);
-    double value() const { return m_value; }
     // What the knob shows: the value, or the last move until it settles.
     double visualValue() const { return m_visualValue; }
     double position() const;
     // Artwork for the track's cap: the light variant in either theme.
     void setIcon(std::string file);
-    LevelTrack *track() const { return m_track; }
 
     // A wheel or touchpad turn, also from the tile around the slider.
     void wheel(const ui::ScrollEvent &event);

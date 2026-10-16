@@ -499,12 +499,6 @@ void ImageCaptureManager::failPending()
     }
 }
 
-void ImageCaptureManager::exportSource(wl_client *client, uint32_t id,
-                                       std::shared_ptr<compositor::CaptureSource> source)
-{
-    createSourceResource(client, id, m_state->authorize(client) ? std::move(source) : Source());
-}
-
 void ImageCaptureManager::setToplevelSourceResolver(ToplevelSourceResolver resolver)
 {
     m_state->toplevelSource = std::move(resolver);

@@ -81,10 +81,6 @@ public:
         return false;
     }
 
-    // Drops every cached import. Called when a device goes away while buffers
-    // it imported are still alive.
-    void dropScanoutImports() { m_imports.clear(); }
-
     // The display controller took a reference for KMS scanout, and gave it up
     // again once the buffer had left every plane. Releasing the client's
     // storage waits for the matching release, which is what stops a buffer

@@ -33,10 +33,6 @@ namespace cutefish::input {
 class Seat;
 }
 
-namespace cutefish::ui {
-class Application;
-}
-
 namespace cutefish::wayland {
 class InputMethodRelay;
 }
@@ -109,8 +105,6 @@ public:
     input::Seat *seat() const { return m_environment.seat; }
     base::dbus::Connection *bus() const { return m_environment.bus; }
     display::DisplayManager *displayManager() const;
-    // The toolkit application every shell window belongs to.
-    ui::Application &application() const;
 
     ShellInput *input() const { return m_input.get(); }
     // What the toolkit's windows ask of the compositor; popups, text input

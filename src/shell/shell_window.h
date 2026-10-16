@@ -87,7 +87,6 @@ public:
     wm::Window *wmWindow() const;
     wm::WindowRole role() const { return m_metadata.role; }
     bool isPopup() const { return m_parent != nullptr; }
-    ShellWindow *parent() const { return m_parent; }
 
     // --- What cutefish_shell_surface_v1 says, applied at once ---
 
@@ -110,7 +109,6 @@ public:
 
     // Authoritative, as a shell surface's set_position.
     void setPosition(const base::Point &position);
-    base::Point position() const { return m_position; }
     void setSize(const base::Size &size);
     base::Size size() const { return m_size; }
     void setGeometry(const base::Rect &geometry);

@@ -250,8 +250,7 @@ private:
 };
 
 NotificationCard::NotificationCard(ui::Window *window)
-    : m_window(window)
-    , m_surface(ui::Theme::current().background)
+    : m_surface(ui::Theme::current().background)
     , m_progress(std::make_unique<Tween>(window, std::chrono::milliseconds(200), outCubic))
 {
     setTracksHover(true);
@@ -408,11 +407,6 @@ ui::Color NotificationCard::controlTint(int state) const
 void NotificationCard::disarmUnless(ui::PointF windowPoint)
 {
     m_close->disarmUnless(windowPoint);
-}
-
-bool NotificationCard::isCloseArmed() const
-{
-    return m_close->isArmed();
 }
 
 std::vector<ui::RectF> NotificationCard::actionRects() const

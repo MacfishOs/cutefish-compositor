@@ -23,7 +23,7 @@ ShellHost::ShellHost(Shell *shell, wayland::InputMethodRelay *inputMethod)
     , m_drag(std::make_unique<ShellDrag>(shell))
 {
     if (inputMethod)
-        m_textInput = std::make_unique<ShellTextInput>(shell, inputMethod);
+        m_textInput = std::make_unique<ShellTextInput>(inputMethod);
     ui::EmbeddedWindow::setHost(this);
 }
 

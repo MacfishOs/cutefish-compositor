@@ -312,8 +312,6 @@ public:
         requestLayout();
     }
 
-    bool isOpen() const { return m_open; }
-
     void setOpen(bool open)
     {
         if (open == m_open)
@@ -742,8 +740,6 @@ public:
         m_go->update();
     }
 
-    bool fieldEnabled() const { return m_enabled; }
-
     ui::SizeF sizeHint() const override { return {0, 32}; }
 
 protected:
@@ -938,6 +934,7 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
     m_password = m_pod->addChild<PasswordField>(window);
     m_password->setName("password-field");
     m_password->setLayoutHints(centred(true));
+    m_password->setPlaceholder("Enter Password");
     m_error = m_pod->addChild<ErrorLabel>(window);
     m_error->setName("error");
     m_error->setLayoutHints(centred(true));
@@ -991,10 +988,6 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         m_sessions->setCurrentIndex(m_controller->sessionIndex());
         m_sessions->setMenuVisible(m_controller->canSelectSession());
     };
-    const auto promptChanged = [this] {
-        const std::string prompt = m_controller->prompt();
-        m_password->setPlaceholder(prompt.empty() ? std::string("Enter Password") : prompt);
-    };
     const auto stateChanged = [this] {
         const bool enabled = !m_controller->busy() && !m_controller->succeeded();
         m_password->setFieldEnabled(enabled);
@@ -1007,7 +1000,6 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
     m_subscriptions.push_back(m_controller->usersChanged.connect(usersChanged));
     m_subscriptions.push_back(m_controller->sessionsChanged.connect(sessionsChanged));
     m_subscriptions.push_back(m_controller->sessionChanged.connect(sessionsChanged));
-    m_subscriptions.push_back(m_controller->promptChanged.connect(promptChanged));
     m_subscriptions.push_back(m_controller->stateChanged.connect(stateChanged));
     m_subscriptions.push_back(m_controller->authenticationFailed.connect([this] {
         m_password->clear();
@@ -1017,7 +1009,6 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
     usersChanged();
     userChanged();
     sessionsChanged();
-    promptChanged();
     stateChanged();
 
     m_clockTimer.setSingleShot(true);
@@ -1058,11 +1049,6 @@ base::RectF AuthScreen::fieldBounds() const
     const ui::RectF pill = m_password->pillRect();
     const ui::PointF origin = m_password->mapToWindow({pill.x, pill.y});
     return base::RectF(origin.x, origin.y, pill.width, pill.height);
-}
-
-ui::View *AuthScreen::passwordInput() const
-{
-    return m_password->input();
 }
 
 void AuthScreen::setClockForTesting(std::time_t now)

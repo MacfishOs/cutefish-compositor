@@ -44,8 +44,6 @@ public:
     ~ScreenRecording();
 
     bool isRunning() const { return m_process != nullptr; }
-    // The first frame is in the file.
-    bool isRecording() const { return m_recording; }
     const std::string &path() const { return m_path; }
 
     // The recorder's arguments for `target`, ending with `path`.

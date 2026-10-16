@@ -122,7 +122,6 @@ public:
     ToolbarButton *optionsButton() const { return m_options; }
     ToolbarButton *actionButton() const { return m_action; }
     CaptureTooltip *tooltip() const { return m_tooltip.get(); }
-    ui::Menu *optionsMenu() const { return m_menu.get(); }
     void openOptions();
 
     // The toolbar was dragged; its rect in the overlay's coordinates.

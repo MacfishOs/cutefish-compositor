@@ -139,15 +139,6 @@ public:
             m_surface->setBufferRelease(std::make_shared<TimelineRelease>(syncobj, point));
     }
 
-    bool hasAcquirePoint() const { return m_hasAcquire; }
-    bool hasReleasePoint() const { return m_hasRelease; }
-
-    uint64_t acquirePoint() const { return m_acquirePoint; }
-    uint64_t releasePoint() const { return m_releasePoint; }
-
-    const std::shared_ptr<render::DrmSyncobj>& acquireSyncobj() const { return m_acquireSyncobj; }
-    const std::shared_ptr<render::DrmSyncobj>& releaseSyncobj() const { return m_releaseSyncobj; }
-
 private:
     void validateCommit()
     {

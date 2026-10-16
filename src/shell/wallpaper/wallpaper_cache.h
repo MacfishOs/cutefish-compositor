@@ -54,8 +54,6 @@ public:
     // A finished decode in memory, or null.
     ui::Bitmap cached(const std::string &path, const base::Size &deviceSize) const;
 
-    const std::string &directory() const { return m_directory; }
-
     // The decode itself, on any thread.
     static ui::Bitmap decode(const std::string &path, const base::Size &deviceSize);
     // decode(), read from the disk cache in `directory` when an earlier

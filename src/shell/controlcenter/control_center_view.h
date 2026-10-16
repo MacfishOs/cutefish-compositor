@@ -46,7 +46,6 @@ public:
     CardItem *darkModeCard() const { return m_darkMode; }
     CardItem *doNotDisturbCard() const { return m_doNotDisturb; }
     CardItem *cameraCard() const { return m_camera; }
-    CardItem *microphoneCard() const { return m_microphone; }
     MediaTile *media() const { return m_media; }
     TileSlider *brightnessSlider() const { return m_brightness; }
     TileSlider *soundSlider() const { return m_sound; }

@@ -164,8 +164,6 @@ public:
     // The mode the client asked for, or nothing after unset_mode.
     void setRequestedDecorationMode(std::optional<DecorationMode> mode);
 
-    std::optional<DecorationMode> requestedDecorationMode() const { return m_requestedMode; }
-
     // What the compositor decided, which is what the decoration configure
     // event must carry.
     DecorationMode decorationMode() const;
@@ -238,8 +236,6 @@ public:
     // --- xdg_popup ---
 
     void grab();
-
-    bool hasGrab() const { return m_hasGrab; }
 
     // Sends xdg_popup.configure for the current bounds, followed by
     // xdg_surface.configure, and records the serial so ack_configure can find

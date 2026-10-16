@@ -231,10 +231,9 @@ void DeskActivationAnimation::prepareDeskForScreenshot(int index)
 }
 
 DeskRemovalAnimation::DeskRemovalAnimation(DesksController *controller, int deskToRemove,
-                                           int deskToActivate, DesksCreationRemovalSource source)
+                                           int deskToActivate)
     : DeskAnimationBase(controller, deskToActivate, false)
     , m_deskToRemove(deskToRemove)
-    , m_source(source)
 {
 }
 
@@ -272,10 +271,10 @@ void DeskRemovalAnimation::onDeskSwitchAnimationFinishedInternal()
         return;
     // Without the animation the ending desk was never activated.
     if (removed == m_controller->activeDesk()) {
-        m_controller->removeDeskInternal(removed, m_source, /*deskSwitched=*/false);
+        m_controller->removeDeskInternal(removed, /*deskSwitched=*/false);
         return;
     }
-    m_controller->removeDeskInternal(removed, m_source, /*deskSwitched=*/true);
+    m_controller->removeDeskInternal(removed, /*deskSwitched=*/true);
 }
 
 } // namespace cutefish::wm

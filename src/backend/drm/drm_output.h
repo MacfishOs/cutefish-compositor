@@ -229,8 +229,6 @@ public:
     // KMS state. Set before the transition's first frame, not after it.
     void setSecureScanout(bool secure);
 
-    bool isSecureScanout() const { return m_secureScanout; }
-
     // A session transition began: frames drawn before it, on screen or still on
     // their way, show where it starts and must not complete it.
     void withdrawSecurePresentation();
@@ -253,8 +251,6 @@ public:
     // The definition of "no application plane is live", in one place.
     static bool isSecureConfiguration(const std::vector<PlaneContent> &planes);
 
-    bool isDirectScanoutEnabled() const { return m_directScanoutEnabled; }
-
     // Whether this output's CRTC can tint what it shows; see
     // ScanoutController::supportsColorTransform().
     bool supportsColorTransform() const;
@@ -276,8 +272,6 @@ public:
     bool setCursorImage(const render::CursorImage &image) override;
     void hideCursor() override;
     void moveCursor(const base::PointF &position) override;
-
-    bool hasHardwareCursor() const { return m_cursor != nullptr; }
 
     // Frames whose primary plane showed a client buffer rather than the
     // composited scene.
@@ -319,9 +313,6 @@ public:
     void reportStats() const;
     // The same counters as reportStats() logs, for a debug interface to read.
     std::string statsLine() const;
-
-    // Output renders (including initial modesets), not completion events.
-    uint64_t frameCount() const { return m_frameCount; }
 
     // The frame was composed and handed to KMS, committed or queued behind a
     // pending flip: viz's DrawAndSwap, where it acks the frames it drew.

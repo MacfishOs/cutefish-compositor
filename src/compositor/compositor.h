@@ -89,8 +89,6 @@ public:
 
     // The device linux-dmabuf buffers are imported through. Null when there is
     // no GPU renderer, in which case no linux-dmabuf global is advertised.
-    render::DmaBufDevice *dmaBufDevice() const { return m_dmaBufDevice; }
-
     void setDmaBufDevice(render::DmaBufDevice *device) { m_dmaBufDevice = device; }
 
     // Takes ownership of the plane fds in `attributes` in every case, including

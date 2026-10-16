@@ -12,8 +12,6 @@
 
 #include "base/signal.h"
 
-struct wl_global;
-
 namespace cutefish {
 
 namespace compositor {
@@ -105,9 +103,9 @@ public:
     // display is destroyed.
     void shutdown();
 
-    // Spawns the input method once, with `x11Display` set when Xwayland is up so
-    // it can serve X11 clients too. Later calls are ignored.
-    void startInputMethod(const std::string &x11Display, const std::string &x11Authority);
+    // Spawns the input method once, without an X11 display. Later calls are
+    // ignored.
+    void startInputMethod();
     // Restarts a started input method with this X11 display: Xwayland started
     // on demand after it, or restarted after a crash.
     void setInputMethodX11Display(const std::string &x11Display,

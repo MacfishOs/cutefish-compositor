@@ -10,7 +10,6 @@
 
 namespace cutefish::shell {
 
-class Shell;
 class ShellWindow;
 
 // The shell's text fields on the input-method relay: one more adapter next
@@ -20,13 +19,11 @@ class ShellWindow;
 class ShellTextInput final : public wayland::TextInput
 {
 public:
-    ShellTextInput(Shell *shell, wayland::InputMethodRelay *relay);
+    explicit ShellTextInput(wayland::InputMethodRelay *relay);
     ~ShellTextInput() override;
 
     // The toolkit's textInputChanged(); null disables.
     void update(ShellWindow *window, const ui::TextInputState *state, bool fromInputMethod);
-    ShellWindow *window() const { return m_window; }
-    bool isEnabled() const { return m_window != nullptr; }
 
     void windowDestroying(ShellWindow *window);
 
@@ -38,7 +35,6 @@ public:
     void focusChanged(compositor::Surface *gained, compositor::Surface *lost) override;
 
 private:
-    Shell *m_shell;
     ShellWindow *m_window = nullptr;
 };
 

@@ -45,9 +45,6 @@ public:
     StatusNotifierItem &operator=(const StatusNotifierItem &) = delete;
 
     const std::string &id() const { return m_id; }
-    const std::string &service() const { return m_service; }
-    // The item's Id property, mostly the application's name.
-    const std::string &appId() const { return m_appId; }
     const std::string &title() const { return m_title; }
     // The tooltip's title.
     const std::string &toolTip() const { return m_toolTip; }

@@ -68,8 +68,6 @@ public:
 
     base::PointF toDevice(const base::PointF& logical) const { return logical * value(); }
 
-    base::PointF toLogical(const base::PointF& device) const { return device / value(); }
-
     base::Rect deviceCoverage(const base::RectF& logical) const
     {
         return base::RectF(toDevice(logical.topLeft()), logical.size() * value()).toEnclosingRect();

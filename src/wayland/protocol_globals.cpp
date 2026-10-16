@@ -269,15 +269,14 @@ void ProtocolGlobals::setInputMethodX11Display(const std::string &x11Display,
     m_inputMethodLauncher->restart();
 }
 
-void ProtocolGlobals::startInputMethod(const std::string &x11Display,
-                                       const std::string &x11Authority)
+void ProtocolGlobals::startInputMethod()
 {
     if (!m_deps.launchInputMethod || m_inputMethodStarted)
         return;
     m_inputMethodStarted = true;
 
     m_inputMethodLauncher->setEnvironment(
-            inputMethodEnvironment(m_deps.server->socketName(), x11Display, x11Authority));
+            inputMethodEnvironment(m_deps.server->socketName(), {}, {}));
     if (!m_deps.inputMethodOverride.empty())
         m_inputMethodSettings->overrideInputMethod(m_deps.inputMethodOverride);
     else

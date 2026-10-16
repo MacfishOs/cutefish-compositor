@@ -147,7 +147,6 @@ uint64_t OutputScheduler::begin()
     m_began = now;
     m_frame = ++m_serial;
     m_state = State::Rendering;
-    ++m_stats.renders;
     if (m_vblank) {
         // A wakeup up to kWakeupSlack short of a draw point on the vblank
         // itself still draws for the slot it was scheduled in, not the last one.
@@ -175,7 +174,6 @@ bool OutputScheduler::submitted(uint64_t frame)
                          m_fullFrame, m_frameBudget});
     m_frame = 0;
     m_failures = 0;
-    ++m_stats.submissions;
     // Outstanding demand is served in the next slot, whether or not this frame
     // has landed by then, up to the display's limit.
     m_state = State::Idle;
@@ -190,7 +188,6 @@ bool OutputScheduler::complete(uint64_t frame, std::optional<Time> presented)
         ++m_stats.staleCompletions;
         return false;
     }
-    ++m_stats.completions;
     const auto now = m_now();
     const Time landed = presented && *presented <= now ? *presented : now;
     // A queued frame waits for the flip ahead of it. Counted as a miss, that

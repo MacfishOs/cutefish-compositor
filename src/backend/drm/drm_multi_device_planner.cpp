@@ -53,8 +53,7 @@ DrmMultiDeviceCommitCoordinator::run(const std::vector<DrmDeviceTransaction> &de
     return {true, false, {}, {}};
 }
 
-CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities &capabilities,
-                                        int64_t maximumCpuCopyPixels)
+CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities &capabilities)
 {
     if (capabilities.sameDevice)
         return CrossGpuTransfer::Direct;
@@ -63,7 +62,7 @@ CrossGpuTransfer chooseCrossGpuTransfer(const CrossGpuCapabilities &capabilities
     if (capabilities.gpuCopy)
         return CrossGpuTransfer::GpuCopy;
     if (capabilities.cpuMappable && capabilities.framePixels > 0
-        && capabilities.framePixels <= maximumCpuCopyPixels)
+        && capabilities.framePixels <= kMaximumCpuCopyPixels)
         return CrossGpuTransfer::CpuCopy;
     return CrossGpuTransfer::Unavailable;
 }

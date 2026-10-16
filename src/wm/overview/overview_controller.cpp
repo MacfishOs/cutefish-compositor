@@ -836,8 +836,7 @@ void OverviewController::drop(const base::PointF &location)
     // Back to its place, unless it goes to another desk, which lays the rest
     // out without it.
     if (!desk || desk == desks->activeDesk()
-        || !desks->moveWindowFromActiveDeskTo(window, desk,
-                                              DesksMoveWindowFromActiveDeskSource::DragAndDrop)) {
+        || !desks->moveWindowFromActiveDeskTo(window, desk)) {
         rebuild(true);
     }
     setHover(hitTest(location));

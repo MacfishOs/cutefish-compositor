@@ -35,7 +35,6 @@ public:
 
     const std::string &iconName() const { return m_iconName; }
     const std::string &glyph() const { return m_glyph; }
-    const std::string &label() const { return m_label; }
 
     // 12 + content + 12, as the bar's row lays it out.
     double preferredWidth() const;
@@ -72,7 +71,6 @@ public:
     explicit ClockItem(BarContext *bar);
 
     void setText(const std::string &text);
-    const std::string &text() const;
     double preferredWidth() const;
     void updateLook();
     std::function<void()> onPreferredWidthChanged;

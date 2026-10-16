@@ -200,13 +200,6 @@ public:
     void setAcquirePoint(std::shared_ptr<render::DrmSyncobj> timeline, uint64_t point);
     void setBufferRelease(std::shared_ptr<BufferRelease> release);
 
-    bool hasPendingAcquireFence() const
-    {
-        return m_pending.acquireFence.isValid() || m_pending.acquireTimeline;
-    }
-
-    bool hasPendingBufferRelease() const { return m_pending.release != nullptr; }
-
     // Whether the most recent commit carried a non-null buffer attachment: the
     // one requested last, or inside onSurfaceCommit() the one being applied.
     // Explicit sync needs this and not hasContents(): a synchronized subsurface
@@ -228,8 +221,6 @@ public:
 
     bool isSynchronized() const;
     Surface *parentSurface() const;
-
-    SubSurface *subSurface() const { return m_subSurface; }
 
     bool isMapped() const;
     void commitSurfaceHierarchy(bool synchronized);
@@ -275,19 +266,6 @@ public:
     bool hasPendingAttachedBuffer() const;
 
     base::Region pendingDamage() const { return m_pending.damage; }
-
-    base::Region pendingBufferDamage() const { return m_pending.bufferDamage; }
-
-    int pendingBufferScale() const { return m_pending.basicState.bufferScale; }
-
-    Transform pendingBufferTransform() const { return m_pending.basicState.bufferTransform; }
-
-    base::Region pendingOpaqueRegion() const { return m_pending.basicState.opaqueRegion; }
-
-    std::optional<base::Region> pendingInputRegion() const
-    {
-        return m_pending.basicState.inputRegion;
-    }
 
     size_t pendingFrameCallbackCount() const { return m_pending.frameCallbacks.size(); }
 

@@ -36,12 +36,7 @@ public:
     DBusMenuPopup(const DBusMenuPopup &) = delete;
     DBusMenuPopup &operator=(const DBusMenuPopup &) = delete;
 
-    DBusMenu *dbusMenu() const { return m_dbus; }
-    int32_t id() const { return m_id; }
     ui::Menu &menu() { return *m_menu; }
-
-    // Whether the entry's own entries have arrived.
-    bool isLoaded() const;
 
     // The exporter is gone: nothing reaches it from here on.
     void detach();
@@ -59,7 +54,6 @@ private:
     static void fill(const std::shared_ptr<State> &state, ui::Menu &menu, int32_t id);
     static void wire(const std::shared_ptr<State> &state, ui::Menu &menu, int32_t id);
 
-    DBusMenu *m_dbus;
     int32_t m_id;
     std::shared_ptr<State> m_state;
     std::unique_ptr<ui::Menu> m_menu;

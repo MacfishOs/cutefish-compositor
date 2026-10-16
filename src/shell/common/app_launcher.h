@@ -29,10 +29,6 @@ public:
 
     explicit ApplicationLauncher(base::dbus::Connection *bus = base::dbus::Connection::session());
 
-    // An xdg_activation token for the started application, so it may take
-    // the keyboard. Unset, none is passed.
-    std::function<std::string()> activationToken;
-
     // The entry by its id, as DesktopEntry::launch() did: the runtime starts
     // it and ties it to the entry; its command is the fallback.
     void launch(const base::DesktopEntry &entry, const std::vector<std::string> &arguments = {},

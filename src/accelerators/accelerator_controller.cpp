@@ -82,11 +82,6 @@ bool AcceleratorController::process(const Accelerator &accelerator)
     return m_manager.process(accelerator);
 }
 
-bool AcceleratorController::isRegistered(const Accelerator &accelerator) const
-{
-    return m_manager.isRegistered(accelerator);
-}
-
 bool AcceleratorController::isReserved(const Accelerator &accelerator) const
 {
     const AcceleratorAction *action = m_configuration->findAcceleratorAction(accelerator);
@@ -147,12 +142,6 @@ bool AcceleratorController::acceleratorPressed(const Accelerator &accelerator)
     performAction(*action, accelerator);
     // ShouldActionConsumeKeyEvent: adding exceptions is strongly discouraged.
     return true;
-}
-
-bool AcceleratorController::isActionForAcceleratorEnabled(const Accelerator &accelerator) const
-{
-    const AcceleratorAction *action = m_configuration->findAcceleratorAction(accelerator);
-    return action && canPerformAction(*action, accelerator);
 }
 
 bool AcceleratorController::canPerformAction(AcceleratorAction action,

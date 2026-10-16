@@ -102,7 +102,6 @@ public:
     void setMuted(bool muted) override { mutedValue = muted; }
     std::vector<shell::AudioOutput> outputs() const override { return outputList; }
     void setDefaultOutput(uint32_t id) override { defaultRequested = int(id); }
-    bool batteryAvailable() const override { return true; }
     int chargePercent() const override { return 80; }
     bool onBattery() const override { return false; }
     std::string batteryStatus() const override { return "Charging paused at 80%"; }

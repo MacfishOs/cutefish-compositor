@@ -27,12 +27,7 @@ namespace cutefish::ui {
 class DropOffer;
 class Menu;
 class View;
-class Window;
 } // namespace cutefish::ui
-
-namespace cutefish::wm {
-class Window;
-}
 
 namespace cutefish::shell {
 
@@ -55,7 +50,6 @@ public:
 
     Dock &dock() { return *m_dock; }
     ShellWindow *window() const { return m_window.get(); }
-    const DockMetrics &metrics() const { return m_metrics; }
     // The panel in the window's coordinates, and on the screen.
     base::Rect panelRect() const { return m_panelRect; }
     base::Rect primaryGeometry() const;

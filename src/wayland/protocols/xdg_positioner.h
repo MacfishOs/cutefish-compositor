@@ -46,7 +46,6 @@ public:
     void setOffset(const base::Point& offset) { m_offset = offset; }
 
     base::Size size() const { return m_size; }
-    base::Rect anchorRect() const { return m_anchorRect; }
 
 private:
     // -1x-1 until set_size.

@@ -45,7 +45,6 @@ public:
     bool isSelected() const { return m_selected; }
     // Its icon and name hide while it is dragged.
     void setDragging(bool dragging);
-    bool isDragging() const { return m_dragging; }
     void setMenuOpen(bool open);
     bool isPressDimmed() const { return (m_pressed || m_menuOpen) && !m_dragging; }
     // The colour the selection is inked against.

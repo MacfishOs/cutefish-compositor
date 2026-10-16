@@ -86,8 +86,6 @@ protected:
     void setText(const std::string &text);
     void setRows(std::vector<Row> rows);
     void dismiss();
-    Frame *frame() const { return m_frame; }
-    Shell *shell() const { return m_shell; }
 
 private:
     Shell *m_shell;

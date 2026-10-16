@@ -16,7 +16,6 @@
 #include "shell/statusbar/status_bar_panels.h"
 
 namespace cutefish::ui {
-class View;
 class Window;
 } // namespace cutefish::ui
 
@@ -60,13 +59,11 @@ public:
     void setDeviceUsersSource(std::function<std::vector<DeviceUser>()> source);
     void deviceUsersChanged();
 
-    ControlCenterServices &services() const { return *m_services; }
     // While open.
     ControlCenterView *controlCenterView() const;
     StatusPanelView *statusPanel(Panel panel) const;
     ui::Window *popup(Panel panel) const;
     ShellWindow *popupWindow(Panel panel) const;
-    PowerDialog *powerDialog() const { return m_powerDialog.get(); }
 
     // Where a panel opened from `anchor` on `bar` goes, global logical.
     base::Rect panelGeometry(Panel panel, ShellWindow *bar, const base::Rect &anchor) const;

@@ -58,10 +58,8 @@ public:
     int currentIndex() const { return m_currentIndex; }
     ui::Menu *openMenu() const { return m_openMenu; }
     MenuBarModel &model() { return *m_model; }
-    size_t entryCount() const { return m_entries.size(); }
     BarItem *entry(size_t index) const;
-    // The avatar's file, or the theme's default-user picture.
-    const std::string &userIcon() const { return m_userIcon; }
+    // The avatar's file; empty takes the theme's default-user picture.
     void setUserIcon(const std::string &file);
 
 protected:
@@ -73,7 +71,6 @@ private:
     void rebuildEntries();
     void onMenuClosed();
 
-    Shell *m_shell;
     StatusBarMenuBarHost m_host;
     std::unique_ptr<MenuBarModel> m_model;
     std::unique_ptr<accounts::UserAccount> m_account;
