@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <set>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <sys/stat.h>
@@ -25,6 +26,7 @@ namespace fs = std::filesystem;
 
 static constexpr std::chrono::milliseconds kDebounce(40);
 static constexpr std::chrono::milliseconds kRetry(2000);
+static constexpr std::chrono::milliseconds kRetryLimit(60000);
 
 // Kernel interfaces, automounts and remote filesystems: looking into an
 // automount mounts it, and a hung share would block the look and its watch.
@@ -88,7 +90,9 @@ static std::vector<std::string> mountPoints(const std::string &mountTable)
 
     std::vector<std::string> points;
     for (const auto &[mountPoint, type] : mounts) {
-        if (!holdsNoTrash(type))
+        // A volume the user cannot enter, such as a service's credentials,
+        // has no trash of theirs.
+        if (!holdsNoTrash(type) && access(mountPoint.c_str(), X_OK) == 0)
             points.push_back(mountPoint);
     }
     return points;
@@ -164,11 +168,12 @@ TrashMonitor::State TrashMonitor::look(const std::string &mountTable, const std:
 TrashMonitor::TrashMonitor(std::string mountTable, std::string homeTrash)
     : m_mountTable(std::move(mountTable))
     , m_homeTrash(homeTrash.empty() ? base::paths::dataHome() + "/Trash" : std::move(homeTrash))
+    , m_retryDelay(kRetry)
 {
     m_debounce.setSingleShot(true);
     m_debounce.onTimeout = [this] { refresh(); };
-    m_retry.setSingleShot(false);
-    m_retry.onTimeout = [this] { refresh(); };
+    m_retry.setSingleShot(true);
+    m_retry.onTimeout = [this] { retryWatches(); };
 
     // Mounts and unmounts change which volumes have a trash; procfs tells
     // through POLLPRI, a test's own table cannot.
@@ -213,35 +218,71 @@ void TrashMonitor::refresh()
 void TrashMonitor::watch(const State &state)
 {
     m_watches.clear();
-    bool complete = true;
-    const auto changed = [this](const std::string &) {
-        if (!m_debounce.isActive())
-            m_debounce.start(kDebounce);
-    };
+    m_unwatched.clear();
     for (const std::string &path : state.paths) {
-        base::FileWatch watch = base::FileWatch::directory(path, changed);
-        complete &= watch.isActive();
-        m_watches.push_back(std::move(watch));
+        if (!addWatch(path, {}))
+            m_unwatched.push_back({path, {}});
     }
     for (const auto &[directory, names] : state.entries) {
         std::error_code error;
         // A trash's own folder may not be there yet; its parent tells.
         if (!fs::is_directory(directory, error))
             continue;
-        base::FileWatch watch = base::FileWatch::directory(directory, [this, names](const std::string &name) {
-            if (name.empty() || std::find(names.begin(), names.end(), name) != names.end()) {
-                if (!m_debounce.isActive())
-                    m_debounce.start(kDebounce);
-            }
-        });
-        complete &= watch.isActive();
-        m_watches.push_back(std::move(watch));
+        if (!addWatch(directory, names))
+            m_unwatched.push_back({directory, names});
     }
 
-    if (complete)
+    if (m_unwatched.empty()) {
         m_retry.stop();
-    else if (!m_retry.isActive())
-        m_retry.start(kRetry);
+        m_retryDelay = kRetry;
+    } else if (!m_retry.isActive()) {
+        m_retry.start(m_retryDelay);
+    }
+}
+
+// Watching takes read access, which the user may lack and retrying cannot
+// bring; such a directory counts as watched.
+bool TrashMonitor::addWatch(const std::string &directory, const std::vector<std::string> &names)
+{
+    if (access(directory.c_str(), R_OK) != 0)
+        return errno == EACCES;
+
+    base::FileWatch watch = base::FileWatch::directory(directory, [this, names](const std::string &name) {
+        if (names.empty() || name.empty() || std::find(names.begin(), names.end(), name) != names.end()) {
+            if (!m_debounce.isActive())
+                m_debounce.start(kDebounce);
+        }
+    });
+    if (!watch.isActive())
+        return false;
+    m_watches.push_back(std::move(watch));
+    return true;
+}
+
+void TrashMonitor::retryWatches()
+{
+    bool changed = false;
+    std::vector<Unwatched> unwatched;
+    for (Unwatched &entry : m_unwatched) {
+        std::error_code error;
+        if (!fs::is_directory(entry.directory, error) || addWatch(entry.directory, entry.names))
+            changed = true;
+        else
+            unwatched.push_back(std::move(entry));
+    }
+    m_unwatched = std::move(unwatched);
+
+    // What changed while it was not watched, or a folder gone since the
+    // look, is seen by looking again.
+    if (changed && !m_debounce.isActive())
+        m_debounce.start(kDebounce);
+
+    if (m_unwatched.empty()) {
+        m_retryDelay = kRetry;
+    } else {
+        m_retryDelay = std::min(m_retryDelay * 2, kRetryLimit);
+        m_retry.start(m_retryDelay);
+    }
 }
 
 static void callFileManager(base::dbus::Connection *bus, const std::string &method,

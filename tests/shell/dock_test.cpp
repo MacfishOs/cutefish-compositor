@@ -312,3 +312,34 @@ TEST_F(DockTest, SeesSomethingInAnyTrash)
     directory.write("Trash/files/old.txt", "x");
     EXPECT_TRUE(test::runUntil([&] { return !trash.isEmpty(); }));
 }
+
+TEST_F(DockTest, LeavesVolumesTheUserCannotRead)
+{
+    if (getuid() == 0)
+        GTEST_SKIP() << "permissions do not apply to root";
+
+    // A service's credentials, which only root may enter, and a volume the
+    // user may enter but not list, with their trash already on it.
+    const std::string uid = std::to_string(getuid());
+    const std::string locked = directory.filePath("credentials");
+    const std::string hidden = directory.filePath("hidden");
+    std::filesystem::create_directories(locked);
+    std::filesystem::create_directories(hidden + "/.Trash-" + uid + "/files");
+    directory.write("hidden/.Trash-" + uid + "/files/note.txt", "x");
+    std::filesystem::permissions(locked, std::filesystem::perms::none);
+    std::filesystem::permissions(hidden, std::filesystem::perms::owner_exec);
+    directory.write("mountinfo", "36 35 0:40 / " + locked + " ro,nosuid - ramfs none rw\n"
+                                 "37 35 98:0 / " + hidden + " rw,noatime - ext4 /dev/sda1 rw\n");
+    start();
+    shell::TrashMonitor &trash = dock->trash();
+    EXPECT_TRUE(test::runUntil([&] { return !trash.isEmpty(); }));
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_FALSE(trash.isRetrying());
+
+    std::filesystem::remove(hidden + "/.Trash-" + uid + "/files/note.txt");
+    EXPECT_TRUE(test::runUntil([&] { return trash.isEmpty(); }));
+    EXPECT_FALSE(trash.isRetrying());
+
+    std::filesystem::permissions(locked, std::filesystem::perms::owner_all);
+    std::filesystem::permissions(hidden, std::filesystem::perms::owner_all);
+}

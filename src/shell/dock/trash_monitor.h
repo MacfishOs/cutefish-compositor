@@ -5,6 +5,7 @@
 #ifndef CUTEFISH_SHELL_DOCK_TRASH_MONITOR_H_
 #define CUTEFISH_SHELL_DOCK_TRASH_MONITOR_H_
 
+#include <chrono>
 #include <map>
 #include <string>
 #include <vector>
@@ -35,6 +36,8 @@ public:
 
     // Until the first look, the trash counts as empty.
     bool isEmpty() const { return m_empty; }
+    // Whether a watch could not be added and is tried again, for tests.
+    bool isRetrying() const { return m_retry.isActive(); }
 
     // What the dock's trash does, through the session's file manager.
     static void moveToTrash(const std::vector<std::string> &paths,
@@ -55,8 +58,16 @@ public:
     static State look(const std::string &mountTable, const std::string &homeTrash);
 
 private:
+    struct Unwatched {
+        std::string directory;
+        // Empty for a trash's files/, whose every change matters.
+        std::vector<std::string> names;
+    };
+
     void refresh();
     void watch(const State &state);
+    bool addWatch(const std::string &directory, const std::vector<std::string> &names);
+    void retryWatches();
 
     std::string m_mountTable;
     std::string m_homeTrash;
@@ -66,6 +77,8 @@ private:
     base::Timer m_debounce;
     base::Timer m_retry;
     std::vector<base::FileWatch> m_watches;
+    std::vector<Unwatched> m_unwatched;
+    std::chrono::milliseconds m_retryDelay;
     int m_mountWatch = 0;
     int m_mountFd = -1;
 };
