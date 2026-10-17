@@ -6,6 +6,8 @@
 // in the one pass an output frame starts with, and shown through their
 // surfaces' textures.
 
+#include <functional>
+
 #include <gtest/gtest.h>
 
 #include "compositor/compositor.h"
@@ -18,11 +20,13 @@
 #include "scene/scene.h"
 #include "scene/surface_node.h"
 #include "shell/shell.h"
+#include "shell/shell_host.h"
 #include "shell/shell_window.h"
 #include "shell/window_renderer.h"
 #include "toolkit/toolkit_host.h"
 #include "ui/bitmap.h"
 #include "ui/embedded_window.h"
+#include "ui/frame_client.h"
 #include "ui/painter.h"
 #include "ui/view.h"
 #include "wm/window.h"
@@ -188,6 +192,69 @@ TEST_P(ShellGpuPixels, WindowsRenderOnTheGpuInOnePassAndOnlyWhatChanged)
     EXPECT_EQ(2u, shell->renderer()->lastPass().size());
     EXPECT_EQ(0xffffffffu, pixelAt(image, {390, 150}));
     EXPECT_EQ(0xffff0000u, pixelAt(image, {100, 20}));
+}
+
+TEST_P(ShellGpuPixels, APopupGrowingInItsOwnFrameShowsItsNewSizeInThatFrame)
+{
+    // Runs once on the next frame of its window.
+    class Step : public ui::FrameClient
+    {
+    public:
+        using ui::FrameClient::FrameClient;
+
+        void start() { startTicking(); }
+
+        std::function<void()> onTick;
+
+    protected:
+        void tick(uint64_t) override
+        {
+            stopTicking();
+            onTick();
+        }
+    };
+
+    shell::ShellWindow panel(shell.get(), wm::WindowRole::Panel);
+    panel.setContentView(std::make_unique<Fill>(ui::Color::rgb(0xff0000)));
+    panel.setGeometry(base::Rect(0, 0, 400, 20));
+    panel.show();
+    ui::PopupPlacement placement;
+    placement.anchorRect = {100, 20, 1, 1};
+    placement.anchor = ui::PopupAnchor::TopLeft;
+    placement.gravity = ui::PopupAnchor::BottomRight;
+    placement.flipX = placement.flipY = placement.slide = false;
+    std::unique_ptr<ui::Window> popup = ui::Window::createPopup(panel.window(), placement, false);
+    auto content = std::make_unique<Fill>(ui::Color::rgb(0x0000ff));
+    Fill *fill = content.get();
+    popup->setContentView(std::move(content));
+    popup->resize({100, 40});
+    popup->show();
+    shell::ShellWindow *window = shell->host()->windowFor(static_cast<ui::EmbeddedWindow *>(popup.get()));
+    ASSERT_NE(nullptr, window);
+    window->setBackgroundBlur(base::Rect(0, 0, 100, 40), 8);
+    ui::Bitmap image = frame();
+    EXPECT_TRUE(window->lastFrameOnGpu());
+    EXPECT_EQ(0xff0000ffu, pixelAt(image, {150, 50}));
+    EXPECT_EQ(0u, pixelAt(image, {150, 90}));
+
+    // Its own animation grows it, recolours it and moves its glass, as a
+    // status panel's height does: all of it in this frame, drawn once.
+    Step step(popup.get());
+    step.onTick = [&] {
+        popup->resize({100, 80});
+        fill->setColor(ui::Color::rgb(0x00ff00));
+        window->setBackgroundBlur(base::Rect(0, 0, 100, 80), 8);
+    };
+    step.start();
+    image = frame();
+    EXPECT_TRUE(window->lastFrameOnGpu());
+    EXPECT_EQ(base::Rect(100, 20, 100, 80), window->geometry());
+    EXPECT_EQ(base::Size(base::roundToInt(100 * scale()), base::roundToInt(80 * scale())),
+              window->surface()->node()->texture()->size());
+    EXPECT_EQ(base::Rect(0, 0, 100, 80), window->surface()->backgroundBlurRect());
+    EXPECT_EQ(0xff00ff00u, pixelAt(image, {150, 30}));
+    EXPECT_EQ(0xff00ff00u, pixelAt(image, {150, 90}));
+    popup.reset();
 }
 
 INSTANTIATE_TEST_SUITE_P(Scales, ShellGpuPixels, testing::Values(1.0, 1.5));

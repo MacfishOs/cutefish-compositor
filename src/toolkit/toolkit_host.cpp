@@ -209,8 +209,14 @@ std::shared_ptr<render::Texture> PanelTexture::sharedTexture(render::Renderer &r
 
 std::shared_ptr<render::Texture> PanelTexture::gpuTexture(render::Renderer &renderer, bool dirty)
 {
+    if (&renderer == m_cpuRenderer || !gpuHost().allowed)
+        return nullptr;
+    // The frame's animations may resize the window: the texture takes the
+    // size they leave.
+    if (dirty || !m_gpuCurrent)
+        m_window->beginFrame(m_frameTimeNs);
     const base::Size size(m_window->pixelWidth(), m_window->pixelHeight());
-    if (size.isEmpty() || &renderer == m_cpuRenderer || !gpuHost().allowed)
+    if (size.isEmpty())
         return nullptr;
     auto *texture = dynamic_cast<render::GlTexture *>(m_gpuTexture.get());
     if (!texture || m_gpuTexture->size() != size) {
