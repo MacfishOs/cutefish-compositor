@@ -8,6 +8,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <ctime>
+#include <thread>
 
 #include <linux/input-event-codes.h>
 
@@ -38,6 +40,7 @@
 #include "statusbar_fakes.h"
 #include "temporary_directory.h"
 #include "ui/bitmap.h"
+#include "ui/embedded_window.h"
 #include "ui/menu.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -224,6 +227,24 @@ TEST_F(StatusBarViewTest, ItemsAbutTheEdgeAndEachOther)
     EXPECT_FALSE(bar->networkIcon()->isVisible());
     // The battery shows when the system has one.
     EXPECT_EQ(bar->statusBar().battery().isAvailable(), bar->batteryIcon()->isVisible());
+}
+
+TEST_F(StatusBarViewTest, AnUnchangedClockDrawsNoFrame)
+{
+    // Not across a minute's end.
+    if (std::time(nullptr) % 60 >= 58)
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    bar->updateClock();
+    frame();
+
+    const ui::FrameStatistics &statistics = bar->window()->window()->frameStatistics();
+    const uint64_t rendered = statistics.rendered;
+    bar->updateClock();
+    frame();
+    EXPECT_EQ(rendered, statistics.rendered);
+
+    move(onScreen(bar->clock()).x + 20, 16);
+    EXPECT_GT(statistics.rendered, rendered);
 }
 
 TEST_F(StatusBarViewTest, IndicatorsPickTheIcons)

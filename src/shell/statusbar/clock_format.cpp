@@ -111,6 +111,18 @@ std::string toLocaleFormat(const std::string &icuPattern)
     return result;
 }
 
+bool showsSeconds(const std::string &format)
+{
+    bool quoted = false;
+    for (const char c : format) {
+        if (c == '\'')
+            quoted = !quoted;
+        else if (!quoted && c == 's')
+            return true;
+    }
+    return false;
+}
+
 std::string pattern(const std::string &localeName, bool twentyFourHour)
 {
     const std::string name = base::Locale(localeName).name();

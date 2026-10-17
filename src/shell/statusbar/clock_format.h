@@ -18,6 +18,9 @@ std::string pattern(const std::string &localeName, bool twentyFourHour);
 // From a CLDR (ICU) pattern; empty when it has a field that format cannot show.
 std::string toLocaleFormat(const std::string &icuPattern);
 
+// A base::Locale::toString format with a seconds field outside its quotes.
+bool showsSeconds(const std::string &format);
+
 } // namespace cutefish::shell::clock_format
 
 #endif // CUTEFISH_SHELL_STATUSBAR_CLOCK_FORMAT_H_

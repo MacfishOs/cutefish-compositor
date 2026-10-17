@@ -9,10 +9,15 @@
 #include <cmath>
 #include <ctime>
 
+#include <sys/epoll.h>
+#include <sys/timerfd.h>
+#include <unistd.h>
+
 #include "base/dbus.h"
 #include "base/locale.h"
 #include "core/main_loop.h"
 #include "shell/shell_window.h"
+#include "shell/statusbar/clock_format.h"
 #include "shell/statusbar/status_bar.h"
 #include "shell/statusbar/device_usage.h"
 #include "shell/statusbar/status_bar_backdrop.h"
@@ -79,7 +84,6 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
     : m_shell(shell)
     , m_statusBar(std::move(statusBar))
     , m_backdrop(std::make_unique<StatusBarBackdrop>())
-    , m_clockTimer(core::mainLoop())
 {
     base::dbus::Connection *bus = m_shell->bus();
     m_vpnNotifier = std::make_unique<VpnNotifier>(bus);
@@ -150,14 +154,17 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
 
     m_window->setContentView(std::move(root));
 
-    // The clock, once a second, in the primary language's words.
-    m_clockTimer.setInterval(std::chrono::milliseconds(1000));
-    m_clockTimer.onTimeout = [this] { updateClock(); };
-    m_clockTimer.start();
-    m_subscriptions.push_back(m_statusBar->timeFormatChanged.connect([this] {
-        updateClock();
-        m_clockTimer.start();
-    }));
+    // The clock, in the primary language's words.
+    m_clockFd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC | TFD_NONBLOCK);
+    if (m_clockFd >= 0) {
+        m_clockWatch = core::mainLoop()->watch(m_clockFd, EPOLLIN, [this](uint32_t) {
+            uint64_t expirations = 0;
+            // Fails with ECANCELED when the system time was set.
+            [[maybe_unused]] const ssize_t size = read(m_clockFd, &expirations, sizeof(expirations));
+            updateClock();
+        });
+    }
+    m_subscriptions.push_back(m_statusBar->timeFormatChanged.connect([this] { updateClock(); }));
 
     Battery &battery = m_statusBar->battery();
     m_subscriptions.push_back(battery.changed.connect([this] { updateBattery(); }));
@@ -186,6 +193,10 @@ StatusBarWindow::~StatusBarWindow()
     m_deviceUsageChanged.reset();
     m_backdrop->follow(nullptr);
     m_window.reset();
+    if (m_clockWatch)
+        core::mainLoop()->unwatch(m_clockWatch);
+    if (m_clockFd >= 0)
+        close(m_clockFd);
 }
 
 void StatusBarWindow::updateGeometry()
@@ -338,7 +349,19 @@ void StatusBarWindow::updateClock()
     const int64_t seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     const base::Locale locale(m_statusBar->timeLocale());
     m_clock->setText(locale.toString(base::DateTime::fromSecondsSinceEpoch(seconds), m_statusBar->timeFormat()));
-    layoutRow();
+    armClock();
+}
+
+void StatusBarWindow::armClock()
+{
+    if (m_clockFd < 0)
+        return;
+    timespec now {};
+    clock_gettime(CLOCK_REALTIME, &now);
+    const time_t period = clock_format::showsSeconds(m_statusBar->timeFormat()) ? 1 : 60;
+    itimerspec spec {};
+    spec.it_value.tv_sec = (now.tv_sec / period + 1) * period;
+    timerfd_settime(m_clockFd, TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET, &spec, nullptr);
 }
 
 void StatusBarWindow::addPanels(StatusBarPanels *panels)

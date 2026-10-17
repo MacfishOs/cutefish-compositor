@@ -452,6 +452,12 @@ TEST(ClockFormatTest, FollowsTheLocalesOrderWithoutCommas)
               "1:40");
     EXPECT_EQ(shell::clock_format::toLocaleFormat("d 'de' MMMM"), "d' de 'MMMM");
     EXPECT_EQ(shell::clock_format::toLocaleFormat("G y"), "");
+
+    EXPECT_FALSE(shell::clock_format::showsSeconds(shell::clock_format::pattern("en_US", false)));
+    EXPECT_FALSE(shell::clock_format::showsSeconds("H:mm' Uhr 'ddd"));
+    EXPECT_FALSE(shell::clock_format::showsSeconds("H:mm' secs'"));
+    EXPECT_TRUE(shell::clock_format::showsSeconds("H:mm:ss"));
+    EXPECT_TRUE(shell::clock_format::showsSeconds("'a''b' s"));
 }
 
 TEST(BatteryTest, PicksTheIconForTheLevel)

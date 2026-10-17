@@ -12,7 +12,6 @@
 
 #include "base/geometry.h"
 #include "base/signal.h"
-#include "base/timer.h"
 #include "shell/shell.h"
 #include "shell/statusbar/bar_item.h"
 #include "shell/statusbar/status_bar_menu_bar.h"
@@ -108,6 +107,7 @@ private:
     void updateIndicators();
     void updateBattery();
     void layoutRow();
+    void armClock();
     StatusBarPanels *panelsFor(StatusBarPanels::Panel panel) const;
     BarItem *itemFor(StatusBarPanels::Panel panel) const;
     void updateChecked();
@@ -136,7 +136,10 @@ private:
     std::vector<base::Subscription> m_panelSubscriptions;
     StatusBarIndicators *m_indicators = nullptr;
     base::Subscription m_indicatorsChanged;
-    base::Timer m_clockTimer;
+    // A wall-clock timerfd: it fires on the minute (or second) the clock
+    // shows next, after a suspend, and whenever the system time is set.
+    int m_clockFd = -1;
+    int m_clockWatch = 0;
     bool m_lightContents = false;
     std::vector<base::Subscription> m_subscriptions;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
