@@ -289,6 +289,27 @@ TEST_F(ShellComponentsTest, TheOsdShowsTopCentreBelowTheBarAndGoes)
     EXPECT_EQ(nullptr, osd->window()->wmWindow());
 }
 
+TEST_F(ShellComponentsTest, TheOsdVolumeUpKeepsAVolumeAboveNormal)
+{
+    auto levels = std::make_unique<FakeLevels>();
+    FakeLevels *values = levels.get();
+    values->m_volume = 1.5;
+    auto *osd = shell->addComponent(std::make_unique<shell::Osd>(shell.get(), std::move(levels)));
+
+    osd->volumeUp();
+    EXPECT_NEAR(1.5, values->m_volume, 1e-9);
+    EXPECT_EQ(1, osd->track()->position());
+
+    // Down still steps from where it is.
+    osd->volumeDown();
+    EXPECT_NEAR(1.48, values->m_volume, 1e-9);
+
+    values->m_volume = 0.98;
+    test::runFor(std::chrono::milliseconds(1700));
+    osd->volumeUp();
+    EXPECT_NEAR(1.0, values->m_volume, 1e-9);
+}
+
 TEST_F(ShellComponentsTest, TheOsdServesComCutefishOsd)
 {
     auto levels = std::make_unique<FakeLevels>();

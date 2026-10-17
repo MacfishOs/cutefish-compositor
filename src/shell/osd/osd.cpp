@@ -241,7 +241,11 @@ void Osd::volumeUp()
         m_pendingMuted = 0;
         m_levels->setMuted(false);
     }
-    m_pendingVolume = std::min(kNormalVolume, (std::round(volume() / kVolumeStep) + 1) * kVolumeStep);
+    // Another application can raise it past the normal volume; up never
+    // lowers it.
+    const double current = volume();
+    m_pendingVolume = std::max(current,
+                               std::min(kNormalVolume, (std::round(current / kVolumeStep) + 1) * kVolumeStep));
     settle();
     m_levels->setVolume(m_pendingVolume);
     present(Kind::Volume);
