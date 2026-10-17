@@ -251,6 +251,9 @@ void LibinputBackend::setActive(bool active)
         dispatch();
     } else {
         libinput_suspend(m_libinput);
+        // Suspending queues the releases of whatever the devices still hold;
+        // left queued, clients repeat a held key until the session returns.
+        dispatch();
     }
 }
 
