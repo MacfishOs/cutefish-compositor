@@ -19,6 +19,7 @@
 #define CUTEFISH_INPUT_KEYBOARD_H_
 
 #include <memory>
+#include <set>
 
 #include "compositor/surface_observer.h"
 #include "input/keyboard_delegate.h"
@@ -64,6 +65,10 @@ private:
     compositor::Surface* m_focus = nullptr;
     // Another client borrows the keys; `m_focus` keeps focus without a leave.
     bool m_lent = false;
+    // Keys held when the borrow ended, pressed while it lasted: the borrower
+    // had their press, which may be what ended it, so neither the press nor
+    // the release reaches this client.
+    std::set<uint32_t> m_borrowedKeys;
 
     // Keys pressed as of the moment focus was taken, plus everything pressed
     // since. Exo keeps this separate from the seat's set so that a key pressed

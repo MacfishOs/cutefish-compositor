@@ -44,6 +44,7 @@ Keyboard::~Keyboard()
 void Keyboard::setFocus(compositor::Surface* surface)
 {
     m_lent = false;
+    m_borrowedKeys.clear();
     if (m_focus) {
         m_delegate->onKeyboardLeave(m_focus);
         m_focus->removeSurfaceObserver(this);
@@ -69,10 +70,14 @@ void Keyboard::onSurfaceFocused(compositor::Surface* gainedFocus, compositor::Su
         m_lent = true;
         return;
     }
-    if (target != m_focus)
+    if (target != m_focus) {
         setFocus(target);
-    else
-        m_lent = false;
+    } else if (std::exchange(m_lent, false)) {
+        for (const auto& [code, state] : m_seat->clientPressedKeys()) {
+            if (!m_pressedKeys.contains(code))
+                m_borrowedKeys.insert(code);
+        }
+    }
 }
 
 void Keyboard::onKeyboardModifierUpdated()
@@ -114,6 +119,8 @@ void Keyboard::onKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
         return;
 
     if (pressed) {
+        if (m_borrowedKeys.contains(evdevCode))
+            return;
         // A lent keyboard still gets the releases and modifiers of what it
         // holds, so nothing stays stuck, and no new presses.
         if (m_lent)
@@ -125,6 +132,8 @@ void Keyboard::onKey(Timestamp timestamp, uint32_t evdevCode, bool pressed)
         m_delegate->onKeyboardKey(timestamp, evdevCode, true);
         m_pressedKeys.emplace(evdevCode, KeyState {evdevCode});
     } else {
+        if (m_borrowedKeys.erase(evdevCode))
+            return;
         auto it = m_pressedKeys.find(evdevCode);
         // Only release what this surface was told about. A key pressed before
         // it had focus is in the set because enter carried it; a key it never

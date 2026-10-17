@@ -7,6 +7,7 @@
 // Revision: 7acd40ddefff49c9d36144999aafdbb674dbd07a
 
 #include <algorithm>
+#include <functional>
 #include <gtest/gtest.h>
 #include <linux/input-event-codes.h>
 #include <string>
@@ -137,6 +138,7 @@ public:
     uint32_t nextSerial = 1;
 
     std::vector<compositor::Surface*> acceptable;
+    std::function<void(uint32_t, bool)> onKey;
 
     bool canAcceptKeyboardEventsForSurface(compositor::Surface* surface) const override
     {
@@ -162,6 +164,8 @@ public:
     {
         calls.push_back("key");
         keys.push_back({evdevCode, pressed});
+        if (onKey)
+            onKey(evdevCode, pressed);
         return nextSerial++;
     }
 
@@ -960,6 +964,43 @@ TEST_F(InputTest, ABorrowedFocusLeavesTheOtherClientFocusedWithoutNewKeys)
     seat.onKey(at(5), KEY_A, true);
     ASSERT_EQ(2u, appKeys->keys.size());
     EXPECT_EQ(KEY_A, appKeys->keys[1].code);
+}
+
+TEST_F(InputTest, TheKeyThatEndsABorrowStaysWithTheBorrower)
+{
+    auto app = compositor.createSurface();
+    auto capture = compositor.createSurface();
+    map(app.get(), base::Point(0, 0), base::Size(100, 100));
+    map(capture.get(), base::Point(0, 0), base::Size(800, 600));
+
+    // The borrower's keyboard comes first, so the seat reaches the other
+    // client after the borrow has already ended.
+    auto captureDelegate = std::make_unique<FakeKeyboardDelegate>();
+    FakeKeyboardDelegate* captureKeys = captureDelegate.get();
+    captureKeys->acceptable = {capture.get()};
+    Keyboard captureKeyboard(std::move(captureDelegate), &seat);
+    auto appDelegate = std::make_unique<FakeKeyboardDelegate>();
+    FakeKeyboardDelegate* appKeys = appDelegate.get();
+    appKeys->acceptable = {app.get()};
+    Keyboard appKeyboard(std::move(appDelegate), &seat);
+
+    seat.setFocusedSurface(app.get());
+    seat.setFocusedSurface(capture.get(), true);
+    captureKeys->onKey = [&](uint32_t code, bool pressed) {
+        if (code == KEY_ESC && pressed)
+            seat.setFocusedSurface(app.get());
+    };
+
+    seat.onKey(at(1), KEY_ESC, true);
+    EXPECT_EQ(app.get(), appKeyboard.focusedSurface());
+    EXPECT_TRUE(appKeys->keys.empty());
+    seat.onKey(at(2), KEY_ESC, false);
+    EXPECT_TRUE(appKeys->keys.empty());
+
+    seat.onKey(at(3), KEY_ESC, true);
+    ASSERT_EQ(1u, appKeys->keys.size());
+    EXPECT_EQ(KEY_ESC, appKeys->keys[0].code);
+    EXPECT_TRUE(appKeys->keys[0].pressed);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
