@@ -54,10 +54,11 @@ ShadowElevation ShadowController::elevationForWindow(const Window* window) const
 
 void ShadowController::onWindowAdded(Window* window)
 {
-    if (!window || m_shadows.count(window))
+    // Only a window with a shadow is observed: m_shadows is what the
+    // controller unregisters from again.
+    if (!window || m_shadows.count(window) || !createShadowForWindow(window))
         return;
     window->addObserver(this);
-    createShadowForWindow(window);
     handlePossibleShadowVisibilityChange(window);
 }
 

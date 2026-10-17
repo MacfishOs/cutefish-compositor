@@ -622,6 +622,22 @@ TEST_F(ShadowControllerTest, ControllerAdoptsWindowsThatAlreadyExist)
     EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
 }
 
+// A window that gets no shadow is not observed either: nothing would take the
+// controller out of it again, and the window would call a controller that is
+// gone.
+TEST_F(ShadowControllerTest, WindowWithoutAShadowOutlivesTheController)
+{
+    controller = std::make_unique<ShadowController>(&manager, nullptr, &delegate);
+    Window *window = makeToplevel({400, 300}, true)->window();
+    ASSERT_TRUE(window);
+    EXPECT_EQ(controller->shadowForWindow(window), nullptr);
+    EXPECT_FALSE(window->hasObserver(controller.get()));
+
+    controller.reset();
+    shells.clear();
+    EXPECT_TRUE(manager.windows().empty());
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Presentation.
 
