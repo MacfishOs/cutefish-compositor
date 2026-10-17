@@ -163,15 +163,13 @@ private:
     ui::PointF m_pressPosition;
 };
 
-// The toolbar's tooltip, the dock's bubble: one still
-// popup of the overlay covering the strip next to the toolbar, the bubble
-// moving inside it, transparent for input. Up as soon as the pointer is on
-// a button; leaving hides it 150 ms later unless another button takes it.
+// The toolbar's tooltip, the dock's bubble: a popup of the overlay of its
+// own size that the next button moves, transparent for input. Up as soon as
+// the pointer is on a button; leaving hides it 150 ms later unless another
+// button takes it.
 class CaptureTooltip
 {
 public:
-    // How far past the ends of the toolbar a tooltip may reach.
-    static constexpr double kReach = 160;
     static constexpr std::chrono::milliseconds kHideDelay {150};
 
     CaptureTooltip(CaptureToolbar *toolbar, CaptureOverlay *overlay, Shell *shell);
@@ -205,7 +203,6 @@ private:
     std::string m_text;
     std::unique_ptr<ui::Window> m_window;
     ui::Label *m_label = nullptr;
-    ui::RectF m_area;
     ui::RectF m_body;
     base::Timer m_hideTimer;
     bool m_released = false;

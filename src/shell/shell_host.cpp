@@ -74,7 +74,7 @@ void ShellHost::popupShown(ui::EmbeddedWindow *popup)
     shown->show();
 }
 
-void ShellHost::popupResized(ui::EmbeddedWindow *popup)
+void ShellHost::popupRepositioned(ui::EmbeddedWindow *popup)
 {
     const auto it = m_popups.find(popup);
     if (it != m_popups.end())

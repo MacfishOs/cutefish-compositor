@@ -45,7 +45,7 @@ public:
 
     // ui::EmbeddedHost:
     void popupShown(ui::EmbeddedWindow *popup) override;
-    void popupResized(ui::EmbeddedWindow *popup) override;
+    void popupRepositioned(ui::EmbeddedWindow *popup) override;
     void popupHidden(ui::EmbeddedWindow *popup) override;
     void activationRequested(ui::EmbeddedWindow *window) override;
     void textInputChanged(ui::EmbeddedWindow *window, const ui::TextInputState *state,

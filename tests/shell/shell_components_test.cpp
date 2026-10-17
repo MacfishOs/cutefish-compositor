@@ -35,10 +35,12 @@
 #include "shell/osd/osd.h"
 #include "shell/shell.h"
 #include "shell/shell_data.h"
+#include "shell/shell_host.h"
 #include "shell/shell_window.h"
 #include "shell_test_util.h"
 #include "temporary_directory.h"
 #include "ui/drag.h"
+#include "ui/embedded_window.h"
 #include "ui/menu.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -455,9 +457,24 @@ TEST_F(ShellComponentsTest, TheDockFollowsRunningApplicationsAndTakesClicks)
     move(1, terminalCentre.x(), terminalCentre.y());
     ASSERT_TRUE(dock->tooltip()->isShown());
     EXPECT_EQ("Terminal", dock->tooltip()->text());
+    const auto tip = [&] {
+        return shell->host()->windowFor(static_cast<ui::EmbeddedWindow *>(dock->tooltip()->window()));
+    };
+    shell::ShellWindow *popup = tip();
+    ASSERT_NE(nullptr, popup);
+    const base::Rect terminalTip = popup->geometry();
     const base::PointF filesCentre = centre(dock->applicationIcon("files"));
     move(2, filesCentre.x(), filesCentre.y());
     EXPECT_EQ("Files", dock->tooltip()->text());
+    // The popup is the bubble, centred over its icon and just above the dock,
+    // and the next icon moves it rather than making another.
+    EXPECT_EQ(popup, tip());
+    const base::Rect filesTip = popup->geometry();
+    EXPECT_NE(terminalTip.x(), filesTip.x());
+    EXPECT_NEAR(filesCentre.x(), filesTip.x() + filesTip.width() / 2.0, 1);
+    EXPECT_NEAR(terminalCentre.x(), terminalTip.x() + terminalTip.width() / 2.0, 1);
+    EXPECT_LT(filesTip.width(), 120);
+    EXPECT_LT(filesTip.y() + filesTip.height(), window.y() + dock->panelRect().y());
 
     // A click on a running application shows its window.
     click(3, terminalCentre.x(), terminalCentre.y(), BTN_LEFT);

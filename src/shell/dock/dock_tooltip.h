@@ -21,10 +21,8 @@ namespace cutefish::shell {
 class DockWindow;
 class Shell;
 
-// The dock's tooltip: a glass bubble whose arrow points at
-// the icon, in a still popup covering everywhere a tip can appear along the
-// dock, so moving to the next icon moves the bubble inside it rather than
-// moving a window.
+// The dock's tooltip: a glass bubble whose arrow points at the icon, a popup
+// of its own size that the next icon moves rather than makes again.
 class DockTooltip
 {
 public:
@@ -36,6 +34,7 @@ public:
     void hide();
     bool isShown() const;
     const std::string &text() const { return m_text; }
+    ui::Window *window() const { return m_window.get(); }
 
 private:
     DockWindow *m_dock;
@@ -45,7 +44,6 @@ private:
     // Measures the text at the dock window's scale, as the label is drawn:
     // hinted text is wider at 1.5 than at 1.
     ui::Label *m_measure = nullptr;
-    ui::RectF m_area;
     std::string m_text;
 };
 

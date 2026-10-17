@@ -714,41 +714,40 @@ void CaptureTooltip::apply()
     const double gap = theme.smallSpacing;
     const bool below = toolbar.y - gap - height < 0;
     const double overlayWidth = m_overlay->bounds().width();
-    const double start = std::max(0.0, toolbar.x - kReach);
-    const double end = std::min(overlayWidth, toolbar.x + toolbar.width + kReach);
     const double top = below ? toolbar.y + toolbar.height + gap : toolbar.y - gap - height;
-    const ui::RectF area {start, top, std::max(width, end - start), height};
 
     // Where the arrow points: the middle of the button's edge facing the tooltip.
     const ui::RectF button = m_target->geometry();
     const double targetX = toolbar.x + button.x + button.width / 2;
-    const double x = std::floor(std::max(0.0, std::min(area.width - width, targetX - area.x - width / 2)) + 0.5);
+    const double x = std::floor(std::max(0.0, std::min(overlayWidth - width, targetX - width / 2)) + 0.5);
     bubble.arrowEdge = below ? ui::BubbleShape::Edge::Top : ui::BubbleShape::Edge::Bottom;
     bubble.width = width;
     bubble.height = height;
-    bubble.arrowPosition = targetX - area.x - x;
+    bubble.arrowPosition = targetX - x;
     const ui::RectF body = bubble.bodyRect();
 
+    ui::PopupPlacement placement;
+    placement.anchorRect = {x, top, 1, 1};
+    placement.anchor = ui::PopupAnchor::TopLeft;
+    placement.gravity = ui::PopupAnchor::BottomRight;
+    placement.flipX = placement.flipY = placement.slide = false;
     // A popup the toolkit closed with its window's popups stays closed: a
     // hidden one is made again.
-    if (!m_window || area != m_area || m_window->isHidden()) {
+    if (!m_window || m_window->isHidden()) {
         if (m_window)
             m_window->hide();
-        m_area = area;
-        ui::PopupPlacement placement;
-        placement.anchorRect = {area.x, area.y, 1, 1};
-        placement.anchor = ui::PopupAnchor::TopLeft;
-        placement.gravity = ui::PopupAnchor::BottomRight;
-        placement.flipX = placement.flipY = placement.slide = false;
         m_window = ui::Window::createPopup(m_overlay->window()->window(), placement, false);
         auto content = std::make_unique<ui::View>();
         m_label = content->addChild<ui::Label>();
         m_label->setElide(ui::Label::Elide::None);
         m_window->setContentView(std::move(content));
-        m_window->resize({area.width, area.height});
+        m_window->resize({width, height});
+    } else {
+        m_window->resize({width, height});
+        m_window->setPopupPlacement(placement);
     }
     m_label->setText(m_text);
-    m_body = {x + body.x, body.y, body.width, body.height};
+    m_body = body;
     m_label->setGeometry({m_body.x + (m_body.width - textSize.width) / 2,
                           m_body.y + (m_body.height - textSize.height) / 2, textSize.width, textSize.height});
     m_window->show();
@@ -762,10 +761,10 @@ void CaptureTooltip::apply()
     // the outline follows the whole bubble.
     const render::GlassParams glass = theme.darkMode ? popupGlass(0.17, 0.17, 0.19, 0.6)
                                                      : popupGlass(1, 1, 1, 0.6);
-    const base::Rect region(int(std::floor(x + body.x)), int(std::floor(body.y)), int(std::ceil(body.width)),
+    const base::Rect region(int(std::floor(body.x)), int(std::floor(body.y)), int(std::ceil(body.width)),
                             int(std::ceil(body.height)));
     const double radius = std::min(bubble.radius, std::min(body.width, body.height) / 2);
-    popup->setBackgroundBlur(region, int(std::lround(radius)), glass, bubble.path().translated(x, 0));
+    popup->setBackgroundBlur(region, int(std::lround(radius)), glass, bubble.path());
 }
 
 } // namespace cutefish::shell
