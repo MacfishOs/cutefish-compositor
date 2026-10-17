@@ -153,6 +153,8 @@ void ApplicationMenu::dropService(const std::string &service)
 {
     bool shownGone = false;
     const std::string prefix = service + '\n';
+    // Kept until switched() is out: the menus open on them close there.
+    std::vector<Import> gone;
     for (auto it = m_imports.begin(); it != m_imports.end();) {
         if (!it->first.starts_with(prefix)) {
             ++it;
@@ -164,6 +166,8 @@ void ApplicationMenu::dropService(const std::string &service)
         }
         if (it->first == m_pendingKey)
             m_pendingKey.clear();
+        it->second.subscriptions.clear();
+        gone.push_back(std::move(it->second));
         it = m_imports.erase(it);
     }
 
@@ -171,6 +175,7 @@ void ApplicationMenu::dropService(const std::string &service)
     // their way out too; the next focus change picks the new bar.
     if (shownGone)
         switched();
+    gone.clear();
 
     // Last: the watch is what called.
     m_serviceWatches.erase(service);

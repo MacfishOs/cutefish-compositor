@@ -589,3 +589,32 @@ TEST_F(MenuBarTest, AnApplicationShowsItsNameItsMenusAndTheirChanges)
     EXPECT_EQ(0, view->currentIndex());
     EXPECT_TRUE(view->openMenu()->isOpen());
 }
+
+TEST_F(MenuBarTest, AnApplicationThatLeavesTakesItsOpenMenu)
+{
+    auto application = std::make_unique<test::DBusTestClient>();
+    auto exporter = std::make_unique<FakeMenuExporter>(application->connection.get(), "/MenuBar");
+    exporter->layouts[0] = layout(0, {}, {layout(1, {{"label", label("_File")}, {"children-display", submenu()}})});
+    exporter->layouts[1] = layout(1, {}, {layout(10, {{"label", label("_Open")}})});
+
+    shell::TaskWindow terminal;
+    terminal.appId = "terminal";
+    terminal.title = "Terminal window";
+    terminal.pid = 4242;
+    terminal.menuService = application->connection->uniqueName();
+    terminal.menuPath = "/MenuBar";
+    windows->setActive(windows->add(terminal));
+    ASSERT_TRUE(test::runUntil([&] { return view->model().count() == 3; }));
+    frame();
+    click(entryCentre(2).x(), 16);
+    ASSERT_EQ(2, view->currentIndex());
+    ASSERT_TRUE(view->openMenu() && view->openMenu()->isOpen());
+
+    // Its exporter leaves the bus with the menu up: the menu closes, and
+    // nothing reaches the menu client that went with the exporter.
+    exporter.reset();
+    application.reset();
+    ASSERT_TRUE(test::runUntil([&] { return view->currentIndex() == -1; }));
+    frame();
+    EXPECT_TRUE(manager.popupGrabs().empty());
+}
