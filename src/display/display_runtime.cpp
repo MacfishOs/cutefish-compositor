@@ -117,9 +117,12 @@ DisplayRuntime::~DisplayRuntime()
         const auto detach = [](const auto &outputs) {
             for (const auto &output : outputs) {
                 output->presentationSubmitted = {};
+                output->setSecureContentCheck({});
+                output->setBeginFrameCallback({});
                 output->setPrepareCallback({});
                 output->setRenderCallback({});
                 output->setScanoutPlanner({});
+                output->setFullRepaintQuery({});
             }
         };
         detach(backend->allOutputs());
