@@ -97,7 +97,7 @@ cutefish_wayland_protocol(linux-dmabuf-v1
 cutefish_wayland_protocol(linux-drm-syncobj-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml)
 
-# Cutefish's own private protocols. cutefish-framework/protocols keeps the
+# Cutefish's own private protocols. cutefish-toolkit/protocols keeps the
 # client-side copy of every one a client speaks, and the two copies must stay
 # byte-identical: they define the wire format.
 set(CUTEFISH_PRIVATE_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocols)
