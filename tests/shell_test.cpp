@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -35,6 +36,7 @@
 #include "shell/window_renderer.h"
 #include "shm_test_util.h"
 #include "ui/embedded_window.h"
+#include "ui/frame_client.h"
 #include "ui/painter.h"
 #include "ui/text_field.h"
 #include "ui/view.h"
@@ -435,6 +437,52 @@ TEST_F(ShellTest, DirtyWindowsRenderTogetherInOnePassPerFrame)
     osd.show();
     frame();
     EXPECT_EQ(0xffffffffu, pixelAt(*textureOf(osd), 100, 50));
+}
+
+TEST_F(ShellTest, AWindowChangedByAnotherWindowsFrameIsDrawnInTheSameFrame)
+{
+    // Runs once on the next frame of its window.
+    class Step : public ui::FrameClient
+    {
+    public:
+        using ui::FrameClient::FrameClient;
+
+        void start() { startTicking(); }
+
+        std::function<void()> onTick;
+
+    protected:
+        void tick(uint64_t) override
+        {
+            stopTicking();
+            onTick();
+        }
+    };
+
+    auto *panel = shell->addComponent(std::make_unique<TestPanel>(shell.get()));
+    shell::ShellWindow osd(shell.get(), wm::WindowRole::Osd);
+    auto content = std::make_unique<ProbeView>(ui::Color::rgb(0x0000ff));
+    ProbeView *osdProbe = content.get();
+    osd.setContentView(std::move(content));
+    osd.setGeometry(base::Rect(400, 600, 200, 100));
+    osd.show();
+    frame();
+
+    // The panel's animation recolours the window and moves its glass, as the
+    // dock does its tooltip: both reach the frame together.
+    Step step(panel->window->window());
+    step.onTick = [&] {
+        osdProbe->setColor(ui::Color::rgb(0x00ffff));
+        osd.setBackgroundBlur(base::Rect(0, 0, 200, 100), 8);
+    };
+    step.start();
+    const uint64_t passes = shell->renderer()->passCount();
+    frame();
+    EXPECT_EQ(passes + 1, shell->renderer()->passCount());
+    EXPECT_EQ(2u, shell->renderer()->lastPass().size());
+    EXPECT_EQ(0xff00ffffu, pixelAt(*textureOf(osd), 100, 50));
+    EXPECT_EQ(base::Rect(0, 0, 200, 100), osd.surface()->backgroundBlurRect());
+    EXPECT_FALSE(shell->renderer()->isScheduled(&osd));
 }
 
 TEST_F(ShellTest, PointerInputReachesTheWindowThroughTheSeat)

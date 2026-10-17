@@ -69,6 +69,18 @@ void WindowRenderer::produceContent(render::Renderer &renderer)
         m_pass.erase(m_pass.begin());
         m_lastPass.push_back(window);
         window->produceFrame(renderer, frameTimeNs);
+        // A window this render changed, such as a popup an animation moved,
+        // is drawn in this pass too, or the frame shows the state it
+        // committed at once without the pixels drawn for it.
+        for (auto it = m_scheduled.begin(); it != m_scheduled.end();) {
+            if (std::find(m_lastPass.begin(), m_lastPass.end(), *it) != m_lastPass.end()) {
+                ++it;
+                continue;
+            }
+            if (std::find(m_pass.begin(), m_pass.end(), *it) == m_pass.end())
+                m_pass.push_back(*it);
+            it = m_scheduled.erase(it);
+        }
     }
     ++m_passCount;
 }
