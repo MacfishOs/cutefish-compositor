@@ -153,10 +153,14 @@ void AuthUi::onSessionStateChanged(session::SessionState state)
         m_cursorShape = input::CursorShape::Default;
         cursorShapeChanged(m_cursorShape);
     }
-    if (state == session::SessionState::Active) {
+    // A lock that cancelled an unlock needs a fresh authentication.
+    if (state == session::SessionState::Active
+        || (state == session::SessionState::Locking
+            && m_state == session::SessionState::Unlocking)) {
         m_authenticated = false;
         m_resetPending = true;
     }
+    m_state = state;
     // Authentication signals may still be on the stack when state changes.
     scheduleRefresh();
 }
@@ -232,7 +236,7 @@ void AuthUi::refresh()
         m_controllerSubscriptions.push_back(
                 m_controller->authenticationSucceeded.connect([this, login] {
                     // greetd owns login handoff; the greeter stays covered until it exits.
-                    if (!login) {
+                    if (!login && !m_resetPending) {
                         m_authenticated = true;
                         m_session->requestUnlock();
                     }

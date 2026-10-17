@@ -97,8 +97,7 @@ void ScreenSaverService::lock(base::dbus::MethodCall *call)
             call->reply();
         return;
     }
-    if (m_session->state() == SessionState::Login
-        || m_session->state() == SessionState::Unlocking) {
+    if (m_session->state() != SessionState::Locking && !m_session->requestLock()) {
         if (call)
             call->replyError(failedError, "Session is not available for locking");
         return;
@@ -106,7 +105,6 @@ void ScreenSaverService::lock(base::dbus::MethodCall *call)
     // Callers may suspend or power off only after every output is securely covered.
     if (call)
         m_pending.push_back(*call);
-    m_session->requestLock();
 }
 
 bool ScreenSaverService::GetActive() const

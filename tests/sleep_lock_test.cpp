@@ -8,11 +8,33 @@
 #include "session/session_controller.h"
 #include "session/sleep_lock.h"
 
+#include <algorithm>
+#include <vector>
+
 #include <gtest/gtest.h>
 
 using namespace cutefish;
 
 namespace {
+
+class StateRecorder : public session::SessionObserver
+{
+public:
+    explicit StateRecorder(session::SessionController *controller)
+        : m_controller(controller)
+    {
+        m_controller->addObserver(this);
+    }
+
+    ~StateRecorder() override { m_controller->removeObserver(this); }
+
+    void onSessionStateChanged(session::SessionState state) override { states.push_back(state); }
+
+    std::vector<session::SessionState> states;
+
+private:
+    session::SessionController *m_controller;
+};
 
 class SleepLockTest : public testing::Test
 {
@@ -61,7 +83,7 @@ TEST_F(SleepLockTest, SleepWaitsForTheLockOnEveryOutput)
     EXPECT_TRUE(logind.held());
 }
 
-TEST_F(SleepLockTest, AnUnlockInProgressIsLockedAgainBeforeSleeping)
+TEST_F(SleepLockTest, AnUnlockInProgressIsCancelledBeforeSleeping)
 {
     ASSERT_TRUE(logind.isValid());
     scene::Node root;
@@ -71,21 +93,20 @@ TEST_F(SleepLockTest, AnUnlockInProgressIsLockedAgainBeforeSleeping)
     session::SleepLock lock(&controller, bus);
     ASSERT_TRUE(lock.start());
     ASSERT_TRUE(waitFor([&] { return lock.holdsInhibitor(); }));
+    StateRecorder recorder(&controller);
     EXPECT_TRUE(controller.requestLock());
     controller.notifyOutputPresented("one");
     EXPECT_TRUE(controller.requestUnlock());
     EXPECT_EQ(controller.state(), session::SessionState::Unlocking);
 
     logind.prepareForSleep(true);
-    test::runFor(std::chrono::milliseconds(50));
-    EXPECT_EQ(controller.state(), session::SessionState::Unlocking);
-    EXPECT_TRUE(lock.holdsInhibitor());
-    controller.notifyOutputPresented("one");
     EXPECT_TRUE(waitFor([&] { return controller.state() == session::SessionState::Locking; }));
     EXPECT_TRUE(lock.holdsInhibitor());
     controller.notifyOutputPresented("one");
     EXPECT_EQ(controller.state(), session::SessionState::Locked);
     EXPECT_TRUE(waitFor([&] { return !logind.held(); }));
+    EXPECT_EQ(std::count(recorder.states.begin(), recorder.states.end(),
+                         session::SessionState::Active), 1);
     logind.prepareForSleep(false);
     EXPECT_TRUE(waitFor([&] { return lock.holdsInhibitor(); }));
 }

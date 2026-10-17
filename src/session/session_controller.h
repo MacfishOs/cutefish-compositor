@@ -95,6 +95,7 @@ private:
     std::vector<SessionObserver *> m_observers;
     std::set<std::string, std::less<>> m_presentedOutputs;
     SessionState m_state = SessionState::Active;
+    SessionState m_unlockingFrom = SessionState::Locked;
 };
 
 } // namespace cutefish::session

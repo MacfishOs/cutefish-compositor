@@ -252,6 +252,34 @@ TEST_F(SessionLockTest, ASecondLockIsRefusedWhileBlocked)
     EXPECT_EQ(SessionState::Locked, controller.state());
 }
 
+TEST_F(SessionLockTest, ALockDuringTheUnlockCancelsItAndCoversAtOnce)
+{
+    lockFully();
+    ASSERT_TRUE(controller.requestUnlock());
+    ASSERT_EQ(SessionState::Unlocking, controller.state());
+
+    EXPECT_TRUE(controller.requestLock());
+    EXPECT_EQ(SessionState::Locking, controller.state());
+    EXPECT_TRUE(controller.isBlocked());
+    EXPECT_TRUE(secure.isSettled(0));
+    const session::CoverSample cover = secure.sample(0, 16);
+    EXPECT_EQ(1.0f, cover.backdrop);
+    EXPECT_EQ(1.0f, cover.panelOpacity);
+    EXPECT_EQ(1.0, cover.panelScale);
+    EXPECT_FALSE(controller.requestLock());
+
+    controller.notifyFramePresented();
+    EXPECT_EQ(SessionState::Locked, controller.state());
+}
+
+TEST_F(SessionLockTest, AnUnlockFromTheLoginScreenIsNotTurnedIntoALock)
+{
+    session::SessionController login {&secure, nullptr, SessionState::Login};
+    ASSERT_TRUE(login.requestUnlock());
+    EXPECT_FALSE(login.requestLock());
+    EXPECT_EQ(SessionState::Unlocking, login.state());
+}
+
 TEST_F(SessionLockTest, UnlockIsRefusedBeforeTheSessionIsLocked)
 {
     EXPECT_FALSE(controller.requestUnlock());

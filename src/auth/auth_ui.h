@@ -142,6 +142,7 @@ private:
     bool m_authenticated = false;
     bool m_focused = false;
     bool m_resetPending = false;
+    session::SessionState m_state = session::SessionState::Active;
     bool m_dirty = true;
     uint64_t m_imageGeneration = 0;
 };

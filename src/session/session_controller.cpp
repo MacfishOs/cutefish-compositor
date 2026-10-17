@@ -77,6 +77,14 @@ void SessionController::setState(SessionState state)
 
 bool SessionController::requestLock()
 {
+    // A lock asked for while an unlock is under way cancels it: the lock
+    // screen comes back at once and has to be authenticated again.
+    if (m_state == SessionState::Unlocking && m_unlockingFrom == SessionState::Locked) {
+        setState(SessionState::Locking);
+        if (m_secure)
+            m_secure->setCovered(true, false);
+        return true;
+    }
     if (isBlocked())
         return false;
     setState(SessionState::Locking);
@@ -157,6 +165,7 @@ bool SessionController::requestUnlock()
 {
     if (m_state != SessionState::Locked && m_state != SessionState::Login)
         return false;
+    m_unlockingFrom = m_state;
     setState(SessionState::Unlocking);
     return true;
 }

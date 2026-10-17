@@ -625,6 +625,38 @@ TEST(AuthUiTest, SuccessDuringLockingWaitsForSecurePresentation)
     EXPECT_EQ(controller.state(), session::SessionState::Active);
 }
 
+TEST(AuthUiTest, ALockThatCancelsTheUnlockAsksForThePasswordAgain)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    controller.requestLock();
+    controller.notifyFramePresented();
+    ui.refresh();
+    ASSERT_EQ(controller.state(), session::SessionState::Locked);
+    ui.controller()->authenticate("valid");
+    backend.succeed();
+    ASSERT_EQ(controller.state(), session::SessionState::Unlocking);
+
+    EXPECT_TRUE(controller.requestLock());
+    EXPECT_EQ(controller.state(), session::SessionState::Locking);
+    // A late answer for the cancelled unlock counts for nothing.
+    backend.succeed();
+    controller.notifyFramePresented();
+    ui.refresh();
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
+    EXPECT_TRUE(fieldText(ui).empty());
+
+    ui.controller()->authenticate("valid");
+    backend.succeed();
+    EXPECT_EQ(controller.state(), session::SessionState::Unlocking);
+    controller.notifyFramePresented();
+    EXPECT_EQ(controller.state(), session::SessionState::Active);
+}
+
 TEST(AuthUiTest, LockingCoversEveryOutput)
 {
     scene::Node root;

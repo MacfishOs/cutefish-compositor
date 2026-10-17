@@ -96,9 +96,9 @@ void SleepLock::prepareForSleep(bool sleeping)
         inhibit();
         return;
     }
-    // An unlock in progress finishes first; onSessionStateChanged locks after it.
-    if (!m_session->isBlocked())
-        m_session->requestLock();
+    // An unlock from the login screen finishes first; onSessionStateChanged
+    // locks after it.
+    m_session->requestLock();
     releaseWhenLocked();
 }
 

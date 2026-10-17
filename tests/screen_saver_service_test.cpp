@@ -93,11 +93,31 @@ TEST_F(ScreenSaverServiceTest, LockReplyWaitsForEveryOutputAndRepeatedRequestsAr
     EXPECT_EQ(changed.size(), 1u);
     EXPECT_TRUE(controller.requestUnlock());
     EXPECT_TRUE(service.GetActive());
-    EXPECT_TRUE(finished(call("Lock")).isError());
     controller.notifyFramePresented();
     EXPECT_FALSE(service.GetActive());
     ASSERT_EQ(changed.size(), 2u);
     EXPECT_FALSE(changed.back());
+}
+
+TEST_F(ScreenSaverServiceTest, LockDuringAnUnlockIsAnsweredOnceLockedAgain)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    session::ScreenSaverService service(&controller);
+    ASSERT_TRUE(service.registerService());
+    ASSERT_TRUE(controller.requestLock());
+    controller.notifyOutputPresented("one");
+    ASSERT_TRUE(controller.requestUnlock());
+
+    auto lock = call("Lock");
+    EXPECT_TRUE(waitFor([&] { return controller.state() == session::SessionState::Locking; }));
+    test::runFor(std::chrono::milliseconds(20));
+    EXPECT_FALSE(lock->finished());
+    controller.notifyOutputPresented("one");
+    EXPECT_FALSE(finished(std::move(lock)).isError());
+    EXPECT_EQ(controller.state(), session::SessionState::Locked);
 }
 
 TEST_F(ScreenSaverServiceTest, LockIsNotAnsweredWhileTheDisplayLayoutIsRebuilt)
