@@ -144,3 +144,24 @@ TEST_F(WmTaskWindowsTest, ReportsChangesAndTheActiveApplicationWindow)
     EXPECT_EQ(windows.window(viewerId), nullptr);
     EXPECT_NE(windows.activeWindow(), viewerId);
 }
+
+TEST_F(WmTaskWindowsTest, KeepsTheApplicationAWindowOffTheTaskListIsInFrontOf)
+{
+    shell::WmTaskWindows windows(manager);
+    wm::Window *editor = open("org.example.Editor", "Draft");
+    manager.activation()->activate(editor);
+    ASSERT_EQ(windows.activeWindow(), editor->id());
+
+    wm::Window *dialog = open({}, "Log out now?");
+    dialog->rootSurface()->setSkipTaskbar(true);
+    manager.activation()->activate(dialog);
+    EXPECT_EQ(windows.activeWindow(), editor->id());
+
+    // Leaving the task list while active gives the bar back as well.
+    manager.activation()->activate(editor);
+    wm::Window *viewer = open("org.example.Viewer", "Picture");
+    manager.activation()->activate(viewer);
+    ASSERT_EQ(windows.activeWindow(), viewer->id());
+    viewer->rootSurface()->setSkipTaskbar(true);
+    EXPECT_EQ(windows.activeWindow(), editor->id());
+}

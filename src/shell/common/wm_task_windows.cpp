@@ -227,9 +227,15 @@ void WmTaskWindows::updateActiveWindow()
     // A sheet speaks for the window it hangs from.
     if (window && window->role() == wm::WindowRole::Sheet && window->transientParent())
         window = window->transientParent();
+    std::erase_if(m_history, [this](uint64_t id) {
+        const auto it = m_windows.find(id);
+        return it == m_windows.end() || !it->second.isTaskListWindow();
+    });
     if (!window || window->isShellWindow() || window->isPopup()) {
         m_history.clear();
-    } else if (m_windows.count(window->id())) {
+    } else if (!window->skipTaskbar() && m_windows.count(window->id())) {
+        // A window off the task list, such as a dialog of the shell's, leaves
+        // the bar and the dock with the application it is in front of.
         std::erase(m_history, window->id());
         m_history.insert(m_history.begin(), window->id());
     }
@@ -319,8 +325,10 @@ void WmTaskWindows::onSurfaceMenuChanged(compositor::Surface *surface)
 void WmTaskWindows::onSurfaceWindowHintsChanged(compositor::Surface *surface)
 {
     wm::Window *window = m_manager.windowForSurface(surface);
-    if (window && window->rootSurface() == surface && m_surfaces.count(window))
+    if (window && window->rootSurface() == surface && m_surfaces.count(window)) {
         refresh(window);
+        updateActiveWindow();
+    }
 }
 
 } // namespace cutefish::shell

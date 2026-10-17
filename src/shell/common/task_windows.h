@@ -69,7 +69,8 @@ public:
     // Null for a window that is not, or no longer, an application window.
     virtual const TaskWindow *window(uint64_t id) const = 0;
     // The application window the user last activated, as the menu bar and
-    // the dock follow it: a sheet speaks for its parent, and a shell window
+    // the dock follow it: a sheet speaks for its parent, a window off the
+    // task list taking the keyboard leaves it as it was, and a shell window
     // or nothing at all taking the keyboard makes it zero.
     virtual uint64_t activeWindow() const = 0;
     // The image the window left when it was minimized; null while it is not.
