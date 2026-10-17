@@ -20,6 +20,7 @@
 #include "wm/overview/overview_layout.h"
 #include "wm/show_desktop_controller.h"
 #include "wm/stacking.h"
+#include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 #include "wm/window_state.h"
@@ -547,6 +548,10 @@ bool OverviewController::enter()
         return false;
     if (m_state == State::Entering || m_state == State::Shown)
         return true;
+    // The overview would take the pointer from under the drag, which would
+    // then go on without a button held once it leaves.
+    if (m_manager->eventHandler()->draggedWindow())
+        return false;
     landDeskSwitch();
     if (m_state == State::Hidden)
         begin();

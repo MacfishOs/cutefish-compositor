@@ -37,6 +37,7 @@
 #include "wm/gestures/wm_gesture_handler.h"
 #include "wm/overview/overview_controller.h"
 #include "wm/stacking.h"
+#include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 #include "wm/window_state.h"
@@ -276,6 +277,19 @@ TEST_F(OverviewTest, TheShortcutBringsItInAndTakesItAway)
     EXPECT_TRUE(overview->items().empty());
     // Nothing changed hands.
     EXPECT_EQ(second, active());
+}
+
+TEST_F(OverviewTest, TheShortcutDoesNothingWhileAWindowIsDragged)
+{
+    Window *window = makeWindow(base::Rect(100, 100, 500, 400));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(300, 110)));
+    overview->toggle();
+    EXPECT_EQ(State::Hidden, overview->state());
+    EXPECT_FALSE(node->isActive());
+
+    manager.eventHandler()->completeDrag(ToplevelEventHandler::DragResult::Success);
+    overview->toggle();
+    EXPECT_EQ(State::Entering, overview->state());
 }
 
 TEST_F(OverviewTest, ThePointerAndTheKeysAreTheOverviewsWhileItIsUp)
