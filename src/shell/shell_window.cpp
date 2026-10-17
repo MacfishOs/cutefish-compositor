@@ -226,6 +226,26 @@ void ShellWindow::setProtectedFromControl(bool protectedFromControl)
     applyMetadata();
 }
 
+void ShellWindow::setDialog(bool dialog)
+{
+    if (dialog == m_dialog || isPopup())
+        return;
+    m_dialog = dialog;
+    m_surface->setSkipTaskbar(dialog);
+    updateSizeLimits();
+    if (m_shown)
+        commit();
+}
+
+void ShellWindow::updateSizeLimits()
+{
+    // Equal limits are what makes the window manager hold a window's size,
+    // as xdg_toplevel's set_min_size and set_max_size do for a client.
+    const base::Size limit = m_dialog ? m_size : base::Size();
+    m_shellSurface->setMinimumSize(limit);
+    m_shellSurface->setMaximumSize(limit);
+}
+
 void ShellWindow::setExclusiveZone(wm::ScreenEdge edge, int thickness)
 {
     m_shell->windowManager()->setExclusiveZone(this, edge, thickness, m_metadata.outputName);
@@ -266,6 +286,8 @@ void ShellWindow::setSize(const base::Size &size)
         return;
     m_size = size;
     m_window->setSize({double(size.width()), double(size.height())});
+    if (m_dialog)
+        updateSizeLimits();
     if (m_shown)
         commit();
     scheduleRender();

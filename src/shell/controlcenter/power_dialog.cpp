@@ -195,6 +195,7 @@ void PowerDialog::open(Action action)
     m_action = action;
     if (!m_window) {
         m_window = std::make_unique<ShellWindow>(m_shell, wm::WindowRole::Normal);
+        m_window->setDialog(true);
         auto content = std::make_unique<Content>(this);
         m_content = content.get();
         m_window->setContentView(std::move(content));
