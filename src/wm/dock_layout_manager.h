@@ -91,8 +91,8 @@ public:
     // waits past its edge, and slides in once it is released.
     void setSessionStarting(bool starting);
 
-    // While the session ends every dock and panel slides away, leaving the
-    // desktop; they come back if it carries on.
+    // While the session ends every dock and panel slides away and the desktop's
+    // icons go, leaving the wallpaper; they come back if it carries on.
     void setSessionEnding(bool ending);
 
     // Both answer for a window this manager treats as a dock; anything else is

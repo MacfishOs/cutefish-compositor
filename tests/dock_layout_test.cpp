@@ -249,6 +249,29 @@ TEST_F(DockLayoutTest, EndingTheSessionPutsDocksAndPanelsAwayUntilItCarriesOn)
     EXPECT_EQ(base::Point(), panel->presentationOffset());
 }
 
+TEST_F(DockLayoutTest, EndingTheSessionHidesTheDesktopUntilItCarriesOn)
+{
+    Window *desktop = makeWindow(kOutput);
+    desktop->setRole(WindowRole::Desktop);
+    layout.update();
+    EXPECT_FALSE(desktop->isPresentationHidden());
+
+    layout.setSessionEnding(true);
+    EXPECT_TRUE(desktop->isPresentationHidden());
+    EXPECT_FALSE(desktop->node()->isEffectivelyVisible());
+
+    // One that maps meanwhile, as a restarted desktop does, stays hidden too.
+    Window *second = makeWindow(kOutput);
+    second->setRole(WindowRole::Desktop);
+    layout.update();
+    EXPECT_TRUE(second->isPresentationHidden());
+
+    layout.setSessionEnding(false);
+    EXPECT_FALSE(desktop->isPresentationHidden());
+    EXPECT_FALSE(second->isPresentationHidden());
+    EXPECT_EQ(base::Point(), desktop->presentationOffset());
+}
+
 TEST_F(DockLayoutTest, DialogOverFullscreenWindowKeepsTheDockAway)
 {
     Window *window = makeWindow(base::Rect(100, 100, 300, 200));

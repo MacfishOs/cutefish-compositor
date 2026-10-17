@@ -314,6 +314,8 @@ DockAutoHideState DockLayoutManager::computeAutoHideState(const Window *dock, co
 void DockLayoutManager::update()
 {
     for (Window *window : m_manager->windows()) {
+        if (window->role() == WindowRole::Desktop)
+            window->setPresentationHidden(m_sessionEnding);
         if (!isEdgeSurface(window))
             continue;
         auto &entry = m_docks[window];
