@@ -13,6 +13,7 @@
 
 #include <wayland-server-core.h>
 
+#include "clipboard/selection.h"
 #include "input/touch_delegate.h"
 
 namespace cutefish::wayland {
@@ -24,7 +25,8 @@ class SerialTracker;
 class WaylandTouchDelegate : public input::TouchDelegate
 {
 public:
-    WaylandTouchDelegate(wl_resource* touchResource, SerialTracker* serialTracker);
+    WaylandTouchDelegate(wl_resource* touchResource, SerialTracker* serialTracker,
+                         clipboard::SelectionController* selection = nullptr);
     WaylandTouchDelegate(const WaylandTouchDelegate&) = delete;
     WaylandTouchDelegate& operator=(const WaylandTouchDelegate&) = delete;
 
@@ -43,6 +45,7 @@ private:
 
     wl_resource* const m_touchResource;
     SerialTracker* const m_serialTracker;
+    base::WeakPtr<clipboard::SelectionController> m_selection;
 };
 
 } // namespace cutefish::wayland

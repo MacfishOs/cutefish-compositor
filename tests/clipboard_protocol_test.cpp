@@ -7,6 +7,7 @@
 #include <signal.h>
 
 #include "clipboard_test_util.h"
+#include "shm_test_util.h"
 
 using namespace clipboard_test;
 
@@ -23,6 +24,18 @@ const bool sigpipeIgnored = [] {
     signal(SIGPIPE, SIG_IGN);
     return true;
 }();
+
+void map(Client& c)
+{
+    auto* resource = wl_client_get_object(c.serverClient,
+                                          wl_proxy_get_id(reinterpret_cast<wl_proxy*>(c.surface)));
+    auto* surface = wayland::surfaceFromResource(resource);
+    auto pool = testsupport::makePool(100 * 100 * 4);
+    auto buffer = pool->createBuffer(base::Size(100, 100), 0, 400, render::PixelFormat::Bgra8888,
+                                     nullptr);
+    surface->attach(buffer, {});
+    surface->commit();
+}
 
 } // namespace
 
@@ -346,3 +359,26 @@ TEST(ClipboardProtocol, SelectionChangesDoNotReachAClientWhoseFocusedSurfaceIsGo
     EXPECT_TRUE(b.events.empty());
     EXPECT_FALSE(h.seat.selection()->source());
 }
+
+// A copy picked from a touch menu cites the tap's serial, as a click's would.
+TEST(ClipboardProtocol, ATouchSerialAuthorizesTheSelection)
+{
+    Harness h;
+    auto& a = h.addClient();
+    map(a);
+    a.getTouch();
+    h.focus(a);
+    h.seat.onTouchDown({}, 1, {10, 10});
+    h.seat.onTouchFrame();
+    h.sync(a);
+    ASSERT_NE(0u, a.touchSerial);
+
+    wl_data_device_set_selection(a.devices.front(), a.source({{"text/plain", "tapped"}}),
+                                 a.touchSerial);
+    h.sync(a);
+    EXPECT_TRUE(h.seat.selection()->source());
+    h.seat.onTouchUp({}, 1);
+    h.seat.onTouchFrame();
+    h.sync(a);
+}
+

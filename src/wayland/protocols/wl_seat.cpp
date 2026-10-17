@@ -129,7 +129,8 @@ void seat_get_touch(wl_client *client, wl_resource *resource, uint32_t id)
     // As for the pointer, the delegate deletes itself when the Touch goes.
     setImplementation(touchResource, &touch_implementation,
                       std::make_unique<input::Touch>(
-                              new WaylandTouchDelegate(touchResource, data->serialTracker),
+                              new WaylandTouchDelegate(touchResource, data->serialTracker,
+                                                       data->seat->selection()),
                               data->seat));
 }
 

@@ -17,9 +17,11 @@
 namespace cutefish::wayland {
 
 WaylandTouchDelegate::WaylandTouchDelegate(wl_resource *touchResource,
-                                           SerialTracker *serialTracker)
+                                           SerialTracker *serialTracker,
+                                           clipboard::SelectionController *selection)
     : m_touchResource(touchResource)
     , m_serialTracker(serialTracker)
+    , m_selection(selection ? selection->weakPtr() : nullptr)
 {
 }
 
@@ -44,6 +46,8 @@ void WaylandTouchDelegate::onTouchDown(compositor::Surface *surface, input::Time
     // A touch is a user action, as a click is: the client may cite it to
     // activate a window.
     m_serialTracker->recordActivationSerial(serial, m_touchResource);
+    if (m_selection)
+        m_selection->recordSerial(client(), serial);
     const base::PointF local = logicalToClient(location, clientScale(client()));
     wl_touch_send_down(m_touchResource, serial, timePointToMilliseconds(timestamp),
                        surfaceResource, id, wl_fixed_from_double(local.x()),
@@ -52,8 +56,10 @@ void WaylandTouchDelegate::onTouchDown(compositor::Surface *surface, input::Time
 
 void WaylandTouchDelegate::onTouchUp(input::Timestamp timestamp, int32_t id)
 {
-    wl_touch_send_up(m_touchResource, m_serialTracker->nextSerial(SerialTracker::TOUCH_UP),
-                     timePointToMilliseconds(timestamp), id);
+    const uint32_t serial = m_serialTracker->nextSerial(SerialTracker::TOUCH_UP);
+    if (m_selection)
+        m_selection->recordSerial(client(), serial);
+    wl_touch_send_up(m_touchResource, serial, timePointToMilliseconds(timestamp), id);
 }
 
 void WaylandTouchDelegate::onTouchMotion(input::Timestamp timestamp, int32_t id,
