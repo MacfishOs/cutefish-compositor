@@ -924,36 +924,6 @@ TEST_F(DeskAnimationTest, ADeskClickedInTheOverviewGlidesThereOnTime)
     EXPECT_EQ(desk(2), desks->activeDesk());
 }
 
-TEST_F(DeskAnimationTest, ADeskClickedMidGlideTurnsTheSameStripThere)
-{
-    addDesks(2);
-    desks->activateDesk(desk(1), DesksSwitchSource::MiniViewButton);
-    DeskAnimationBase *animation = desks->animation();
-    ASSERT_NE(nullptr, animation);
-    paint();
-    now += 100;
-    paint();
-    ASSERT_TRUE(node->isAnimating());
-
-    // Another desk, before the first one lands.
-    desks->activateDesk(desk(2), DesksSwitchSource::MiniViewButton);
-    EXPECT_EQ(animation, desks->animation());
-    EXPECT_EQ(desk(2), desks->activeDesk());
-    paint();
-    now += 100;
-    paint();
-    EXPECT_TRUE(node->isAnimating());
-
-    // Back to where it started, which has its frame and is active at once.
-    desks->activateDesk(desk(0), DesksSwitchSource::MiniViewButton);
-    EXPECT_EQ(animation, desks->animation());
-    EXPECT_EQ(desk(0), desks->activeDesk());
-    finish();
-    EXPECT_EQ(nullptr, desks->animation());
-    EXPECT_EQ(desk(0), desks->activeDesk());
-    EXPECT_TRUE(desk(0)->isActive());
-}
-
 TEST_F(DeskAnimationTest, AWindowSentAwaySlidesOffTheScreen)
 {
     addDesks(1);

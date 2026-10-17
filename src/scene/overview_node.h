@@ -167,6 +167,11 @@ public:
     // Shown at all: moving, or standing anywhere but 0.
     bool isActive() const { return m_motion != Motion::Still || m_position > 0; }
 
+    // Draws and covers nothing while the progress goes on moving the desk bar
+    // and the panels: a desk switch's strip shows the desks meanwhile.
+    void setContentHidden(bool hidden);
+    bool covers() const { return isActive() && !m_contentHidden; }
+
     // Runs from inside render() when the progress lands on 0 or 1, with that
     // value: must not change the scene.
     void setFinishedCallback(std::function<void(double)> callback)
@@ -178,11 +183,11 @@ public:
     base::RectF presentedRect(int index, double progress, double timeMs) const;
 
     void render(render::Renderer &renderer) const override;
-    Content content() const override { return isActive() ? Content::Opaque : Content::None; }
-    bool paintsSubtree() const override { return isActive(); }
-    bool requiresFullRepaint() const override { return isActive(); }
+    Content content() const override { return covers() ? Content::Opaque : Content::None; }
+    bool paintsSubtree() const override { return covers(); }
+    bool requiresFullRepaint() const override { return covers(); }
     bool acceptsInput(const base::PointF &) const override { return false; }
-    bool occludesOutput(const render::Renderer &) const override { return isActive(); }
+    bool occludesOutput(const render::Renderer &) const override { return covers(); }
     void releaseRenderResources() override;
 
 private:
@@ -205,6 +210,8 @@ private:
     render::RoundedShape restingBody(int index, const base::RectF &rect) const;
     void renderChrome(render::Renderer &renderer, const base::Rect &viewport, double now) const;
     void landed(double now) const;
+    // Lands the progress, and asks for the frames its motion needs.
+    void advance(double now) const;
 
     std::function<int64_t()> m_now;
     OverviewTextPainter m_textPainter;
@@ -218,6 +225,7 @@ private:
     int m_dragged = -1;
     base::RectF m_dragRect;
     int m_raised = -1;
+    bool m_contentHidden = false;
     Chrome m_chrome;
 
     mutable Motion m_motion = Motion::Still;

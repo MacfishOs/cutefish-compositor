@@ -197,6 +197,8 @@ private:
     void releasePointer();
 
     void landDeskSwitch();
+    // exit() without landing a desk switch first.
+    void leave(Window *window);
     // Lays everything out again on the outputs there are now, at once.
     void onOutputsChanged();
     // Clicks, touches and Enter act while it is shown or coming in on its

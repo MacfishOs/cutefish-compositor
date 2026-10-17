@@ -491,7 +491,7 @@ TEST_F(OverviewTest, MinimizedWindowsAreLeftOut)
     EXPECT_FALSE(drewContentOf(minimized));
 }
 
-TEST_F(OverviewTest, ClickingADeskShowsItsWindowsAndStaysUp)
+TEST_F(OverviewTest, ClickingADeskSwitchesThereAndTakesItAway)
 {
     Window *first = makeWindow(base::Rect(100, 100, 500, 400));
     ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
@@ -501,12 +501,60 @@ TEST_F(OverviewTest, ClickingADeskShowsItsWindowsAndStaysUp)
     ASSERT_EQ(first, active());
     show();
     ASSERT_EQ(1u, overview->items().size());
+    // With no frames to slide, it switches at once and leaves.
     click(overview->bars()[0].desks[1].bounds.center());
     EXPECT_EQ(desk(1), desks->activeDesk());
-    EXPECT_EQ(State::Shown, overview->state());
-    ASSERT_EQ(1u, overview->items().size());
-    EXPECT_EQ(second, overview->items()[0].window);
-    EXPECT_TRUE(overview->bars()[0].desks[1].active);
+    EXPECT_EQ(State::Exiting, overview->state());
+    EXPECT_TRUE(node->covers());
+    EXPECT_EQ(second, active());
+}
+
+TEST_F(OverviewTest, AClickedDeskSlidesInWhileTheDeskBarGoes)
+{
+    auto *switchNode = static_cast<scene::DeskSwitchNode *>(
+            surfaceContainer->addChild(std::make_unique<scene::DeskSwitchNode>([this] {
+                return now;
+            })));
+    manager.setDeskOverlays({node, switchNode, bar});
+    desks->setSwitchNode(switchNode);
+    int screenshots = 0;
+    desks->setScreenshotter([this, &screenshots](const std::function<void(render::Renderer &)> &paint) {
+        ++screenshots;
+        paint(renderer);
+        scene::DeskSwitchNode::Frames frames;
+        frames["out"] = std::make_unique<FrameTexture>(kOutput.size());
+        return frames;
+    });
+    makeWindow(base::Rect(100, 100, 500, 400));
+    ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
+    show();
+
+    // The strip starts from the overview as it is shown, and the overview
+    // heads out at once under it, drawing nothing there.
+    click(overview->bars()[0].desks[1].bounds.center());
+    EXPECT_EQ(1, screenshots);
+    ASSERT_NE(nullptr, desks->animation());
+    EXPECT_TRUE(switchNode->isActive());
+    EXPECT_EQ(desk(1), desks->activeDesk());
+    EXPECT_EQ(State::Exiting, overview->state());
+    EXPECT_TRUE(node->isActive());
+    EXPECT_FALSE(node->covers());
+
+    // The desk bar goes as the strip slides.
+    paint();
+    now += scene::OverviewNode::kTransitionDurationMs / 2;
+    paint();
+    EXPECT_TRUE(switchNode->isAnimating());
+    const double halfway = node->progress(double(now));
+    EXPECT_GT(halfway, 0);
+    EXPECT_LT(halfway, 1);
+
+    settle();
+    settle();
+    EXPECT_EQ(nullptr, desks->animation());
+    EXPECT_EQ(State::Hidden, overview->state());
+    EXPECT_EQ(desk(1), desks->activeDesk());
+    EXPECT_FALSE(node->isActive());
 }
 
 TEST_F(OverviewTest, ClickingTheDeskItIsOnTakesItAway)
@@ -817,7 +865,7 @@ TEST_F(OverviewTest, ClosingTheActiveDeskSwitchesAtOnceWithoutTheRemovalStrip)
     // A new desk, clicked to, then closed.
     click(overview->bars()[0].newDesk.center());
     ASSERT_EQ(2u, desks->desks().size());
-    click(overview->bars()[0].desks[1].bounds.center());
+    desks->activateDesk(desk(1), DesksSwitchSource::MiniViewButton);
     settle();
     ASSERT_EQ(desk(1), desks->activeDesk());
     ASSERT_EQ(nullptr, desks->animation());

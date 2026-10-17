@@ -167,25 +167,15 @@ bool DeskActivationAnimation::replace(bool movingLeft, DesksSwitchSource source)
         m_chosenDesk = m_endingDesk;
         return true;
     }
-    return replaceWith(m_endingDesk + (movingLeft ? -1 : 1), source);
-}
-
-bool DeskActivationAnimation::replaceWith(int ending, DesksSwitchSource source)
-{
-    if (source != m_source || m_isContinuousGestureAnimation)
-        return false;
     if (!m_node->endingScreenshotTaken())
         return false;
+
+    const int ending = m_endingDesk + (movingLeft ? -1 : 1);
     if (ending < 0 || ending >= int(m_controller->desks().size()))
         return false;
-    if (ending == m_endingDesk)
-        return true;
     m_endingDesk = ending;
 
     if (!m_node->replaceAnimation(ending)) {
-        // Active at once, under its frame, so a click on it next turns the
-        // strip again rather than reading as a click on the active desk.
-        prepareDeskForScreenshot(ending);
         onEndingDeskScreenshotTaken();
         return true;
     }

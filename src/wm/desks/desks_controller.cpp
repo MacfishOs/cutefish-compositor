@@ -166,15 +166,9 @@ void DesksController::removeDesk(Desk *desk, DesksCreationRemovalSource source)
 
 void DesksController::activateDesk(Desk *desk, DesksSwitchSource source)
 {
-    if (deskIndex(desk) < 0)
+    if (deskIndex(desk) < 0 || m_animation)
         return;
-    // Another desk clicked while the strip slides turns it there.
-    if (m_animation && source == DesksSwitchSource::MiniViewButton) {
-        if (m_animation->replaceWith(deskIndex(desk), source))
-            return;
-        m_animation->finishNow();
-    }
-    if (m_animation || desk == m_activeDesk)
+    if (desk == m_activeDesk)
         return;
 
     if (source == DesksSwitchSource::DeskRestored) {

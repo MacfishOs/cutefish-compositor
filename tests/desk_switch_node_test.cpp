@@ -282,35 +282,6 @@ TEST(DeskSwitchNode, AGlideCrossesTheWholeGapOpaqueAndLandsOnTime)
     EXPECT_EQ(f.finished, 1);
 }
 
-TEST(DeskSwitchNode, AGlideTurnedToAnotherDeskKeepsItsPlaceAndSpeed)
-{
-    Fixture f;
-    render::Texture *starting = nullptr;
-    f.node->start(Node::Type::Glide, 3, 0, 1, f.frames(&starting), 1000);
-    f.node->takeEndingScreenshot(1);
-    f.paint();
-    render::Texture *middle = f.renderer.lastCapture;
-    f.node->startAnimation();
-    f.paint();
-    f.now += Node::kGlideDurationMs / 2;
-    const double before = Fixture::drawn(f.paint(), middle)->rect.x();
-
-    // On to the third desk: nothing jumps, and it does not stop to set off.
-    ASSERT_TRUE(f.node->replaceAnimation(2));
-    f.node->takeEndingScreenshot(2);
-    EXPECT_NEAR(Fixture::drawn(f.paint(), middle)->rect.x(), before, 1);
-    f.node->startAnimation();
-    EXPECT_NEAR(Fixture::drawn(f.paint(), middle)->rect.x(), before, 1);
-    f.now += 16;
-    EXPECT_LT(Fixture::drawn(f.paint(), middle)->rect.x(), before - 10);
-    EXPECT_EQ(f.finished, 0);
-
-    f.now += Node::kGlideDurationMs;
-    f.paint();
-    EXPECT_EQ(f.finished, 1);
-    EXPECT_EQ(2, f.node->endingDesk());
-}
-
 TEST(DeskSwitchNode, ADeskOnTheLeftGoesInFrontWithoutMovingWhatIsShown)
 {
     Fixture f;

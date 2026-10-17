@@ -48,9 +48,6 @@ public:
     // Upstream Replace: takes the ending desk one further along. False when
     // the animation cannot, and the caller has to start another.
     virtual bool replace(bool movingLeft, DesksSwitchSource source) { return false; }
-    // Heads for `endingDesk` instead, from wherever the strip is. False as
-    // replace().
-    virtual bool replaceWith(int endingDesk, DesksSwitchSource source) { return false; }
     // See DeskSwitchNode::updateSwipeAnimation and endSwipeAnimation.
     virtual bool updateSwipeAnimation(double deskDelta, double timeMs) { return false; }
     virtual bool endSwipeAnimation(double timeMs) { return false; }
@@ -92,7 +89,6 @@ public:
                             DesksSwitchSource source, bool updateWindowActivation);
 
     bool replace(bool movingLeft, DesksSwitchSource source) override;
-    bool replaceWith(int endingDesk, DesksSwitchSource source) override;
     bool updateSwipeAnimation(double deskDelta, double timeMs) override;
     bool endSwipeAnimation(double timeMs) override;
 

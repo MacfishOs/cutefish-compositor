@@ -439,6 +439,8 @@ void OverviewController::landDeskSwitch()
     // lands at once: the overview starts from the desk it was heading to.
     if (DeskAnimationBase *animation = m_manager->desks()->animation())
         animation->finishNow();
+    if (m_node)
+        m_node->setContentHidden(false);
 }
 
 void OverviewController::onOutputsChanged()
@@ -514,6 +516,7 @@ void OverviewController::finish()
     }
     if (m_node) {
         m_node->jumpTo(0);
+        m_node->setContentHidden(false);
         m_node->setItems({}, false);
         m_node->setBackdrop({});
         m_node->setFadingBackdrop({});
@@ -571,6 +574,11 @@ void OverviewController::exit(Window *window)
     if (m_state == State::Hidden || (m_state == State::Exiting && !window))
         return;
     landDeskSwitch();
+    leave(window);
+}
+
+void OverviewController::leave(Window *window)
+{
     cancelPress();
     m_swipeTarget = nullptr;
     activateForExit(window);
@@ -787,12 +795,21 @@ void OverviewController::release(const base::PointF &location)
     case Hit::Type::Desk:
         if (press.hit.bar < int(m_barDesks.size())
             && press.hit.index < int(m_barDesks[press.hit.bar].size())) {
-            // The desk it is on takes the overview away, as Escape does.
+            // A desk takes the overview away to it, as Escape does. Another
+            // one slides in on the strip, which starts from the overview, while
+            // the desk bar goes and the panels come back.
             Desk *desk = m_barDesks[press.hit.bar][press.hit.index];
-            if (desk == desks->activeDesk())
+            if (!desk || desk == desks->activeDesk()) {
                 exit();
-            else if (desk)
-                desks->activateDesk(desk, DesksSwitchSource::MiniViewButton);
+                break;
+            }
+            desks->activateDesk(desk, DesksSwitchSource::MiniViewButton);
+            if (!desks->animation()) {
+                exit();
+                break;
+            }
+            m_node->setContentHidden(true);
+            leave(nullptr);
         }
         break;
     case Hit::Type::DeskClose:

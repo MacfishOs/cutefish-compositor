@@ -217,9 +217,6 @@ private:
     std::optional<motion::Spring> m_coast;
     double m_coastStart = 0;
     Animation m_animation;
-    motion::Tween m_glide;
-    // How far the strip has shifted since m_glide set off.
-    double m_glideOffset = 0;
     motion::Spring m_spring;
     mutable double m_animationStart = -1;
     mutable bool m_finishNotified = false;

@@ -511,6 +511,11 @@ void OverviewNode::render(render::Renderer &renderer) const
     if (!isActive() || !isVisible())
         return;
     const double now = frameNow(renderer, m_now);
+    if (m_contentHidden) {
+        if (!renderer.capturing)
+            advance(now);
+        return;
+    }
     const base::Rect viewport = viewportOf(renderer, *this);
     const double progress = this->progress(now);
 
@@ -552,8 +557,12 @@ void OverviewNode::render(render::Renderer &renderer) const
 
     renderChrome(renderer, viewport, now);
 
-    if (renderer.capturing)
-        return;
+    if (!renderer.capturing)
+        advance(now);
+}
+
+void OverviewNode::advance(double now) const
+{
     switch (m_motion) {
     case Motion::Still:
         break;
@@ -609,6 +618,14 @@ void OverviewNode::renderItem(render::Renderer &renderer, int index, double prog
         if (m_frame.outline && uniform > 0)
             m_frame.outline(renderer, body, float(uniform));
     }
+}
+
+void OverviewNode::setContentHidden(bool hidden)
+{
+    if (m_contentHidden == hidden)
+        return;
+    m_contentHidden = hidden;
+    notifyChanged();
 }
 
 void OverviewNode::setRaised(int index)
