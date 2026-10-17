@@ -19,12 +19,16 @@ const base::LogCategory &logs()
 const char *const service = "org.freedesktop.login1";
 const char *const path = "/org/freedesktop/login1";
 const char *const manager = "org.freedesktop.login1.Manager";
+// logind resolves it to the caller's own session.
+const char *const sessionPath = "/org/freedesktop/login1/session/auto";
+const char *const sessionInterface = "org.freedesktop.login1.Session";
 } // namespace
 
 SleepLock::SleepLock(SessionController *session, base::dbus::Connection *bus)
     : m_session(session)
     , m_bus(bus ? bus : base::dbus::Connection::system(core::mainLoop()))
     , m_manager(m_bus, service, path, manager)
+    , m_logindSession(m_bus, service, sessionPath, sessionInterface)
     , m_relock(core::mainLoop())
 {
     m_relock.setSingleShot(true);
@@ -60,6 +64,7 @@ bool SleepLock::start()
     }
     m_started = true;
     inhibit();
+    updateLockedHint(m_session->state());
     return true;
 }
 
@@ -99,6 +104,7 @@ void SleepLock::prepareForSleep(bool sleeping)
 
 void SleepLock::onSessionStateChanged(SessionState state)
 {
+    updateLockedHint(state);
     if (!m_sleeping)
         return;
     if (state == SessionState::Active) {
@@ -114,5 +120,24 @@ void SleepLock::releaseWhenLocked()
     const SessionState state = m_session->state();
     if (state == SessionState::Locked || state == SessionState::Login)
         m_inhibitor = base::dbus::UnixFd();
+}
+
+void SleepLock::updateLockedHint(SessionState state)
+{
+    if (!m_started)
+        return;
+    // The hint turns on once the lock covers every output and off only when
+    // the desktop is back.
+    bool locked = m_lockedHint;
+    if (state == SessionState::Locked)
+        locked = true;
+    else if (state == SessionState::Active)
+        locked = false;
+    if (locked == m_lockedHint)
+        return;
+    m_lockedHint = locked;
+    if (!m_logindSession.send("SetLockedHint", locked))
+        CF_WARNING(logs()) << "Cannot tell logind that the session is"
+                           << (locked ? "locked" : "unlocked");
 }
 } // namespace cutefish::session

@@ -16,6 +16,9 @@ class SessionController;
 // sleep back until the lock is on every output, so waking never shows the
 // desktop. Upstream: ash/system/power/power_event_observer.cc, which delays
 // suspend the same way until the lock screen has been composited.
+//
+// It also keeps logind's LockedHint on the session in step with the lock, as
+// Ash tells session_manager that the lock screen was shown or dismissed.
 class SleepLock : public SessionObserver
 {
 public:
@@ -25,7 +28,8 @@ public:
     SleepLock &operator=(const SleepLock &) = delete;
     ~SleepLock() override;
 
-    // Follows logind's PrepareForSleep and takes the inhibitor.
+    // Follows logind's PrepareForSleep, takes the inhibitor and from then on
+    // sets the session's LockedHint.
     bool start();
 
     bool holdsInhibitor() const { return m_inhibitor.isValid(); }
@@ -36,16 +40,19 @@ private:
     void prepareForSleep(bool sleeping);
     void inhibit();
     void releaseWhenLocked();
+    void updateLockedHint(SessionState state);
 
     SessionController *m_session;
     base::dbus::Connection *m_bus;
     base::dbus::Proxy m_manager;
+    base::dbus::Proxy m_logindSession;
     base::dbus::Match m_prepareForSleep;
     base::dbus::PendingCall m_inhibiting;
     base::dbus::UnixFd m_inhibitor;
     // Not from inside the controller's own state change.
     base::Timer m_relock;
     bool m_sleeping = false;
+    bool m_lockedHint = false;
     bool m_started = false;
 };
 } // namespace cutefish::session

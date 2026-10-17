@@ -110,3 +110,31 @@ TEST_F(SleepLockTest, AnAlreadyLockedSessionSleepsAtOnce)
     logind.prepareForSleep(false);
     EXPECT_TRUE(waitFor([&] { return lock.holdsInhibitor(); }));
 }
+
+TEST_F(SleepLockTest, LockedHintFollowsTheLock)
+{
+    ASSERT_TRUE(logind.isValid());
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    session::SleepLock lock(&controller, bus);
+    ASSERT_TRUE(lock.start());
+
+    EXPECT_TRUE(controller.requestLock());
+    test::runFor(std::chrono::milliseconds(20));
+    EXPECT_TRUE(logind.lockedHints.empty());
+    controller.notifyOutputPresented("one");
+    ASSERT_TRUE(waitFor([&] { return logind.lockedHints.size() == 1; }));
+    EXPECT_TRUE(logind.lockedHints[0]);
+
+    EXPECT_TRUE(controller.requestUnlock());
+    test::runFor(std::chrono::milliseconds(20));
+    EXPECT_EQ(logind.lockedHints.size(), 1u);
+    controller.notifyOutputPresented("one");
+    ASSERT_TRUE(waitFor([&] { return logind.lockedHints.size() == 2; }));
+    EXPECT_FALSE(logind.lockedHints[1]);
+
+    test::runFor(std::chrono::milliseconds(20));
+    EXPECT_EQ(logind.lockedHints.size(), 2u);
+}

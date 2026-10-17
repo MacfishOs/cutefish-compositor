@@ -19,7 +19,7 @@ namespace cutefish::test {
 
 // logind's manager on a connection of its own, as much of it as the session
 // uses: Inhibit hands out the write end of a pipe, and the read end tells
-// whether anyone still holds it.
+// whether anyone still holds it. The caller's session records its LockedHint.
 class FakeLogind
 {
 public:
@@ -40,7 +40,13 @@ public:
             return base::dbus::UnixFd::adopt(ends[1]);
         });
         m_object->addSignal("PrepareForSleep", "b");
-        m_valid = m_object->publish() && m_bus->requestName("org.freedesktop.login1");
+        m_session = std::make_unique<base::dbus::Object>(m_bus.get(),
+                                                         "/org/freedesktop/login1/session/auto",
+                                                         "org.freedesktop.login1.Session");
+        m_session->addMethod("SetLockedHint",
+                             [this](bool locked) { lockedHints.push_back(locked); });
+        m_valid = m_object->publish() && m_session->publish()
+                && m_bus->requestName("org.freedesktop.login1");
     }
 
     ~FakeLogind()
@@ -66,10 +72,12 @@ public:
 
     std::vector<std::string> lastInhibit;
     std::vector<int> readEnds;
+    std::vector<bool> lockedHints;
 
 private:
     std::unique_ptr<base::dbus::Connection> m_bus;
     std::unique_ptr<base::dbus::Object> m_object;
+    std::unique_ptr<base::dbus::Object> m_session;
     bool m_valid = false;
 };
 
