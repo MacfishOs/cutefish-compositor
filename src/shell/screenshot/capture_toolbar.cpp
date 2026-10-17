@@ -7,11 +7,11 @@
 #include <algorithm>
 #include <cmath>
 
-#include "audio/audiomodel.h"
-#include "audio/audioobject.h"
-#include "audio/backend.h"
 #include "base/event_loop.h"
 #include "core/main_loop.h"
+#include "cutefish/audio/audio_model.h"
+#include "cutefish/audio/audio_object.h"
+#include "cutefish/audio/backend.h"
 #include "shell/screenshot/capture_overlay.h"
 #include "shell/screenshot/capture_settings.h"
 #include "shell/screenshot/screen_capture.h"

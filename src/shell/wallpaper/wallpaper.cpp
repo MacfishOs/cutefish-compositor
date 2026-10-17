@@ -8,13 +8,13 @@
 #include <cmath>
 #include <optional>
 
-#include "appearance/appearance.h"
 #include "base/settings.h"
 #include "base/strings.h"
 #include "base/url.h"
 #include "compositor/capture_source.h"
 #include "compositor/compositor.h"
 #include "core/preferences.h"
+#include "cutefish/appearance/appearance.h"
 #include "scene/node.h"
 #include "scene/wallpaper_node.h"
 #include "wm/overview/overview_controller.h"

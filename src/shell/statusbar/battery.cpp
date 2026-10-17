@@ -5,9 +5,9 @@
 #include "shell/statusbar/battery.h"
 
 #include "base/settings.h"
+#include "cutefish/upower/battery_status.h"
 #include "shell/common/file_thread.h"
 #include "shell/common/service_owner.h"
-#include "upower/batterystatus.h"
 
 namespace cutefish::shell {
 

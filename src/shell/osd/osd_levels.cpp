@@ -4,9 +4,9 @@
 
 #include <memory>
 
-#include "audio/audiomodel.h"
-#include "audio/audioobject.h"
-#include "audio/backend.h"
+#include "cutefish/audio/audio_model.h"
+#include "cutefish/audio/audio_object.h"
+#include "cutefish/audio/backend.h"
 #include "shell/osd/osd.h"
 #include "shell/statusbar/brightness.h"
 

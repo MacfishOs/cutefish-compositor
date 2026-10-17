@@ -4,8 +4,8 @@
 
 #include "shell/menubar/menu_bar_view.h"
 
-#include "accounts/useraccount.h"
 #include "core/main_loop.h"
+#include "cutefish/accounts/user_account.h"
 #include "shell/shell.h"
 #include "shell/statusbar/bar_item.h"
 #include "shell/statusbar/status_bar.h"

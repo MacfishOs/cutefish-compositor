@@ -8,24 +8,24 @@
 #include <filesystem>
 #include <vector>
 
-#include "audio/audiomodel.h"
-#include "audio/backend.h"
 #include "base/dbus.h"
 #include "base/logging.h"
 #include "base/thread_pool.h"
 #include "base/timer.h"
-#include "bluez/manager.h"
-#include "networkmanager/client.h"
-#include "networkmanager/handler.h"
-#include "networkmanager/hotspot.h"
-#include "networkmanager/networkmodel.h"
-#include "networkmanager/wifiutils.h"
-#include "powerprofiles/powerprofiles.h"
+#include "cutefish/audio/audio_model.h"
+#include "cutefish/audio/backend.h"
+#include "cutefish/bluez/manager.h"
+#include "cutefish/networkmanager/client.h"
+#include "cutefish/networkmanager/handler.h"
+#include "cutefish/networkmanager/hotspot.h"
+#include "cutefish/networkmanager/network_model.h"
+#include "cutefish/networkmanager/wifi_utils.h"
+#include "cutefish/powerprofiles/power_profiles.h"
+#include "cutefish/upower/battery_status.h"
 #include "shell/common/app_launcher.h"
 #include "shell/common/pending_calls.h"
 #include "shell/notification/notification_settings.h"
 #include "shell/statusbar/status_bar.h"
-#include "upower/batterystatus.h"
 
 namespace cutefish::shell {
 

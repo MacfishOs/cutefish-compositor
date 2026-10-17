@@ -26,7 +26,7 @@
 #include "shell_test_util.h"
 #include "statusbar_fakes.h"
 #include "temporary_directory.h"
-#include "upower/batterystatus.h"
+#include "cutefish/upower/battery_status.h"
 #include "ui/bitmap.h"
 
 using namespace cutefish;

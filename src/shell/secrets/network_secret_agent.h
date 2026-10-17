@@ -16,7 +16,7 @@
 #include "base/dbus.h"
 #include "base/signal.h"
 #include "base/timer.h"
-#include "networkmanager/types.h"
+#include "cutefish/networkmanager/types.h"
 #include "shell/secrets/vpn_secret_fields.h"
 
 namespace cutefish::networkmanager {

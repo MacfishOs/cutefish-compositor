@@ -5,8 +5,8 @@
 #include "shell/secrets/secret_prompts.h"
 
 #include "base/dbus.h"
-#include "bluez/manager.h"
-#include "networkmanager/client.h"
+#include "cutefish/bluez/manager.h"
+#include "cutefish/networkmanager/client.h"
 #include "shell/secrets/bluetooth_pairing_dialog.h"
 #include "shell/secrets/network_dialogs.h"
 #include "shell/secrets/network_secret_agent.h"

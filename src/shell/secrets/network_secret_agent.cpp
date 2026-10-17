@@ -7,9 +7,9 @@
 #include <chrono>
 
 #include "base/logging.h"
-#include "networkmanager/client.h"
-#include "networkmanager/handler.h"
-#include "networkmanager/variants.h"
+#include "cutefish/networkmanager/client.h"
+#include "cutefish/networkmanager/handler.h"
+#include "cutefish/networkmanager/variants.h"
 #include "shell/secrets/secret_store.h"
 
 namespace cutefish::shell {

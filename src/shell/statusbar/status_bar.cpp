@@ -7,10 +7,10 @@
 #include "base/desktop_entry.h"
 #include "base/logging.h"
 #include "base/settings.h"
-#include "powerprofiles/powerprofiles.h"
+#include "cutefish/powerprofiles/power_profiles.h"
+#include "cutefish/upower/battery_status.h"
 #include "shell/common/file_thread.h"
 #include "shell/statusbar/clock_format.h"
-#include "upower/batterystatus.h"
 
 namespace cutefish::shell {
 
