@@ -19,13 +19,13 @@
 #include "cutefish/networkmanager/handler.h"
 #include "cutefish/networkmanager/hotspot.h"
 #include "cutefish/networkmanager/network_model.h"
-#include "cutefish/networkmanager/wifi_utils.h"
 #include "cutefish/powerprofiles/power_profiles.h"
 #include "cutefish/upower/battery_status.h"
 #include "shell/common/app_launcher.h"
 #include "shell/common/pending_calls.h"
 #include "shell/notification/notification_settings.h"
 #include "shell/statusbar/status_bar.h"
+#include "shell/statusbar/wireless_status.h"
 
 namespace cutefish::shell {
 
@@ -56,7 +56,8 @@ public:
         : m_statusBar(statusBar)
         , m_notifications(notifications)
         , m_client(nm::Client::instance())
-        , m_handler(std::make_unique<nm::Handler>())
+        , m_wireless(std::make_unique<WirelessStatus>())
+        , m_handler(&m_wireless->handler())
         , m_networks(std::make_unique<nm::NetworkModel>())
         , m_bluetooth(bluez::Manager::shared())
         , m_audio(std::make_unique<audio::AudioModel>(audio::AudioObject::Sink, audio::Backend::shared()))
@@ -71,14 +72,13 @@ public:
 
         if (m_client) {
             m_subscriptions.push_back(m_client->changed.connect([this] {
-                updateActiveConnection();
                 joinScanned();
                 scheduleChanged();
             }));
             m_subscriptions.push_back(m_client->readyChanged.connect(notify));
         }
         m_subscriptions.push_back(m_networks->changed.connect(notify));
-        m_subscriptions.push_back(m_handler->hotspotActiveChanged.connect(notify));
+        m_subscriptions.push_back(m_wireless->changed.connect(notify));
         m_subscriptions.push_back(m_handler->vpnFailed.connect(
                 [this](const std::string &name, const std::string &message) { vpnFailed.emit(name, message); }));
         if (m_bluetooth) {
@@ -125,8 +125,6 @@ public:
                     m_microphoneEnabled = state.second;
                     scheduleChanged();
                 });
-
-        updateActiveConnection();
     }
 
     ~SessionServices() override
@@ -137,19 +135,11 @@ public:
 
     // --- Network ---
 
-    bool ready() const { return m_client && m_client->ready(); }
+    bool wirelessHardwareEnabled() const override { return m_wireless->network().wirelessHwEnabled; }
 
-    bool wirelessHardwareEnabled() const override
-    {
-        return ready() && m_client->manager("WirelessHardwareEnabled").value<bool>(false);
-    }
+    bool wirelessEnabled() const override { return m_wireless->network().wirelessEnabled; }
 
-    bool wirelessEnabled() const override
-    {
-        return ready() && m_client->manager("WirelessEnabled").value<bool>(false);
-    }
-
-    bool hotspotActive() const override { return m_handler->hotspotActive(); }
+    bool hotspotActive() const override { return m_wireless->network().hotspotActive; }
 
     std::string hotspotName() const override
     {
@@ -157,8 +147,8 @@ public:
         return configuration ? configuration->name() : std::string();
     }
 
-    std::string wirelessName() const override { return m_wirelessName; }
-    std::string wirelessIcon() const override { return m_wirelessIcon; }
+    std::string wirelessName() const override { return m_wireless->network().wirelessName; }
+    std::string wirelessIcon() const override { return m_wireless->network().wirelessIcon; }
 
     std::vector<WirelessNetwork> wirelessNetworks() const override
     {
@@ -408,50 +398,6 @@ private:
         });
     }
 
-    // NM.ActiveConnection: the Wi-Fi connection that is up, the primary one if
-    // there are several; a hotspot is not a network this machine is on.
-    void updateActiveConnection()
-    {
-        std::string name;
-        std::string icon;
-        if (ready()) {
-            const auto primary = m_client->manager("PrimaryConnection").get<dbus::ObjectPath>();
-            std::string chosen;
-            std::string device;
-            for (const std::string &active : m_client->activeConnections()) {
-                const auto devices = m_client->property(active, nm::activeInterface, "Devices")
-                                             .value<std::vector<dbus::ObjectPath>>();
-                if (m_client->property(active, nm::activeInterface, "Type").value<std::string>() != "802-11-wireless"
-                    || m_client->property(active, nm::activeInterface, "State").value<uint32_t>()
-                            != nm::ActiveActivated
-                    || devices.empty()
-                    || m_client->property(devices.front().path, nm::wirelessInterface, "Mode").value<uint32_t>()
-                            == nm::ModeAp)
-                    continue;
-                if (chosen.empty() || (primary && active == primary->path)) {
-                    chosen = active;
-                    device = devices.front().path;
-                }
-            }
-            if (!chosen.empty()) {
-                const auto accessPoint =
-                        m_client->property(device, nm::wirelessInterface, "ActiveAccessPoint").get<dbus::ObjectPath>();
-                const std::string path = accessPoint ? accessPoint->path : std::string();
-                const auto bytes = m_client->property(path, nm::accessPointInterface, "Ssid")
-                                           .value<std::vector<uint8_t>>();
-                const std::string ssid(bytes.begin(), bytes.end());
-                // A hidden network's access point has no name of its own; its profile does.
-                name = nm::wifi::ssidHidden(ssid)
-                        ? m_client->property(chosen, nm::activeInterface, "Id").value<std::string>()
-                        : nm::wifi::ssidLabel(ssid);
-                icon = nm::wifi::strengthIcon(
-                        int(m_client->property(path, nm::accessPointInterface, "Strength").value<uint8_t>()));
-            }
-        }
-        m_wirelessName = name;
-        m_wirelessIcon = icon;
-    }
-
     // Handler.whenScanned: Settings' join window, once NetworkManager lists
     // the access point again.
     void whenScanned(const std::string &accessPoint)
@@ -488,7 +434,8 @@ private:
     StatusBar &m_statusBar;
     NotificationSettings *m_notifications;
     nm::Client *m_client;
-    std::unique_ptr<nm::Handler> m_handler;
+    std::unique_ptr<WirelessStatus> m_wireless;
+    nm::Handler *m_handler;
     std::unique_ptr<nm::NetworkModel> m_networks;
     std::shared_ptr<bluez::Manager> m_bluetooth;
     std::unique_ptr<audio::AudioModel> m_audio;
@@ -498,8 +445,6 @@ private:
     base::Job m_privacyState;
     bool m_cameraEnabled = true;
     bool m_microphoneEnabled = true;
-    std::string m_wirelessName;
-    std::string m_wirelessIcon;
     std::vector<PendingJoin> m_pendingJoins;
     base::Timer m_changedTimer;
     std::vector<base::Subscription> m_subscriptions;

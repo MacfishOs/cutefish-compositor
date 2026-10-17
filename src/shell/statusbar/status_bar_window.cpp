@@ -250,13 +250,8 @@ void StatusBarWindow::updateLook()
 
 void StatusBarWindow::updateBattery()
 {
-    Battery &battery = m_statusBar->battery();
-    m_battery->setVisible(battery.isAvailable());
-    std::string icon = battery.iconSource();
-    if (icon.ends_with(".svg"))
-        icon.resize(icon.size() - 4);
-    m_battery->setIconName(icon);
-    m_battery->setLabel(battery.showPercentage() ? std::to_string(battery.chargePercent()) + "%" : std::string());
+    const Battery &battery = m_statusBar->battery();
+    m_battery->showBattery(battery, battery.showPercentage());
     layoutRow();
 }
 
@@ -280,13 +275,7 @@ void StatusBarWindow::updateIndicators()
                                        : "audio-volume-high-symbolic";
     m_volume->setIconName(audio.hasSink && !audio.muted ? volumeIcon : "audio-volume-muted-symbolic");
 
-    const StatusBarIndicators::Network network =
-            m_indicators ? m_indicators->network() : StatusBarIndicators::Network();
-    m_network->setVisible(network.wirelessHwEnabled);
-    m_network->setGlyph(!network.wirelessEnabled ? "network-wireless-disabled"
-                        : network.hotspotActive  ? "network-wireless-hotspot"
-                        : !network.wirelessName.empty() ? network.wirelessIcon
-                                                        : "network-wireless-connected-00");
+    m_network->showNetwork(m_indicators ? m_indicators->network() : StatusBarIndicators::Network());
 
     layoutRow();
 }

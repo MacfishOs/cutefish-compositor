@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "shell/shell_data.h"
+#include "shell/statusbar/battery.h"
 #include "ui/painter.h"
 #include "ui/cell_layout.h"
 #include "ui/window.h"
@@ -110,6 +111,25 @@ void StatusIcon::setIndicatorColor(std::optional<ui::Color> color)
     if (color)
         m_indicator->setColor(*color);
     updateContent();
+}
+
+void StatusIcon::showBattery(const Battery &battery, bool percentage)
+{
+    setVisible(battery.isAvailable());
+    std::string icon = battery.iconSource();
+    if (icon.ends_with(".svg"))
+        icon.resize(icon.size() - 4);
+    setIconName(icon);
+    setLabel(percentage ? std::to_string(battery.chargePercent()) + "%" : std::string());
+}
+
+void StatusIcon::showNetwork(const StatusBarIndicators::Network &network)
+{
+    setVisible(network.wirelessHwEnabled);
+    setGlyph(!network.wirelessEnabled ? "network-wireless-disabled"
+             : network.hotspotActive  ? "network-wireless-hotspot"
+             : !network.wirelessName.empty() ? network.wirelessIcon
+                                             : "network-wireless-connected-00");
 }
 
 void StatusIcon::updateContent()

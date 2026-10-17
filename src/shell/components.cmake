@@ -165,11 +165,18 @@ target_link_libraries(cutefish-shell-controlcenter PUBLIC cutefish-shell cutefis
     cutefish-shell-statusbar cutefish-shell-notification Cutefish::NetworkManagerClient
     Cutefish::BluezClient Cutefish::AudioClient)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-controlcenter)
+# The status bar's items, which the lock screen shows too.
+add_library(cutefish-shell-bar-items STATIC
+    src/shell/statusbar/bar_item.cpp
+    src/shell/statusbar/bar_item.h
+    src/shell/statusbar/status_bar_panels.h
+    src/shell/statusbar/status_icon.cpp
+    src/shell/statusbar/status_icon.h
+)
+target_link_libraries(cutefish-shell-bar-items PUBLIC cutefish-shell cutefish-shell-statusbar)
 # The status bar: its window, tray, status icons and clock on the bar's backend.
 find_package(CutefishClients REQUIRED COMPONENTS appearance)
 add_library(cutefish-shell-statusbar-view STATIC
-    src/shell/statusbar/bar_item.cpp
-    src/shell/statusbar/bar_item.h
     src/shell/statusbar/dbus_menu_popup.cpp
     src/shell/statusbar/dbus_menu_popup.h
     src/shell/statusbar/device_usage.cpp
@@ -180,13 +187,11 @@ add_library(cutefish-shell-statusbar-view STATIC
     src/shell/statusbar/status_bar_panels.h
     src/shell/statusbar/status_bar_window.cpp
     src/shell/statusbar/status_bar_window.h
-    src/shell/statusbar/status_icon.cpp
-    src/shell/statusbar/status_icon.h
     src/shell/statusbar/system_tray_view.cpp
     src/shell/statusbar/system_tray_view.h
 )
-target_link_libraries(cutefish-shell-statusbar-view PUBLIC cutefish-shell cutefish-shell-statusbar
-    cutefish-shell-wallpaper Cutefish::AudioClient)
+target_link_libraries(cutefish-shell-statusbar-view PUBLIC cutefish-shell cutefish-shell-bar-items
+    cutefish-shell-statusbar cutefish-shell-wallpaper Cutefish::AudioClient)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-statusbar-view)
 # The status bar's menu bar.
 include(src/shell/menubar/menubar.cmake)

@@ -10,12 +10,15 @@
 #include <string>
 
 #include "shell/statusbar/bar_item.h"
+#include "shell/statusbar/status_bar_panels.h"
 
 namespace cutefish::ui {
 class RowLayout;
 }
 
 namespace cutefish::shell {
+
+class Battery;
 
 // A bar icon that opens a panel, with an optional dot after
 // it and an optional label, 12 px of the item on either side of them.
@@ -32,6 +35,12 @@ public:
     void setLabel(std::string label);
     // The dot after the icon; none when unset.
     void setIndicatorColor(std::optional<ui::Color> color);
+
+    // The battery's level, and its percentage with `percentage`; hidden
+    // without a battery.
+    void showBattery(const Battery &battery, bool percentage);
+    // The Wi-Fi state; hidden without Wi-Fi hardware.
+    void showNetwork(const StatusBarIndicators::Network &network);
 
     const std::string &iconName() const { return m_iconName; }
     const std::string &glyph() const { return m_glyph; }
