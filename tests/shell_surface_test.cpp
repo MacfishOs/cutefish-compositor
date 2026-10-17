@@ -1767,3 +1767,17 @@ TEST_F(MultiDisplayShellSurfaceTest, ADialogFollowsItsParentsOutput)
     dialog->rootSurface()->commit();
     EXPECT_EQ(base::Rect(1350, 210, 100, 80), dialog->window()->bounds());
 }
+
+TEST_F(MultiDisplayShellSurfaceTest, LeavingFullscreenOnAnotherOutputRestoresTheOldBounds)
+{
+    pointerAt(base::PointF(100, 100));
+    ShellSurface *shell = mapApp("video", base::Size(400, 300));
+    const base::Rect normal = shell->window()->bounds();
+    ASSERT_TRUE(kPrimary.contains(normal));
+
+    shell->setFullscreenOutput("Cutefish-b");
+    shell->setFullscreen(true);
+    EXPECT_EQ(kSecondary, shell->window()->bounds());
+    shell->setFullscreen(false);
+    EXPECT_EQ(normal, shell->window()->bounds());
+}

@@ -393,9 +393,12 @@ public:
     // - the launcher covers the whole screen - so this is the output bounds for
     // those.
     base::Rect workAreaFor(const Window *window) const;
+    // The same for `window` once it is at `bounds`, which may be on another output.
+    base::Rect workAreaFor(const Window *window, const base::Rect &bounds) const;
     // What a normal window must stay partly inside while moved: the work area,
     // but down to the output's bottom edge so it can slide under the dock.
     base::Rect visibleAreaFor(const Window *window) const;
+    base::Rect visibleAreaFor(const Window *window, const base::Rect &bounds) const;
     void setWorkArea(const base::Rect &bounds);
 
     // The output bounds a new ordinary window goes to: the active application

@@ -268,21 +268,26 @@ void WindowState::updateBoundsFromState(WindowStateType previous)
     switch (m_type) {
     case WindowStateType::Normal: {
         base::Rect bounds = m_window->bounds();
+        base::Rect normalWorkArea = workArea;
         if (hasRestoreBounds()) {
             bounds = restoreBounds();
+            // A window fullscreen on another output comes back to the one it
+            // left, so that output's areas are the ones that apply.
+            normalWorkArea = manager->workAreaFor(m_window, bounds);
             // The restore bounds can be as large as the work area if the window
             // was resized to it, or if the output shrank while it was
             // maximized. Inset so the result is visibly not maximized. Only
             // when leaving Maximized: a minimise or fullscreen round trip
             // brings a work-area-sized window back exactly as it was.
-            if (previous == WindowStateType::Maximized && !workArea.isEmpty()
-                && bounds.width() >= workArea.width() && bounds.height() >= workArea.height()) {
-                bounds = workArea.adjusted(kMaximizedWindowInset, kMaximizedWindowInset,
-                                           -kMaximizedWindowInset, -kMaximizedWindowInset);
+            if (previous == WindowStateType::Maximized && !normalWorkArea.isEmpty()
+                && bounds.width() >= normalWorkArea.width()
+                && bounds.height() >= normalWorkArea.height()) {
+                bounds = normalWorkArea.adjusted(kMaximizedWindowInset, kMaximizedWindowInset,
+                                                 -kMaximizedWindowInset, -kMaximizedWindowInset);
             }
         }
-        adjustBoundsToEnsureMinimumVisibility(manager->visibleAreaFor(m_window), &bounds,
-                                              workArea);
+        adjustBoundsToEnsureMinimumVisibility(manager->visibleAreaFor(m_window, bounds), &bounds,
+                                              normalWorkArea);
         setBoundsDirect(bounds);
         break;
     }

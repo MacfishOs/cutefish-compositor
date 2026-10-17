@@ -220,9 +220,14 @@ void WindowManager::clearWindowOutput(Window *window)
 
 base::Rect WindowManager::workAreaFor(const Window *window) const
 {
+    return workAreaFor(window, window ? window->bounds() : base::Rect());
+}
+
+base::Rect WindowManager::workAreaFor(const Window *window, const base::Rect &bounds) const
+{
     if (m_displayManager) {
         const display::LogicalDisplay *logical = window
-                ? m_displayManager->displayForRect(window->bounds())
+                ? m_displayManager->displayForRect(bounds)
                 : m_displayManager->primaryDisplay();
         if (logical)
             return window && window->isShellWindow()
@@ -240,10 +245,15 @@ base::Rect WindowManager::workAreaFor(const Window *window) const
 
 base::Rect WindowManager::visibleAreaFor(const Window *window) const
 {
-    base::Rect area = workAreaFor(window);
+    return visibleAreaFor(window, window ? window->bounds() : base::Rect());
+}
+
+base::Rect WindowManager::visibleAreaFor(const Window *window, const base::Rect &bounds) const
+{
+    base::Rect area = workAreaFor(window, bounds);
     base::Rect output = m_outputBounds;
     if (m_displayManager) {
-        if (const auto *logical = window ? m_displayManager->displayForRect(window->bounds())
+        if (const auto *logical = window ? m_displayManager->displayForRect(bounds)
                                          : m_displayManager->primaryDisplay())
             output = logical->bounds;
     }
