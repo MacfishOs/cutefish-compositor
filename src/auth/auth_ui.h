@@ -93,6 +93,7 @@ public:
 
     // The password field in panel coordinates, for the backdrop blur behind it.
     base::RectF fieldBounds() const;
+    double fieldOpacity() const;
 
     // The panel rendered on the CPU, when it changed.
     ui::Bitmap renderImage();

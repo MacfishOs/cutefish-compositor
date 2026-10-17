@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <linux/input-event-codes.h>
+#include <memory>
 #include <optional>
 #include <tuple>
 
@@ -473,6 +474,150 @@ TEST(AuthUiTest, ChoiceMenuClosesOnAPressElsewhere)
     EXPECT_EQ(ui.controller()->sessionIndex(), 1);
 }
 
+// A greeter with three accounts, driven by the pointer and the keyboard.
+class UserGridTest : public ::testing::Test
+{
+protected:
+    UserGridTest()
+        : secure(&root)
+        , controller(&secure, nullptr, session::SessionState::Login)
+        , compositor(&applications)
+        , seat(&compositor)
+        , input(&seat)
+    {
+        controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+        seat.setSessionGate(&controller);
+        ui = std::make_unique<auth::AuthUi>(&controller, seat.xkbTracker(), &backend);
+        ui->refresh();
+        ui->controller()->setUsers({"tester", "alice", "bob"});
+        ui->window()->updateLayout();
+        screen = ui->window()->contentView();
+        avatar = findView(screen, "user-avatar");
+        grid = findView(screen, "user-grid");
+        panel = base::PointF(secure.authContainer()->children().front()->absolutePosition());
+    }
+
+    ~UserGridTest() override { seat.shutdown(); }
+
+    void click(base::PointF point)
+    {
+        ui->onPointerMotion({}, panel + point);
+        ui->onPointerButton({}, panel + point, BTN_LEFT, true);
+        ui->onPointerButton({}, panel + point, BTN_LEFT, false);
+    }
+
+    void press(uint32_t key)
+    {
+        input.onKey({}, key, true);
+        input.onKey({}, key, false);
+    }
+
+    base::RectF rectOf(const std::string &name)
+    {
+        ui->window()->updateLayout();
+        return panelRect(findView(screen, name));
+    }
+
+    bool settled(bool open)
+    {
+        ui->renderImage();
+        return open ? ui->fieldBounds().isEmpty() && ui->fieldOpacity() == 0
+                    : !grid->isVisible() && ui->fieldOpacity() == 1;
+    }
+
+    scene::Node root;
+    session::SecureContainer secure;
+    session::SessionController controller;
+    scene::Node applications;
+    compositor::Compositor compositor;
+    input::Seat seat;
+    input::InputManager input;
+    FakeBackend backend;
+    std::unique_ptr<auth::AuthUi> ui;
+    ui::View *screen = nullptr;
+    ui::View *avatar = nullptr;
+    ui::View *grid = nullptr;
+    base::PointF panel;
+};
+
+TEST_F(UserGridTest, TheAvatarOpensTheAccountsAndATilePicksOne)
+{
+    ASSERT_TRUE(avatar && grid);
+    EXPECT_TRUE(avatar->acceptsPointer());
+    EXPECT_TRUE(!grid->isVisible());
+    // The name pill is gone: the avatar is the way in.
+    EXPECT_EQ(findView(screen, "user-menu"), nullptr);
+
+    click(rectOf("user-avatar").center());
+    EXPECT_TRUE(grid->isVisible());
+    EXPECT_EQ(ui->focusView(), grid);
+    EXPECT_TRUE(test::runUntil([&] { return settled(true); }, std::chrono::milliseconds(1000)));
+
+    // One row of three, centred, the pictures in the row of the one picked.
+    const base::RectF first = rectOf("user-tile-0");
+    const base::RectF last = rectOf("user-tile-2");
+    EXPECT_EQ(first.top(), last.top());
+    EXPECT_NEAR(first.left() + last.right(), 480, 1e-6);
+    EXPECT_NEAR(first.top() + 6, rectOf("user-avatar").top(), 1e-6);
+
+    click(rectOf("user-tile-2").center());
+    EXPECT_EQ(ui->controller()->userName(), "bob");
+    EXPECT_TRUE(test::runUntil([&] { return settled(false); }, std::chrono::milliseconds(1000)));
+    EXPECT_TRUE(focusedField(*ui));
+    EXPECT_TRUE(!ui->fieldBounds().isEmpty());
+}
+
+TEST_F(UserGridTest, EscapeAndAPressElsewhereGoBack)
+{
+    click(rectOf("user-avatar").center());
+    EXPECT_TRUE(test::runUntil([&] { return settled(true); }, std::chrono::milliseconds(1000)));
+    press(KEY_ESC);
+    EXPECT_TRUE(test::runUntil([&] { return settled(false); }, std::chrono::milliseconds(1000)));
+    EXPECT_TRUE(focusedField(*ui));
+    EXPECT_EQ(ui->controller()->userName(), "tester");
+
+    click(rectOf("user-avatar").center());
+    EXPECT_TRUE(test::runUntil([&] { return settled(true); }, std::chrono::milliseconds(1000)));
+    click({20, 20});
+    EXPECT_TRUE(test::runUntil([&] { return settled(false); }, std::chrono::milliseconds(1000)));
+    EXPECT_EQ(ui->controller()->userName(), "tester");
+}
+
+TEST_F(UserGridTest, ArrowsAndReturnPickFromTheKeyboard)
+{
+    click(rectOf("user-avatar").center());
+    // From the account picked now: one to the right is alice.
+    press(KEY_RIGHT);
+    press(KEY_ENTER);
+    EXPECT_EQ(ui->controller()->userName(), "alice");
+    EXPECT_TRUE(test::runUntil([&] { return settled(false); }, std::chrono::milliseconds(1000)));
+
+    // Return without moving keeps the account.
+    click(rectOf("user-avatar").center());
+    press(KEY_ENTER);
+    EXPECT_EQ(ui->controller()->userName(), "alice");
+}
+
+TEST_F(UserGridTest, NothingToSwitchToWithOneAccountOrWhileChecking)
+{
+    ui->controller()->setUsers({"tester"});
+    EXPECT_TRUE(!avatar->acceptsPointer());
+    click(rectOf("user-avatar").center());
+    EXPECT_TRUE(!grid->isVisible());
+
+    ui->controller()->setUsers({"tester", "alice"});
+    click(rectOf("user-avatar").center());
+    EXPECT_TRUE(grid->isVisible());
+    // An attempt under way takes the accounts away again.
+    press(KEY_ESC);
+    for (uint32_t key : {KEY_P, KEY_W, KEY_ENTER})
+        press(key);
+    EXPECT_TRUE(ui->controller()->busy());
+    EXPECT_TRUE(!avatar->acceptsPointer());
+    click(rectOf("user-avatar").center());
+    EXPECT_TRUE(test::runUntil([&] { return settled(false); }, std::chrono::milliseconds(1000)));
+}
+
 TEST(AuthUiTest, PasswordPillIsOnWholeDevicePixels)
 {
     // The field lands half a device pixel off the grid at 1.5, where an
@@ -858,4 +1003,3 @@ TEST(AuthUiTest, LoginUsesSameOffscreenScreenAndStaysBlockedForHandoff)
     EXPECT_EQ(controller.state(), session::SessionState::Login);
     EXPECT_TRUE(root.isVisible());
 }
-

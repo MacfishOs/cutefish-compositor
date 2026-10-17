@@ -54,7 +54,7 @@ protected:
         // The blur behind the password field fades and scales with the panel.
         if (const base::RectF field = m_ui->fieldBounds(); !field.isEmpty()) {
             render::GlassParams fade;
-            fade.opacity = sample.panelOpacity;
+            fade.opacity = sample.panelOpacity * m_ui->fieldOpacity();
             const base::RectF blurred =
                     transform.mapRect(field.translated(base::PointF(geometry.origin())));
             renderer.drawBackgroundBlur(blurred.toEnclosingRect(),
@@ -349,6 +349,11 @@ base::RectF AuthUi::fieldBounds() const
     // Where the next frame puts it, also before the first one.
     m_window->updateLayout();
     return m_screen->fieldBounds();
+}
+
+double AuthUi::fieldOpacity() const
+{
+    return m_screen ? m_screen->fieldOpacity() : 1;
 }
 
 ui::Bitmap AuthUi::renderImage()

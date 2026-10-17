@@ -16,6 +16,7 @@
 #include "ui/view.h"
 
 namespace cutefish::ui {
+class Animation;
 class ColumnLayout;
 class Window;
 } // namespace cutefish::ui
@@ -27,6 +28,7 @@ class ChoiceMenu;
 class ErrorLabel;
 class PasswordField;
 class RaisedLabel;
+class UserGrid;
 class UserNameField;
 class UserView;
 
@@ -51,6 +53,9 @@ public:
     // The password field in panel coordinates, for the blur behind it; it
     // moves with the shake.
     base::RectF fieldBounds() const;
+    // How visible the password field is: it fades out while the accounts
+    // are shown, and its blur with it.
+    double fieldOpacity() const;
     // Seconds since the epoch the clock shows instead of the time, for tests.
     void setClockForTesting(std::time_t now);
 
@@ -61,6 +66,10 @@ protected:
 private:
     void tick();
     void closeMenus(ui::PointF position);
+    bool canSwitchUser() const;
+    void updateSwappable();
+    void setPickerOpen(bool open);
+    void updatePicker();
 
     ui::Window *m_window;
     AuthController *m_controller;
@@ -72,11 +81,15 @@ private:
     RaisedLabel *m_time = nullptr;
     ui::ColumnLayout *m_pod = nullptr;
     UserView *m_user = nullptr;
-    ChoiceMenu *m_users = nullptr;
     UserNameField *m_userName = nullptr;
     PasswordField *m_password = nullptr;
     ErrorLabel *m_error = nullptr;
     ChoiceMenu *m_sessions = nullptr;
+    UserGrid *m_picker = nullptr;
+    std::unique_ptr<ui::Animation> m_pickerFade;
+    bool m_pickerOpen = false;
+    double m_pickerProgress = 0;
+    double m_pickerFrom = 0;
 };
 
 } // namespace cutefish::auth

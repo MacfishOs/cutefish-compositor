@@ -204,28 +204,38 @@ private:
 };
 
 // The account's picture cut to a circle on a light disc, or the account's
-// initial where there is none. Upstream: LoginUserView.
-class UserView final : public ui::View
+// initial where there is none. Where another account can be picked, hovering
+// dims it and shows the swap arrows, and a click opens the accounts.
+class Avatar final : public Clickable
 {
 public:
-    UserView()
+    static constexpr double kSize = 64;
+
+    explicit Avatar(ui::Window *window)
+        : m_hover(window, 140, ui::Animation::Easing::Linear, numberInterpolation(), [this] {
+            // A picture shows through the dim; an initial would cross the arrows.
+            m_initial->setOpacity(1 - m_hover.value());
+            m_overlay->requestPaint();
+        })
     {
         m_disc = addChild<Disc>();
         m_picture = addChild<ui::ImageView>();
         m_picture->setFillMode(ui::ImageView::FillMode::PreserveAspectCrop);
-        m_picture->setCornerRadius(32);
+        m_picture->setCornerRadius(kSize / 2);
         m_picture->onStatusChanged = [this](ui::ImageView::Status) { updateInitial(); };
         m_initial = addChild<ui::Label>();
         m_initial->setFontSize(28);
         m_initial->setWeight(300);
         m_initial->setColor(kWhite);
         m_initial->setElide(ui::Label::Elide::None);
-        m_name = addChild<RaisedLabel>(16, 600, kWhite, kBlack.withAlpha(0.3));
+        m_initial->setFadesWhenDisabled(false);
+        m_overlay = addChild<SwapOverlay>(this);
+        onHoverChanged = [this] { updateHover(); };
+        m_hover.setTarget(0);
     }
 
     void setUser(const std::string &displayName, const std::string &icon)
     {
-        m_name->setText(displayName);
         m_initial->setText(displayName.empty() ? std::string("?") : initialOf(displayName));
         if (icon != m_icon) {
             m_icon = icon;
@@ -235,23 +245,30 @@ public:
         requestLayout();
     }
 
-    ui::SizeF sizeHint() const override
+    void setSwappable(bool swappable)
     {
-        return {std::max(64.0, m_name->sizeHint().width), 64 + 10 + m_name->sizeHint().height};
+        if (swappable == m_swappable)
+            return;
+        m_swappable = swappable;
+        setCursorShape(swappable ? ui::CursorShape::Pointer : ui::CursorShape::Default);
+        updateHover();
     }
+
+    bool acceptsPointer() const override { return m_swappable; }
+
+    ui::SizeF sizeHint() const override { return {kSize, kSize}; }
 
 protected:
     void layout() override
     {
-        const double width = geometry().width;
-        const ui::RectF avatar {centeredStart(width, 64), 0, 64, 64};
-        m_disc->setGeometry(avatar);
-        m_picture->setGeometry(avatar);
+        const ui::RectF rect = localRect();
+        m_disc->setGeometry(rect);
+        m_picture->setGeometry(rect);
+        m_overlay->setGeometry(rect);
         const ui::SizeF initial = m_initial->sizeHint();
-        m_initial->setGeometry({avatar.x + centeredStart(64, initial.width),
-                                centeredStart(64, initial.height), initial.width, initial.height});
-        const ui::SizeF name = m_name->sizeHint();
-        m_name->setGeometry({centeredStart(width, name.width), 74, name.width, name.height});
+        m_initial->setGeometry({centeredStart(rect.width, initial.width),
+                                centeredStart(rect.height, initial.height), initial.width,
+                                initial.height});
     }
 
 private:
@@ -260,8 +277,42 @@ private:
     protected:
         void paint(ui::Painter &painter) override
         {
-            drawPanelRect(painter, localRect(), 32, white(0.16));
+            drawPanelRect(painter, localRect(), geometry().width / 2, white(0.16));
         }
+    };
+
+    class SwapOverlay final : public ui::View
+    {
+    public:
+        explicit SwapOverlay(Avatar *avatar)
+            : m_avatar(avatar)
+        {
+        }
+
+    protected:
+        void paint(ui::Painter &painter) override
+        {
+            const double t = m_avatar->m_hover.value();
+            if (t <= 0)
+                return;
+            drawPanelRect(painter, localRect(), geometry().width / 2, kBlack.withAlpha(0.35 * t));
+            // The arrows on their 24 by 24 grid, centred.
+            const double x = centeredStart(geometry().width, 24);
+            const double y = centeredStart(geometry().height, 24);
+            ui::Path arrows;
+            arrows.moveTo({x + 20.5, y + 14.99});
+            arrows.lineTo({x + 15.49, y + 20.01});
+            arrows.moveTo({x + 3.5, y + 14.99});
+            arrows.lineTo({x + 20.5, y + 14.99});
+            arrows.moveTo({x + 3.5, y + 9.01});
+            arrows.lineTo({x + 8.51, y + 3.99});
+            arrows.moveTo({x + 20.5, y + 9.01});
+            arrows.lineTo({x + 3.5, y + 9.01});
+            painter.strokePath(arrows, white(t), 1.5, ui::LineCap::Round, ui::LineJoin::Round);
+        }
+
+    private:
+        Avatar *m_avatar;
     };
 
     void updateInitial()
@@ -270,11 +321,261 @@ private:
         m_initial->setVisible(m_picture->status() != ui::ImageView::Status::Ready);
     }
 
+    void updateHover()
+    {
+        m_hover.setTarget(m_swappable && containsMouse() ? 1 : 0);
+    }
+
+    NumberBehavior m_hover;
     Disc *m_disc;
     ui::ImageView *m_picture;
     ui::Label *m_initial;
-    RaisedLabel *m_name;
+    SwapOverlay *m_overlay;
     std::string m_icon;
+    bool m_swappable = false;
+};
+
+// The account's picture and name over the password field.
+// Upstream: LoginUserView.
+class UserView final : public ui::View
+{
+public:
+    explicit UserView(ui::Window *window)
+    {
+        m_avatar = addChild<Avatar>(window);
+        m_avatar->setName("user-avatar");
+        m_name = addChild<RaisedLabel>(16, 600, kWhite, kBlack.withAlpha(0.3));
+    }
+
+    Avatar *avatar() const { return m_avatar; }
+
+    void setUser(const std::string &displayName, const std::string &icon)
+    {
+        m_name->setText(displayName);
+        m_avatar->setUser(displayName, icon);
+        requestLayout();
+    }
+
+    ui::SizeF sizeHint() const override
+    {
+        return {std::max(Avatar::kSize, m_name->sizeHint().width),
+                Avatar::kSize + 10 + m_name->sizeHint().height};
+    }
+
+protected:
+    void layout() override
+    {
+        const double width = geometry().width;
+        m_avatar->setGeometry({centeredStart(width, Avatar::kSize), 0, Avatar::kSize, Avatar::kSize});
+        const ui::SizeF name = m_name->sizeHint();
+        m_name->setGeometry({centeredStart(width, name.width), Avatar::kSize + 10, name.width,
+                             name.height});
+    }
+
+private:
+    Avatar *m_avatar;
+    RaisedLabel *m_name;
+};
+
+// One account among the others: its picture with a halo behind it while
+// hovered or chosen from the keyboard, a fainter one for the account picked
+// now, and the name under it.
+class UserTile final : public Clickable
+{
+public:
+    static constexpr double kWidth = 96;
+    static constexpr double kHalo = 6;
+
+    UserTile(ui::Window *window, const std::string &displayName, const std::string &icon)
+    {
+        setCursorShape(ui::CursorShape::Pointer);
+        m_avatar = addChild<Avatar>(window);
+        m_avatar->setUser(displayName, icon);
+        m_name = addChild<RaisedLabel>(13, 400, kWhite, kBlack.withAlpha(0.3));
+        m_name->setText(displayName);
+        m_name->setElidedCentred();
+        onHoverChanged = [this] { requestPaint(); };
+    }
+
+    void setCurrent(bool current)
+    {
+        m_current = current;
+        requestPaint();
+    }
+
+    void setHighlighted(bool highlighted)
+    {
+        m_highlighted = highlighted;
+        requestPaint();
+    }
+
+    ui::SizeF sizeHint() const override
+    {
+        return {kWidth, Avatar::kSize + 2 * kHalo + 6 + m_name->sizeHint().height};
+    }
+
+protected:
+    void layout() override
+    {
+        const double width = geometry().width;
+        m_avatar->setGeometry({centeredStart(width, Avatar::kSize), kHalo, Avatar::kSize, Avatar::kSize});
+        const double nameHeight = m_name->sizeHint().height;
+        m_name->setGeometry({0, Avatar::kSize + 2 * kHalo + 6, width, nameHeight});
+    }
+
+    void paint(ui::Painter &painter) override
+    {
+        const double alpha = containsMouse() || m_highlighted ? 0.24 : m_current ? 0.12 : 0;
+        if (alpha <= 0)
+            return;
+        const double diameter = Avatar::kSize + 2 * kHalo;
+        drawPanelRect(painter, {centeredStart(geometry().width, diameter), 0, diameter, diameter},
+                      diameter / 2, white(alpha));
+    }
+
+private:
+    Avatar *m_avatar;
+    RaisedLabel *m_name;
+    bool m_current = false;
+    bool m_highlighted = false;
+};
+
+// The accounts to switch to, in rows centred under each other. The arrow keys
+// move between them, Return picks one and Escape goes back to the password.
+class UserGrid final : public ui::View
+{
+public:
+    explicit UserGrid(ui::Window *window)
+        : m_window(window)
+    {
+        setClickFocusOnly(true);
+    }
+
+    std::function<void(int index)> onActivated;
+    std::function<void()> onCancelled;
+
+    void setUsers(const std::vector<std::string> &names, const std::vector<std::string> &icons)
+    {
+        while (!children().empty())
+            takeChild(children().back().get());
+        m_tiles.clear();
+        for (size_t i = 0; i < names.size(); ++i) {
+            auto *tile = addChild<UserTile>(m_window, names[i], i < icons.size() ? icons[i] : std::string());
+            tile->setName("user-tile-" + std::to_string(i));
+            tile->onClicked = [this, i] {
+                if (onActivated)
+                    onActivated(int(i));
+            };
+            m_tiles.push_back(tile);
+        }
+        setCurrentIndex(m_current);
+        requestLayout();
+    }
+
+    void setCurrentIndex(int index)
+    {
+        m_current = index;
+        for (size_t i = 0; i < m_tiles.size(); ++i)
+            m_tiles[i]->setCurrent(int(i) == index);
+    }
+
+    // Each time it opens, the keyboard starts from the account picked now,
+    // and highlights nothing until it is used.
+    void reset()
+    {
+        m_highlight = std::clamp(m_current, 0, std::max(0, int(m_tiles.size()) - 1));
+        m_keyboard = false;
+        updateHighlight();
+    }
+
+    ui::SizeF sizeFor(double width) const
+    {
+        const int count = int(m_tiles.size());
+        if (count == 0)
+            return {};
+        const int columns = columnsFor(width);
+        const int rows = (count + columns - 1) / columns;
+        return {columns * UserTile::kWidth + (columns - 1) * kColumnGap,
+                rows * tileHeight() + (rows - 1) * kRowGap};
+    }
+
+    bool acceptsFocus() const override { return true; }
+
+protected:
+    void layout() override
+    {
+        const int count = int(m_tiles.size());
+        const int columns = columnsFor(geometry().width);
+        const double height = tileHeight();
+        for (int i = 0; i < count; ++i) {
+            const int row = i / columns;
+            const int inRow = std::min(columns, count - row * columns);
+            const double rowWidth = inRow * UserTile::kWidth + (inRow - 1) * kColumnGap;
+            const double x = centeredStart(geometry().width, rowWidth)
+                    + (i % columns) * (UserTile::kWidth + kColumnGap);
+            m_tiles[size_t(i)]->setGeometry({x, row * (height + kRowGap), UserTile::kWidth, height});
+        }
+    }
+
+    bool keyPress(const ui::KeyEvent &event) override
+    {
+        const int count = int(m_tiles.size());
+        const int columns = columnsFor(geometry().width);
+        const auto move = [&](int to) {
+            m_highlight = std::clamp(to, 0, std::max(0, count - 1));
+            m_keyboard = true;
+            updateHighlight();
+        };
+        switch (event.key) {
+        case XKB_KEY_Left:
+            move(m_highlight - 1);
+            return true;
+        case XKB_KEY_Right:
+            move(m_highlight + 1);
+            return true;
+        case XKB_KEY_Up:
+            move(m_highlight - columns >= 0 ? m_highlight - columns : m_highlight);
+            return true;
+        case XKB_KEY_Down:
+            move(m_highlight + columns < count ? m_highlight + columns : m_highlight);
+            return true;
+        case XKB_KEY_Return:
+        case XKB_KEY_KP_Enter:
+            if (count > 0 && onActivated)
+                onActivated(m_keyboard ? m_highlight : m_current);
+            return true;
+        case XKB_KEY_Escape:
+            if (onCancelled)
+                onCancelled();
+            return true;
+        default:
+            return false;
+        }
+    }
+
+private:
+    static constexpr double kColumnGap = 8;
+    static constexpr double kRowGap = 16;
+
+    int columnsFor(double width) const
+    {
+        const int fit = int(std::floor((width + kColumnGap) / (UserTile::kWidth + kColumnGap)));
+        return std::clamp(fit, 1, std::max(1, int(m_tiles.size())));
+    }
+
+    double tileHeight() const { return m_tiles.empty() ? 0 : m_tiles.front()->sizeHint().height; }
+
+    void updateHighlight()
+    {
+        for (size_t i = 0; i < m_tiles.size(); ++i)
+            m_tiles[i]->setHighlighted(m_keyboard && int(i) == m_highlight);
+    }
+
+    ui::Window *m_window;
+    std::vector<UserTile *> m_tiles;
+    int m_current = -1;
+    int m_highlight = 0;
+    bool m_keyboard = false;
 };
 
 // One of a few names, the account or the session to log in with: the current
@@ -915,11 +1216,9 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         hints.fillWidth = fill;
         return hints;
     };
-    m_user = m_pod->addChild<UserView>();
+    m_user = m_pod->addChild<UserView>(window);
     m_user->setName("user");
     m_user->setLayoutHints(centred(false));
-    m_users = m_pod->addChild<ChoiceMenu>("user-menu", popups);
-    m_users->setLayoutHints(centred(false));
     m_userName = m_pod->addChild<UserNameField>();
     m_userName->setName("user-name-field");
     {
@@ -937,13 +1236,30 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
     m_sessions = m_pod->addChild<ChoiceMenu>("session-menu", popups);
     m_sessions->setLayoutHints(centred(false));
 
-    m_users->onActivated = [this](int index) {
-        m_controller->setUserIndex(index);
-        if (m_controller->failed())
-            m_controller->reset();
-        m_password->clear();
-        focusPassword();
+    m_picker = addChild<UserGrid>(window);
+    m_picker->setName("user-grid");
+    m_picker->setVisible(false);
+    m_picker->setEnabled(false);
+    m_picker->setOpacity(0);
+    m_pickerFade = std::make_unique<ui::Animation>(window);
+    m_pickerFade->setDuration(std::chrono::milliseconds(180));
+    m_pickerFade->setEasing(ui::Animation::Easing::OutCubic);
+    m_pickerFade->onUpdate = [this](double t) {
+        m_pickerProgress = m_pickerFrom + ((m_pickerOpen ? 1 : 0) - m_pickerFrom) * t;
+        updatePicker();
     };
+
+    m_user->avatar()->onClicked = [this] { setPickerOpen(true); };
+    m_picker->onActivated = [this](int index) {
+        if (index != m_controller->userIndex()) {
+            m_controller->setUserIndex(index);
+            if (m_controller->failed())
+                m_controller->reset();
+            m_password->clear();
+        }
+        setPickerOpen(false);
+    };
+    m_picker->onCancelled = [this] { setPickerOpen(false); };
     m_sessions->onActivated = [this](int index) {
         m_controller->setSessionIndex(index);
         focusPassword();
@@ -968,16 +1284,16 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
 
     const auto userChanged = [this] {
         m_user->setUser(m_controller->displayName(), m_controller->iconSource());
-        m_users->setCurrentIndex(m_controller->userIndex());
+        m_picker->setCurrentIndex(m_controller->userIndex());
         NameInput *input = m_userName->input();
         const std::string text = m_controller->userName();
         if (input->text() != text)
             input->setText(text);
     };
     const auto usersChanged = [this] {
-        m_users->setNames(m_controller->userNames());
-        m_users->setMenuVisible(m_controller->canPickUser());
+        m_picker->setUsers(m_controller->userNames(), m_controller->userIcons());
         m_userName->setVisible(m_controller->typesUserName());
+        updateSwappable();
     };
     const auto sessionsChanged = [this] {
         m_sessions->setNames(m_controller->sessionNames());
@@ -988,8 +1304,8 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         const bool enabled = !m_controller->busy() && !m_controller->succeeded();
         m_password->setFieldEnabled(enabled);
         m_userName->input()->setEnabled(enabled);
-        m_users->setMenuEnabled(enabled);
         m_sessions->setMenuEnabled(enabled);
+        updateSwappable();
         m_error->setMessage(m_controller->errorMessage(), m_controller->failed());
     };
     m_subscriptions.push_back(m_controller->userChanged.connect(userChanged));
@@ -1032,6 +1348,8 @@ void AuthScreen::setKeyboardFocused(bool focused)
 
 void AuthScreen::focusPassword()
 {
+    if (m_pickerOpen)
+        return;
     // The keyboard is the compositor's to give; when it arrives it belongs in
     // the password field and nowhere else.
     m_password->input()->setFocus();
@@ -1040,11 +1358,58 @@ void AuthScreen::focusPassword()
 
 base::RectF AuthScreen::fieldBounds() const
 {
-    if (!m_password->isVisible())
+    if (!m_pod->isVisible() || !m_password->isVisible())
         return {};
     const ui::RectF pill = m_password->pillRect();
     const ui::PointF origin = m_password->mapToWindow({pill.x, pill.y});
     return base::RectF(origin.x, origin.y, pill.width, pill.height);
+}
+
+double AuthScreen::fieldOpacity() const
+{
+    return 1 - m_pickerProgress;
+}
+
+bool AuthScreen::canSwitchUser() const
+{
+    return m_controller->canPickUser() && !m_controller->busy() && !m_controller->succeeded();
+}
+
+void AuthScreen::updateSwappable()
+{
+    m_user->avatar()->setSwappable(canSwitchUser());
+    if (!canSwitchUser())
+        setPickerOpen(false);
+}
+
+void AuthScreen::setPickerOpen(bool open)
+{
+    if (open == m_pickerOpen || (open && !canSwitchUser()))
+        return;
+    m_pickerOpen = open;
+    // The side going away takes no input while it fades.
+    m_pod->setEnabled(!open);
+    m_picker->setEnabled(open);
+    if (open) {
+        m_sessions->setOpen(false);
+        m_picker->reset();
+    }
+    updatePicker();
+    if (open)
+        m_picker->setFocus();
+    else
+        focusPassword();
+    m_pickerFrom = m_pickerProgress;
+    m_pickerFade->stop();
+    m_pickerFade->start();
+}
+
+void AuthScreen::updatePicker()
+{
+    m_pod->setOpacity(1 - m_pickerProgress);
+    m_pod->setVisible(!m_pickerOpen || m_pickerProgress < 1);
+    m_picker->setOpacity(m_pickerProgress);
+    m_picker->setVisible(m_pickerOpen || m_pickerProgress > 0);
 }
 
 void AuthScreen::setClockForTesting(std::time_t now)
@@ -1076,8 +1441,12 @@ void AuthScreen::tick()
 
 void AuthScreen::closeMenus(ui::PointF position)
 {
-    m_users->pressedAt(position);
     m_sessions->pressedAt(position);
+    if (m_pickerOpen) {
+        const ui::PointF local = m_picker->mapFromWindow(position);
+        if (!m_picker->localRect().contains(local))
+            setPickerOpen(false);
+    }
 }
 
 void AuthScreen::layout()
@@ -1096,13 +1465,17 @@ void AuthScreen::layout()
     const double podWidth = std::min(width - 48, 240.0);
     const double podHeight = m_pod->verticalExtent(podWidth).preferred;
     m_pod->setGeometry({centeredStart(width, podWidth), height - 64 - podHeight, podWidth, podHeight});
+
+    // The accounts' pictures in the row of the one picked now, as long as
+    // they fit above the bottom margin.
+    const ui::SizeF grid = m_picker->sizeFor(width - 48);
+    const double gridTop = std::min(height - 64 - podHeight - UserTile::kHalo, height - 64 - grid.height);
+    m_picker->setGeometry({centeredStart(width, grid.width), gridTop, grid.width, grid.height});
 }
 
-// The menus' lists lie outside the pod, by their menus wherever the pod
-// placed them.
+// The menu's list lies outside the pod, by its menu wherever the pod placed it.
 void AuthScreen::childrenLaidOut()
 {
-    m_users->placeList();
     m_sessions->placeList();
 }
 

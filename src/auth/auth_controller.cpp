@@ -94,6 +94,14 @@ std::vector<std::string> AuthController::userNames() const
     return names;
 }
 
+std::vector<std::string> AuthController::userIcons() const
+{
+    std::vector<std::string> icons;
+    for (const std::string &user : m_users)
+        icons.push_back(accountIcon(user));
+    return icons;
+}
+
 int AuthController::userIndex() const
 {
     const auto found = std::find(m_users.begin(), m_users.end(), m_userName);
