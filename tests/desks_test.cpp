@@ -937,6 +937,27 @@ TEST_F(DeskAnimationTest, RemovingAnotherDeskMidSwitchStillLandsOnTheChosenDesk)
     EXPECT_FALSE(desk(1)->isActive());
 }
 
+TEST_F(DeskAnimationTest, ADialogSentAwayTakesItsParentAlongInTheSlide)
+{
+    addDesks(1);
+    Window *parent = makeWindow();
+    Window *dialog = makeWindow("app", parent);
+    ASSERT_EQ(dialog, active());
+    renderer.calls.clear();
+    desks->sendToDeskAtIndex(dialog, 1);
+    EXPECT_TRUE(slideOut->isActive());
+    // The frame that slides away shows the parent and the dialog over it.
+    int drawn = 0;
+    for (const auto &call : renderer.calls) {
+        if (call.kind == "texture")
+            ++drawn;
+    }
+    EXPECT_GE(drawn, 2);
+    EXPECT_EQ(desk(1), desks->deskOf(parent));
+    EXPECT_FALSE(parent->isVisible());
+    EXPECT_FALSE(dialog->isVisible());
+}
+
 TEST_F(DeskAnimationTest, ActivatingAWindowElsewhereMidSwitchLandsTheSwitchFirst)
 {
     addDesks(2);

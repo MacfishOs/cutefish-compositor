@@ -564,14 +564,16 @@ int DesksController::referenceWidth() const
 
 void DesksController::performWindowMoveToDeskAnimation(Window *window, bool goingLeft)
 {
-    if (!m_windowMoveNode || !window->node() || !window->isVisible())
+    // The entire transient tree appears to go together, whichever of its
+    // windows was sent.
+    Window *root = transientRoot(window);
+    if (!m_windowMoveNode || !root->node() || !root->isVisible())
         return;
-    // The entire transient tree appears to go together.
-    auto frames = takeWindowScreenshots([this, window](const Window *candidate) {
-        return transientRoot(candidate) == window;
+    auto frames = takeWindowScreenshots([this, root](const Window *candidate) {
+        return transientRoot(candidate) == root;
     });
     m_windowMoveNode->setGeometry(m_manager->outputBounds());
-    m_windowMoveNode->slideOut(std::move(frames), window->bounds(), m_manager->outputBoundsFor(window),
+    m_windowMoveNode->slideOut(std::move(frames), root->bounds(), m_manager->outputBoundsFor(root),
                                goingLeft);
 }
 
