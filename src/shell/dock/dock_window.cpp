@@ -31,6 +31,7 @@
 #include "ui/theme.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
+#include "toolkit/compositor_colors.h"
 
 namespace cutefish::shell {
 
@@ -139,8 +140,7 @@ protected:
 
     void paint(ui::Painter &painter) override
     {
-        const bool dark = ui::Theme::current().darkMode;
-        ui::Color line = dark ? ui::Color {255, 255, 255, 255} : ui::Color {0, 0, 0, 255};
+        const ui::Color line = ui::color(toolkit::CompositorColor::DockDivider);
         const base::Rect panel = m_dock->panelRect();
         const auto draw = [&](const base::RectF &rect, double opacity) {
             if (rect.isEmpty() || opacity <= 0)

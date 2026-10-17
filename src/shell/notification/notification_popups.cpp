@@ -18,14 +18,14 @@
 #include "ui/embedded_window.h"
 #include "ui/theme.h"
 #include "wm/window_manager.h"
+#include "toolkit/compositor_colors.h"
 
 namespace cutefish::shell {
 
 // The plate the card reads as (its fallback colour): its ink.
 static ui::Color bannerSurface()
 {
-    return ui::Theme::current().darkMode ? rgba(0x4D / 255.0, 0x4D / 255.0, 0x4D / 255.0, 0.65)
-                                         : rgba(0xF0 / 255.0, 0xF0 / 255.0, 0xF0 / 255.0, 0.82);
+    return ui::color(toolkit::CompositorColor::NotificationBannerSurface);
 }
 
 // The window's content: the card over the whole banner, and the glass

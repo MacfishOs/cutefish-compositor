@@ -283,7 +283,7 @@ class ChoiceMenu final : public ui::View
 {
 public:
     // The list goes on `layer`, over everything else in the panel, and is
-    // placed there whenever the menu is laid out.
+    // placed there whenever the menu is laid out or placeList() is called.
     ChoiceMenu(const std::string &name, ui::View *layer)
     {
         setName(name);
@@ -295,6 +295,12 @@ public:
     }
 
     std::function<void(int index)> onActivated;
+
+    // After the menu moved without being laid out itself.
+    void placeList()
+    {
+        m_popup->place();
+    }
 
     void setNames(const std::vector<std::string> &names)
     {
@@ -1100,6 +1106,14 @@ void AuthScreen::layout()
     const double podWidth = std::min(width - 48, 240.0);
     const double podHeight = m_pod->verticalExtent(podWidth).preferred;
     m_pod->setGeometry({centeredStart(width, podWidth), height - 64 - podHeight, podWidth, podHeight});
+}
+
+// The menus' lists lie outside the pod, by their menus wherever the pod
+// placed them.
+void AuthScreen::childrenLaidOut()
+{
+    m_users->placeList();
+    m_sessions->placeList();
 }
 
 } // namespace cutefish::auth

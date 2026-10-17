@@ -15,6 +15,7 @@
 #include "ui/image_view.h"
 #include "ui/painter.h"
 #include "ui/theme.h"
+#include "toolkit/compositor_colors.h"
 
 namespace cutefish::shell {
 
@@ -419,7 +420,7 @@ std::vector<ui::RectF> NotificationCard::actionRects() const
 
 ui::Color NotificationCard::secondaryTextColor() const
 {
-    return ui::Theme::current().darkMode ? rgba(1, 1, 1, 0.55) : rgba(0, 0, 0, 0.5);
+    return ui::color(toolkit::CompositorColor::NotificationSecondaryText);
 }
 
 bool NotificationCard::showsThumbnail() const

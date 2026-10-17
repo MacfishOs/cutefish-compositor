@@ -4,6 +4,7 @@
 
 #include "shell/secrets/bluetooth_pairing_dialog.h"
 
+#include "ui/color_provider.h"
 #include "ui/dialog_window.h"
 #include "ui/label.h"
 #include "ui/text_field.h"
@@ -113,7 +114,7 @@ void BluetoothPairingDialog::update()
     m_field->setInputPurpose(kind == "RequestPasskey" ? ui::TextPurpose::Digits : ui::TextPurpose::Normal);
 
     m_error->setText(m_agent->errorText());
-    m_error->setColor(theme.darkMode ? ui::Color::rgb(0xff453a) : ui::Color::rgb(0xd92d20));
+    m_error->setColor(ui::color(ui::ColorId::DestructiveAction));
     m_error->setVisible(!m_agent->errorText().empty());
 
     const bool decline = kind == "RequestConfirmation" || kind == "RequestAuthorization" || service;

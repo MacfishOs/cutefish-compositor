@@ -10,18 +10,9 @@
 #include "ui/animation.h"
 #include "ui/painter.h"
 #include "ui/theme.h"
+#include "toolkit/compositor_colors.h"
 
 namespace cutefish::shell {
-
-namespace {
-
-ui::Color withAlpha(ui::Color color, double alpha)
-{
-    color.a = uint8_t(std::lround(alpha * 255));
-    return color;
-}
-
-} // namespace
 
 LevelTrack::LevelTrack() = default;
 
@@ -70,13 +61,13 @@ void LevelTrack::paint(ui::Painter &painter)
     const double height = rect.height;
     const double travel = rect.width - height;
     const double hairline = 1 / painter.scale();
-    const ui::Color outline = withAlpha({0, 0, 0, 255}, dark ? 0.3 : 0.08);
+    const ui::Color outline = ui::color(toolkit::CompositorColor::LevelTrackOutline);
     const ui::RoundedShape pill {height / 2, 0, ui::Corners::Circular};
 
-    painter.drawRoundedRect(rect, pill, withAlpha({0, 0, 0, 255}, dark ? 0.2 : 0.04), hairline,
+    painter.drawRoundedRect(rect, pill, ui::color(toolkit::CompositorColor::LevelTrackBackground), hairline,
                             outline);
 
-    const ui::Color fill = dark ? ui::Color::rgb(0x6C6C72) : ui::Color::rgb(0xFFFFFF);
+    const ui::Color fill = ui::color(toolkit::CompositorColor::LevelTrackFill);
     const ui::RectF fillRect {0, 0, height + travel * m_drawn, height};
     painter.drawRoundedRect(fillRect, pill, fill, hairline, outline);
 
@@ -84,10 +75,10 @@ void LevelTrack::paint(ui::Painter &painter)
     // device pixels, a deviation of (3 dpr + 1) / 3.3333 of them.
     const ui::RectF knob {fillRect.width - height, 0, height, height};
     const double sigma = (3 * painter.scale() + 1) / 3.3333 / painter.scale();
-    painter.drawShadow(knob, height / 2, sigma, withAlpha({0, 0, 0, 255}, dark ? 0.35 : 0.18),
+    painter.drawShadow(knob, height / 2, sigma, ui::color(toolkit::CompositorColor::LevelTrackKnobShadow),
                        {0, 1});
     painter.drawRoundedRect(knob, pill,
-                            dark ? ui::Color::rgb(0x7C7C82) : ui::Color::rgb(0xFFFFFF), hairline,
+                            ui::color(toolkit::CompositorColor::LevelTrackKnob), hairline,
                             outline);
 
     if (!m_icon.empty()) {

@@ -17,6 +17,7 @@
 #include "ui/painter.h"
 #include "ui/theme.h"
 #include "ui/window.h"
+#include "toolkit/compositor_colors.h"
 
 namespace cutefish::shell {
 
@@ -27,13 +28,13 @@ static constexpr int kThumbnailPixels = ClipboardPickerView::kIconSize * 2;
 // confirmation's plate.
 static ui::Color surfaceColor()
 {
-    return ui::Theme::current().darkMode ? ui::Color::rgb(0x242529) : ui::Color::rgb(0xFAFAFC);
+    return ui::color(toolkit::CompositorColor::ClipboardSurface);
 }
 
 // Ink.on(surfaceColor, 0.1): the surfaces are dark in dark mode only.
 static ui::Color hairlineColor()
 {
-    return (ui::Theme::current().darkMode ? ui::Color::rgb(0xFFFFFF) : ui::Color::rgb(0x000000)).withAlpha(0.1);
+    return ui::color(toolkit::CompositorColor::ClipboardHairline);
 }
 
 // The largest size of the same aspect ratio that fits in the box.

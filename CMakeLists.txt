@@ -840,7 +840,8 @@ target_link_libraries(cutefish-display-runtime PUBLIC cutefish-backend cutefish-
     cutefish-wm cutefish-display cutefish-wayland-input cutefish-cursor)
 # The toolkit's application inside the compositor, for the panels it draws itself.
 add_library(cutefish-toolkit-host STATIC
-    src/toolkit/toolkit_host.cpp src/toolkit/toolkit_host.h)
+    src/toolkit/toolkit_host.cpp src/toolkit/toolkit_host.h
+    src/toolkit/compositor_colors.cpp src/toolkit/compositor_colors.h)
 target_include_directories(cutefish-toolkit-host PUBLIC src)
 target_link_libraries(cutefish-toolkit-host PUBLIC Cutefish::Toolkit cutefish-render)
 

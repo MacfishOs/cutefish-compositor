@@ -20,6 +20,7 @@
 #include "render/renderer.h"
 #include "scene/node.h"
 #include "scene/window_visual_node.h"
+#include "toolkit/compositor_colors.h"
 #include "toolkit/toolkit_host.h"
 #include "ui/embedded_window.h"
 #include "ui/icon_image.h"
@@ -215,8 +216,7 @@ public:
 
     void setDarkMode(bool dark)
     {
-        m_name->setColor(dark ? ui::Color {255, 255, 255, 255}.withAlpha(0.92)
-                              : ui::Color {0, 0, 0, 255}.withAlpha(0.85));
+        m_name->setColor(ui::ColorProvider::forMode(dark).get(toolkit::CompositorColor::SwitcherName));
     }
 
 protected:

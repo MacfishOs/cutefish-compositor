@@ -56,6 +56,7 @@ public:
 
 protected:
     void layout() override;
+    void childrenLaidOut() override;
 
 private:
     void tick();

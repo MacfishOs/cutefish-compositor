@@ -22,13 +22,14 @@
 #include "ui/painter.h"
 #include "ui/scroll_view.h"
 #include "ui/theme.h"
+#include "toolkit/compositor_colors.h"
 
 namespace cutefish::shell {
 
 // PanelStyle.tileColor: the cards' plates.
 static ui::Color cardColor()
 {
-    return ui::Theme::current().darkMode ? rgba(1, 1, 1, 0.1) : rgba(1, 1, 1, 0.8);
+    return ui::color(toolkit::CompositorColor::NotificationCentreCard);
 }
 
 // PanelStyle.tileInkColor: what the cards read as, opaque, for their ink.
@@ -408,7 +409,7 @@ protected:
 
         ui::Label *empty = m_centre->m_empty;
         empty->setFontSize(13.0 * 4 / 3);
-        empty->setColor(theme.darkMode ? rgba(1, 1, 1, 0.5) : rgba(0, 0, 0, 0.45));
+        empty->setColor(ui::color(toolkit::CompositorColor::NotificationCentreEmptyText));
         const ui::SizeF emptySize = empty->sizeHint();
         empty->setGeometry({list.x + (list.width - emptySize.width) / 2,
                             list.y + (list.height - emptySize.height) / 2, emptySize.width, emptySize.height});
