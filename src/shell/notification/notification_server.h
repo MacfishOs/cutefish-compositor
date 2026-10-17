@@ -91,6 +91,7 @@ private:
     void flush();
     bool isOpen(uint32_t id) const;
     Pending *pendingFor(uint32_t id) const;
+    bool isPending(const Pending *pending) const;
     DesktopEntryPtr visibleOwner(DesktopEntryPtr entry) const;
 
     base::dbus::Connection *m_bus;

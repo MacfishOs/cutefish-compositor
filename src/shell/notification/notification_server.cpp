@@ -151,13 +151,20 @@ bool NotificationServer::isOpen(uint32_t id) const
     return pending && !pending->off && !pending->closeRequested;
 }
 
+// A replacement can follow its notification before either is shown; the
+// newest one is what the application now refers to.
 NotificationServer::Pending *NotificationServer::pendingFor(uint32_t id) const
 {
-    for (const auto &pending : m_pending) {
-        if (pending->notification.id == id)
-            return pending.get();
+    for (auto it = m_pending.rbegin(); it != m_pending.rend(); ++it) {
+        if ((*it)->notification.id == id)
+            return it->get();
     }
     return nullptr;
+}
+
+bool NotificationServer::isPending(const Pending *pending) const
+{
+    return std::any_of(m_pending.begin(), m_pending.end(), [pending](const auto &p) { return p.get() == pending; });
 }
 
 void NotificationServer::notify(dbus::MethodCall &call)
@@ -245,7 +252,6 @@ void NotificationServer::notify(dbus::MethodCall &call)
 void NotificationServer::lookUpSender(Pending *pending)
 {
     const std::string sender = pending->notification.service;
-    const uint32_t id = pending->notification.id;
     if (!m_bus || sender.empty() || !m_tasks) {
         decide(pending);
         return;
@@ -255,10 +261,10 @@ void NotificationServer::lookUpSender(Pending *pending)
     m_calls.track([&](std::function<void()> finished) {
         return bus.callAsync(
                 "GetConnectionUnixProcessID",
-                [this, pending, id, finished](const dbus::Reply &reply) {
+                [this, pending, finished](const dbus::Reply &reply) {
                     // The pending notification lives until it is flushed,
                     // which waits for this.
-                    if (pendingFor(id) == pending) {
+                    if (isPending(pending)) {
                         const uint32_t pid = reply.value<uint32_t>().value_or(0);
                         Notification &notification = pending->notification;
                         const DesktopEntryPtr entry = visibleOwner(
@@ -313,14 +319,13 @@ void NotificationServer::decide(Pending *pending)
     }
 
     if (pending->imageData) {
-        const uint32_t id = notification.id;
         pending->imageJob = runOnFileThread(
                 [image = std::move(*pending->imageData), directory = m_imageDirectory] {
                     return image.pixels.empty() ? std::string()
                                                 : notification_images::save(directory, image.toBitmap());
                 },
-                [this, pending, id](std::string path) {
-                    if (pendingFor(id) != pending)
+                [this, pending](std::string path) {
+                    if (!isPending(pending))
                         return;
                     pending->notification.image = path;
                     finishImages(pending);

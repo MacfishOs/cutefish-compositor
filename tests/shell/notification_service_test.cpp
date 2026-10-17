@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <tuple>
 
 #include <gtest/gtest.h>
@@ -165,6 +166,38 @@ TEST_F(NotificationServiceTest, ReplacesInPlaceAndFoldsRepeats)
     notifications->banners().close(first);
     settle();
     EXPECT_EQ(notify("Again", first), first + 1);
+}
+
+TEST_F(NotificationServiceTest, ReplacesAndClosesWhatIsNotShownYet)
+{
+    start();
+    // The first notification's picture waits on the file thread, so the
+    // ones behind it are not shown before their replacements arrive.
+    std::promise<void> gate;
+    std::shared_future<void> opened = gate.get_future().share();
+    shell::fileThread().post([opened] { opened.wait(); });
+
+    std::vector<uint8_t> pixels(size_t(16) * 16 * 4, 0x80);
+    notify("Photo", 0, {{"image-data", dbus::Variant(ImageData(16, 16, 16 * 4, true, 8, 4, pixels))}});
+    const uint32_t progress = notify("Progress");
+    EXPECT_EQ(notify("Progress 50%", progress), progress);
+    const uint32_t revoked = notify("Revoked");
+    EXPECT_EQ(notify("Revoked again", revoked), revoked);
+    EXPECT_FALSE(client.call(kService, kPath, kService, "CloseNotification", revoked).isError());
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_EQ(notifications->banners().count(), 0);
+
+    gate.set_value();
+    settle();
+    const auto &banners = notifications->banners().notifications();
+    ASSERT_EQ(banners.size(), 2u);
+    EXPECT_EQ(banners.back().id, progress);
+    EXPECT_EQ(banners.back().summary, "Progress 50%");
+
+    // Nothing waits behind them.
+    notify("Later");
+    settle();
+    EXPECT_EQ(notifications->banners().notifications().back().summary, "Later");
 }
 
 TEST_F(NotificationServiceTest, ClosesWithTheSpecsSignalOrError)
