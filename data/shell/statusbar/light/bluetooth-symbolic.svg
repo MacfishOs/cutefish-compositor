@@ -50,13 +50,13 @@
      id="defs5">
     <style
        id="current-color-scheme"
-       type="text/css">.ColorScheme-Text { color:#383838; } .ColorScheme-Highlight { color:#5294e2; }</style>
+       type="text/css">.ColorScheme-Text { color:#000000; } .ColorScheme-Highlight { color:#5294e2; }</style>
   </defs>
   <path
      class="ColorScheme-Text"
      d="M 7.9981,1.0000174 V 7.1608928 L 4.7051,4.2795177 4.7031,4.281273 C 4.34735,3.9698113 3.70705,3.4096887 3.70705,3.4096887 L 3.00002,4.02834 7.54492,8.0017152 3.00002,11.97509 3.70705,12.593741 c 0,0 0.64035,-0.560079 0.99609,-0.871578 h 0.002 L 8.00004,8.8407878 V 15 h 1 l 4,-3.5 -4,-3.4999998 4,-3.5000001 L 9.00004,1 Z m 1.002,1.239 2.5859,2.2626627 -2.5859,2.2626626 z m 0,7.0000004 2.5859,2.2626632 -2.5859,2.262661 z"
-     color="#383838"
-     fill="#383838"
+     color="#000000"
+     fill="#000000"
      id="path7"
-     style="fill:#383838;fill-opacity:1;stroke-width:0.935415" />
+     style="fill:#000000;fill-opacity:1;stroke-width:0.935415" />
 </svg>

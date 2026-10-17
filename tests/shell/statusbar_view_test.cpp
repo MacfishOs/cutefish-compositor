@@ -375,7 +375,8 @@ TEST_F(StatusBarViewTest, ThePictureBehindTheBarPicksItsColours)
     wallpaper->setBackground(background);
     bar->setWallpaper(wallpaper);
     EXPECT_TRUE(test::runUntil([&] { return !bar->lightContents(); }));
-    EXPECT_EQ(ui::Color::rgb(0x383838), bar->textColor());
+    EXPECT_EQ((ui::Color {0, 0, 0, 217}), bar->textColor());
+    EXPECT_EQ(ui::Color::rgb(0x000000), bar->menuTextColor());
     bar->setWallpaper(nullptr);
     // Nothing shown: the theme decides again.
     bar->backdrop().setUnavailable();

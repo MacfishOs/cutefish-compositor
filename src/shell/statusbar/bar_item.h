@@ -36,8 +36,10 @@ public:
     // What is behind the bar is dark, so its contents are light and cast a
     // shadow.
     virtual bool lightContents() const = 0;
-    // #FFFFFF on a dark backdrop, #383838 otherwise.
+    // #FFFFFF on a dark backdrop, black at 85% otherwise.
     ui::Color textColor() const;
+    // The menu bar's: #FFFFFF on a dark backdrop, black otherwise.
+    ui::Color menuTextColor() const;
     // A panel is open: only its own item stays lit.
     virtual bool panelOpen() const = 0;
 };
@@ -172,6 +174,7 @@ private:
     ui::BlurredCopy *m_shadow;
     ui::Label *m_shadowText;
     ui::StyledLabel *m_label;
+    int m_weight = 400;
 };
 
 } // namespace cutefish::shell

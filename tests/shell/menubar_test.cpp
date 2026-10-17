@@ -438,7 +438,7 @@ TEST_F(MenuBarTest, TheDesktopShowsItsExportedMenus)
     EXPECT_EQ(openedBefore + 1, exporter.count("Event 1 opened"));
     const auto bounds = menuBounds();
     ASSERT_TRUE(bounds);
-    EXPECT_EQ(int(file + 3), bounds->x());
+    EXPECT_EQ(int(std::lround(file + 3)), bounds->x());
     EXPECT_EQ(38, bounds->y());
     ASSERT_TRUE(test::runUntil([&] { return exporter.called("Event 1 opened"); }));
 
@@ -449,7 +449,7 @@ TEST_F(MenuBarTest, TheDesktopShowsItsExportedMenus)
     ASSERT_EQ(3, view->currentIndex());
     EXPECT_FALSE(view->entry(2)->isChecked());
     EXPECT_TRUE(view->entry(3)->isChecked());
-    EXPECT_EQ(int(entryRect(3).x + 3), menuBounds()->x());
+    EXPECT_EQ(int(std::lround(entryRect(3).x + 3)), menuBounds()->x());
     EXPECT_EQ(1u, manager.popupGrabs().size());
     ASSERT_TRUE(test::runUntil([&] { return exporter.called("Event 1 closed") && exporter.called("Event 2 opened"); }));
 

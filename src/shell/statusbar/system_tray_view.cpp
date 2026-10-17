@@ -485,12 +485,9 @@ void TrayItemView::setMonochrome(bool monochrome)
 
 void TrayItemView::updateLook()
 {
-    const bool light = bar()->lightContents();
     const ui::Color color = bar()->textColor();
-    if (m_themeIcon) {
+    if (m_themeIcon)
         m_themeIcon->setColor(m_monochrome ? std::optional<ui::Color>(color) : std::nullopt);
-        m_themeIcon->setOpacity(m_monochrome && !light ? 0.7 : 1);
-    }
     if (m_monochrome && m_tintedColor != color && !m_image.isNull()) {
         m_tintedColor = color;
         m_tinted = ui::Image(m_image.width(), m_image.height());
@@ -592,11 +589,7 @@ void TrayItemView::paint(ui::Painter &painter)
     if (m_image.isNull() || m_iconHidden)
         return;
     const ui::RectF rect = centred({BarContext::kIconSize, BarContext::kIconSize});
-    painter.save();
-    if (m_monochrome && !bar()->lightContents())
-        painter.multiplyOpacity(0.7);
     painter.drawImage(m_monochrome && !m_tinted.isNull() ? m_tinted : m_image, rect);
-    painter.restore();
 }
 
 } // namespace cutefish::shell

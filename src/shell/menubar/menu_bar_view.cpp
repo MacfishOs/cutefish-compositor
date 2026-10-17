@@ -40,8 +40,6 @@ public:
         } else {
             setInsets(BarContext::kHighlightGap / 2, BarContext::kHighlightGap / 2);
             m_label = addChild<BarLabel>();
-            // The application's name stands out from its menus.
-            m_label->setWeight(row.kind == MenuBarModel::Kind::Application ? 600 : 400);
             m_label->setText(row.title);
         }
         updateLook();
@@ -66,7 +64,11 @@ public:
     void updateLook()
     {
         if (m_label) {
-            m_label->setTextColor(bar()->textColor());
+            // The application's name stands out from its menus, a step
+            // lighter in black, which carries more weight than white.
+            if (m_row.kind == MenuBarModel::Kind::Application)
+                m_label->setWeight(bar()->lightContents() ? 600 : 500);
+            m_label->setTextColor(bar()->menuTextColor());
             m_label->setDropShadow(bar()->lightContents());
         }
         barChanged();
@@ -144,6 +146,8 @@ void MenuBarView::barChanged()
 {
     for (Entry *entry : m_entries)
         entry->updateLook();
+    // The application's name changes weight, and with it width.
+    requestLayout();
 }
 
 void MenuBarView::rebuildEntries()

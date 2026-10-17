@@ -15,7 +15,12 @@ namespace cutefish::shell {
 
 ui::Color BarContext::textColor() const
 {
-    return lightContents() ? ui::Color::rgb(0xFFFFFF) : ui::Color::rgb(0x383838);
+    return lightContents() ? ui::Color::rgb(0xFFFFFF) : ui::Color {0, 0, 0, 217};
+}
+
+ui::Color BarContext::menuTextColor() const
+{
+    return lightContents() ? ui::Color::rgb(0xFFFFFF) : ui::Color::rgb(0x000000);
 }
 
 // The centre of a centred item aligned to whole pixels: an odd whole width
@@ -243,10 +248,15 @@ protected:
         const ui::Rect device = painter.snappedRect(localRect());
         const double scale = painter.scale();
         const ui::PointF offset = painter.offset();
+        painter.save();
+        // Artwork drawn in its own colours takes the contents' alpha.
+        if (!m_tinted)
+            painter.multiplyOpacity(m_color.a / 255.0);
         painter.drawSvg(m_file,
                         {device.x / scale - offset.x, device.y / scale - offset.y, device.width / scale,
                          device.height / scale},
                         m_tinted ? std::optional<ui::Color>(m_color) : std::nullopt);
+        painter.restore();
     }
 
 private:
@@ -338,6 +348,7 @@ BarLabel::BarLabel()
         label->setFontSize(BarContext::kFontPointSize * 4 / 3);
         label->setElide(ui::Label::Elide::None);
     }
+    m_label->setSubpixelAntialiasing(false);
 }
 
 void BarLabel::setText(std::string text)
@@ -357,6 +368,9 @@ const std::string &BarLabel::text() const
 
 void BarLabel::setWeight(int weight)
 {
+    if (weight == m_weight)
+        return;
+    m_weight = weight;
     m_label->setWeight(weight);
     m_shadowText->setWeight(weight);
     requestLayout();
