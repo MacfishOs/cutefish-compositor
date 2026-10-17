@@ -114,6 +114,9 @@ bool SessionController::everyOutputPresented() const
 {
     if (!m_secure)
         return true;
+    // No outputs is a layout being rebuilt, not a lock on screen.
+    if (m_secure->outputs().empty())
+        return false;
     for (const SecureOutput &output : m_secure->outputs()) {
         if (!m_presentedOutputs.contains(output.name))
             return false;

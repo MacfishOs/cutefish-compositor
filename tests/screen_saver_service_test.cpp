@@ -100,6 +100,28 @@ TEST_F(ScreenSaverServiceTest, LockReplyWaitsForEveryOutputAndRepeatedRequestsAr
     EXPECT_FALSE(changed.back());
 }
 
+TEST_F(ScreenSaverServiceTest, LockIsNotAnsweredWhileTheDisplayLayoutIsRebuilt)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    session::ScreenSaverService service(&controller);
+    ASSERT_TRUE(service.registerService());
+
+    auto lock = call("Lock");
+    EXPECT_TRUE(waitFor([&] { return controller.state() == session::SessionState::Locking; }));
+    controller.setOutputs({});
+    controller.notifyFramePresented();
+    test::runFor(std::chrono::milliseconds(20));
+    EXPECT_FALSE(lock->finished());
+    EXPECT_EQ(controller.state(), session::SessionState::Locking);
+
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    controller.notifyOutputPresented("one");
+    EXPECT_FALSE(finished(std::move(lock)).isError());
+}
+
 TEST_F(ScreenSaverServiceTest, TheBusHearsActiveChangedAtBothPaths)
 {
     scene::Node root;
@@ -127,8 +149,12 @@ TEST_F(ScreenSaverServiceTest, NoDbusMethodCanUnlock)
     session::SecureContainer secure(&root);
     session::SessionController controller(&secure);
     session::ScreenSaverService service(&controller);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
     ASSERT_TRUE(service.registerService());
-    EXPECT_FALSE(finished(call("Lock")).isError());
+    auto lock = call("Lock");
+    EXPECT_TRUE(waitFor([&] { return controller.state() == session::SessionState::Locking; }));
+    controller.notifyOutputPresented("one");
+    EXPECT_FALSE(finished(std::move(lock)).isError());
     EXPECT_EQ(controller.state(), session::SessionState::Locked);
     EXPECT_TRUE(finished(call("Unlock")).isError());
     EXPECT_EQ(controller.state(), session::SessionState::Locked);

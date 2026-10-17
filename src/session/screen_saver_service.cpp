@@ -107,8 +107,6 @@ void ScreenSaverService::lock(base::dbus::MethodCall *call)
     if (call)
         m_pending.push_back(*call);
     m_session->requestLock();
-    if (m_session->secureContainer() && m_session->secureContainer()->outputs().empty())
-        m_session->notifyFramePresented();
 }
 
 bool ScreenSaverService::GetActive() const

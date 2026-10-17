@@ -574,10 +574,30 @@ TEST_F(SessionLockTest, AnOutputRemovedMidTransitionCannotDeadlockTheBarrier)
     EXPECT_EQ(SessionState::Locked, controller.state());
 }
 
-TEST_F(SessionLockTest, LosingEveryOutputMidTransitionStillCompletesIt)
+TEST_F(SessionLockTest, LosingEveryOutputMidTransitionWaitsForOneToPresentAgain)
 {
     ASSERT_TRUE(controller.requestLock());
     controller.setOutputs({});
+    EXPECT_EQ(SessionState::Locking, controller.state());
+    controller.notifyFramePresented();
+    EXPECT_EQ(SessionState::Locking, controller.state());
+
+    controller.setOutputs({{kSecondaryName, kSecondary}});
+    EXPECT_EQ(SessionState::Locking, controller.state());
+    controller.notifyOutputPresented(kSecondaryName);
+    EXPECT_EQ(SessionState::Locked, controller.state());
+}
+
+TEST_F(SessionLockTest, AnOutputThatPresentedBeforeTheLayoutWasClearedMustPresentAgain)
+{
+    controller.setOutputs({{kPrimaryName, kPrimary}, {kSecondaryName, kSecondary}});
+    ASSERT_TRUE(controller.requestLock());
+    controller.notifyOutputPresented(kPrimaryName);
+    controller.setOutputs({});
+    controller.setOutputs({{kPrimaryName, kPrimary}, {kSecondaryName, kSecondary}});
+    controller.notifyOutputPresented(kSecondaryName);
+    EXPECT_EQ(SessionState::Locking, controller.state());
+    controller.notifyOutputPresented(kPrimaryName);
     EXPECT_EQ(SessionState::Locked, controller.state());
 }
 

@@ -128,6 +128,7 @@ protected:
         server = wl_display_create();
         ASSERT_NE(server, nullptr);
         model.pixelSize = {8, 6};
+        sessionController.setOutputs({{model.name, base::Rect(0, 0, 8, 6)}});
         outputGlobal = wayland::createOutputGlobal(server, &model);
         ASSERT_NE(outputGlobal, nullptr);
         ASSERT_NE(wayland::createShmGlobal(server, &compositor), nullptr);
