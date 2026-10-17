@@ -4,6 +4,7 @@
 
 #include "wayland/shell_control_channel.h"
 
+#include <cerrno>
 #include <cstring>
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -39,8 +40,10 @@ int receiveFd(int socket)
     message.msg_controllen = sizeof(control.buffer);
 
     const ssize_t received = recvmsg(socket, &message, MSG_CMSG_CLOEXEC);
-    if (received <= 0)
-        return received == 0 ? -1 : -2;
+    if (received < 0)
+        return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? -2 : -1;
+    if (received == 0)
+        return -1;
 
     // One descriptor is expected; every other one delivered still belongs to
     // this process and would leak if it were merely skipped.
@@ -132,7 +135,8 @@ void ShellControlChannel::onControlReady()
 {
     const int fd = receiveFd(m_controlFd);
     if (fd == -1) {
-        // The session went away. The compositor and its clients carry on.
+        // The session went away or its socket failed. The compositor and its
+        // clients carry on.
         closeControl();
         return;
     }
