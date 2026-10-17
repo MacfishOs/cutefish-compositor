@@ -415,6 +415,16 @@ public:
 
     void setSystemDialog(bool systemDialog);
 
+    // A shell prompt the user answers in person, such as a password or a
+    // pairing confirmation: computer control neither clicks nor types into it
+    // or anything transient to it.
+    bool isProtectedFromControl() const { return m_protectedFromControl; }
+
+    void setProtectedFromControl(bool protectedFromControl)
+    {
+        m_protectedFromControl = protectedFromControl;
+    }
+
     // Set by policy for floating clients, or asked for by the client itself
     // through cutefish_window_hints_v1.
     bool isAlwaysOnTop() const;
@@ -504,6 +514,7 @@ private:
     bool m_modal = false;
     bool m_responsive = true;
     bool m_systemDialog = false;
+    bool m_protectedFromControl = false;
     bool m_alwaysOnTop = false;
     bool m_surfaceAlwaysOnTop = false;
 

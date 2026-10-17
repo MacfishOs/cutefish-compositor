@@ -40,17 +40,24 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
                                      std::function<void(computer_control::ConsentResult)> answer) {
         return consent->ask(agentName, std::move(answer));
     };
-    // The permission prompt and the authentication dialogs are the user's to
-    // answer, so the agent neither clicks nor types into them.
-    environment.protectedAt = [wm, showsSystemDialogs](const base::PointF &point) {
+    // The permission prompt, the authentication dialogs and the shell's secret
+    // prompts are the user's to answer, so the agent neither clicks nor types
+    // into them or their popups. Shell windows have no process.
+    const auto protects = [showsSystemDialogs](const wm::Window *window) {
+        for (; window; window = window->transientParent()) {
+            if (window->isProtectedFromControl() || showsSystemDialogs(window->processId()))
+                return true;
+        }
+        return false;
+    };
+    environment.protectedAt = [wm, protects](const base::PointF &point) {
         wm::Window *window = wm->windowAt(point);
         if (!window)
             window = wm->frameAt(point);
-        return window && showsSystemDialogs(window->processId());
+        return protects(window);
     };
-    environment.protectedFocus = [wm, seat, showsSystemDialogs] {
-        wm::Window *window = wm->windowForSurface(seat->focusedSurface());
-        return window && showsSystemDialogs(window->processId());
+    environment.protectedFocus = [wm, seat, protects] {
+        return protects(wm->windowForSurface(seat->focusedSurface()));
     };
     const auto inputMethod = hosts.inputMethod;
     environment.textInputFocused = [inputMethod] {
@@ -103,9 +110,8 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
         wm->activation()->activate(window);
         return true;
     };
-    environment.protectedWindow = [wm, showsSystemDialogs](uint64_t id) {
-        wm::Window *window = wm->windowById(id);
-        return window && showsSystemDialogs(window->processId());
+    environment.protectedWindow = [wm, protects](uint64_t id) {
+        return protects(wm->windowById(id));
     };
     // What the close button does (commands::closeWindow).
     environment.closeWindow = [wm](uint64_t id) {

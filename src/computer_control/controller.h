@@ -93,8 +93,8 @@ struct Environment {
     std::function<std::function<void()>(const std::string &agentName,
                                         std::function<void(ConsentResult)> answer)>
             askConsent;
-    // A window of a process that shows system dialogs is at `position`, or has
-    // the keyboard focus.
+    // A window the user answers in person (a system dialog or a shell prompt,
+    // with its popups) is at `position`, or has the keyboard focus.
     std::function<bool(const base::PointF &position)> protectedAt;
     std::function<bool()> protectedFocus;
     // A text field of the focused client is enabled; an input method composes
@@ -107,8 +107,8 @@ struct Environment {
     // as the dock does; false when the window is gone.
     std::function<std::vector<WindowInfo>()> windows;
     std::function<bool(uint64_t id)> activateWindow;
-    // A window of a process that shows system dialogs. Closing and setting
-    // the frame return false when the window is gone or cannot take it.
+    // Such a window, by id. Closing and setting the frame return false when
+    // the window is gone or cannot take it.
     std::function<bool(uint64_t id)> protectedWindow;
     std::function<bool(uint64_t id)> closeWindow;
     std::function<bool(uint64_t id, const base::Rect &frame)> setWindowFrame;

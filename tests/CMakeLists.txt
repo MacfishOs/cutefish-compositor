@@ -355,7 +355,9 @@ cutefish_add_test(idle_notify_protocol_test cutefish-wayland-input PkgConfig::Wa
 
 cutefish_add_test(auth_controller_test cutefish-auth)
 cutefish_add_test(switcher_view_test cutefish-switcher)
-cutefish_add_test(shell_test cutefish-shell)
+cutefish_add_test(shell_test cutefish-shell cutefish-computer-control cutefish-session
+    cutefish-wayland-input)
+target_sources(shell_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/computer_control_environment.cpp)
 cutefish_add_test(shell_gpu_pixel_test cutefish-shell cutefish-render)
 set_tests_properties(shell_gpu_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 # The shell components' memory, step by step; by hand.

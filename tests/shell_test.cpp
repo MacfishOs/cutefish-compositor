@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -15,6 +16,8 @@
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "computer_control/controller.h"
+#include "core/computer_control_environment.h"
 #include "display/display_manager.h"
 #include "fake_renderer.h"
 #include "input/drag.h"
@@ -110,6 +113,26 @@ public:
 
 private:
     ui::Color m_color;
+};
+
+// What the controller refused an agent.
+class RejectionRecorder : public computer_control::ControlClient
+{
+public:
+    void granted() override { ++granteds; }
+    void revoked(computer_control::RevokeReason) override {}
+    void rejected(computer_control::Rejection rejection) override { rejections.push_back(rejection); }
+    void window(uint32_t handle, const computer_control::WindowInfo &window) override
+    {
+        windows[window.id] = handle;
+    }
+    void windowsDone() override {}
+    void pointer(const base::PointF &) override {}
+
+    int granteds = 0;
+    std::vector<computer_control::Rejection> rejections;
+    // Handles by window id.
+    std::map<uint64_t, uint32_t> windows;
 };
 
 // The test component: a coloured panel along the top edge, reserving its
@@ -968,4 +991,113 @@ TEST_F(ShellTest, AWindowDrawsWhereItIsAfterItsOutputShrinks)
     frame();
     EXPECT_EQ(base::Rect(5, 706, 990, 89), dock.wmWindow()->bounds());
     EXPECT_EQ(base::Rect(5, 706, 990, 89), dock.surface()->node()->absoluteGeometry());
+}
+
+TEST_F(ShellTest, ComputerControlLeavesTheShellsSecretPromptsAlone)
+{
+    using computer_control::Rejection;
+
+    auto *panel = shell->addComponent(std::make_unique<TestPanel>(shell.get()));
+    // A prompt as the secret dialogs make it, with a popup of its own.
+    shell::ShellWindow prompt(shell.get(), wm::WindowRole::Normal);
+    auto content = std::make_unique<ProbeView>(ui::Color::rgb(0x0000ff));
+    ProbeView *probe = content.get();
+    ui::TextField *secret = probe->addChild<ui::TextField>();
+    secret->setGeometry({0, 150, 300, 30});
+    prompt.setContentView(std::move(content));
+    prompt.setProtectedFromControl(true);
+    prompt.setGeometry(base::Rect(300, 300, 300, 200));
+    prompt.show();
+    ui::PopupPlacement placement;
+    placement.anchorRect = {10, 200, 1, 1};
+    placement.anchor = ui::PopupAnchor::BottomLeft;
+    placement.gravity = ui::PopupAnchor::BottomRight;
+    std::unique_ptr<ui::Window> popup = ui::Window::createPopup(prompt.window(), placement, false);
+    auto popupContent = std::make_unique<ProbeView>(ui::Color::rgb(0x00ff00));
+    ProbeView *popupProbe = popupContent.get();
+    popup->setContentView(std::move(popupContent));
+    popup->resize({100, 50});
+    popup->show();
+    frame();
+    ASSERT_TRUE(prompt.wmWindow()->isProtectedFromControl());
+    shell::ShellWindow *popupWindow =
+            shell->host()->windowFor(static_cast<ui::EmbeddedWindow *>(popup.get()));
+    ASSERT_NE(nullptr, popupWindow);
+    ASSERT_NE(nullptr, popupWindow->wmWindow());
+    EXPECT_EQ(prompt.wmWindow(), popupWindow->wmWindow()->transientParent());
+
+    core::ComputerControlHosts hosts;
+    hosts.windowManager = &manager;
+    hosts.seat = &seat;
+    hosts.inputMethod = []() -> wayland::InputMethodManager * {
+        return nullptr;
+    };
+    hosts.showsSystemDialogs = [](int64_t) {
+        return false;
+    };
+    computer_control::Environment environment = core::computerControlEnvironment(std::move(hosts));
+    std::function<void(computer_control::ConsentResult)> answer;
+    environment.askConsent = [&answer](const std::string &,
+                                       std::function<void(computer_control::ConsentResult)> reply) {
+        answer = std::move(reply);
+        return std::function<void()>([] {});
+    };
+    environment.sessionBlocked = [] {
+        return false;
+    };
+    environment.now = [] {
+        return at(100000);
+    };
+    computer_control::Controller controller(&input, std::move(environment));
+    RejectionRecorder agent;
+    std::unique_ptr<computer_control::Control> control = controller.request(&agent, &agent, "Agent");
+    ASSERT_TRUE(answer);
+    answer(computer_control::ConsentResult::Allowed);
+    ASSERT_EQ(1, agent.granteds);
+
+    // No press on the prompt or its popup, no key or text into its field.
+    control->motion(base::PointF(400, 320));
+    control->button(BTN_LEFT, true);
+    control->motion(base::PointF(330, 520));
+    EXPECT_EQ(popupWindow->surface(), seat.pointerFocus());
+    control->button(BTN_LEFT, true);
+    prompt.activate();
+    secret->setFocus();
+    ASSERT_EQ(prompt.surface(), seat.focusedSurface());
+    control->key(KEY_A, true);
+    control->typeText("hunter2");
+    // Nor is it closed or moved.
+    control->listWindows();
+    ASSERT_TRUE(agent.windows.contains(prompt.wmWindow()->id()));
+    const uint32_t handle = agent.windows[prompt.wmWindow()->id()];
+    control->closeWindow(handle);
+    control->setWindowFrame(handle, base::Rect(0, 0, 300, 200));
+    EXPECT_EQ(std::vector<Rejection>(6, Rejection::Protected), agent.rejections);
+    EXPECT_EQ(base::Rect(300, 300, 300, 200), prompt.wmWindow()->bounds());
+    EXPECT_FALSE(probe->saw("press"));
+    EXPECT_FALSE(popupProbe->saw("press"));
+    EXPECT_EQ("", secret->text());
+    agent.rejections.clear();
+
+    // Other shell windows take the agent's input as the user's.
+    shell::ShellWindow launcher(shell.get(), wm::WindowRole::Launcher);
+    auto field = std::make_unique<ui::TextField>();
+    ui::TextField *text = field.get();
+    launcher.setContentView(std::move(field));
+    launcher.setGeometry(base::Rect(700, 600, 200, 40));
+    launcher.show();
+    frame();
+    launcher.activate();
+    text->setFocus();
+    ASSERT_EQ(launcher.surface(), seat.focusedSurface());
+    control->typeText("cf");
+    EXPECT_EQ("cf", text->text());
+
+    panel->openMenu({40, 20});
+    frame();
+    control->motion(base::PointF(60, 50));
+    control->button(BTN_LEFT, true);
+    control->button(BTN_LEFT, false);
+    EXPECT_TRUE(panel->menuProbe->saw("press"));
+    EXPECT_TRUE(agent.rejections.empty());
 }

@@ -562,6 +562,7 @@ TEST_F(SecretPromptsTest, AsksWhenNothingIsStoredAndKeepsWhatWasTyped)
     wm::Window *window = dialogWindow(dialog);
     ASSERT_NE(nullptr, window);
     EXPECT_EQ(wm::WindowRole::Normal, window->role());
+    EXPECT_TRUE(window->isProtectedFromControl());
     EXPECT_TRUE(window->isAlwaysOnTop());
     EXPECT_EQ(360, window->bounds().width());
     EXPECT_EQ("Wi-Fi Password Required", window->title());
@@ -754,6 +755,7 @@ TEST_F(SecretPromptsTest, VpnSecretsAreAskedForInTheirOwnWindowAndKept)
     ASSERT_TRUE(dialog->isOpen());
     frame();
     EXPECT_EQ("VPN Password Required", dialogWindow(dialog)->title());
+    EXPECT_TRUE(dialogWindow(dialog)->isProtectedFromControl());
     ASSERT_EQ(1u, dialog->fields().size());
     EXPECT_TRUE(dialog->fields()[0]->hasFocus());
     EXPECT_EQ(ui::TextField::EchoMode::Password, dialog->fields()[0]->echoMode());
@@ -855,6 +857,7 @@ TEST_F(SecretPromptsTest, BluetoothPairingIsConfirmedInTheDialog)
     ASSERT_TRUE(test::runUntil([dialog] { return dialog->isOpen(); }));
     frame();
     EXPECT_EQ("Bluetooth Pairing Request", dialogWindow(dialog)->title());
+    EXPECT_TRUE(dialogWindow(dialog)->isProtectedFromControl());
     EXPECT_EQ("000042", dialog->code()->text());
     EXPECT_TRUE(dialog->code()->isVisible());
     EXPECT_FALSE(dialog->codeField()->isVisible());

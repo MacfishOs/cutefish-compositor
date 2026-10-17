@@ -73,6 +73,8 @@ struct ShellWindowMetadata {
     std::string outputName;
     // The window a Sheet hangs from, by Window::id; zero for none.
     uint64_t parentWindow = 0;
+    // See Window::isProtectedFromControl.
+    bool protectedFromControl = false;
 };
 
 // Everything a window is announced with. The application id and the process id

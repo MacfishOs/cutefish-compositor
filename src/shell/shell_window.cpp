@@ -220,6 +220,12 @@ void ShellWindow::setParentWindow(uint64_t windowId)
     applyMetadata();
 }
 
+void ShellWindow::setProtectedFromControl(bool protectedFromControl)
+{
+    m_metadata.protectedFromControl = protectedFromControl;
+    applyMetadata();
+}
+
 void ShellWindow::setExclusiveZone(wm::ScreenEdge edge, int thickness)
 {
     m_shell->windowManager()->setExclusiveZone(this, edge, thickness, m_metadata.outputName);

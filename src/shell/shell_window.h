@@ -99,6 +99,9 @@ public:
     const std::string &outputName() const { return m_metadata.outputName; }
     // The window a Sheet hangs from, by wm::Window::id.
     void setParentWindow(uint64_t windowId);
+    // Keeps computer control out of the window and its popups; see
+    // wm::Window::isProtectedFromControl.
+    void setProtectedFromControl(bool protectedFromControl);
     void setExclusiveZone(wm::ScreenEdge edge, int thickness);
     void clearExclusiveZone();
     // Takes the keyboard: activation, or for the Capture and Picker roles
