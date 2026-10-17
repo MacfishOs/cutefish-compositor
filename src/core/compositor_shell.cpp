@@ -548,7 +548,7 @@ bool CompositorShell::init()
         m_windowDebugService = std::make_unique<session::WindowDebugService>(&m_windowManager);
         m_windowDebugService->setInput(&m_inputManager);
         if (!m_options.noDrm)
-            m_windowDebugService->setInputGate("/etc/cutefish/window-debug-input");
+            m_windowDebugService->setGate("/etc/cutefish/window-debug-input");
         m_windowDebugService->setOutputStats([this] {
             std::vector<std::string> lines;
             if (m_backend) {

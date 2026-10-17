@@ -181,7 +181,7 @@ TEST_F(WindowDebugServiceTest, OnARealSessionTakesInputOnlyWithRootsFile)
     ASSERT_TRUE(directory.isValid());
 
     // No file.
-    service.setInputGate(directory.filePath("window-debug-input"));
+    service.setGate(directory.filePath("window-debug-input"));
     EXPECT_FALSE(callBool("PointerMotion", 40.0, 30.0));
     // A file the user made.
     ASSERT_TRUE(input_test::writeFile(directory.filePath("window-debug-input"), ""));
@@ -189,12 +189,12 @@ TEST_F(WindowDebugServiceTest, OnARealSessionTakesInputOnlyWithRootsFile)
     EXPECT_FALSE(callBool("Key", uint32_t(30), true));
     // The user's link to a file of root's.
     std::filesystem::create_symlink("/etc/passwd", directory.filePath("link"));
-    service.setInputGate(directory.filePath("link"));
+    service.setGate(directory.filePath("link"));
     EXPECT_FALSE(callBool("PointerMotion", 40.0, 30.0));
     EXPECT_EQ(desktop.seat.pointerLocation(), base::PointF());
 
     // A file root owns and only root writes.
-    service.setInputGate("/etc/passwd");
+    service.setGate("/etc/passwd");
     EXPECT_TRUE(callBool("PointerMotion", 40.0, 30.0));
     EXPECT_EQ(desktop.seat.pointerLocation(), base::PointF(40, 30));
     EXPECT_TRUE(callBool("PointerButton", uint32_t(0x110), true));
@@ -202,6 +202,54 @@ TEST_F(WindowDebugServiceTest, OnARealSessionTakesInputOnlyWithRootsFile)
     EXPECT_TRUE(callBool("PointerButton", uint32_t(0x110), false));
     EXPECT_TRUE(callBool("Key", uint32_t(30), true));
     EXPECT_TRUE(callBool("Key", uint32_t(30), false));
+}
+
+// Without root's file a session client reads where windows are, never what
+// they show, and changes none of them, protected dialogs included.
+TEST_F(WindowDebugServiceTest, OnARealSessionChangesWindowsAndNamesTitlesOnlyWithRootsFile)
+{
+    Desktop desktop;
+    wm::Window *editor = desktop.open("kate");
+    wm::Window *viewer = desktop.open("loupe");
+    editor->setTitle("notes.txt");
+    viewer->activate();
+    const base::Rect before = editor->bounds();
+    session::WindowDebugService service(&desktop.manager);
+    ASSERT_TRUE(service.registerService());
+    input_test::TemporaryDirectory directory;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(input_test::writeFile(directory.filePath("window-debug-input"), ""));
+    service.setGate(directory.filePath("window-debug-input"));
+    const uint64_t id = editor->id();
+
+    const Value windows = listWindows();
+    ASSERT_EQ(windows.size(), 2u);
+    EXPECT_EQ(windows[size_t(0)]["appId"].toString(), "kate");
+    EXPECT_TRUE(windows[size_t(0)]["bounds"].isArray());
+    for (const Value &window : windows.toArray()) {
+        for (const auto &[key, member] : window.toObject())
+            EXPECT_NE(key, "title");
+    }
+    EXPECT_FALSE(callBool("MoveWindow", id, int32_t(40), int32_t(60)));
+    EXPECT_FALSE(callBool("SetWindowBounds", id, int32_t(100), int32_t(120), int32_t(300), int32_t(200)));
+    EXPECT_FALSE(callBool("ActivateWindow", id));
+    EXPECT_FALSE(callBool("SnapWindow", id, false));
+    EXPECT_FALSE(callBool("MinimizeWindow", id));
+    EXPECT_FALSE(callBool("RestoreWindow", id));
+    EXPECT_EQ(editor->bounds(), before);
+    EXPECT_FALSE(editor->isActive());
+    EXPECT_EQ(editor->stateType(), wm::WindowStateType::Normal);
+    // Reading the counters stays open for measurements.
+    EXPECT_FALSE(call("OutputStats").isError());
+
+    service.setGate("/etc/passwd");
+    EXPECT_EQ(listWindows()[size_t(0)]["title"].toString(), "notes.txt");
+    EXPECT_TRUE(callBool("MoveWindow", id, int32_t(40), int32_t(60)));
+    EXPECT_EQ(editor->bounds().topLeft(), base::Point(40, 60));
+    EXPECT_TRUE(callBool("ActivateWindow", id));
+    EXPECT_TRUE(editor->isActive());
+    EXPECT_TRUE(callBool("MinimizeWindow", id));
+    EXPECT_EQ(editor->stateType(), wm::WindowStateType::Minimized);
 }
 
 TEST_F(WindowDebugServiceTest, AnUnknownIdChangesNothing)
