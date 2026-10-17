@@ -8,6 +8,7 @@
 #include <chrono>
 #include <filesystem>
 #include <set>
+#include <string_view>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -28,15 +29,24 @@ static constexpr std::chrono::milliseconds kDebounce(40);
 static constexpr std::chrono::milliseconds kRetry(2000);
 static constexpr std::chrono::milliseconds kRetryLimit(60000);
 
-// Kernel interfaces, automounts and remote filesystems: looking into an
-// automount mounts it, and a hung share would block the look and its watch.
-static bool holdsNoTrash(const std::string &type)
+// Kernel interfaces, memory-backed folders, automounts and remote
+// filesystems: a memory-backed trash would be lost at shutdown, so the file
+// manager sends those files home; looking into an automount mounts it, and a
+// hung share would block the look and its watch.
+static bool holdsNoTrash(const std::string &mountPoint, const std::string &type)
 {
+    // The system's own places; removable volumes may be mounted under /run/media.
+    for (const std::string_view system : {"/proc", "/sys", "/dev", "/run"}) {
+        if (mountPoint.starts_with(system) && (mountPoint.size() == system.size() || mountPoint[system.size()] == '/'))
+            return !mountPoint.starts_with("/run/media/");
+    }
+
     static const std::set<std::string> types = {
             "proc",        "sysfs",           "devtmpfs",           "devpts",   "cgroup",      "cgroup2",
             "debugfs",     "tracefs",         "securityfs",         "bpf",      "pstore",      "autofs",
             "mqueue",      "hugetlbfs",       "configfs",           "fusectl",  "efivarfs",    "nsfs",
             "binfmt_misc", "rpc_pipefs",      "fuse.portal",        "fuse.gvfsd-fuse",         "fuse.cutefish-mountd",
+            "tmpfs",       "ramfs",
             "nfs",         "nfs4",            "cifs",               "smb3",     "smbfs",       "ncpfs",
             "afs",         "ceph",            "9p",                 "glusterfs", "coda",       "davfs",
             "fuse.sshfs",  "fuse.rclone",     "fuse.davfs2",
@@ -92,7 +102,7 @@ static std::vector<std::string> mountPoints(const std::string &mountTable)
     for (const auto &[mountPoint, type] : mounts) {
         // A volume the user cannot enter, such as a service's credentials,
         // has no trash of theirs.
-        if (!holdsNoTrash(type) && access(mountPoint.c_str(), X_OK) == 0)
+        if (!holdsNoTrash(mountPoint, type) && access(mountPoint.c_str(), X_OK) == 0)
             points.push_back(mountPoint);
     }
     return points;
@@ -157,8 +167,12 @@ TrashMonitor::State TrashMonitor::look(const std::string &mountTable, const std:
         }
     }
     for (const std::string &topdir : points) {
-        state.entries[topdir].push_back(".Trash");
-        state.entries[topdir].push_back(".Trash-" + uid);
+        // Where the user cannot make a trash, such as /, one an administrator
+        // makes later is found by the next look.
+        if (access(topdir.c_str(), W_OK) == 0) {
+            state.entries[topdir].push_back(".Trash");
+            state.entries[topdir].push_back(".Trash-" + uid);
+        }
         if (fs::is_directory(joined(topdir, ".Trash"), error))
             state.entries[joined(topdir, ".Trash")].push_back(uid);
     }

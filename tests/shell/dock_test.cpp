@@ -343,3 +343,34 @@ TEST_F(DockTest, LeavesVolumesTheUserCannotRead)
     std::filesystem::permissions(locked, std::filesystem::perms::owner_all);
     std::filesystem::permissions(hidden, std::filesystem::perms::owner_all);
 }
+
+TEST_F(DockTest, WatchesOnlyVolumesThatCanHoldATrash)
+{
+    if (getuid() == 0)
+        GTEST_SKIP() << "permissions do not apply to root";
+
+    // Every file made in a memory-backed folder or a system place would wake
+    // the compositor, and none of them holds a trash.
+    const std::string memory = directory.filePath("tmp");
+    const std::string stick = directory.filePath("media/u/stick");
+    const std::string data = directory.filePath("mnt/data");
+    const std::string runtime = "/run/user/" + std::to_string(getuid());
+    for (const std::string &path : {memory, stick, data})
+        std::filesystem::create_directories(path);
+    const std::string table = "21 1 8:2 / / rw,relatime - ext4 /dev/sda2 rw\n"
+                              "22 21 0:21 / /proc rw,nosuid - proc proc rw\n"
+                              "23 21 0:30 / " + memory + " rw,nosuid - tmpfs tmpfs rw\n"
+                              "24 21 0:31 / " + runtime + " rw,nosuid - fuse.app app rw\n"
+                              "25 21 8:17 / " + stick + " rw,nosuid - vfat /dev/sdb1 rw\n"
+                              "26 21 8:33 / " + data + " rw,relatime - ext4 /dev/sdc1 rw\n";
+    directory.write("mountinfo", table);
+
+    const shell::TrashMonitor::State state =
+            shell::TrashMonitor::look(directory.filePath("mountinfo"), directory.filePath("Trash"));
+    EXPECT_FALSE(state.entries.contains("/"));
+    EXPECT_FALSE(state.entries.contains("/proc"));
+    EXPECT_FALSE(state.entries.contains(memory));
+    EXPECT_FALSE(state.entries.contains(runtime));
+    EXPECT_TRUE(state.entries.contains(stick));
+    EXPECT_TRUE(state.entries.contains(data));
+}
