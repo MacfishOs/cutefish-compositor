@@ -135,7 +135,7 @@ void select(wl_client *client, wl_resource *resource, wl_resource *sourceResourc
 {
     auto *device = getUserDataAs<Device>(resource);
     if (!device->controller || !device->authorization
-        || !device->authorization->authorize(client, serial))
+        || !device->authorization->authorize(client, serial, *device->controller))
         return;
     std::shared_ptr<Source> source;
     if (sourceResource) {

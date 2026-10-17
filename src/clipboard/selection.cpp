@@ -75,15 +75,21 @@ void SelectionController::recordSerial(Recipient recipient, uint32_t serial)
 
 bool SelectionController::authorize(Recipient recipient, uint32_t serial)
 {
-    if (m_isolated)
+    return authorize(recipient, serial, *this);
+}
+
+bool SelectionController::authorize(Recipient recipient, uint32_t serial,
+                                    SelectionController &selection)
+{
+    if (m_isolated || selection.m_isolated)
         return false;
     if (!recipient || recipient != m_recipient)
         return false;
     for (auto it = m_serials.rbegin(); it != m_serials.rend(); ++it) {
         if (it->value == serial) {
-            if (it->sequence < m_lastAccepted)
+            if (it->sequence < selection.m_lastAccepted)
                 return false;
-            m_lastAccepted = it->sequence;
+            selection.m_lastAccepted = it->sequence;
             return true;
         }
     }

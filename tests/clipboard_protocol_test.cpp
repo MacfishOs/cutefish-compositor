@@ -7,7 +7,9 @@
 #include <signal.h>
 
 #include "clipboard_test_util.h"
+#include "primary-selection-unstable-v1-client-protocol.h"
 #include "shm_test_util.h"
+#include "wayland/protocols/primary_selection.h"
 
 using namespace clipboard_test;
 
@@ -382,3 +384,58 @@ TEST(ClipboardProtocol, ATouchSerialAuthorizesTheSelection)
     h.sync(a);
 }
 
+// Each selection refuses only serials older than the one that last set it, so
+// a toolkit that sets the primary selection from the press that started the
+// selected text can still do so after a later copy.
+TEST(ClipboardProtocol, PrimarySelectionSerialsAreOrderedApartFromTheClipboard)
+{
+    Harness h;
+    wayland::createPrimarySelectionGlobal(h.server.display(), &h.waylandSeat);
+    auto& a = h.addClient();
+    zwp_primary_selection_device_manager_v1* manager = nullptr;
+    auto* registry = wl_display_get_registry(a.display);
+    static const wl_registry_listener listener = {
+        [](void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t) {
+            if (std::string(interface) == zwp_primary_selection_device_manager_v1_interface.name)
+                *static_cast<zwp_primary_selection_device_manager_v1**>(data) =
+                    static_cast<zwp_primary_selection_device_manager_v1*>(wl_registry_bind(
+                        registry, name, &zwp_primary_selection_device_manager_v1_interface, 1));
+        },
+        [](void*, wl_registry*, uint32_t) {}};
+    wl_registry_add_listener(registry, &listener, &manager);
+    h.sync(a);
+    ASSERT_TRUE(manager);
+    auto* device = zwp_primary_selection_device_manager_v1_get_device(manager, a.seat);
+    h.focus(a);
+    const auto enter = a.serial;
+    h.seat.onKey(input::Timestamp {}, 30, true);
+    h.sync(a);
+    const auto press = a.serial;
+    h.seat.onKey(input::Timestamp {}, 30, false);
+    h.seat.onKey(input::Timestamp {}, 46, true);
+    h.sync(a);
+    wl_data_device_set_selection(a.devices.front(), a.source({{"text/plain", "copied"}}), a.serial);
+    h.sync(a);
+    ASSERT_TRUE(h.seat.selection()->source());
+
+    auto* source = zwp_primary_selection_device_manager_v1_create_source(manager);
+    zwp_primary_selection_source_v1_offer(source, "text/plain");
+    zwp_primary_selection_device_v1_set_selection(device, source, press);
+    h.sync(a);
+    const auto selected = h.seat.primarySelection()->source();
+    EXPECT_TRUE(selected);
+
+    auto* stale = zwp_primary_selection_device_manager_v1_create_source(manager);
+    zwp_primary_selection_source_v1_offer(stale, "text/plain");
+    zwp_primary_selection_device_v1_set_selection(device, stale, enter);
+    h.sync(a);
+    EXPECT_EQ(selected, h.seat.primarySelection()->source());
+
+    h.seat.onKey(input::Timestamp {}, 46, false);
+    zwp_primary_selection_source_v1_destroy(stale);
+    zwp_primary_selection_source_v1_destroy(source);
+    zwp_primary_selection_device_v1_destroy(device);
+    zwp_primary_selection_device_manager_v1_destroy(manager);
+    wl_registry_destroy(registry);
+    h.sync(a);
+}

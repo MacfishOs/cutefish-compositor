@@ -90,6 +90,10 @@ public:
     // Records only actual delivered keyboard-enter/key or pointer-button events.
     void recordSerial(Recipient recipient, uint32_t serial);
     bool authorize(Recipient recipient, uint32_t serial);
+    // For a selection that records no serials of its own, the primary one:
+    // the serial is looked up here, but it only has to be newer than the last
+    // one `selection` accepted.
+    bool authorize(Recipient recipient, uint32_t serial, SelectionController &selection);
     bool setSource(std::shared_ptr<DataSource> source);
     // Expected-source check protects a replacement from old teardown callbacks.
     void sourceDestroyed(DataSource *source);
