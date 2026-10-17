@@ -23,6 +23,7 @@
 #include "input/seat.h"
 #include "wm/activation.h"
 #include "wm/mru_window_tracker.h"
+#include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 #include "wm/window_state.h"
@@ -52,6 +53,9 @@ WindowCycleController::~WindowCycleController()
 bool WindowCycleController::canCycle() const
 {
     if (!m_manager->allowsActivation())
+        return false;
+    // As upstream: the window the pointer holds stays the one in use.
+    if (m_manager->eventHandler()->draggedWindow())
         return false;
     for (Window *window : m_manager->windows()) {
         if (window->isSystemDialog() && window->isVisible())

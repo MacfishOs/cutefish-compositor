@@ -1322,6 +1322,27 @@ TEST_F(AcceleratorTest, SwitchingToAHiddenApplicationBringsItAllBack)
     EXPECT_EQ(editor, manager.activation()->activeWindow());
 }
 
+TEST_F(AcceleratorTest, NoCycleStartsWhileAWindowIsDragged)
+{
+    wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
+    wm::Window *second = makeWindow(base::Rect(50, 50, 300, 200));
+    manager.activation()->activate(first);
+    manager.activation()->activate(second);
+    ASSERT_TRUE(manager.eventHandler()->beginMove(second, base::PointF(100, 60)));
+    press(KEY_LEFTALT);
+    tap(KEY_TAB);
+    EXPECT_FALSE(cycle->isCycling());
+    release(KEY_LEFTALT);
+    EXPECT_EQ(second, manager.activation()->activeWindow());
+
+    manager.eventHandler()->completeDrag(wm::ToplevelEventHandler::DragResult::Success);
+    press(KEY_LEFTALT);
+    tap(KEY_TAB);
+    EXPECT_TRUE(cycle->isCycling());
+    release(KEY_LEFTALT);
+    EXPECT_EQ(first, manager.activation()->activeWindow());
+}
+
 TEST_F(AcceleratorTest, CycleSurvivesAWindowClosingUnderIt)
 {
     wm::Window *first = makeWindow(base::Rect(0, 0, 300, 200));
