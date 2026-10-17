@@ -121,7 +121,8 @@ bool readEntry(const std::string &path, LoginSession *session)
             session->command.push_back(argument);
     }
     std::vector<std::string> desktopNames;
-    for (const std::string_view name : base::strings::splitViews(value("DesktopNames"), ';')) {
+    const std::string desktopNamesValue = value("DesktopNames");
+    for (const std::string_view name : base::strings::splitViews(desktopNamesValue, ';')) {
         if (!base::strings::trimmed(name).empty())
             desktopNames.emplace_back(base::strings::trimmed(name));
     }

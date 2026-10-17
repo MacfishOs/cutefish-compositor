@@ -101,6 +101,24 @@ TEST(AuthControllerTest, LoginSessionsFollowWaylandSessions)
     setLoginSessionDirectoriesForTesting({});
 }
 
+TEST(AuthControllerTest, EveryDesktopNameReachesTheSessionEnvironment)
+{
+    TemporaryDirectory directory;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(directory.write("cutefish-wayland.desktop",
+                                "[Desktop Entry]\nName=Cutefish\nExec=/bin/true\n"
+                                "DesktopNames=CutefishDesktopSession; SecondDesktopName ;;\n"));
+    const auto sessions = findLoginSessions({directory.path()});
+    ASSERT_EQ(sessions.size(), 1u);
+    const auto &environment = sessions.front().environment;
+    EXPECT_NE(std::find(environment.begin(), environment.end(),
+                        "XDG_SESSION_DESKTOP=CutefishDesktopSession"),
+              environment.end());
+    EXPECT_NE(std::find(environment.begin(), environment.end(),
+                        "XDG_CURRENT_DESKTOP=CutefishDesktopSession:SecondDesktopName"),
+              environment.end());
+}
+
 // Exec lines split on whitespace, double quotes grouping and """ a literal
 // quote.
 TEST(AuthControllerTest, SplitsOnWhitespaceAndQuotes)
