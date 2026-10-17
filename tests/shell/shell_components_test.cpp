@@ -631,6 +631,44 @@ TEST_F(ShellComponentsTest, ADraggedIconNothingTakesGoesBackToItsSlot)
     EXPECT_EQ(dockIds(dock), (std::vector<std::string>{shell::DockModel::kLauncherId, "files", "terminal"}));
 }
 
+TEST_F(ShellComponentsTest, TheLastPinTakenOffTheDockOpensItsSlotAgainWhereItWas)
+{
+    auto *dock = openDock("[Dock]\nPinned=files, terminal\n");
+    input::DragController *drag = seat.drag();
+    const base::PointF terminal = centreOf(dock, dock->applicationIcon("terminal"));
+    shell::DockPresentation *presentation = dock->applicationPresentation();
+
+    // Off the dock its slot closes and the dock shrinks.
+    beginDrag(1, terminal, {terminal.x(), terminal.y() - 30});
+    ASSERT_TRUE(drag->active());
+    move(10, terminal.x(), terminal.y() - 200);
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        return presentation->placeholder() < 0 && !presentation->isRunning();
+    }));
+
+    // Back where it was, its slot opens again.
+    move(20, terminal.x(), terminal.y());
+    EXPECT_TRUE(test::runUntil([&] { return presentation->placeholder() == 2; }));
+    EXPECT_TRUE(presentation->placeholderPinned());
+    EXPECT_TRUE(drag->targetAcceptsDrop());
+
+    // And over the divider gap, up to the trash.
+    move(30, terminal.x(), terminal.y() - 200);
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        return presentation->placeholder() < 0 && !presentation->isRunning();
+    }));
+    shell::DockIcon *trash = dock->trashIcon();
+    const double trashStart = dock->window()->geometry().x() + trash->geometry().x + trash->iconRect().x;
+    move(40, trashStart - 2, terminal.y());
+    EXPECT_TRUE(test::runUntil([&] { return presentation->placeholder() == 2; }));
+    EXPECT_TRUE(presentation->placeholderPinned());
+    EXPECT_TRUE(drag->targetAcceptsDrop());
+    release(41);
+    EXPECT_EQ(dockIds(dock), (std::vector<std::string>{shell::DockModel::kLauncherId, "files", "terminal"}));
+}
+
 TEST_F(ShellComponentsTest, EscapeLeavesThePinsAsTheyWere)
 {
     auto *dock = openDock("[Dock]\nPinned=files, terminal\n");

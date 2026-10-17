@@ -1517,9 +1517,19 @@ void DockWindow::updateDropSlot()
     const int pins = model.pinnedCount() - (source >= 0 && source < model.pinnedCount() ? 1 : 0);
     const int pinGap = m_applications->placeholder() >= 0 && m_applications->placeholderPinned() ? 1 : 0;
     const double externalShift = external ? pitch / 2 : 0;
-    const double boundary = (pins + pinGap) * pitch + (separatorExtent - iconGap) / 2 - (pinGap ? externalShift : 0);
+    // The reference was anchored with the dragged icon's own slot open, or none
+    // for a drag from elsewhere; the centred dock is drawn half a slot along
+    // for each slot fewer open now.
+    const int anchoredSlots = source >= 0 ? 1 : 0;
+    const int openSlots = m_applications->placeholder() >= 0 ? 1 : 0;
+    const double drawnShift = (anchoredSlots - openSlots) * pitch / 2;
+    // One that can only be pinned takes the whole divider gap; one that can
+    // go either way changes sides at the line.
+    const bool pinsOnly = m_drop.sourcePinned || external;
+    const double divider = pinsOnly ? separatorExtent : (separatorExtent - iconGap) / 2;
+    const double boundary = (pins + pinGap) * pitch + divider + drawnShift;
     m_drop.pinned = along < boundary;
-    if (!m_drop.pinned && (m_drop.sourcePinned || external)) {
+    if (!m_drop.pinned && pinsOnly) {
         m_drop.slot = -1;
         m_applications->setDropSlot(-1, false);
         return;
