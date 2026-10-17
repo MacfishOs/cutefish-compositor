@@ -270,7 +270,7 @@ AcceleratorConfigResult AcceleratorConfiguration::removeAccelerator(AcceleratorA
     const AcceleratorConfigResult result =
             doRemoveAccelerator(id, accelerator, /*saveOverride=*/true);
     if (result == AcceleratorConfigResult::Success) {
-        restoreDefaultOwner(accelerator);
+        restoreDefaultOwner(m_acceleratorToId.remapForLookup(accelerator));
         updateAndNotifyAccelerators();
     }
     CF_DEBUG(cfInput) << "removeAccelerator" << id << accelerator.shortcutText() << toString(result);
@@ -354,12 +354,13 @@ AcceleratorConfigResult AcceleratorConfiguration::doRemoveAccelerator(
     if (toActionId(*foundId) != id)
         return AcceleratorConfigResult::NotFound;
 
-    std::erase(foundAccelerators->second, accelerator);
-    m_acceleratorToId.erase(accelerator);
+    const Accelerator stored = m_acceleratorToId.remapForLookup(accelerator);
+    std::erase(foundAccelerators->second, stored);
+    m_acceleratorToId.erase(stored);
 
     // A press/release pair belongs together: removing one removes the other.
-    Accelerator reverse(accelerator);
-    reverse.setKeyState(accelerator.keyState() == Accelerator::KeyState::Pressed
+    Accelerator reverse(stored);
+    reverse.setKeyState(stored.keyState() == Accelerator::KeyState::Pressed
                                 ? Accelerator::KeyState::Released
                                 : Accelerator::KeyState::Pressed);
     const AcceleratorAction *reverseId = m_acceleratorToId.find(reverse);
@@ -369,7 +370,7 @@ AcceleratorConfigResult AcceleratorConfiguration::doRemoveAccelerator(
     }
 
     if (saveOverride)
-        updateOverrides(id, accelerator, ModificationAction::Remove);
+        updateOverrides(id, stored, ModificationAction::Remove);
     return AcceleratorConfigResult::Success;
 }
 

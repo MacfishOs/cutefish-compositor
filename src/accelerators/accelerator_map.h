@@ -44,7 +44,11 @@ public:
     // The DomCode never goes into the map; only the lookup consults it.
     V &getOrInsertDefault(const Accelerator &accelerator) { return m_map[stripped(accelerator)]; }
 
-    bool erase(const Accelerator &accelerator) { return m_map.erase(stripped(accelerator)) > 0; }
+    // Erases the entry find() returns.
+    bool erase(const Accelerator &accelerator)
+    {
+        return m_map.erase(remapForLookup(accelerator)) > 0;
+    }
 
     void clear() { m_map.clear(); }
 
@@ -65,14 +69,7 @@ public:
 
     bool usePositionalLookup() const { return m_usePositionalLookup; }
 
-private:
-    static Accelerator stripped(const Accelerator &accelerator)
-    {
-        Accelerator copy = accelerator;
-        copy.resetEvdevCode();
-        return copy;
-    }
-
+    // The key find() looks up for the accelerator.
     Accelerator remapForLookup(const Accelerator &accelerator) const
     {
         uint32_t keysym = accelerator.keysym();
@@ -82,6 +79,14 @@ private:
                 keysym = remapped;
         }
         return Accelerator(keysym, accelerator.modifiers(), accelerator.keyState());
+    }
+
+private:
+    static Accelerator stripped(const Accelerator &accelerator)
+    {
+        Accelerator copy = accelerator;
+        copy.resetEvdevCode();
+        return copy;
     }
 
     const_iterator findImpl(const Accelerator &accelerator) const

@@ -296,6 +296,21 @@ TEST(AcceleratorMap, PositionalLookupPinsPunctuationToTheUsLayout)
     EXPECT_EQ(0u, positionalUsKeysym(KEY_A, XKB_KEY_a));
 }
 
+TEST(AcceleratorMap, EraseRemovesWhatFindReturns)
+{
+    AcceleratorMap<int> map;
+    map.insertNew(Accelerator(XKB_KEY_bracketright, AltDown), 1);
+    map.insertNew(Accelerator(XKB_KEY_plus, AltDown), 2);
+    map.setUsePositionalLookup(true);
+
+    const Accelerator germanPlus(XKB_KEY_plus, KEY_RIGHTBRACE, AltDown,
+                                 Accelerator::KeyState::Pressed);
+    EXPECT_TRUE(map.erase(germanPlus));
+    EXPECT_EQ(nullptr, map.find(germanPlus));
+    ASSERT_NE(nullptr, map.find(Accelerator(XKB_KEY_plus, AltDown)));
+    EXPECT_EQ(2, *map.find(Accelerator(XKB_KEY_plus, AltDown)));
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // AcceleratorManager
 
@@ -345,6 +360,27 @@ TEST(AcceleratorManager, LaterTargetsWinAndPriorityHandlersGoFirst)
     manager.unregisterAccelerator(accelerator, &first);
     EXPECT_FALSE(manager.isRegistered(accelerator));
     EXPECT_FALSE(manager.process(accelerator));
+}
+
+TEST(AcceleratorManager, UnregisteringByPositionRemovesTheUsKey)
+{
+    AcceleratorManager manager;
+    manager.setUsePositionalLookup(true);
+    const Accelerator usBracket(XKB_KEY_bracketright, AltDown);
+    const Accelerator germanPlus(XKB_KEY_plus, KEY_RIGHTBRACE, AltDown,
+                                 Accelerator::KeyState::Pressed);
+    const Accelerator plainPlus(XKB_KEY_plus, AltDown);
+    CountingTarget target(true), other(true);
+    manager.registerAccelerators({usBracket}, AcceleratorManager::NormalPriority, &target);
+    manager.registerAccelerators({plainPlus}, AcceleratorManager::NormalPriority, &other);
+    ASSERT_TRUE(manager.isRegistered(germanPlus));
+
+    manager.unregisterAccelerator(germanPlus, &target);
+    EXPECT_FALSE(manager.isRegistered(usBracket));
+    EXPECT_FALSE(manager.process(germanPlus));
+    EXPECT_TRUE(manager.isRegistered(plainPlus));
+    EXPECT_TRUE(manager.process(plainPlus));
+    EXPECT_EQ(1, other.presses);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -421,6 +457,30 @@ TEST(AcceleratorConfiguration, AddRemoveReplaceAndRestore)
     EXPECT_FALSE(configuration.hasCustomAccelerators());
     EXPECT_EQ(configuration.defaultAcceleratorsForId(maximize),
               *configuration.acceleratorsForAction(maximize));
+}
+
+TEST(AcceleratorConfiguration, RemovingByPositionRemovesTheUsKey)
+{
+    input_test::TemporaryDirectory directory;
+    AcceleratorConfiguration configuration(directory.filePath("compositor.conf"));
+    configuration.initialize();
+    configuration.setUsePositionalLookup(true);
+
+    const auto snapRight = toActionId(AcceleratorAction::WindowCycleSnapRight);
+    const Accelerator usBracket(XKB_KEY_bracketright, AltDown);
+    const Accelerator germanPlus(XKB_KEY_plus, KEY_RIGHTBRACE, AltDown,
+                                 Accelerator::KeyState::Pressed);
+    ASSERT_TRUE(configuration.findAcceleratorAction(germanPlus));
+    const size_t accelerators = configuration.acceleratorsForAction(snapRight)->size();
+
+    EXPECT_EQ(AcceleratorConfigResult::Success,
+              configuration.removeAccelerator(snapRight, germanPlus));
+    EXPECT_FALSE(configuration.findAcceleratorAction(usBracket));
+    EXPECT_EQ(accelerators - 1, configuration.acceleratorsForAction(snapRight)->size());
+
+    AcceleratorConfiguration reloaded(directory.filePath("compositor.conf"));
+    reloaded.initialize();
+    EXPECT_FALSE(reloaded.findAcceleratorAction(usBracket));
 }
 
 TEST(AcceleratorConfiguration, OverridesPersistAcrossInstances)
