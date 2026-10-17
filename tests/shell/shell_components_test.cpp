@@ -826,3 +826,29 @@ TEST_F(ShellComponentsTest, AMinimizingWindowAimsAtWhereItsThumbnailComesToRest)
     frame();
     EXPECT_EQ(icon->presentationOpacity(), 0);
 }
+
+TEST_F(ShellComponentsTest, AClosedShellWindowLeavesTheSceneWithTheNextFrame)
+{
+    scene.render(renderer);
+    const size_t before = surfaceContainer->children().size();
+    std::vector<std::unique_ptr<shell::ShellWindow>> panels;
+    for (int i = 0; i < 3; ++i) {
+        panels.push_back(std::make_unique<shell::ShellWindow>(shell.get(), wm::WindowRole::Panel));
+        panels.back()->setContentView(std::make_unique<ui::View>());
+        panels.back()->setGeometry(base::Rect(0, 0, 200, kStatusBar));
+        panels.back()->show();
+    }
+    test::processPendingEvents();
+    frame();
+    scene.render(renderer);
+
+    panels.clear();
+    test::processPendingEvents();
+    frame();
+    // Each window's node stays until a frame collects it.
+    EXPECT_EQ(before + 3, surfaceContainer->children().size());
+
+    ASSERT_TRUE(scene.hasDamage(renderer.outputContext()));
+    scene.render(renderer);
+    EXPECT_EQ(before, surfaceContainer->children().size());
+}

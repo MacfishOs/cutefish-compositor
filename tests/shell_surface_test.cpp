@@ -17,7 +17,9 @@
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "base/geometry.h"
@@ -65,6 +67,22 @@ struct Recorder {
     uint32_t nextSerial = 1;
 
     ShellSurface::ConfigureState last() const { return configures.back(); }
+};
+
+// Offscreen passes succeed, so a closing window plays its animation from a
+// snapshot as it does on a GPU.
+class SnapshotRenderer final : public testsupport::FakeRenderer
+{
+public:
+    bool renderToTexture(std::unique_ptr<render::Texture> &texture, const base::Rect &bounds,
+                         const std::function<void()> &paint) override
+    {
+        paint();
+        std::vector<uint8_t> pixels(bounds.width() * bounds.height() * 4);
+        texture = createTexture(bounds.size(), pixels.data(), bounds.width() * 4,
+                                render::PixelFormat::Bgrx8888);
+        return bool(texture);
+    }
 };
 
 class ShellSurfaceTest : public testing::Test
@@ -777,6 +795,44 @@ TEST_F(ShellSurfaceTest, DestroyingTheShellSurfaceDestroysTheWindow)
     takeShell(shells.back().get()).reset();
 
     EXPECT_TRUE(manager.windows().empty());
+}
+
+TEST_F(ShellSurfaceTest, AClosedWindowLeavesTheSceneWhenItsCloseAnimationEnds)
+{
+    SnapshotRenderer snapshots;
+    for (int i = 0; i < 3; ++i) {
+        ShellSurface *shell = makeMappedToplevel(base::Size(300, 200));
+        scene.render(snapshots);
+        compositor::Surface *surface = shell->rootSurface();
+        takeShell(shell).reset();
+        takeSurface(surface).reset();
+        ASSERT_TRUE(manager.windows().empty());
+    }
+
+    // The closes play from their snapshots, so the window nodes outlive the windows.
+    scene.render(snapshots);
+    EXPECT_EQ(3u, surfaceContainer->children().size());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+            scene::WindowAnimation::duration(scene::WindowAnimation::Type::Close, {}, {}) + 50));
+    scene.render(snapshots);
+    EXPECT_TRUE(surfaceContainer->children().empty());
+}
+
+TEST_F(ShellSurfaceTest, AWindowClosedBeforeItWasDrawnLeavesTheSceneWithTheNextFrame)
+{
+    scene.render(renderer);
+    for (int i = 0; i < 3; ++i) {
+        ShellSurface *shell = makeMappedToplevel(base::Size(300, 200));
+        compositor::Surface *surface = shell->rootSurface();
+        takeShell(shell).reset();
+        takeSurface(surface).reset();
+    }
+    EXPECT_EQ(3u, surfaceContainer->children().size());
+
+    ASSERT_TRUE(scene.hasDamage(renderer.outputContext()));
+    scene.render(renderer);
+    EXPECT_TRUE(surfaceContainer->children().empty());
 }
 
 TEST_F(ShellSurfaceTest, ANewToplevelCanBeCreatedWhileAnotherIsBeingDestroyed)
