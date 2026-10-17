@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "base/geometry.h"
+#include "base/lru_cache.h"
 #include "base/signal.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
@@ -544,8 +545,11 @@ private:
         base::Rect bounds;
         base::Rect output;
     };
-    // By application id and restore id.
-    std::map<std::pair<std::string, std::string>, RememberedPlacement> m_rememberedPlacements;
+    // By application id and restore id. Both come from clients, so the least
+    // recently used go once there are kMaxRememberedPlacements.
+    static constexpr size_t kMaxRememberedPlacements = 256;
+    mutable base::LruCache<std::string, RememberedPlacement> m_rememberedPlacements {
+            kMaxRememberedPlacements};
 
     std::map<compositor::Surface *, Window *> m_surfaceOwners;
     std::vector<compositor::Surface *> m_auxiliarySurfaces;

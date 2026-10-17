@@ -2261,6 +2261,37 @@ TEST_F(WmTest, ARestoreIdIsKeptPerApplicationAndOutput)
     EXPECT_EQ(base::Rect(500, 400, 200, 100), moved->bounds());
 }
 
+// Restore ids are the client's to choose, so only so many are remembered.
+TEST_F(WmTest, OnlyTheMostRecentRestoreIdsAreRemembered)
+{
+    const auto map = [&](const std::string &restoreId) {
+        compositor::Surface *surface = makeSurface(base::Size(200, 100));
+        surface->setRestoreId(restoreId);
+        return manager.createWindow(surface, {.requestedSize = base::Size(200, 100),
+                                              .applicationId = "app",
+                                              .positionManaged = true});
+    };
+    const auto leave = [&](const std::string &restoreId) {
+        Window *window = map(restoreId);
+        window->requestBounds(base::Rect(100, 120, 200, 100));
+        manager.destroyWindow(window);
+    };
+    leave("first");
+    leave("kept");
+    for (int i = 0; i < 255; ++i) {
+        leave("id" + std::to_string(i));
+        // Used again, so it stays while the others push the first one out.
+        if (i == 200)
+            manager.destroyWindow(map("kept"));
+    }
+
+    Window *first = map("first");
+    EXPECT_EQ(base::Rect(400, 350, 200, 100), first->bounds());
+    manager.destroyWindow(first);
+    Window *kept = map("kept");
+    EXPECT_EQ(base::Rect(100, 120, 200, 100), kept->bounds());
+}
+
 TEST_F(WmTest, TheCascadeFollowsTheMostRecentWindowWhereverItIs)
 {
     Window *first = mapManagedWindow(base::Size(300, 200));

@@ -47,6 +47,16 @@
 
 namespace cutefish::wm {
 
+namespace {
+
+// Wayland strings carry no NUL, so it cannot occur in either part.
+std::string placementKey(const std::string &applicationId, const std::string &restoreId)
+{
+    return applicationId + '\0' + restoreId;
+}
+
+} // namespace
+
 void WindowManager::setVisualStyle(const decoration::WindowVisualStyle &style)
 {
     m_visualStyle = style;
@@ -492,8 +502,9 @@ void WindowManager::rememberPlacement(const Window *window)
             return;
         bounds = state->restoreBounds();
     }
-    m_rememberedPlacements[{window->applicationId(), surface->restoreId()}] = {
-            bounds, outputBoundsFor(window)};
+    m_rememberedPlacements.insert(placementKey(window->applicationId(), surface->restoreId()),
+                                  std::make_unique<RememberedPlacement>(
+                                          RememberedPlacement {bounds, outputBoundsFor(window)}));
 }
 
 bool WindowManager::restorePlacement(const Window *window, base::Rect *bounds) const
@@ -501,13 +512,14 @@ bool WindowManager::restorePlacement(const Window *window, base::Rect *bounds) c
     const compositor::Surface *surface = window->rootSurface();
     if (!surface || surface->restoreId().empty())
         return false;
-    const auto it = m_rememberedPlacements.find({window->applicationId(), surface->restoreId()});
-    if (it == m_rememberedPlacements.end())
+    const RememberedPlacement *remembered =
+            m_rememberedPlacements.find(placementKey(window->applicationId(), surface->restoreId()));
+    if (!remembered)
         return false;
-    const base::Rect workArea = workAreaForOutput(it->second.output);
+    const base::Rect workArea = workAreaForOutput(remembered->output);
     if (workArea.isEmpty())
         return false;
-    const base::Rect &previous = it->second.bounds;
+    const base::Rect &previous = remembered->bounds;
     bounds->moveTopLeft(previous.topLeft());
     if (surface->resizeAnchor() == compositor::ResizeAnchor::Center) {
         // Halves of the difference, as a client resize around the centre moves it.
