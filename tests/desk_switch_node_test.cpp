@@ -13,6 +13,7 @@
 
 #include "fake_renderer.h"
 #include "scene/desk_switch_node.h"
+#include "scene/motion.h"
 #include "scene/scene.h"
 #include "scene/slide_out_node.h"
 #include "base/geometry.h"
@@ -248,6 +249,66 @@ TEST(DeskSwitchNode, AQuickSwitchMovesAQuarterAndFadesTheEndingDeskIn)
     calls = f.paint();
     EXPECT_EQ(Fixture::drawn(calls, ending)->rect, kViewport);
     EXPECT_EQ(f.finished, 1);
+}
+
+TEST(DeskSwitchNode, AGlideCrossesTheWholeGapOpaqueAndLandsOnTime)
+{
+    Fixture f;
+    render::Texture *starting = nullptr;
+    f.node->start(Node::Type::Glide, 2, 0, 1, f.frames(&starting), 1000);
+    f.node->takeEndingScreenshot(1);
+    f.paint();
+    render::Texture *ending = f.renderer.lastCapture;
+
+    f.node->startAnimation();
+    auto calls = f.paint();
+    ASSERT_TRUE(Fixture::drawn(calls, starting));
+    EXPECT_EQ(Fixture::drawn(calls, starting)->rect, kViewport);
+    EXPECT_FALSE(Fixture::drawn(calls, ending));
+
+    // Halfway in time, on gfx::Tween::ACCEL_20_DECEL_60, and not faded.
+    f.now += Node::kGlideDurationMs / 2;
+    calls = f.paint();
+    const double eased = scene::motion::cubicBezier(0.2, 0, 0.4, 1, 0.5);
+    ASSERT_TRUE(Fixture::drawn(calls, ending));
+    EXPECT_NEAR(Fixture::drawn(calls, ending)->rect.x(),
+                (1000 + Node::kDesksSpacing) * (1 - eased), 1);
+    EXPECT_FLOAT_EQ(Fixture::drawn(calls, ending)->alpha, 1);
+    EXPECT_EQ(f.finished, 0);
+
+    f.now += Node::kGlideDurationMs / 2;
+    calls = f.paint();
+    EXPECT_EQ(Fixture::drawn(calls, ending)->rect, kViewport);
+    EXPECT_EQ(f.finished, 1);
+}
+
+TEST(DeskSwitchNode, AGlideTurnedToAnotherDeskKeepsItsPlaceAndSpeed)
+{
+    Fixture f;
+    render::Texture *starting = nullptr;
+    f.node->start(Node::Type::Glide, 3, 0, 1, f.frames(&starting), 1000);
+    f.node->takeEndingScreenshot(1);
+    f.paint();
+    render::Texture *middle = f.renderer.lastCapture;
+    f.node->startAnimation();
+    f.paint();
+    f.now += Node::kGlideDurationMs / 2;
+    const double before = Fixture::drawn(f.paint(), middle)->rect.x();
+
+    // On to the third desk: nothing jumps, and it does not stop to set off.
+    ASSERT_TRUE(f.node->replaceAnimation(2));
+    f.node->takeEndingScreenshot(2);
+    EXPECT_NEAR(Fixture::drawn(f.paint(), middle)->rect.x(), before, 1);
+    f.node->startAnimation();
+    EXPECT_NEAR(Fixture::drawn(f.paint(), middle)->rect.x(), before, 1);
+    f.now += 16;
+    EXPECT_LT(Fixture::drawn(f.paint(), middle)->rect.x(), before - 10);
+    EXPECT_EQ(f.finished, 0);
+
+    f.now += Node::kGlideDurationMs;
+    f.paint();
+    EXPECT_EQ(f.finished, 1);
+    EXPECT_EQ(2, f.node->endingDesk());
 }
 
 TEST(DeskSwitchNode, ADeskOnTheLeftGoesInFrontWithoutMovingWhatIsShown)

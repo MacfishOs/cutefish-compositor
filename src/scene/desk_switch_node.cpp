@@ -42,6 +42,9 @@ double accel20Decel100(double t)
     return tween(0.2, 0, 0, 1, t);
 }
 
+// gfx::Tween::ACCEL_20_DECEL_60, the curve a minimize flies on.
+constexpr motion::TimingCurve kAccel20Decel60 {0.2, 0, 0.4, 1};
+
 int scaled(int durationMs)
 {
     return std::max(1, int(std::lround(durationMs * motion::durationScale())));
@@ -68,8 +71,8 @@ DeskSwitchNode::DeskSwitchNode(std::function<int64_t()> clock)
 
 double DeskSwitchNode::slotDistance(int width) const
 {
-    return m_type == Type::Continuous ? width + kDesksSpacing
-                                      : width * kQuickAnimationTranslationDistanceRatio;
+    return m_type == Type::Quick ? width * kQuickAnimationTranslationDistanceRatio
+                                 : width + kDesksSpacing;
 }
 
 void DeskSwitchNode::start(Type type, int desks, int startingDesk, int endingDesk, Frames frames,
@@ -140,6 +143,7 @@ void DeskSwitchNode::shiftStrip(double by, double now)
     m_fingers.shift(by);
     m_animation.from += by;
     m_animation.to += by;
+    m_glideOffset += by;
     if (m_motion == Motion::Spring)
         m_spring.reset(now, m_spring.value(now) + by, m_spring.target() + by,
                        m_spring.velocity(now));
@@ -219,6 +223,8 @@ double DeskSwitchNode::position(double now) const
             return m_coast->value(now);
         return rubberBand(fingerPosition(now - kResampleLatencyMs));
     case Motion::Tween: {
+        if (m_type == Type::Glide)
+            return m_glide.value(now) + m_glideOffset;
         const double t = std::clamp((now - m_animationStart) / m_animation.durationMs, 0.0, 1.0);
         return m_animation.from + (m_animation.to - m_animation.from) * accel20Decel100(t);
     }
@@ -230,6 +236,8 @@ double DeskSwitchNode::position(double now) const
 
 bool DeskSwitchNode::hasSettled(double now, double distance, double scale) const
 {
+    if (m_motion == Motion::Tween && m_type == Type::Glide)
+        return m_glide.isFinished(now);
     if (m_motion == Motion::Tween)
         return now - m_animationStart >= m_animation.durationMs;
     if (m_motion != Motion::Spring)
@@ -250,6 +258,13 @@ void DeskSwitchNode::startAnimation()
         settle(now, from, to, m_motion == Motion::Spring ? m_spring.velocity(now) : 0,
                kSwitchResponse);
         return;
+    }
+    if (m_type == Type::Glide) {
+        // Turned to another desk on the way, it keeps its speed.
+        const double velocity = m_motion == Motion::Tween ? m_glide.velocity(now) : 0;
+        m_glide = motion::Tween(now, from, to, scaled(kGlideDurationMs), velocity,
+                                kAccel20Decel60);
+        m_glideOffset = 0;
     }
     m_animation = {from, to, scaled(kQuickAnimationDurationMs)};
     m_motion = Motion::Tween;
@@ -421,6 +436,8 @@ void DeskSwitchNode::stop()
     m_fingers.clear();
     m_coast.reset();
     m_animation = {};
+    m_glide = {};
+    m_glideOffset = 0;
     m_animationStart = -1;
     m_finishNotified = false;
     m_reachedEdge = false;

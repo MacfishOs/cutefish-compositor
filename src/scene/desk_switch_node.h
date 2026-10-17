@@ -57,6 +57,9 @@ public:
         Quick,
         // Keyboard and touchpad: the desks sit side by side, a black gap apart.
         Continuous,
+        // A click on a desk: side by side as Continuous, gliding there over a
+        // fixed time on the curve a minimize flies.
+        Glide,
     };
 
     // Keyed by OutputRenderContext::outputId.
@@ -67,6 +70,7 @@ public:
     static constexpr int kMinDistanceBeforeScreenshot = 40;
     static constexpr int kQuickAnimationDurationMs = 150;
     static constexpr int kQuickFadeInAnimationDurationMs = 100;
+    static constexpr int kGlideDurationMs = 320;
     // Critically damped springs, response in seconds: a keyboard switch from
     // rest, and the strip settling once the fingers let go.
     static constexpr double kSwitchResponse = 0.5;
@@ -213,6 +217,9 @@ private:
     std::optional<motion::Spring> m_coast;
     double m_coastStart = 0;
     Animation m_animation;
+    motion::Tween m_glide;
+    // How far the strip has shifted since m_glide set off.
+    double m_glideOffset = 0;
     motion::Spring m_spring;
     mutable double m_animationStart = -1;
     mutable bool m_finishNotified = false;
