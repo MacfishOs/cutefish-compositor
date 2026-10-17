@@ -690,6 +690,8 @@ void DockWindow::layoutItems()
             hideTooltip();
         if (m_menuIcon == it->second)
             m_menuIcon = nullptr;
+        if (m_drop.hovered == it->second)
+            setDropHovered(nullptr);
         retire(it->second);
         it = m_applicationIcons.erase(it);
     }
@@ -725,6 +727,8 @@ void DockWindow::layoutItems()
             hideTooltip();
         if (m_menuIcon == it->second)
             m_menuIcon = nullptr;
+        if (m_drop.hovered == it->second)
+            setDropHovered(nullptr);
         retire(it->second);
         m_minimizedStates.erase(it->first);
         it = m_minimizedIcons.erase(it);

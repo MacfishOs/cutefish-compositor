@@ -743,6 +743,47 @@ TEST_F(ShellComponentsTest, MinimizedWindowsSwapUnderADragAndTheirBadgeFadesIn)
     EXPECT_EQ(ids[0], minimized.entries()[1].id);
 }
 
+TEST_F(ShellComponentsTest, AMinimizedWindowClosedUnderADragLeavesNothingHovered)
+{
+    auto *dock = openDock("[Dock]\nPinned=files\n");
+    std::vector<uint64_t> ids;
+    for (const char *title : {"One", "Two"}) {
+        shell::TaskWindow window;
+        window.appId = "terminal";
+        window.title = title;
+        window.geometry = base::Rect(100, 100, 400, 200);
+        const uint64_t id = windows->add(window);
+        windows->m_snapshots[id] = ui::Bitmap(base::Size(40, 20), ui::Bitmap::Format::Argb32Premultiplied);
+        windows->change(id, [](shell::TaskWindow &w) { w.minimized = true; }, shell::kStateChange);
+        ids.push_back(id);
+    }
+    shell::MinimizedWindows &minimized = dock->dock().minimizedWindows();
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        return dock->minimizedIcon(ids[0]) && dock->minimizedIcon(ids[1]) && minimized.entries()[0].landed
+                && minimized.entries()[1].landed && !dock->minimizedPresentation()->isRunning();
+    }));
+
+    // Held over the second, which closes before the swap: its icon goes
+    // while the drag still rests where it was.
+    const base::PointF from = centreOf(dock, dock->minimizedIcon(ids[0]));
+    const base::PointF to = centreOf(dock, dock->minimizedIcon(ids[1]));
+    beginDrag(1, from, {from.x(), from.y() - 30});
+    ASSERT_TRUE(seat.drag()->active());
+    move(10, to.x(), to.y());
+    test::processPendingEvents();
+    windows->remove(ids[1]);
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        return !dock->minimizedIcon(ids[1]) && !dock->minimizedPresentation()->isRunning();
+    }));
+    test::runFor(std::chrono::milliseconds(300));
+    release(11);
+    ASSERT_EQ(1, minimized.count());
+    EXPECT_EQ(ids[0], minimized.entries()[0].id);
+    EXPECT_FALSE(dock->minimizedIcon(ids[0])->isDragHidden());
+}
+
 TEST_F(ShellComponentsTest, AMinimizingWindowAimsAtWhereItsThumbnailComesToRest)
 {
     auto *dock = openDock("[Dock]\nPinned=files\n");
