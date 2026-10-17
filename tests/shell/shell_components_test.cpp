@@ -580,6 +580,39 @@ TEST_F(ShellComponentsTest, ADraggedIconMovesAmongThePinsAndOffTheDockUnpins)
     EXPECT_EQ(dockIds(dock), (std::vector<std::string>{shell::DockModel::kLauncherId, "terminal"}));
 }
 
+TEST_F(ShellComponentsTest, AnIconThatFinishedLeavingIsAnnouncedOnTheFrameThatDropsIt)
+{
+    // Driven by hand, at chosen frame times.
+    class Presentation : public shell::DockPresentation
+    {
+    public:
+        using shell::DockPresentation::DockPresentation;
+        using shell::DockPresentation::tick;
+    };
+
+    auto *dock = openDock("[Dock]\nPinned=files\n");
+    Presentation presentation(dock->window()->window());
+    presentation.setKeys({"files", "terminal"});
+    presentation.setAnimationsEnabled(true);
+    int changes = 0;
+    presentation.onChanged = [&] { ++changes; };
+    presentation.setKeys({"files"});
+    ASSERT_EQ(2u, presentation.entries().size());
+
+    // The first frame backdates the start by one interval. The quintic ease
+    // reaches its end in floating point a fraction of a millisecond early,
+    // so the last frame moves nothing; it still drops the icon and says so.
+    const auto ns = [](double ms) { return uint64_t(ms * 1e6); };
+    const double start = 1000 - shell::DockPresentation::kFrameIntervalMs;
+    presentation.tick(ns(1000));
+    presentation.tick(ns(start + shell::DockPresentation::kDurationMs - 0.0001));
+    ASSERT_EQ(2u, presentation.entries().size());
+    const int before = changes;
+    presentation.tick(ns(start + shell::DockPresentation::kDurationMs + 1));
+    EXPECT_EQ(1u, presentation.entries().size());
+    EXPECT_EQ(before + 1, changes);
+}
+
 TEST_F(ShellComponentsTest, ADraggedIconNothingTakesGoesBackToItsSlot)
 {
     auto *dock = openDock("[Dock]\nPinned=files, terminal\n");

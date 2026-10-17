@@ -385,11 +385,11 @@ void DockPresentation::tick(uint64_t frameTimeNs)
         moved |= advance(*tween, nowMs);
         active |= tween->active;
     }
-    std::erase_if(m_entries,
-                  [](const Entry &entry) { return entry.leaving && !entry.appearance.active; });
+    const size_t left = std::erase_if(
+            m_entries, [](const Entry &entry) { return entry.leaving && !entry.appearance.active; });
     if (!active)
         stopTicking();
-    if (moved)
+    if (moved || left > 0)
         changed();
 }
 
