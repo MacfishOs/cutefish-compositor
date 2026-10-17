@@ -538,9 +538,8 @@ private:
     bool m_upward = false;
 };
 
-// The password field's TextInput: no frame, no clipboard, no undo and no
-// selecting with the mouse. Every one of those is a copy of the credential
-// that would outlive the attempt.
+// The password field's TextInput: no frame, no clipboard and no undo. Each of
+// those is a copy of the credential that would outlive the attempt.
 class PasswordInput final : public ui::TextField
 {
 public:
@@ -554,9 +553,8 @@ public:
         // What "monospace" resolved to before.
         setFontFamily("DejaVu Sans Mono");
         setFontSize(13);
-        setSelectionColors(ui::Color::rgb(0x000080), kWhite);
+        setSelectionColors(white(0.35), kWhite);
         setCaretWidth(2);
-        setSelectByMouse(false);
         setClipboardEnabled(false);
         setContextMenuEnabled(false);
         updateColor();
@@ -588,14 +586,6 @@ protected:
         }
         return ui::TextField::keyPress(event);
     }
-
-    void pointerPress(const ui::PointerEvent &event) override
-    {
-        // Without selectByMouse a double click selects nothing either.
-        ui::PointerEvent single = event;
-        single.clickCount = 1;
-        ui::TextField::pointerPress(single);
-    }
 };
 
 // The typed user name's TextInput.
@@ -609,7 +599,7 @@ public:
         setFadesWhenDisabled(false);
         setFontSize(12);
         setTextColor(kWhite);
-        setSelectionColors(ui::Color::rgb(0x000080), kWhite);
+        setSelectionColors(white(0.35), kWhite);
         setCaretWidth(2);
         setContextMenuEnabled(false);
     }

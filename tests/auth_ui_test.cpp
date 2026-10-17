@@ -737,6 +737,44 @@ TEST(AuthUiTest, TypedPasswordIsEditedAndRetriedAfterARejection)
     seat.shutdown();
 }
 
+TEST(AuthUiTest, DoubleClickSelectsTheWholePasswordToRetype)
+{
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    scene::Node applications;
+    compositor::Compositor compositor(&applications);
+    input::Seat seat(&compositor);
+    seat.setSessionGate(&controller);
+    input::InputManager input(&seat);
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, seat.xkbTracker(), &backend);
+    EXPECT_TRUE(controller.requestLock());
+    ui.refresh();
+    const auto type = [&](std::initializer_list<uint32_t> keys) {
+        for (uint32_t key : keys) {
+            input.onKey({}, key, true);
+            input.onKey({}, key, false);
+        }
+    };
+    type({KEY_P, KEY_W, KEY_D});
+    ASSERT_EQ(fieldText(ui), "pwd");
+    const base::PointF panel(secure.authContainer()->children().front()->absolutePosition());
+    const base::PointF onField = panel + ui.fieldBounds().center();
+    ui.onPointerMotion({}, onField);
+    for (int i = 0; i < 2; ++i) {
+        ui.onPointerButton({}, onField, BTN_LEFT, true);
+        ui.onPointerButton({}, onField, BTN_LEFT, false);
+    }
+    const ui::TextField *field = focusedField(ui);
+    ASSERT_TRUE(field);
+    EXPECT_TRUE(field->hasSelection());
+    type({KEY_O, KEY_K});
+    EXPECT_EQ(fieldText(ui), "ok");
+    seat.shutdown();
+}
+
 TEST(AuthUiTest, SubmitButtonAsksForAPointingHand)
 {
     scene::Node root;
