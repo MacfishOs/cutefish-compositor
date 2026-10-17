@@ -63,6 +63,12 @@ DecorationNode::DecorationNode(const Decoration* decoration, Theme* theme)
 
 DecorationNode::~DecorationNode() = default;
 
+void DecorationNode::releaseRenderResources()
+{
+    m_captions.clear();
+    scene::Node::releaseRenderResources();
+}
+
 void DecorationNode::paint(render::Renderer& renderer, const base::Rect& geometry) const
 {
     if (!m_decoration || !m_decoration->window() || geometry.isEmpty()

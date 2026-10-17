@@ -29,6 +29,8 @@ public:
     // The client area inside this geometry is deliberately left unpainted.
     Content content() const override { return Content::Translucent; }
 
+    void releaseRenderResources() override;
+
 protected:
     void paint(render::Renderer& renderer, const base::Rect& geometry) const override;
 

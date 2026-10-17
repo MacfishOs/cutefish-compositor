@@ -362,6 +362,32 @@ TEST_F(DecorationTest, TheFrameSitsOutsideTheClientArea)
     EXPECT_EQ(window->contentBounds().topLeft(), shell->rootSurface()->node()->absolutePosition());
 }
 
+// The caption's texture belongs to the renderer, so it goes with the others
+// when the scene gives its render resources up, and is made again after.
+TEST_F(DecorationTest, TheCaptionIsMadeAgainOnceRenderResourcesAreReleased)
+{
+    ShellSurface *shell = makeToplevel(base::Size(400, 300));
+    shell->setTitle("Caption");
+    Window *window = shell->window();
+    ASSERT_NE(nullptr, window);
+    scene::Node *node = nullptr;
+    for (scene::Node *child : window->visualNode()->children()) {
+        if (child->name() == "decoration")
+            node = child;
+    }
+    ASSERT_NE(nullptr, node);
+
+    node->render(renderer);
+    const int created = renderer.createdTextures;
+    ASSERT_GT(created, 0);
+    node->render(renderer);
+    EXPECT_EQ(created, renderer.createdTextures);
+
+    node->releaseRenderResources();
+    node->render(renderer);
+    EXPECT_EQ(created + 1, renderer.createdTextures);
+}
+
 TEST_F(DecorationTest, TheConfigureSizeDescribesTheClientAreaAndNotTheFrame)
 {
     Recorder *recorder = nullptr;
