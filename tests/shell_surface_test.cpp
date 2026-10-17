@@ -1008,11 +1008,18 @@ TEST_F(ShellSurfaceTest, RepositionMovesThePopupAndConfiguresItAgain)
     attach(popup->rootSurface(), base::Size(100, 80));
     popup->rootSurface()->commit();
 
+    const base::Point before = surfacePosition(popup);
     popup->reposition(base::Rect(50, 60, 100, 80));
 
-    EXPECT_EQ(base::Point(150, 160), surfacePosition(popup));
     ASSERT_EQ(1u, recorder->popupConfigures.size());
     EXPECT_EQ(base::Rect(50, 60, 100, 80), recorder->popupConfigures.back());
+    // xdg_popup.reposition: nothing moves until the client acknowledges the
+    // configure and commits.
+    EXPECT_EQ(before, surfacePosition(popup));
+    ASSERT_TRUE(popup->acknowledgeConfigure(recorder->serials.back()));
+    EXPECT_EQ(before, surfacePosition(popup));
+    popup->rootSurface()->commit();
+    EXPECT_EQ(base::Point(150, 160), surfacePosition(popup));
 }
 
 TEST_F(ShellSurfaceTest, APressOutsideAGrabbingPopupDismissesTheChainAndIsNotDelivered)
@@ -1397,7 +1404,8 @@ TEST_F(ShellSurfaceTest, PopupUsesTheSharedShadowControllerAndTransientStacking)
     auto *dock = makeMappedToplevel(base::Size(400, 60));
     dock->window()->setRole(WindowRole::Dock);
     dock->window()->setBounds(base::Rect(300, 740, 400, 60));
-    auto *popup = makeShell();
+    Recorder *popupRecorder = nullptr;
+    auto *popup = makeShell(&popupRecorder);
     ASSERT_TRUE(popup->setPopup(desktop, base::Rect(20, 30, 160, 120)));
     auto *surface = popup->rootSurface();
     surface->setBackgroundBlur(base::Rect(0, 0, 160, 120), 8);
@@ -1420,6 +1428,8 @@ TEST_F(ShellSurfaceTest, PopupUsesTheSharedShadowControllerAndTransientStacking)
     EXPECT_EQ(shadow->node(), window->node()->children().front());
     const base::Rect oldBounds = shadow->shadowBounds();
     popup->reposition(base::Rect(40, 60, 160, 120));
+    ASSERT_TRUE(popup->acknowledgeConfigure(popupRecorder->serials.back()));
+    surface->commit();
     EXPECT_EQ(oldBounds.translated(20, 30), shadow->shadowBounds());
     auto *submenu = makeShell();
     ASSERT_TRUE(submenu->setPopup(popup, base::Rect(140, 10, 100, 80)));

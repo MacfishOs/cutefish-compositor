@@ -235,6 +235,8 @@ bool ShellSurface::acknowledgeConfigure(uint32_t serial)
         m_pendingOriginOffset += config.originOffset;
         m_pendingResizeEdge = config.resizeEdge;
         m_acknowledgedConfigure = config.state;
+        if (config.popupBounds)
+            m_pendingPopupBounds = config.popupBounds;
         if (config.serial == serial)
             break;
     }
@@ -497,20 +499,36 @@ void ShellSurface::reposition(const base::Rect &bounds)
 {
     if (m_role != Role::Popup)
         return;
+    if (m_popupConfigureCallback) {
+        sendPopupConfigure(bounds, true);
+        return;
+    }
     m_popupBounds = bounds;
     updatePopupPosition();
-    configurePopup();
 }
 
 void ShellSurface::configurePopup()
 {
     if (m_role != Role::Popup || !m_popupConfigureCallback)
         return;
+    sendPopupConfigure(m_popupBounds, false);
+}
+
+void ShellSurface::sendPopupConfigure(const base::Rect &bounds, bool reposition)
+{
     const std::shared_ptr<ShellSurface *> self = m_self;
     const PopupConfigureCallback callback = m_popupConfigureCallback;
-    const uint32_t serial = callback(m_popupBounds);
-    if (*self && serial)
-        m_pendingConfigs.push_back(Config {serial, base::Point(), ResizeEdge::None});
+    const uint32_t serial = callback(bounds);
+    if (!*self)
+        return;
+    const std::optional<base::Rect> popupBounds =
+            reposition ? std::optional<base::Rect>(bounds) : std::nullopt;
+    if (serial) {
+        m_pendingConfigs.push_back(Config {serial, base::Point(), ResizeEdge::None, {}, popupBounds});
+    } else if (popupBounds) {
+        m_popupBounds = *popupBounds;
+        updatePopupPosition();
+    }
 }
 
 base::Point ShellSurface::absoluteOrigin() const
@@ -814,6 +832,7 @@ std::function<void()> ShellSurface::onSurfaceCommitRequested(compositor::Surface
         .resizeEdge = m_pendingResizeEdge,
         .acknowledgedConfigure = m_acknowledgedConfigure,
         .decorationRemoval = std::exchange(m_decorationRemovalPending, false),
+        .popupBounds = std::exchange(m_pendingPopupBounds, std::nullopt),
     };
     // The surface drops this when the observer goes away.
     return [this, state = std::move(state)] {
@@ -828,6 +847,8 @@ void ShellSurface::applyCommittedState(const CommittedState &state)
     m_maximumSize = state.maximumSize;
     m_originOffset += state.originOffset;
     m_resizeEdge = state.resizeEdge;
+    if (state.popupBounds)
+        m_popupBounds = *state.popupBounds;
 
     updateSizeConstraints();
 }
@@ -1217,6 +1238,7 @@ void ShellSurface::resetConfigureState()
     m_pendingOriginOffsetAccumulator = base::Point();
     m_resizeEdge = ResizeEdge::None;
     m_pendingResizeEdge = ResizeEdge::None;
+    m_pendingPopupBounds.reset();
     m_configuredContentBounds = base::Rect();
     m_boundsTransitionOldContentSize = base::Size();
 }

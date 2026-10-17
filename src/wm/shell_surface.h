@@ -242,7 +242,8 @@ public:
     // it. Popups have no state of their own to report, so unlike a toplevel
     // they are configured only when the compositor is asked to place them.
     void configurePopup();
-    // xdg_popup.reposition, with an already-solved positioner result.
+    // xdg_popup.reposition, with an already-solved positioner result. A popup
+    // with a client moves once it has acknowledged and committed the new bounds.
     void reposition(const base::Rect &bounds);
 
     base::Rect popupBounds() const { return m_popupBounds; }
@@ -295,6 +296,7 @@ private:
         base::Point originOffset;
         ResizeEdge resizeEdge;
         ConfigureState state;
+        std::optional<base::Rect> popupBounds;
     };
 
     // Double-buffered state, taken when the client commits and installed when
@@ -309,9 +311,11 @@ private:
         ResizeEdge resizeEdge = ResizeEdge::None;
         std::optional<ConfigureState> acknowledgedConfigure;
         bool decorationRemoval = false;
+        std::optional<base::Rect> popupBounds;
     };
 
     void configure();
+    void sendPopupConfigure(const base::Rect &bounds, bool reposition);
     void applyCommittedState(const CommittedState &state);
     void mapToplevel();
     void unmapToplevel();
@@ -431,6 +435,8 @@ private:
     std::vector<ShellSurface *> m_transientChildShells;
     std::vector<ShellSurface *> m_childShells;
     base::Rect m_popupBounds;
+    // Repositioned bounds the client has acknowledged but not yet committed.
+    std::optional<base::Rect> m_pendingPopupBounds;
     bool m_hasGrab = false;
     bool m_popupMapped = false;
 };
