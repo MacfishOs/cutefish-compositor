@@ -580,8 +580,7 @@ void xdg_toplevel_unset_maximized(wl_client*, wl_resource* resource)
 void xdg_toplevel_set_fullscreen(wl_client*, wl_resource* resource, wl_resource* output)
 {
     if (ShellSurface* shellSurface = toplevelShellSurface(resource)) {
-        if (const auto name = outputNameFromResource(output))
-            shellSurface->setFullscreenOutput(*name);
+        shellSurface->setFullscreenOutput(outputNameFromResource(output).value_or(std::string()));
         shellSurface->setFullscreen(true);
     }
 }

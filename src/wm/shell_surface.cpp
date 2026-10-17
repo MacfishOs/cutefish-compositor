@@ -416,14 +416,18 @@ void ShellSurface::setFullscreen(bool fullscreen)
             m_initialStateType = WindowStateType::Fullscreen;
         else if (m_initialStateType == WindowStateType::Fullscreen)
             m_initialStateType = WindowStateType::Normal;
+        if (!fullscreen)
+            m_fullscreenOutputName.clear();
         return;
     }
     ScopedConfigure scoped(this, false);
     if (fullscreen && !m_fullscreenOutputName.empty())
         m_manager->setWindowOutput(m_window, m_fullscreenOutputName);
     m_window->setFullscreen(fullscreen);
-    if (!fullscreen)
+    if (!fullscreen) {
+        m_fullscreenOutputName.clear();
         m_manager->clearWindowOutput(m_window);
+    }
 }
 
 void ShellSurface::dropInheritedState()
@@ -439,7 +443,7 @@ void ShellSurface::dropInheritedState()
 void ShellSurface::setFullscreenOutput(const std::string &waylandName)
 {
     m_fullscreenOutputName = waylandName;
-    if (m_window && m_window->stateType() == WindowStateType::Fullscreen) {
+    if (!waylandName.empty() && m_window && m_window->stateType() == WindowStateType::Fullscreen) {
         m_manager->setWindowOutput(m_window, waylandName);
         m_window->state()->onEvent(WMEvent(WMEventType::WorkAreaChanged));
     }

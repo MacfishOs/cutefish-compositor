@@ -1781,3 +1781,20 @@ TEST_F(MultiDisplayShellSurfaceTest, LeavingFullscreenOnAnotherOutputRestoresThe
     shell->setFullscreen(false);
     EXPECT_EQ(normal, shell->window()->bounds());
 }
+
+TEST_F(MultiDisplayShellSurfaceTest, FullscreenWithoutAnOutputStaysOnTheWindowsOutput)
+{
+    pointerAt(base::PointF(100, 100));
+    ShellSurface *shell = mapApp("video", base::Size(400, 300));
+    ASSERT_TRUE(kPrimary.contains(shell->window()->bounds()));
+
+    shell->setFullscreenOutput("Cutefish-b");
+    shell->setFullscreen(true);
+    EXPECT_EQ(kSecondary, shell->window()->bounds());
+    shell->setFullscreen(false);
+    ASSERT_TRUE(kPrimary.contains(shell->window()->bounds()));
+
+    // xdg_toplevel.set_fullscreen with a null output names none.
+    shell->setFullscreen(true);
+    EXPECT_EQ(kPrimary, shell->window()->bounds());
+}
