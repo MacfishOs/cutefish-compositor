@@ -255,6 +255,12 @@ void OverviewNode::setBackdrop(std::vector<const Node *> nodes)
     notifyChanged();
 }
 
+void OverviewNode::setFadingBackdrop(std::vector<const Node *> nodes)
+{
+    m_fadingBackdrop = std::move(nodes);
+    notifyChanged();
+}
+
 void OverviewNode::setItems(std::vector<Item> items, bool animate)
 {
     const double now = double(m_now());
@@ -528,6 +534,12 @@ void OverviewNode::render(render::Renderer &renderer) const
             node->render(renderer);
     }
     renderer.overwriteOpaque = overwrite;
+    const float fade = 1 - float(std::clamp(progress, 0.0, 1.0));
+    if (fade > 0) {
+        renderer.opacityScale = opacity * (1 - dim) * fade;
+        for (const Node *node : m_fadingBackdrop)
+            node->render(renderer);
+    }
     renderer.opacityScale = opacity;
 
     const int raised = m_raised < int(m_items.size()) && m_raised != m_dragged ? m_raised : -1;

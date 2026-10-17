@@ -209,3 +209,28 @@ TEST_F(OverviewPixels, AnOpaqueDesktopDarkenedInPlaceStaysOpaque)
     EXPECT_EQ(255, test::alpha(dimmed));
     EXPECT_NEAR(255 * (1 - scene::OverviewNode::kDimOpacity), test::green(dimmed), 2);
 }
+
+TEST_F(OverviewPixels, TheDesktopIconsFadeOutOnTheWayIn)
+{
+    auto *icons = static_cast<scene::ColorNode *>(
+            container->addChild(std::make_unique<scene::ColorNode>(Color {0, 1, 0, 1})));
+    container->reorderChildren({desktop, icons, window, node});
+    icons->setGeometry(base::Rect(0, 0, 8, 8));
+    node->setFadingBackdrop({icons});
+
+    node->animateTo(1);
+    while (node->progress(double(now)) < 0.5)
+        ++now;
+    const double progress = node->progress(double(now));
+    const uint32_t halfway = test::pixelAt(paint(), pixel(4, 4));
+    const float dim = 1 - scene::OverviewNode::kDimOpacity * float(progress);
+    EXPECT_NEAR(255 * dim * (1 - progress), test::green(halfway), 3);
+    EXPECT_NEAR(255 * dim * (1 - dim * (1 - progress)), test::blue(halfway), 3);
+
+    node->jumpTo(1);
+    const ui::Bitmap image = paint();
+    ASSERT_FALSE(image.isNull());
+    const uint32_t shown = test::pixelAt(image, pixel(4, 4));
+    EXPECT_EQ(0, test::green(shown));
+    EXPECT_EQ(test::pixelAt(image, pixel(12, 4)), shown);
+}

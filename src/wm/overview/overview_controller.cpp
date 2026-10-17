@@ -306,15 +306,18 @@ void OverviewController::setWallpaperNodes(std::vector<const scene::Node *> node
 void OverviewController::updateNodes(bool animate)
 {
     const std::vector<Window *> &windows = m_manager->windows();
-    std::vector<const scene::Node *> backdrop;
+    std::vector<const scene::Node *> wallpapers;
     for (const scene::Node *wallpaper : m_wallpapers) {
         if (wallpaper->isVisible())
-            backdrop.push_back(wallpaper);
+            wallpapers.push_back(wallpaper);
     }
+    std::vector<const scene::Node *> desktops;
     for (Window *window : windows) {
         if (layerFor(window) == StackingLayer::Desktop && window->isVisible() && window->node())
-            backdrop.push_back(window->node());
+            desktops.push_back(window->node());
     }
+    std::vector<const scene::Node *> backdrop = wallpapers;
+    backdrop.insert(backdrop.end(), desktops.begin(), desktops.end());
 
     std::vector<scene::OverviewNode::Item> items;
     for (const Item &item : m_items) {
@@ -330,7 +333,8 @@ void OverviewController::updateNodes(bool animate)
         node.title = item.window->title();
         items.push_back(std::move(node));
     }
-    m_node->setBackdrop(backdrop);
+    m_node->setBackdrop(wallpapers);
+    m_node->setFadingBackdrop(desktops);
     m_node->setItems(std::move(items), animate);
     int raised = -1;
     for (size_t index = 0; index < m_items.size(); ++index) {
@@ -512,6 +516,7 @@ void OverviewController::finish()
         m_node->jumpTo(0);
         m_node->setItems({}, false);
         m_node->setBackdrop({});
+        m_node->setFadingBackdrop({});
     }
     if (m_bar) {
         m_bar->setBars({});
