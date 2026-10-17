@@ -90,6 +90,8 @@ private:
     Host m_host;
     std::vector<TrayItemView *> m_items;
     std::unique_ptr<DBusMenuPopup> m_popup;
+    // The item whose menu the popup shows, open or not.
+    TrayItemView *m_popupItem = nullptr;
     TrayItemView *m_menuItem = nullptr;
     // A menu whose first layout is on its way.
     base::Timer m_menuWait;

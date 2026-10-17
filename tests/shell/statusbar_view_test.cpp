@@ -404,6 +404,37 @@ TEST_F(StatusBarViewTest, TrayItemsSitRightToLeftAndTakeClicks)
     EXPECT_TRUE(test::runUntil([&] { return exporter.called("Event 0 closed"); }));
 }
 
+TEST_F(StatusBarViewTest, AnItemThatLeavesTakesItsOpenMenu)
+{
+    ASSERT_TRUE(bar->statusBar().registerServices());
+    auto application = std::make_unique<test::DBusTestClient>();
+    auto item = std::make_unique<test::FakeTrayItem>(application->connection.get());
+    item->menuPath = "/MenuBar";
+    auto exporter = std::make_unique<test::FakeMenuExporter>(application->connection.get(), "/MenuBar");
+    exporter->layouts[0] = test::layout(0, {},
+                                        {test::layout(1, {{"label", dbus::Variant(std::string("_Open"))}}),
+                                         test::layout(2, {{"label", dbus::Variant(std::string("_Recent"))},
+                                                          {"children-display", dbus::Variant(std::string("submenu"))}})});
+    application->call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "org.kde.StatusNotifierWatcher",
+                      "RegisterStatusNotifierItem", std::string("/StatusNotifierItem"));
+    ASSERT_TRUE(test::runUntil([&] { return bar->tray()->count() == 1; }));
+    frame();
+    ASSERT_TRUE(test::runUntil([&] { return bar->statusBar().systemTray().at(0)->menu(); }));
+
+    const ui::RectF slot = onScreen(bar->tray()->item(0));
+    click(slot.x + 20, 16, BTN_RIGHT);
+    ASSERT_TRUE(test::runUntil([&] { return bar->tray()->openMenu() != nullptr; }));
+
+    // The application quits with its menu up: the menu closes without
+    // reaching the item's menu client, which went first.
+    exporter.reset();
+    item.reset();
+    application.reset();
+    ASSERT_TRUE(test::runUntil([&] { return bar->tray()->count() == 0; }));
+    frame();
+    EXPECT_EQ(nullptr, bar->tray()->openMenu());
+}
+
 TEST(DBusMenuPopupTest, LabelsLoseTheirMnemonics)
 {
     EXPECT_EQ("File", shell::DBusMenuPopup::plainLabel("_File"));

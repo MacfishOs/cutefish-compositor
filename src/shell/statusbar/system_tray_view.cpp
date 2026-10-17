@@ -167,6 +167,13 @@ void SystemTrayView::rebuild()
     }
     // Items that left: their menu goes with them.
     for (TrayItemView *gone : m_items) {
+        // The item's DBusMenu is already gone with it.
+        if (gone == m_popupItem && m_popup) {
+            m_popup->detach();
+            closeMenu();
+            m_popup.reset();
+            m_popupItem = nullptr;
+        }
         if (gone == m_menuItem)
             closeMenu();
         gone->setVisible(false);
@@ -362,6 +369,7 @@ void SystemTrayView::showMenu(TrayItemView *item, DBusMenu *menu)
     if (m_popup && m_popup->menu().isOpen())
         return;
     m_popup = std::make_unique<DBusMenuPopup>(menu, 0);
+    m_popupItem = item;
     m_popup->onClosed = [this] { menuClosed(); };
     ui::Menu &popup = m_popup->menu();
     if (m_host.availableGeometry)
