@@ -8,6 +8,7 @@
 #include "base/settings.h"
 #include "base/strings.h"
 #include "base/thread_pool.h"
+#include "base/timer.h"
 #include "base/url.h"
 #include "core/main_loop.h"
 #include "core/preferences.h"
@@ -36,6 +37,9 @@ constexpr double kPanelLiftFadeMs = 200;
 constexpr double kPanelRaiseFrom = 0.92;
 constexpr double kPanelLiftTo = 1.06;
 
+// Another account's wallpaper fades in over the one shown.
+constexpr double kWallpaperFadeMs = 300;
+
 double steadyNow()
 {
     return std::chrono::duration<double, std::milli>(
@@ -59,11 +63,6 @@ double easeOut(double t)
 
 const std::string kDefaultWallpaper = "/usr/share/backgrounds/cutefishos/default.jpg";
 const std::string kDefaultBackgroundColor = "#2B8ADA";
-
-std::string servicesFile()
-{
-    return preferencesFile("services");
-}
 
 // The file a wallpaper setting names: a path, or a file: URL.
 std::string wallpaperFile(const std::string &setting)
@@ -127,9 +126,9 @@ uint32_t settingColor(std::string_view text)
 
 // On a worker thread: the wallpaper covering `size` at the output's density,
 // cropped to its middle.
-ui::Bitmap loadWallpaper(const base::Size &size, double scale)
+ui::Bitmap loadWallpaper(const std::string &settingsFile, const base::Size &size, double scale)
 {
-    const base::Settings settings(servicesFile());
+    const base::Settings settings(settingsFile);
     // Device pixels: the wallpaper is shown sharp, as the desktop shows it.
     const base::Size target(std::max(1, base::roundToInt(size.width() * scale)),
                             std::max(1, base::roundToInt(size.height() * scale)));
@@ -158,9 +157,12 @@ ui::Bitmap loadWallpaper(const base::Size &size, double scale)
 class WallpaperNode final : public scene::Node
 {
 public:
-    WallpaperNode(const SecureContainer *container, const base::Size &size, double scale)
+    // `fadesIn` over the wallpaper below it, which goes once it is covered.
+    WallpaperNode(const SecureContainer *container, const base::Size &size, double scale, bool fadesIn)
         : Node("lock-wallpaper")
         , m_container(container)
+        , m_fadesIn(fadesIn)
+        , m_covered(core::mainLoop())
     {
         setGeometry(base::Rect(size));
         const SecureContainer::PictureLoader &loader = container->pictureLoader();
@@ -172,17 +174,17 @@ public:
             m_request = loader(picture, target, [this](const ui::Bitmap &image) {
                 m_image = image;
                 m_format = render::PixelFormat::Bgra8888;
-                m_loaded = true;
-                notifyChanged();
+                loaded();
             });
             return;
         }
         m_loader = base::ThreadPool::global().run(
-                [size, scale] { return loadWallpaper(size, scale); },
+                [settingsFile = container->settingsFile(), size, scale] {
+                    return loadWallpaper(settingsFile, size, scale);
+                },
                 [this](ui::Bitmap image) {
                     m_image = std::move(image);
-                    m_loaded = true;
-                    notifyChanged();
+                    loaded();
                 });
     }
 
@@ -191,6 +193,13 @@ public:
     bool isLoaded() const { return m_loaded; }
 
     void releaseRenderResources() override { m_texture.reset(); }
+
+    void render(render::Renderer &renderer) const override
+    {
+        Node::render(renderer);
+        if (m_fadeStart && fade(renderer) < 1)
+            notifyChanged();
+    }
 
 protected:
     void paint(render::Renderer &renderer, const base::Rect &bounds) const override
@@ -202,16 +211,48 @@ protected:
                                                m_image.constBits(), int(m_image.stride()),
                                                m_format);
         if (m_texture)
-            renderer.drawTexture(m_texture.get(), bounds, m_container->sample(renderer).backdrop);
+            renderer.drawTexture(m_texture.get(), bounds,
+                                 m_container->sample(renderer).backdrop * float(fade(renderer)));
     }
 
 private:
+    void loaded()
+    {
+        m_loaded = true;
+        // One that cannot be read leaves the wallpaper below it up.
+        if (m_fadesIn && !m_image.isNull()) {
+            m_fadeStart = steadyNow();
+            m_covered.setSingleShot(true);
+            m_covered.onTimeout = [this] { removeBelow(); };
+            m_covered.start(std::chrono::milliseconds(int(kWallpaperFadeMs)));
+        }
+        notifyChanged();
+    }
+
+    double fade(const render::Renderer &renderer) const
+    {
+        if (!m_fadeStart)
+            return 1;
+        const double time = renderer.frameTime >= 0 ? renderer.frameTime : steadyNow();
+        return easeInOut((time - *m_fadeStart) / kWallpaperFadeMs);
+    }
+
+    void removeBelow()
+    {
+        m_fadeStart.reset();
+        while (!parent()->children().empty() && parent()->children().front() != this)
+            parent()->removeChild(parent()->children().front());
+    }
+
     const SecureContainer *m_container;
+    const bool m_fadesIn;
     base::Job m_loader;
     std::shared_ptr<void> m_request;
     ui::Bitmap m_image;
     render::PixelFormat m_format = render::PixelFormat::Rgba8888;
     bool m_loaded = false;
+    std::optional<double> m_fadeStart;
+    base::Timer m_covered;
     mutable std::unique_ptr<render::Texture> m_texture;
 };
 
@@ -254,7 +295,8 @@ private:
 } // namespace
 
 SecureContainer::SecureContainer(scene::Node *root)
-    : m_root(root)
+    : m_settingsFile(preferencesFile("services"))
+    , m_root(root)
 {
     m_shield = m_root->addChild(std::make_unique<scene::Node>("lock-shield"));
     m_auth = m_root->addChild(std::make_unique<scene::Node>("auth-ui"));
@@ -360,9 +402,17 @@ bool SecureContainer::isWallpaperReady() const
     });
 }
 
-void SecureContainer::refreshWallpaper()
+void SecureContainer::setSettingsFile(const std::string &path, bool crossfade)
 {
-    const base::Settings settings(servicesFile());
+    if (path == m_settingsFile)
+        return;
+    m_settingsFile = path;
+    refreshWallpaper(crossfade);
+}
+
+void SecureContainer::refreshWallpaper(bool crossfade)
+{
+    const base::Settings settings(m_settingsFile);
     const std::string path = settings.stringValue("Appearance/Wallpaper", kDefaultWallpaper);
     const std::string file = wallpaperFile(path);
     if (base::EventLoop *loop = core::mainLoop()) {
@@ -388,10 +438,10 @@ void SecureContainer::refreshWallpaper()
     if (key == m_wallpaperKey)
         return;
     m_wallpaperKey = key;
-    rebuildShield();
+    rebuildShield(crossfade);
 }
 
-void SecureContainer::rebuildShield()
+void SecureContainer::rebuildShield(bool crossfade)
 {
     while (m_shieldRects.size() > m_outputs.size()) {
         m_shield->removeChild(m_shieldRects.back());
@@ -405,12 +455,19 @@ void SecureContainer::rebuildShield()
     for (size_t i = 0; i < m_outputs.size(); ++i) {
         auto *shield = m_shieldRects[i];
         shield->setGeometry(m_outputs[i].bounds);
-        while (!shield->children().empty())
-            shield->removeChild(shield->children().back());
+        // The wallpapers up stay under the new one until it covers them.
+        bool shown = false;
+        for (scene::Node *child : std::vector<scene::Node *>(shield->children())) {
+            const auto *wallpaper = dynamic_cast<const WallpaperNode *>(child);
+            if (crossfade && wallpaper && wallpaper->isLoaded())
+                shown = true;
+            else
+                shield->removeChild(child);
+        }
         if (core::mainLoop())
             shield->addChild(
                     std::make_unique<WallpaperNode>(this, m_outputs[i].bounds.size(),
-                                                    m_outputs[i].scale));
+                                                    m_outputs[i].scale, shown));
     }
 }
 

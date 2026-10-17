@@ -7,6 +7,7 @@
 #include "auth/auth_controller.h"
 #include "auth/auth_view.h"
 #include "auth/greetd_backend.h"
+#include "auth/login_sessions.h"
 #include "auth/pam_backend.h"
 #include "core/logging.h"
 #include "input/xkb_tracker.h"
@@ -233,6 +234,16 @@ void AuthUi::refresh()
                 m_injectedBackend ? m_injectedBackend : m_backend.get());
         m_controllerSubscriptions.push_back(
                 m_controller->stateChanged.connect([this] { m_repeatTimer.stop(); }));
+        // The login screen shows the wallpaper of the account picked.
+        if (login) {
+            const auto showBackground = [this, secure](bool crossfade) {
+                if (!m_controller->typesUserName() && !m_controller->userName().empty())
+                    secure->setSettingsFile(loginBackgroundFile(m_controller->userName()), crossfade);
+            };
+            showBackground(false);
+            m_controllerSubscriptions.push_back(
+                    m_controller->userChanged.connect([showBackground] { showBackground(true); }));
+        }
         m_controllerSubscriptions.push_back(
                 m_controller->authenticationSucceeded.connect([this, login] {
                     // greetd owns login handoff; the greeter stays covered until it exits.

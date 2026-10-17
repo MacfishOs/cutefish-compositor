@@ -24,6 +24,7 @@ namespace cutefish::auth {
 namespace {
 
 const std::string kStatePath = "/var/lib/cutefish-dm/state.conf";
+const std::string kBackgroundDirectory = "/var/lib/cutefish-dm/backgrounds";
 
 bool isSpace(char c)
 {
@@ -272,6 +273,11 @@ std::string lastLoginUser()
 std::string lastLoginSession(const std::string &user)
 {
     return base::Settings(kStatePath).stringValue("Sessions/" + user);
+}
+
+std::string loginBackgroundFile(const std::string &user)
+{
+    return kBackgroundDirectory + '/' + user + ".conf";
 }
 
 } // namespace cutefish::auth

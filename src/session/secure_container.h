@@ -106,9 +106,17 @@ public:
     // The wallpaper file shown, empty for the plain colour.
     const std::string &picture() const { return m_picture; }
 
+    // The file with services.conf's [Appearance] keys the wallpaper is read
+    // from: the user's services.conf, or at the login screen the copy
+    // cutefish-dm keeps for the account picked. With `crossfade` the new
+    // wallpaper fades in over the one shown.
+    void setSettingsFile(const std::string &path, bool crossfade);
+    const std::string &settingsFile() const { return m_settingsFile; }
+
 private:
-    void rebuildShield();
-    void refreshWallpaper();
+    void rebuildShield(bool crossfade = false);
+    void refreshWallpaper(bool crossfade = false);
+    std::string m_settingsFile;
     std::string m_watchedSettings;
     std::string m_watchedWallpaper;
     base::FileWatch m_settingsWatch;

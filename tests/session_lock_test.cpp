@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/file.h"
 #include "base/geometry.h"
 #include "input/event_sink.h"
 #include "input/input_manager.h"
@@ -314,6 +315,33 @@ TEST_F(SessionLockTest, TheLoginScreenIsReadyOnceEveryOutputHasItsShield)
     // The wallpaper decodes on a worker; the shield is ready once it lands.
     test::runUntil([&] { return greeterScene.isWallpaperReady(); }, std::chrono::seconds(30));
     EXPECT_TRUE(greeterScene.isWallpaperReady());
+}
+
+TEST_F(SessionLockTest, ThePickedAccountsWallpaperFadesInOverTheOneShown)
+{
+    base::file::TemporaryDirectory directory("/tmp", "session-lock-test");
+    const std::string alice = directory.path() + "/alice.conf";
+    const std::string bob = directory.path() + "/bob.conf";
+    ASSERT_TRUE(base::file::writeAtomically(alice, "[Appearance]\nBackgroundType=1\nBackgroundColor=#ff0000\n"));
+    ASSERT_TRUE(base::file::writeAtomically(bob, "[Appearance]\nBackgroundType=1\nBackgroundColor=#0000ff\n"));
+
+    session::SecureContainer greeterScene(greeterNode);
+    greeterScene.setSettingsFile(alice, false);
+    greeterScene.setOutputs({{kPrimaryName, kPrimary}});
+    ASSERT_TRUE(test::runUntil([&] { return greeterScene.isWallpaperReady(); }, std::chrono::seconds(30)));
+    const scene::Node *shield = greeterScene.shieldContainer()->children().front();
+    EXPECT_EQ(1u, shield->children().size());
+
+    // Alice's stays up under Bob's until Bob's has faded in over it.
+    greeterScene.setSettingsFile(bob, true);
+    EXPECT_EQ(2u, shield->children().size());
+    ASSERT_TRUE(test::runUntil([&] { return shield->children().size() == 1; }, std::chrono::seconds(30)));
+    EXPECT_TRUE(greeterScene.isWallpaperReady());
+
+    // Without the crossfade the old one goes at once.
+    greeterScene.setSettingsFile(alice, false);
+    EXPECT_EQ(1u, shield->children().size());
+    EXPECT_FALSE(greeterScene.isWallpaperReady());
 }
 
 TEST_F(SessionLockTest, LoginUnlocksIntoAnActiveSessionTheSameWayALockDoes)

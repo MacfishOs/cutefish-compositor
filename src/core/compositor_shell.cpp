@@ -16,6 +16,7 @@
 #include "accelerators/accelerator_service.h"
 #include "accelerators/hot_corner_controller.h"
 #include "accelerators/hot_corner_settings.h"
+#include "auth/login_sessions.h"
 #include "backend/drm/drm_backend.h"
 #include "backend/drm/drm_output.h"
 #include "backend/headless/headless_backend.h"
@@ -227,6 +228,10 @@ CompositorShell::CompositorShell(const CompositorOptions &options)
     , m_sleepLock(&m_sessionController)
     , m_compositorInstanceId(base::Uuid::generate().toString())
 {
+    // Before any output is up: the account the login screen preselects, so its
+    // wallpaper is the first one decoded.
+    if (m_options.login && !auth::lastLoginUser().empty())
+        m_secureScene.setSettingsFile(auth::loginBackgroundFile(auth::lastLoginUser()), false);
     m_compositor.setOutputScale(m_options.scale);
     m_compositor.setInputMethodContainer(m_inputMethodContainer);
     m_seat.setDragIconContainer(m_dragIconContainer);
