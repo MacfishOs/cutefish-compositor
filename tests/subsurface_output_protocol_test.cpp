@@ -29,6 +29,7 @@
 #include "compositor/output.h"
 #include "compositor/surface.h"
 #include "fake_renderer.h"
+#include "loop_test_util.h"
 #include "scene/scene.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_output.h"
@@ -493,5 +494,20 @@ TEST_F(SubsurfaceOutputProtocolTest, OutputUpdatesAndRemovalKeepExistingResource
         wl_output_release(out);
         c.sync();
     });
+}
+
+TEST_F(SubsurfaceOutputProtocolTest, AWithdrawnOutputIsDestroyedOnceWhicheverComesFirst)
+{
+    wl_display* display = wl_display_create();
+    ASSERT_TRUE(display);
+    wl_global* expiring = wayland::createOutputGlobal(display, &output);
+    wl_global* outlived = wayland::createOutputGlobal(display, &output);
+    ASSERT_TRUE(expiring);
+    ASSERT_TRUE(outlived);
+    wayland::removeOutputGlobal(expiring);
+    test::runFor(std::chrono::milliseconds(3200));
+    wayland::removeOutputGlobal(outlived);
+    wl_display_destroy(display);
+    test::runFor(std::chrono::milliseconds(3200));
 }
 } // namespace

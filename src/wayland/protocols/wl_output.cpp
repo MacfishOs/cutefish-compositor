@@ -24,7 +24,7 @@
 #include <xdg-output-unstable-v1-server-protocol.h>
 
 #include "compositor/output.h"
-#include "base/timer.h"
+#include "base/event_loop.h"
 #include "compositor/surface.h"
 #include "core/main_loop.h"
 #include "scene/surface_node.h"
@@ -46,8 +46,10 @@ struct OutputState {
     std::vector<Binding *> bindings;
     std::shared_ptr<compositor::CaptureSource> capture =
             std::make_shared<compositor::CaptureSource>();
-    // The delayed destruction, which dies with the display.
-    std::unique_ptr<base::Timer> removal;
+    // The loop's timer for the delayed destruction, which dies with the
+    // display. The loop keeps its task alive while it runs, so the task may
+    // delete this state.
+    int removal = 0;
 };
 
 struct Membership {
@@ -250,6 +252,8 @@ void bindOutput(wl_client *client, void *data, uint32_t version, uint32_t id)
 void destroyState(OutputState *state)
 {
     wl_list_remove(&state->destroy.link);
+    if (state->removal)
+        core::mainLoop()->stopTimer(state->removal);
     const auto bindings = std::move(state->bindings);
     for (auto *binding : bindings) {
         for (auto *extension : binding->extensions)
@@ -445,13 +449,11 @@ void removeOutputGlobal(wl_global *global)
     // it has not seen withdrawn, and binding a destroyed global is a protocol
     // error that disconnects it. Such late bindings get no events, as upstream.
     wl_global_remove(global);
-    state->removal = std::make_unique<base::Timer>(core::mainLoop());
-    state->removal->setSingleShot(true);
-    state->removal->onTimeout = [state] {
+    state->removal = core::mainLoop()->startTimer(kRemovedOutputLifetime, false, [state] {
+        state->removal = 0;
         wl_global_destroy(state->global);
         destroyState(state);
-    };
-    state->removal->start(kRemovedOutputLifetime);
+    });
 }
 
 std::shared_ptr<compositor::CaptureSource> outputCaptureSource(wl_resource *resource)
