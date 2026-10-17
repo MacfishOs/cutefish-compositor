@@ -34,6 +34,7 @@ public:
 
     void onDeskAdded(const Desk *) override { save(); }
     void onDeskRemoved(const Desk *) override { save(); }
+    void onDeskReordered(int, int) override { save(); }
     void onDeskActivationChanged(const Desk *, const Desk *) override { save(); }
     void onDeskNameChanged(const Desk *) override { save(); }
 

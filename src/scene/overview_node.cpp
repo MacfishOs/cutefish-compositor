@@ -788,7 +788,10 @@ void OverviewDeskBarNode::setBars(std::vector<Bar> bars)
                 continue;
             }
             placement = std::move(was.desks[desk.id]);
-            placement.moveTo(before->bounds, desk.bounds, now);
+            if (desk.dragged)
+                placement = {};
+            else
+                placement.moveTo(before->bounds, desk.bounds, now);
         }
         for (const Desk &desk : old->desks) {
             if (findDesk(bar.desks, desk.id) != bar.desks.end())
@@ -869,7 +872,10 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
     const base::RectF bounds = bar.desks[desk].bounds;
     Preview &preview = m_previews[previewKey(bar, bar.desks[desk].id)];
     const bool live = bar.desks[desk].active && now - preview.drawnAt >= kPreviewRefreshMs;
-    if (preview.texture && !preview.stale && !live && base::fuzzyCompare(preview.bounds, bounds)
+    // Moved along the bar it shows the same; only a new size draws it again.
+    const bool sameSize = std::abs(preview.bounds.width() - bounds.width()) < 1e-6
+            && std::abs(preview.bounds.height() - bounds.height()) < 1e-6;
+    if (preview.texture && !preview.stale && !live && sameSize
         && preview.scale == renderer.rasterScale())
         return;
     // One a frame, so the first frames of a swipe are not spent on all of
@@ -896,8 +902,12 @@ void OverviewDeskBarNode::updatePreview(render::Renderer &renderer, const Bar &b
         };
         for (const Node *node : m_backdrop)
             place(node);
-        if (desk < int(m_desks.size())) {
-            for (const WindowAnimation *window : m_desks[desk].windows)
+        const auto content = std::find_if(m_desks.begin(), m_desks.end(),
+                                          [&](const DeskContent &content) {
+                                              return content.id == bar.desks[desk].id;
+                                          });
+        if (content != m_desks.end()) {
+            for (const WindowAnimation *window : content->windows)
                 place(window);
         }
         renderer.suppressBackgroundBlur = blurSuppressed;
@@ -1006,7 +1016,17 @@ void OverviewDeskBarNode::renderBar(render::Renderer &renderer, const Bar &bar,
         return snappedFrom(placement->rect(rest, now).translated(0, offset), at, density);
     };
 
+    // The dragged desk last, over the ones it passes.
+    std::vector<int> order;
     for (int index = 0; index < int(bar.desks.size()); ++index) {
+        if (!bar.desks[index].dragged)
+            order.push_back(index);
+    }
+    for (int index = 0; index < int(bar.desks.size()); ++index) {
+        if (bar.desks[index].dragged)
+            order.push_back(index);
+    }
+    for (int index : order) {
         const Desk &desk = bar.desks[index];
         const Placement *placement = nullptr;
         if (motion) {

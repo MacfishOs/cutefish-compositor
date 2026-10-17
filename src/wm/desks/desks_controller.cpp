@@ -164,6 +164,19 @@ void DesksController::removeDesk(Desk *desk, DesksCreationRemovalSource source)
     removeDeskInternal(desk, /*deskSwitched=*/false);
 }
 
+void DesksController::reorderDesk(int from, int to)
+{
+    const int count = int(m_desks.size());
+    if (m_animation || from == to || from < 0 || from >= count || to < 0 || to >= count)
+        return;
+    std::unique_ptr<Desk> desk = std::move(m_desks[size_t(from)]);
+    m_desks.erase(m_desks.begin() + from);
+    m_desks.insert(m_desks.begin() + to, std::move(desk));
+    notify([from, to](DesksObserver *observer) {
+        observer->onDeskReordered(from, to);
+    });
+}
+
 void DesksController::activateDesk(Desk *desk, DesksSwitchSource source)
 {
     if (deskIndex(desk) < 0 || m_animation)

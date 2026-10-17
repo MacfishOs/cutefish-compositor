@@ -66,6 +66,8 @@ public:
     virtual void onDeskAdded(const Desk *desk) { }
     // After the desk left the list; it is destroyed right after.
     virtual void onDeskRemoved(const Desk *desk) { }
+    // The desk at `from` moved to `to`, the ones between moving over by one.
+    virtual void onDeskReordered(int from, int to) { }
     virtual void onDeskActivationChanged(const Desk *activated, const Desk *deactivated) { }
     virtual void onDeskNameChanged(const Desk *desk) { }
     virtual void onDeskSwitchAnimationLaunching() { }
@@ -118,6 +120,10 @@ public:
     // Combines `desk` into the desk on its left, or on its right when it is
     // the first. Removing the active desk slides to that desk first.
     void removeDesk(Desk *desk, DesksCreationRemovalSource source);
+
+    // Upstream ReorderDesk: the desk at `from` goes to `to`. Not while a
+    // desk animation runs, whose strip is laid out by index.
+    void reorderDesk(int from, int to);
 
     void activateDesk(Desk *desk, DesksSwitchSource source);
 

@@ -568,6 +568,38 @@ TEST(OverviewNode, OnlyTheActiveDeskIsRingedAndAPressedOneDims)
     EXPECT_EQ(1, dims);
 }
 
+TEST(OverviewNode, ADraggedDeskFollowsAtOnceOverTheOnesThatEaseAside)
+{
+    Fixture f;
+    auto *deskBar = static_cast<DeskBar *>(
+            f.container->addChild(std::make_unique<DeskBar>(f.node)));
+    f.node->jumpTo(1);
+    deskBar->setBars({bar({barDesk(1, 340), barDesk(2, 450)}, 560)});
+    f.paint();
+
+    // The first one dragged past the second, which makes way.
+    DeskBar::Desk dragged = barDesk(1, 420);
+    dragged.dragged = true;
+    deskBar->setBars({bar({barDesk(2, 340), dragged}, 560)});
+    f.now += DeskBar::kShiftDurationMs / 2;
+    f.paint();
+    ASSERT_EQ(2, f.renderer.outlines.size());
+    // The second is on its way; the dragged one is where it is put, drawn last.
+    EXPECT_GT(f.renderer.outlines[0].bounds.x(), 340);
+    EXPECT_LT(f.renderer.outlines[0].bounds.x(), 450);
+    EXPECT_EQ(base::RectF(420, 20, 100, 60), f.renderer.outlines[1].bounds);
+
+    // Let go, it eases into its place from where it was dropped.
+    deskBar->setBars({bar({barDesk(2, 340), barDesk(1, 450)}, 560)});
+    f.now += DeskBar::kShiftDurationMs / 2;
+    f.paint();
+    EXPECT_GT(f.renderer.outlines[1].bounds.x(), 420);
+    EXPECT_LT(f.renderer.outlines[1].bounds.x(), 450);
+    f.now += DeskBar::kShiftDurationMs;
+    f.paint();
+    EXPECT_EQ(base::RectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
+}
+
 TEST(OverviewNode, ANewDeskScalesUpAndFadesInWhileTheRestMoveOver)
 {
     Fixture f;

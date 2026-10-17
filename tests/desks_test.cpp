@@ -219,6 +219,37 @@ TEST_F(DesksTest, ThereIsAlwaysOneActiveDeskAndAtMostEight)
     EXPECT_EQ(desk(3), desks->deskById(desk(3)->id()));
 }
 
+TEST_F(DesksTest, ADeskReorderedTakesItsWindowsAndActivationAlong)
+{
+    struct Observer : DesksObserver {
+        std::vector<std::pair<int, int>> reordered;
+        void onDeskReordered(int from, int to) override { reordered.push_back({from, to}); }
+    } observer;
+    desks->addObserver(&observer);
+    Window *window = makeWindow();
+    addDesks(2);
+    Desk *first = desk(0);
+    Desk *second = desk(1);
+    Desk *third = desk(2);
+
+    desks->reorderDesk(0, 2);
+    EXPECT_EQ(second, desk(0));
+    EXPECT_EQ(third, desk(1));
+    EXPECT_EQ(first, desk(2));
+    EXPECT_EQ(first, desks->activeDesk());
+    EXPECT_EQ(2, desks->activeDeskIndex());
+    EXPECT_EQ(first, desks->deskOf(window));
+    EXPECT_TRUE(window->isVisible());
+    EXPECT_EQ((std::vector<std::pair<int, int>> {{0, 2}}), observer.reordered);
+
+    // Nowhere to go, or no desk there.
+    desks->reorderDesk(1, 1);
+    desks->reorderDesk(0, 3);
+    desks->reorderDesk(-1, 0);
+    EXPECT_EQ(1u, observer.reordered.size());
+    desks->removeObserver(&observer);
+}
+
 TEST_F(DesksTest, NewWindowsGoToTheActiveDeskAndLeaveTheScreenWithIt)
 {
     addDesks(1);

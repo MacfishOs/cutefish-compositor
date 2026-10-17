@@ -584,17 +584,119 @@ TEST_F(OverviewTest, AHoveredDeskIsNotRingedAndAPressedOneDimsWhileTheButtonIsOn
     input.onPointerButton(at(now), BTN_LEFT, true);
     EXPECT_TRUE(other().pressed);
     EXPECT_FALSE(other().highlighted);
-    // Off it the press would do nothing, and it shows so.
-    moveTo(overview->bars()[0].desks[0].bounds.center());
-    EXPECT_FALSE(other().pressed);
-    EXPECT_FALSE(overview->bars()[0].desks[0].pressed);
-    moveTo(on);
+    moveTo(on + base::PointF(0, 4));
     EXPECT_TRUE(other().pressed);
-    // Dropped off it, nothing is clicked.
-    moveTo(overview->bars()[0].desks[0].bounds.center());
+    // Further, it is dragged rather than pressed; let go where it was,
+    // nothing is clicked or moved.
+    moveTo(on + base::PointF(0, 40));
+    EXPECT_FALSE(other().pressed);
+    EXPECT_TRUE(other().dragged);
     input.onPointerButton(at(now), BTN_LEFT, false);
     EXPECT_FALSE(other().pressed);
+    EXPECT_FALSE(other().dragged);
+    EXPECT_EQ(desk(0), desks->activeDesk());
     EXPECT_EQ(State::Shown, overview->state());
+}
+
+TEST_F(OverviewTest, ALoneDeskPressedAndLeftDimsOnlyWhileTheButtonIsOnIt)
+{
+    makeWindow(base::Rect(100, 100, 500, 400));
+    show();
+    const auto lone = [&] {
+        return overview->bars()[0].desks[0];
+    };
+    const base::PointF on = lone().bounds.center();
+    moveTo(on);
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    EXPECT_TRUE(lone().pressed);
+    // A lone desk has nowhere to go: off it the press would do nothing, and
+    // it shows so.
+    moveTo(on + base::PointF(0, 200));
+    EXPECT_FALSE(lone().pressed);
+    EXPECT_FALSE(lone().dragged);
+    moveTo(on);
+    EXPECT_TRUE(lone().pressed);
+    moveTo(on + base::PointF(0, 200));
+    input.onPointerButton(at(now), BTN_LEFT, false);
+    EXPECT_FALSE(lone().pressed);
+    EXPECT_EQ(State::Shown, overview->state());
+}
+
+TEST_F(OverviewTest, ADeskDraggedAlongTheBarTakesItsNewPlaceAndTheNamesFollowTheOrder)
+{
+    makeWindow(base::Rect(100, 100, 500, 400));
+    ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
+    ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
+    Desk *first = desk(0);
+    Desk *second = desk(1);
+    Desk *third = desk(2);
+    show();
+    const auto slots = overview->bars()[0].desks;
+    ASSERT_EQ(3u, slots.size());
+    const auto desksShown = [&] {
+        return overview->bars()[0].desks;
+    };
+
+    const base::PointF from = slots[0].bounds.center();
+    moveTo(from);
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    // Up and down does nothing; along the bar it follows the pointer.
+    moveTo(from + base::PointF(30, 120));
+    auto shown = desksShown();
+    ASSERT_EQ(3u, shown.size());
+    EXPECT_TRUE(shown[0].dragged);
+    EXPECT_EQ(slots[0].bounds.translated(30, 0), shown[0].bounds);
+    EXPECT_EQ("Desk 1", shown[0].name);
+
+    // Past the second desk's middle, the second one makes way.
+    const double step = slots[1].bounds.x() - slots[0].bounds.x();
+    moveTo(from + base::PointF(step * 0.6, 0));
+    shown = desksShown();
+    EXPECT_EQ(uintptr_t(second), shown[0].id);
+    EXPECT_EQ(slots[0].bounds, shown[0].bounds);
+    EXPECT_EQ(uintptr_t(first), shown[1].id);
+    EXPECT_TRUE(shown[1].dragged);
+
+    // Held past the last place, it stops there.
+    moveTo(from + base::PointF(step * 5, 0));
+    shown = desksShown();
+    EXPECT_EQ(uintptr_t(first), shown[2].id);
+    EXPECT_EQ(slots[2].bounds, shown[2].bounds);
+    input.onPointerButton(at(now), BTN_LEFT, false);
+
+    EXPECT_EQ(second, desk(0));
+    EXPECT_EQ(third, desk(1));
+    EXPECT_EQ(first, desk(2));
+    // Still up, on the same desk, which is now the last.
+    EXPECT_EQ(State::Shown, overview->state());
+    EXPECT_EQ(first, desks->activeDesk());
+    shown = desksShown();
+    ASSERT_EQ(3u, shown.size());
+    for (size_t index = 0; index < shown.size(); ++index) {
+        EXPECT_FALSE(shown[index].dragged);
+        EXPECT_EQ(slots[index].bounds, shown[index].bounds);
+        EXPECT_EQ("Desk " + std::to_string(index + 1), shown[index].name);
+    }
+    EXPECT_EQ(uintptr_t(first), shown[2].id);
+    EXPECT_TRUE(shown[2].active);
+}
+
+TEST_F(OverviewTest, ADeskDroppedWhereItWasStaysAndIsNotClicked)
+{
+    makeWindow(base::Rect(100, 100, 500, 400));
+    ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
+    Desk *second = desk(1);
+    show();
+    const base::PointF from = overview->bars()[0].desks[1].bounds.center();
+    moveTo(from);
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    moveTo(from + base::PointF(20, 0));
+    moveTo(from);
+    input.onPointerButton(at(now), BTN_LEFT, false);
+    EXPECT_EQ(second, desk(1));
+    EXPECT_EQ(desk(0), desks->activeDesk());
+    EXPECT_EQ(State::Shown, overview->state());
+    EXPECT_FALSE(overview->bars()[0].desks[1].dragged);
 }
 
 TEST_F(OverviewTest, AWindowDraggedOntoADeskMovesThere)

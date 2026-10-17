@@ -185,6 +185,60 @@ void OverviewController::buildBars()
         m_bars.push_back(std::move(bar));
         m_barDesks.push_back(std::move(barDesks));
     }
+    if (m_deskDrag)
+        arrangeDraggedDesk();
+}
+
+void OverviewController::arrangeDraggedDesk()
+{
+    const int barIndex = m_deskDrag->bar;
+    if (barIndex < 0 || barIndex >= int(m_bars.size())) {
+        m_deskDrag.reset();
+        return;
+    }
+    scene::OverviewDeskBarNode::Bar &bar = m_bars[size_t(barIndex)];
+    std::vector<Desk *> &barDesks = m_barDesks[size_t(barIndex)];
+    const auto found = std::find(barDesks.begin(), barDesks.end(), m_deskDrag->desk);
+    if (found == barDesks.end()) {
+        m_deskDrag.reset();
+        return;
+    }
+    const int from = int(found - barDesks.begin());
+    std::vector<base::RectF> slots;
+    for (const auto &desk : bar.desks)
+        slots.push_back(desk.bounds);
+    // Along the bar only, from the first place to the last.
+    const double x = std::round(std::clamp(m_pointer.x() - m_deskDrag->grab, slots.front().x(),
+                                           slots.back().x()));
+    const double center = x + slots[size_t(from)].width() / 2;
+    int target = 0;
+    for (int index = 1; index < int(slots.size()); ++index) {
+        if (std::abs(slots[size_t(index)].center().x() - center)
+            < std::abs(slots[size_t(target)].center().x() - center))
+            target = index;
+    }
+    std::vector<int> order;
+    for (int index = 0; index < int(slots.size()); ++index) {
+        if (index != from)
+            order.push_back(index);
+    }
+    order.insert(order.begin() + target, from);
+
+    std::vector<scene::OverviewDeskBarNode::Desk> desks;
+    std::vector<Desk *> arranged;
+    for (int place = 0; place < int(order.size()); ++place) {
+        scene::OverviewDeskBarNode::Desk desk = bar.desks[size_t(order[size_t(place)])];
+        desk.bounds = slots[size_t(place)];
+        if (order[size_t(place)] == from) {
+            desk.bounds.moveLeft(x);
+            desk.dragged = true;
+        }
+        desks.push_back(std::move(desk));
+        arranged.push_back(barDesks[size_t(order[size_t(place)])]);
+    }
+    bar.desks = std::move(desks);
+    barDesks = std::move(arranged);
+    m_deskDrag->target = target;
 }
 
 void OverviewController::rebuild(bool animate, bool keepPlaces)
@@ -348,6 +402,8 @@ void OverviewController::updateNodes(bool animate)
     if (m_bar) {
         DesksController *desks = m_manager->desks();
         std::vector<scene::OverviewDeskBarNode::DeskContent> contents(desks->desks().size());
+        for (size_t index = 0; index < contents.size(); ++index)
+            contents[index].id = uintptr_t(desks->deskAt(int(index)));
         for (Window *window : windows) {
             if (window->isShellWindow() || layerFor(window) != StackingLayer::Normal
                 || window->state()->isMinimized() || window->isHidden() || !animationOf(window)
@@ -380,7 +436,8 @@ void OverviewController::updateChrome()
     const Hit target = m_dragged >= 0 ? hitTest(m_pointer) : m_barHover;
     const bool closable = m_dragged < 0 && canCloseDesks();
     // A desk pressed dims while the pointer or touch is still on it.
-    const Hit pressedOn = m_press && m_dragged < 0 && m_press->hit.type == Hit::Type::Desk
+    const Hit pressedOn =
+            m_press && m_dragged < 0 && !m_deskDrag && m_press->hit.type == Hit::Type::Desk
             ? hitTest(m_press->touch ? m_touchLocation : m_pointer)
             : Hit();
     for (size_t index = 0; index < m_bars.size(); ++index) {
@@ -458,6 +515,7 @@ void OverviewController::onOutputsChanged()
     // the old outputs' shapes.
     m_press.reset();
     m_dragged = -1;
+    m_deskDrag.reset();
     m_node->setGeometry(m_manager->outputBounds());
     if (m_bar)
         m_bar->setGeometry(m_manager->outputBounds());
@@ -490,6 +548,7 @@ void OverviewController::begin()
     m_hovered = m_selected = m_dragged = -1;
     m_barHover = {};
     m_press.reset();
+    m_deskDrag.reset();
     m_node->setGeometry(m_manager->outputBounds());
     if (m_bar)
         m_bar->setGeometry(m_manager->outputBounds());
@@ -514,6 +573,7 @@ void OverviewController::finish()
     m_hovered = m_selected = m_dragged = -1;
     m_swipeTarget = nullptr;
     m_press.reset();
+    m_deskDrag.reset();
     m_buttons.clear();
     m_keys.clear();
     m_touches.clear();
@@ -737,6 +797,23 @@ void OverviewController::move(const base::PointF &location)
                                std::clamp(grab.y(), 0.0, bounds.height()));
         m_hovered = -1;
     }
+    if (m_press && m_dragged < 0 && !m_deskDrag && m_press->hit.type == Hit::Type::Desk
+        && m_state == State::Shown && m_manager->desks()->desks().size() > 1
+        && distance(location, m_press->location) >= kDragThreshold) {
+        const Hit &hit = m_press->hit;
+        if (hit.bar >= 0 && hit.bar < int(m_bars.size()) && hit.index >= 0
+            && hit.index < int(m_bars[size_t(hit.bar)].desks.size())) {
+            const base::RectF &bounds = m_bars[size_t(hit.bar)].desks[size_t(hit.index)].bounds;
+            m_deskDrag = DeskDrag {hit.bar, m_barDesks[size_t(hit.bar)][size_t(hit.index)],
+                                   m_press->location.x() - bounds.x(), hit.index};
+            m_barHover = {};
+        }
+    }
+    if (m_deskDrag) {
+        buildBars();
+        updateChrome();
+        return;
+    }
     if (m_dragged < 0) {
         setHover(hitTest(location));
         return;
@@ -786,6 +863,10 @@ void OverviewController::release(const base::PointF &location)
     const Press press = *m_press;
     m_press.reset();
     updateChrome();
+    if (m_deskDrag) {
+        dropDesk();
+        return;
+    }
     if (m_dragged >= 0) {
         drop(location);
         return;
@@ -848,6 +929,10 @@ void OverviewController::release(const base::PointF &location)
 void OverviewController::cancelPress()
 {
     m_press.reset();
+    if (m_deskDrag) {
+        m_deskDrag.reset();
+        buildBars();
+    }
     if (m_dragged < 0) {
         updateChrome();
         return;
@@ -855,6 +940,19 @@ void OverviewController::cancelPress()
     m_dragged = -1;
     if (m_node)
         rebuild(true);
+}
+
+void OverviewController::dropDesk()
+{
+    const DeskDrag drag = *m_deskDrag;
+    m_deskDrag.reset();
+    DesksController *desks = m_manager->desks();
+    const int from = desks->deskIndex(drag.desk);
+    if (from >= 0 && drag.target >= 0)
+        desks->reorderDesk(from, drag.target);
+    // Into its place, or back to it when the desks could not be reordered.
+    buildBars();
+    updateChrome();
 }
 
 void OverviewController::drop(const base::PointF &location)
@@ -1099,6 +1197,12 @@ void OverviewController::onDeskAdded(const Desk *)
 }
 
 void OverviewController::onDeskRemoved(const Desk *)
+{
+    if (isActive())
+        rebuild(true);
+}
+
+void OverviewController::onDeskReordered(int, int)
 {
     if (isActive())
         rebuild(true);

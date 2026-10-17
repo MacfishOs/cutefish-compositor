@@ -256,6 +256,8 @@ public:
         bool highlighted = false;
         // Pressed, with the pointer still on it.
         bool pressed = false;
+        // Dragged along the bar: follows the pointer, over the rest.
+        bool dragged = false;
         // The pointer is on it and it can be removed: its close button shows,
         // lit while the pointer is on the button.
         bool closeShown = false;
@@ -275,6 +277,8 @@ public:
 
     // What a desk preview shows: the desk's windows bottom to top, over the backdrop.
     struct DeskContent {
+        // The Desk::id it is for.
+        uintptr_t id = 0;
         std::vector<const WindowAnimation *> windows;
     };
 

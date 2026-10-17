@@ -161,6 +161,7 @@ public:
     // --- DesksObserver ---
     void onDeskAdded(const Desk *desk) override;
     void onDeskRemoved(const Desk *desk) override;
+    void onDeskReordered(int from, int to) override;
     void onDeskActivationChanged(const Desk *activated, const Desk *deactivated) override;
     void onDeskNameChanged(const Desk *desk) override;
     void onChosenDeskChanged() override;
@@ -183,6 +184,10 @@ private:
     // window is raised on the way out.
     void rebuild(bool animate, bool keepPlaces = false);
     void buildBars();
+    // Puts the dragged desk under the pointer along its bar and the rest in
+    // the order a drop there would leave them.
+    void arrangeDraggedDesk();
+    void dropDesk();
     // Where the dragged item is drawn with the pointer at `location`: shrunk
     // on its way to the desk bar, as Ash's OverviewWindowDragController does,
     // and held where it was grabbed.
@@ -239,6 +244,16 @@ private:
     std::optional<Press> m_press;
     int m_dragged = -1;
     base::PointF m_dragOffset;
+    // A desk dragged along its bar to another place.
+    struct DeskDrag {
+        int bar = -1;
+        Desk *desk = nullptr;
+        // How far along the preview it was grabbed.
+        double grab = 0;
+        // The index a drop gives it.
+        int target = -1;
+    };
+    std::optional<DeskDrag> m_deskDrag;
     base::PointF m_pointer;
     bool m_pointerTaken = false;
     // The cursor is the default one from the overview's first frame to its
