@@ -379,12 +379,19 @@ void OverviewController::updateChrome()
     // A window dragged over the bar shows where it would drop.
     const Hit target = m_dragged >= 0 ? hitTest(m_pointer) : m_barHover;
     const bool closable = m_dragged < 0 && canCloseDesks();
+    // A desk pressed dims while the pointer or touch is still on it.
+    const Hit pressedOn = m_press && m_dragged < 0 && m_press->hit.type == Hit::Type::Desk
+            ? hitTest(m_press->touch ? m_touchLocation : m_pointer)
+            : Hit();
     for (size_t index = 0; index < m_bars.size(); ++index) {
         auto &bar = m_bars[index];
         for (size_t desk = 0; desk < bar.desks.size(); ++desk) {
             const bool on = (target.type == Hit::Type::Desk || target.type == Hit::Type::DeskClose)
                     && target.bar == int(index) && target.index == int(desk);
-            bar.desks[desk].highlighted = on;
+            bar.desks[desk].highlighted = on && m_dragged >= 0;
+            bar.desks[desk].pressed = pressedOn.type == Hit::Type::Desk
+                    && pressedOn.bar == m_press->hit.bar && pressedOn.index == m_press->hit.index
+                    && pressedOn.bar == int(index) && pressedOn.index == int(desk);
             bar.desks[desk].closeShown = on && closable;
             bar.desks[desk].closeHovered =
                     bar.desks[desk].closeShown && target.type == Hit::Type::DeskClose;
@@ -713,6 +720,7 @@ void OverviewController::press(const Hit &hit, const base::PointF &location,
                                std::optional<int32_t> touch)
 {
     m_press = Press {hit, location, touch};
+    updateChrome();
 }
 
 void OverviewController::move(const base::PointF &location)
@@ -777,6 +785,7 @@ void OverviewController::release(const base::PointF &location)
         return;
     const Press press = *m_press;
     m_press.reset();
+    updateChrome();
     if (m_dragged >= 0) {
         drop(location);
         return;
@@ -839,8 +848,10 @@ void OverviewController::release(const base::PointF &location)
 void OverviewController::cancelPress()
 {
     m_press.reset();
-    if (m_dragged < 0)
+    if (m_dragged < 0) {
+        updateChrome();
         return;
+    }
     m_dragged = -1;
     if (m_node)
         rebuild(true);

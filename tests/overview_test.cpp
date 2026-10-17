@@ -567,6 +567,36 @@ TEST_F(OverviewTest, ClickingTheDeskItIsOnTakesItAway)
     EXPECT_EQ(window, active());
 }
 
+TEST_F(OverviewTest, AHoveredDeskIsNotRingedAndAPressedOneDimsWhileTheButtonIsOnIt)
+{
+    makeWindow(base::Rect(100, 100, 500, 400));
+    ASSERT_NE(nullptr, desks->newDesk(DesksCreationRemovalSource::Keyboard));
+    show();
+    const auto other = [&] {
+        return overview->bars()[0].desks[1];
+    };
+    const base::PointF on = other().bounds.center();
+    moveTo(on);
+    EXPECT_FALSE(other().highlighted);
+    EXPECT_FALSE(other().pressed);
+    EXPECT_TRUE(other().closeShown);
+
+    input.onPointerButton(at(now), BTN_LEFT, true);
+    EXPECT_TRUE(other().pressed);
+    EXPECT_FALSE(other().highlighted);
+    // Off it the press would do nothing, and it shows so.
+    moveTo(overview->bars()[0].desks[0].bounds.center());
+    EXPECT_FALSE(other().pressed);
+    EXPECT_FALSE(overview->bars()[0].desks[0].pressed);
+    moveTo(on);
+    EXPECT_TRUE(other().pressed);
+    // Dropped off it, nothing is clicked.
+    moveTo(overview->bars()[0].desks[0].bounds.center());
+    input.onPointerButton(at(now), BTN_LEFT, false);
+    EXPECT_FALSE(other().pressed);
+    EXPECT_EQ(State::Shown, overview->state());
+}
+
 TEST_F(OverviewTest, AWindowDraggedOntoADeskMovesThere)
 {
     Window *moved = makeWindow(base::Rect(100, 100, 500, 400));

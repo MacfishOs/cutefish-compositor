@@ -31,6 +31,7 @@ constexpr render::Color kClosePlateColor {0.16f, 0.16f, 0.16f, 0.92f};
 constexpr render::Color kButtonColor {1, 1, 1, 0.16f};
 constexpr render::Color kButtonHighlightColor {1, 1, 1, 0.3f};
 constexpr render::Color kPreviewOutlineColor {1, 1, 1, 0.22f};
+constexpr render::Color kPressedDimColor {0, 0, 0, 0.25f};
 
 constexpr int kTitlePixelSize = 13;
 constexpr int kTitleMaxWidth = 360;
@@ -923,6 +924,8 @@ void OverviewDeskBarNode::renderDesk(render::Renderer &renderer, const Desk &des
         renderer.drawTextureF(preview, body, opacity);
     else
         renderer.fillRectF(body, faded(kBlack, opacity));
+    if (desk.pressed)
+        renderer.fillRectF(body, faded(kPressedDimColor, opacity));
     renderer.popRoundedClip();
     const render::Color outline = desk.active ? kRingColor
             : desk.highlighted              ? kSelectionColor

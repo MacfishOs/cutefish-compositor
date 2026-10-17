@@ -252,8 +252,10 @@ public:
         base::RectF bounds;
         std::string name;
         bool active = false;
-        // The pointer is on it, or a window dragged over it would drop there.
+        // A window dragged over it would drop there.
         bool highlighted = false;
+        // Pressed, with the pointer still on it.
+        bool pressed = false;
         // The pointer is on it and it can be removed: its close button shows,
         // lit while the pointer is on the button.
         bool closeShown = false;

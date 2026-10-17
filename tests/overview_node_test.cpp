@@ -540,6 +540,34 @@ TEST(OverviewNode, ABarPutUpAnewStandsWhereItIsPut)
     EXPECT_FLOAT_EQ(kOutlineAlpha, f.renderer.outlines[1].alpha);
 }
 
+TEST(OverviewNode, OnlyTheActiveDeskIsRingedAndAPressedOneDims)
+{
+    Fixture f;
+    auto *deskBar = static_cast<DeskBar *>(
+            f.container->addChild(std::make_unique<DeskBar>(f.node)));
+    f.node->jumpTo(1);
+    DeskBar::Desk active = barDesk(1, 340);
+    active.active = true;
+    DeskBar::Desk pressed = barDesk(2, 450);
+    pressed.pressed = true;
+    deskBar->setBars({bar({active, pressed}, 560)});
+    f.paint();
+    ASSERT_EQ(2, f.renderer.outlines.size());
+    // The ring stands off the active desk's body; the pressed one keeps the
+    // plain outline on its body.
+    EXPECT_EQ(base::RectF(337, 17, 106, 66), f.renderer.outlines[0].bounds);
+    EXPECT_EQ(base::RectF(450, 20, 100, 60), f.renderer.outlines[1].bounds);
+    EXPECT_FLOAT_EQ(kOutlineAlpha, f.renderer.outlines[1].alpha);
+    const auto dims = std::count_if(f.renderer.calls.begin(), f.renderer.calls.end(),
+                                    [](const auto &call) {
+                                        return call.kind == "fill"
+                                                && call.rect == base::Rect(450, 20, 100, 60)
+                                                && call.color.r == 0 && call.color.a > 0
+                                                && call.color.a < 1;
+                                    });
+    EXPECT_EQ(1, dims);
+}
+
 TEST(OverviewNode, ANewDeskScalesUpAndFadesInWhileTheRestMoveOver)
 {
     Fixture f;
