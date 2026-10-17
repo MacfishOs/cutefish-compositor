@@ -28,6 +28,7 @@
 #include "base/json.h"
 #include "base/logging.h"
 #include "base/paths.h"
+#include "base/process.h"
 #include "base/strings.h"
 #include "compositor/surface.h"
 #include "core/main_loop.h"
@@ -395,6 +396,8 @@ bool XwaylandServer::spawn(const std::vector<std::string>& arguments,
             ::signal(signal, SIG_DFL);
         for (int fd : inherited)
             fcntl(fd, F_SETFD, 0);
+        // Its memory is mostly the X clients', and a lost server is restarted.
+        base::dropOomProtection();
         execve(argv[0], argv.data(), envp.data());
         const int error = errno;
         (void)!write(status[1], &error, sizeof(error));

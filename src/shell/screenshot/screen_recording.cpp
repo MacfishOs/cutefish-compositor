@@ -76,6 +76,8 @@ bool ScreenRecording::start(const Target &target, const std::string &path)
         m_process->setEnvironment(m_environment);
     // The recorder stops at the end of its input: it stays open until stop().
     m_process->setStandardInputOpen(true);
+    // Its loss ends only the recording.
+    m_process->setOomProtectionDropped(true);
     m_process->onStandardOutput = [this](std::string_view output) { onOutput(output); };
     m_process->onFinished = [this](int exitCode, bool crashed) { onFinished(exitCode, crashed); };
     if (!m_process->start(m_program, arguments(target, path))) {

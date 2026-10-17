@@ -125,6 +125,8 @@ void InputMethodLauncher::start()
     process->setEnvironment(std::move(environment));
     process->setOutputForwarded(true);
     process->setInheritedFd(fds[1]);
+    // Restarted when lost, so not one of the processes the session protects.
+    process->setOomProtectionDropped(true);
     process->onFinished = [this, process](int code, bool) {
         const auto it = std::find_if(m_children.begin(), m_children.end(), [&](const auto &c) {
             return &c->process == process;
