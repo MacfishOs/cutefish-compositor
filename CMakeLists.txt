@@ -851,6 +851,7 @@ target_link_libraries(cutefish-auth-helper PRIVATE ${PAM_LIBRARY})
 install(TARGETS cutefish-auth-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 install(FILES data/cutefish-auth DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/pam.d)
 add_library(cutefish-auth STATIC
+    src/auth/auth_status.cpp src/auth/auth_status.h
     src/auth/auth_ui.cpp src/auth/auth_ui.h
     src/auth/auth_view.cpp src/auth/auth_view.h
     src/auth/auth_controller.cpp src/auth/auth_controller.h src/auth/auth_backend.h
@@ -858,8 +859,10 @@ add_library(cutefish-auth STATIC
     src/auth/greetd_backend.cpp src/auth/greetd_backend.h
     src/auth/login_sessions.cpp src/auth/login_sessions.h)
 target_include_directories(cutefish-auth PUBLIC src)
+# The status bar's items and backdrop rules come from the shell's libraries,
+# defined further down.
 target_link_libraries(cutefish-auth PUBLIC cutefish-session cutefish-toolkit-host
-    PRIVATE PkgConfig::TitleText)
+    cutefish-shell-bar-items cutefish-shell-wallpaper PRIVATE PkgConfig::TitleText)
 target_compile_definitions(cutefish-auth PRIVATE
     CUTEFISH_AUTH_HELPER="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-auth-helper")
 

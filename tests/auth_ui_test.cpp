@@ -4,11 +4,13 @@
 
 #include "base/geometry.h"
 #include "auth/auth_controller.h"
+#include "auth/auth_status.h"
 #include "auth/auth_ui.h"
 #include "auth/auth_view.h"
 #include "compositor/compositor.h"
 #include "core/main_loop.h"
 #include "core/preferences.h"
+#include "cutefish/networkmanager/client.h"
 #include "fake_backend.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
@@ -16,9 +18,11 @@
 #include "scene/node.h"
 #include "session/secure_container.h"
 #include "session/session_controller.h"
+#include "shell/statusbar/status_icon.h"
 #include "base/settings.h"
 #include "loop_test_util.h"
 #include "temporary_directory.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -111,6 +115,13 @@ struct ConfigurationHome {
     ConfigurationHome() { setConfigHomeForTesting(directory.path()); }
 };
 const ConfigurationHome configurationHome;
+
+// NetworkManager is looked for on the private session bus, where it is not:
+// the status icons show only what a test gives them.
+void withoutNetworkManager()
+{
+    networkmanager::Client::setInstanceBus(base::dbus::Connection::session(core::mainLoop()));
+}
 
 } // namespace
 
@@ -668,7 +679,8 @@ TEST(AuthUiTest, OutputChangesReuseOneOffscreenWindow)
                            {"two", base::Rect(800, 0, 640, 480)}});
     ui.refresh();
     EXPECT_EQ(ui.window(), window);
-    EXPECT_EQ(secure.authContainer()->children().size(), size_t(1));
+    // The panel and the status icons.
+    EXPECT_EQ(secure.authContainer()->children().size(), size_t(2));
     controller.setOutputs({{"two", base::Rect(800, 0, 640, 480)}});
     ui.refresh();
     EXPECT_EQ(ui.window(), window);
@@ -695,12 +707,13 @@ TEST(AuthUiTest, PanelTextureFollowsTheImageSize)
     ui.refresh();
     secure.finishTransition();
     testsupport::FakeRenderer renderer;
-    // The panel is drawn last, above the shield and its wallpaper.
+    // The panel is drawn above the shield and its wallpaper, over the panel node.
     const auto panelTexture = [&]() -> const render::Texture * {
         renderer.calls.clear();
         root.render(renderer);
+        const base::Rect panel = secure.authContainer()->children().front()->geometry();
         for (auto call = renderer.calls.crbegin(); call != renderer.calls.crend(); ++call) {
-            if (call->texture)
+            if (call->texture && call->rect == panel)
                 return call->texture;
         }
         return nullptr;
@@ -1002,4 +1015,115 @@ TEST(AuthUiTest, LoginUsesSameOffscreenScreenAndStaysBlockedForHandoff)
     EXPECT_EQ(backend.acceptCount, 1);
     EXPECT_EQ(controller.state(), session::SessionState::Login);
     EXPECT_TRUE(root.isVisible());
+}
+
+TEST(AuthUiTest, StatusIconsSitInTheTopRightCornerAndTakeNoInput)
+{
+    withoutNetworkManager();
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    session::SessionController controller(&secure);
+    const base::Rect one(0, 0, 800, 600);
+    const base::Rect two(800, 0, 1280, 800);
+    controller.setOutputs({{"one", one, 1, true}, {"two", two}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    base::PointF pointer(100, 100);
+    ui.setPointerLocator([&] {
+        return pointer;
+    });
+    EXPECT_TRUE(controller.requestLock());
+    ui.refresh();
+    auth::AuthStatus *status = ui.status();
+    ASSERT_TRUE(status);
+    shell::StatusBarIndicators::Network network;
+    network.wirelessHwEnabled = true;
+    network.wirelessEnabled = true;
+    network.wirelessName = "Home";
+    network.wirelessIcon = "network-wireless-connected-75";
+    status->networkIcon()->showNetwork(network);
+    status->batteryIcon()->setVisible(true);
+    status->batteryIcon()->setIconName("battery-level-60-symbolic");
+    status->batteryIcon()->setLabel("60%");
+    ui.refresh();
+
+    // The panel and the icons, each in its own node.
+    ASSERT_EQ(secure.authContainer()->children().size(), size_t(2));
+    const scene::Node *node = secure.authContainer()->children().back();
+    EXPECT_EQ(node->geometry().x() + node->geometry().width(), one.width());
+    EXPECT_EQ(node->geometry().y(), 0);
+    EXPECT_EQ(node->geometry().height(), 32);
+    EXPECT_EQ(sizeOf(ui.renderStatusImage()), node->geometry().size());
+
+    // The battery comes last, its plate as far from the edge as the status
+    // bar's last one; Wi-Fi abuts it.
+    ui.statusWindow()->updateLayout();
+    const shell::StatusIcon *battery = status->batteryIcon();
+    const shell::StatusIcon *wifi = status->networkIcon();
+    EXPECT_DOUBLE_EQ(battery->geometry().x + battery->geometry().width, double(node->geometry().width()));
+    EXPECT_DOUBLE_EQ(battery->rightInset(), 9);
+    EXPECT_DOUBLE_EQ(wifi->rightInset(), 3);
+    EXPECT_DOUBLE_EQ(wifi->geometry().x + wifi->geometry().width, battery->geometry().x);
+    EXPECT_EQ(wifi->glyph(), "network-wireless-connected-75");
+
+    // Covered, they show unscaled and at full strength.
+    secure.finishTransition();
+    testsupport::FakeRenderer renderer;
+    root.render(renderer);
+    const auto drawn = std::find_if(renderer.calls.begin(), renderer.calls.end(),
+                                    [&](const auto &call) { return call.texture && call.rect == node->geometry(); });
+    ASSERT_TRUE(drawn != renderer.calls.end());
+    EXPECT_EQ(drawn->kind, "texture");
+    EXPECT_EQ(drawn->alpha, 1.0f);
+    EXPECT_EQ(drawn->texture->size(), node->geometry().size());
+
+    // A press on them reaches neither them nor the panel.
+    const base::PointF onBattery(node->geometry().x() + battery->geometry().x + battery->geometry().width / 2, 16);
+    ui.onPointerMotion({}, onBattery);
+    ui.onPointerButton({}, onBattery, BTN_LEFT, true);
+    EXPECT_TRUE(!battery->isPressed());
+    EXPECT_TRUE(!battery->isPlateShown());
+    ui.onPointerButton({}, onBattery, BTN_LEFT, false);
+    EXPECT_EQ(backend.authenticateCount, 0);
+
+    // They go with the panel to the screen the pointer is on.
+    pointer = base::PointF(1000, 300);
+    ui.onPointerMotion({}, pointer);
+    EXPECT_TRUE(test::runUntil([&] { return node->geometry().x() + node->geometry().width() == two.right(); }));
+    EXPECT_EQ(node->geometry().y(), 0);
+
+    // Nothing to show, nothing drawn.
+    network.wirelessHwEnabled = false;
+    status->networkIcon()->showNetwork(network);
+    status->batteryIcon()->setVisible(false);
+    ui.refresh();
+    EXPECT_TRUE(!node->isVisible());
+}
+
+TEST(AuthUiTest, StatusIconsAreLightOnADarkWallpaperAndDarkOnALightOne)
+{
+    test::TemporaryDirectory files;
+    ASSERT_TRUE(files.isValid());
+    const auto background = [&](const std::string &name, const std::string &color) {
+        base::Settings settings(files.filePath(name));
+        settings.setValue("Appearance/BackgroundType", 1);
+        settings.setValue("Appearance/BackgroundColor", color);
+        settings.sync();
+        return settings.path();
+    };
+    const std::string dark = background("dark.conf", "#202020");
+    const std::string light = background("light.conf", "#F0F0F0");
+    scene::Node root;
+    session::SecureContainer secure(&root);
+    secure.setSettingsFile(dark, false);
+    session::SessionController controller(&secure);
+    controller.setOutputs({{"one", base::Rect(0, 0, 800, 600)}});
+    FakeBackend backend;
+    auth::AuthUi ui(&controller, nullptr, &backend);
+    EXPECT_TRUE(controller.requestLock());
+    ui.refresh();
+    ASSERT_TRUE(ui.status());
+    EXPECT_TRUE(test::runUntil([&] { return ui.status()->lightContents(); }));
+    secure.setSettingsFile(light, true);
+    EXPECT_TRUE(test::runUntil([&] { return !ui.status()->lightContents(); }));
 }

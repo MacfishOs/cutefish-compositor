@@ -5,6 +5,7 @@
 #include "auth/auth_ui.h"
 #include "core/main_loop.h"
 #include "auth/auth_controller.h"
+#include "auth/auth_status.h"
 #include "auth/auth_view.h"
 #include "auth/greetd_backend.h"
 #include "auth/login_sessions.h"
@@ -13,8 +14,12 @@
 #include "input/xkb_tracker.h"
 #include "scene/node.h"
 #include "session/session_controller.h"
+#include "shell/wallpaper/bar_backdrop.h"
 #include "toolkit/toolkit_host.h"
 #include "ui/embedded_window.h"
+#include "ui/theme.h"
+#include <algorithm>
+#include <cmath>
 #include <linux/input-event-codes.h>
 #include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
@@ -66,6 +71,39 @@ protected:
             return;
         }
         renderer.drawTextureTransformed(texture, geometry, transform, sample.panelOpacity);
+    }
+
+private:
+    AuthUi *m_ui;
+    const session::SecureContainer *m_secure;
+};
+
+// The Wi-Fi and battery icons: they fade with the wallpaper and do not scale,
+// as they belong to the screen's edge rather than to the panel.
+class StatusNode final : public scene::Node
+{
+public:
+    StatusNode(AuthUi *ui, const session::SecureContainer *secure)
+        : Node("auth-status")
+        , m_ui(ui)
+        , m_secure(secure)
+    {
+    }
+
+    Content content() const override { return Content::Translucent; }
+
+    void releaseRenderResources() override { m_ui->releaseStatusRenderResources(); }
+
+protected:
+    void paint(render::Renderer &renderer, const base::Rect &geometry) const override
+    {
+        render::Texture *texture = m_ui->statusTexture(renderer);
+        if (!texture)
+            return;
+        const float opacity = m_secure->sample(renderer).backdrop;
+        if (opacity <= 0)
+            return;
+        renderer.drawTextureMapped(texture, geometry, opacity, base::AffineTransform());
     }
 
 private:
@@ -145,6 +183,15 @@ AuthUi::~AuthUi()
     m_session->setAuthInput(nullptr);
     m_session->removeObserver(this);
     clear();
+    m_judgement.cancel();
+    m_wallpaperLoaded.reset();
+    if (m_statusNode) {
+        m_statusNode->parent()->removeChild(m_statusNode);
+        m_statusNode = nullptr;
+    }
+    m_status = nullptr;
+    m_statusPanel.reset();
+    toolkit::destroyWindow(m_statusWindow);
 }
 
 void AuthUi::onSessionStateChanged(session::SessionState state)
@@ -218,6 +265,8 @@ void AuthUi::refresh()
     if (!secure || secure->outputs().empty()) {
         if (m_node)
             m_node->setVisible(false);
+        if (m_statusNode)
+            m_statusNode->setVisible(false);
         return;
     }
     if (!m_attempted) {
@@ -273,6 +322,8 @@ void AuthUi::refresh()
         };
         m_focused = false;
         m_node = secure->authContainer()->addChild(std::make_unique<AuthNode>(this, secure));
+        // The panel stays first; the icons kept from the last lock come after it.
+        secure->authContainer()->lower(m_node);
     }
     if (m_session->isBlocked() && !m_started) {
         m_started = true;
@@ -289,6 +340,7 @@ void AuthUi::refresh()
     m_screen->setBlocked(m_session->isBlocked());
     const session::SecureOutput &target = panelOutput(secure->outputs());
     m_panelOutput = target.name;
+    refreshStatus(target);
     const base::Rect output = target.bounds;
     const double scale = target.scale;
     // The output's full height: the clock at the top, the login column at the bottom.
@@ -381,6 +433,108 @@ void AuthUi::releaseRenderResources()
 {
     if (m_panel)
         m_panel->releaseRenderResources();
+}
+
+void AuthUi::refreshStatus(const session::SecureOutput &target)
+{
+    auto *secure = m_session->secureContainer();
+    if (!m_statusWindow) {
+        toolkit::application();
+        m_statusWindow = std::make_unique<ui::EmbeddedWindow>();
+        m_statusWindow->setBackgroundColor(ui::Color {0, 0, 0, 0});
+        auto status = std::make_unique<AuthStatus>(m_session->state() == session::SessionState::Login);
+        m_status = status.get();
+        m_statusWindow->setContentView(std::move(status));
+        m_statusPanel = std::make_unique<toolkit::PanelTexture>(m_statusWindow.get());
+        // Drawn once while the session is active, as the panel is.
+        m_statusWindow->onRenderRequested = [this] {
+            m_statusDirty = true;
+            if (m_session->isBlocked() || m_statusPanel->image().isNull())
+                scheduleRefresh();
+        };
+        m_statusNode = secure->authContainer()->addChild(std::make_unique<StatusNode>(this, secure));
+        // The loaded wallpaper's node may not be in place yet.
+        m_wallpaperLoaded = secure->wallpaperLoaded.connect([this] { scheduleRefresh(); });
+    }
+    judgeBackdrop();
+
+    const base::Rect output = target.bounds;
+    const int width = std::min(int(std::ceil(m_status->preferredWidth())), output.width());
+    const base::Size size(width, std::min(int(AuthStatus::kHeight), output.height()));
+    m_statusNode->setGeometry(base::Rect(output.x() + output.width() - size.width(), output.y(), size.width(),
+                                         size.height()));
+    m_statusNode->setVisible(!size.isEmpty());
+    if (size.isEmpty())
+        return;
+    if (!(m_statusWindow->size() == ui::SizeF {double(size.width()), double(size.height())})
+        || m_statusScale != target.scale) {
+        m_statusScale = target.scale;
+        m_statusWindow->setScale(target.scale);
+        m_statusWindow->setSize({double(size.width()), double(size.height())});
+        m_statusDirty = true;
+    }
+    if (m_statusDirty) {
+        if (m_session->isBlocked())
+            m_statusNode->notifyChanged();
+        else
+            renderStatusImage();
+    }
+}
+
+void AuthUi::judgeBackdrop()
+{
+    const auto *secure = m_session->secureContainer();
+    const ui::Bitmap image = secure->wallpaperImage(m_panelOutput);
+    if (image.isNull()) {
+        // The system's dark mode while nothing has been judged, as the bar does.
+        if (!m_judged)
+            m_status->setLightContents(ui::Theme::current().darkMode);
+        return;
+    }
+    if (m_panelOutput == m_judgedOutput && image.constBits() == m_judgedPixels)
+        return;
+    m_judgedOutput = m_panelOutput;
+    m_judgedPixels = image.constBits();
+    int outputHeight = 1;
+    for (const session::SecureOutput &output : secure->outputs()) {
+        if (output.name == m_panelOutput)
+            outputHeight = std::max(1, output.bounds.height());
+    }
+    const int barHeight = int(std::lround(AuthStatus::kHeight * image.height() / outputHeight));
+    m_judgement = base::ThreadPool::global().run(
+            [image, barHeight] {
+                return shell::BarBackdrop::styleForSample(shell::BarBackdrop::sampleImage(image, barHeight));
+            },
+            [this](shell::BarBackdrop::Style style) {
+                m_judged = true;
+                m_status->setLightContents(style.useLightForeground);
+            });
+}
+
+ui::Bitmap AuthUi::renderStatusImage()
+{
+    if (!m_statusWindow || !m_statusNode->isVisible())
+        return {};
+    if (m_statusDirty || m_statusPanel->image().isNull()) {
+        m_statusDirty = false;
+        m_statusPanel->renderImage();
+    }
+    return m_statusPanel->image();
+}
+
+render::Texture *AuthUi::statusTexture(render::Renderer &renderer)
+{
+    if (!m_statusWindow || !m_statusNode->isVisible())
+        return nullptr;
+    const bool dirty = m_statusDirty;
+    m_statusDirty = false;
+    return m_statusPanel->texture(renderer, dirty);
+}
+
+void AuthUi::releaseStatusRenderResources()
+{
+    if (m_statusPanel)
+        m_statusPanel->releaseRenderResources();
 }
 
 bool AuthUi::onKey(input::Timestamp, uint32_t code, bool pressed)

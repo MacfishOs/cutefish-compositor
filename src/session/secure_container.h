@@ -13,6 +13,8 @@
 
 #include "base/file_watcher.h"
 #include "base/geometry.h"
+#include "base/signal.h"
+#include "ui/bitmap.h"
 
 namespace cutefish::render {
 class Renderer;
@@ -22,10 +24,6 @@ namespace cutefish::scene {
 class ColorNode;
 class Node;
 } // namespace cutefish::scene
-
-namespace cutefish::ui {
-class Bitmap;
-}
 
 namespace cutefish::session {
 
@@ -95,6 +93,12 @@ public:
     // Every output has its shield, and every shield's wallpaper has finished
     // loading, whether or not it could be read.
     bool isWallpaperReady() const;
+
+    // The picture the output named shows on top, at its device size; null
+    // while none has loaded.
+    ui::Bitmap wallpaperImage(const std::string &output) const;
+    // A wallpaper finished loading, possibly before its node is in place.
+    base::Signal<> wallpaperLoaded;
 
     // Decodes the picture covering `deviceSize`, centre-cropped; `done` runs
     // while the returned handle is kept. The session's desktop shares its

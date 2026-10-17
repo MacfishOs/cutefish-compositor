@@ -7,6 +7,7 @@
 #include "base/dbus.h"
 #include "base/geometry.h"
 #include "base/signal.h"
+#include "base/thread_pool.h"
 #include "base/timer.h"
 #include "input/cursor_shape.h"
 #include "input/event_sink.h"
@@ -49,6 +50,7 @@ namespace cutefish::auth {
 class AuthBackend;
 class AuthController;
 class AuthScreen;
+class AuthStatus;
 
 class AuthUi : public input::EventSink, public session::SessionObserver
 {
@@ -101,6 +103,16 @@ public:
     // drawn on the GPU where the renderer allows.
     render::Texture *panelTexture(render::Renderer &renderer);
     void releaseRenderResources();
+
+    // The Wi-Fi and battery icons in the top-right corner of the panel's
+    // output, in a window of their own: the panel's scales as it comes and
+    // goes, they only fade with the wallpaper.
+    ui::EmbeddedWindow *statusWindow() const { return m_statusWindow.get(); }
+    AuthStatus *status() const { return m_status; }
+    // The icons rendered on the CPU, when they changed.
+    ui::Bitmap renderStatusImage();
+    render::Texture *statusTexture(render::Renderer &renderer);
+    void releaseStatusRenderResources();
     void refresh();
     // The cursor the session shows while it is blocked.
     base::Signal<input::CursorShape> cursorShapeChanged;
@@ -108,6 +120,10 @@ public:
 private:
     void clear();
     void scheduleRefresh();
+    void refreshStatus(const session::SecureOutput &target);
+    // Light or dark icons from the wallpaper under them, as the status bar
+    // judges its own.
+    void judgeBackdrop();
     const session::SecureOutput &
     panelOutput(const std::vector<session::SecureOutput> &outputs) const;
     bool sendKey(uint32_t code, bool pressed, bool repeat);
@@ -146,6 +162,19 @@ private:
     session::SessionState m_state = session::SessionState::Active;
     bool m_dirty = true;
     uint64_t m_imageGeneration = 0;
+    // Kept from lock to lock, unlike the panel.
+    std::unique_ptr<ui::EmbeddedWindow> m_statusWindow;
+    std::unique_ptr<toolkit::PanelTexture> m_statusPanel;
+    AuthStatus *m_status = nullptr;
+    scene::Node *m_statusNode = nullptr;
+    double m_statusScale = 1;
+    bool m_statusDirty = true;
+    base::Subscription m_wallpaperLoaded;
+    base::Job m_judgement;
+    // What the icons were last judged against.
+    std::string m_judgedOutput;
+    const void *m_judgedPixels = nullptr;
+    bool m_judged = false;
 };
 } // namespace cutefish::auth
 #endif

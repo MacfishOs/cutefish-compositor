@@ -158,10 +158,12 @@ class WallpaperNode final : public scene::Node
 {
 public:
     // `fadesIn` over the wallpaper below it, which goes once it is covered.
-    WallpaperNode(const SecureContainer *container, const base::Size &size, double scale, bool fadesIn)
+    WallpaperNode(const SecureContainer *container, const base::Size &size, double scale, bool fadesIn,
+                  std::function<void()> onLoaded)
         : Node("lock-wallpaper")
         , m_container(container)
         , m_fadesIn(fadesIn)
+        , m_onLoaded(std::move(onLoaded))
         , m_covered(core::mainLoop())
     {
         setGeometry(base::Rect(size));
@@ -191,6 +193,8 @@ public:
     Content content() const override { return Content::Translucent; }
 
     bool isLoaded() const { return m_loaded; }
+
+    const ui::Bitmap &image() const { return m_image; }
 
     void releaseRenderResources() override { m_texture.reset(); }
 
@@ -227,6 +231,8 @@ private:
             m_covered.start(std::chrono::milliseconds(int(kWallpaperFadeMs)));
         }
         notifyChanged();
+        if (m_onLoaded)
+            m_onLoaded();
     }
 
     double fade(const render::Renderer &renderer) const
@@ -246,6 +252,7 @@ private:
 
     const SecureContainer *m_container;
     const bool m_fadesIn;
+    std::function<void()> m_onLoaded;
     base::Job m_loader;
     std::shared_ptr<void> m_request;
     ui::Bitmap m_image;
@@ -402,6 +409,21 @@ bool SecureContainer::isWallpaperReady() const
     });
 }
 
+ui::Bitmap SecureContainer::wallpaperImage(const std::string &output) const
+{
+    for (size_t i = 0; i < m_outputs.size() && i < m_shieldRects.size(); ++i) {
+        if (m_outputs[i].name != output)
+            continue;
+        const auto &children = m_shieldRects[i]->children();
+        for (auto it = children.rbegin(); it != children.rend(); ++it) {
+            const auto *wallpaper = dynamic_cast<const WallpaperNode *>(*it);
+            if (wallpaper && wallpaper->isLoaded() && !wallpaper->image().isNull())
+                return wallpaper->image();
+        }
+    }
+    return {};
+}
+
 void SecureContainer::setSettingsFile(const std::string &path, bool crossfade)
 {
     if (path == m_settingsFile)
@@ -467,7 +489,7 @@ void SecureContainer::rebuildShield(bool crossfade)
         if (core::mainLoop())
             shield->addChild(
                     std::make_unique<WallpaperNode>(this, m_outputs[i].bounds.size(),
-                                                    m_outputs[i].scale, shown));
+                                                    m_outputs[i].scale, shown, [this] { wallpaperLoaded(); }));
     }
 }
 
