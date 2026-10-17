@@ -53,10 +53,18 @@ ShellWindow *ShellHost::windowFor(const ui::EmbeddedWindow *window) const
 
 void ShellHost::windowDestroying(ShellWindow *window)
 {
+    m_glassDark.erase(window->window());
     if (m_textInput)
         m_textInput->windowDestroying(window);
     if (m_drag)
         m_drag->windowDestroying(window);
+}
+
+void ShellHost::frameStarting(ShellWindow *window)
+{
+    const auto it = m_glassDark.find(window->window());
+    if (it != m_glassDark.end() && it->second != ui::Theme::current().darkMode)
+        blurChanged(window->window());
 }
 
 void ShellHost::popupShown(ui::EmbeddedWindow *popup)
@@ -120,6 +128,7 @@ void ShellHost::blurChanged(ui::EmbeddedWindow *window)
     // FishUI's popups (menus, drop-downs) sit on PopupGlass, outlined and
     // masked by their bubble.
     const bool dark = ui::Theme::current().darkMode;
+    m_glassDark[window] = dark;
     shellWindow->setBackgroundBlur(base::Rect(left, top, int(std::lround(rect.x + rect.width)) - left,
                                               int(std::lround(rect.y + rect.height)) - top),
                                    int(std::lround(window->blurRadius())),

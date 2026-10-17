@@ -414,6 +414,13 @@ public:
     }
 
 protected:
+    // A theme change lays every window out again.
+    void layout() override
+    {
+        if (m_overlay->m_glassDark != ui::Theme::current().darkMode)
+            m_overlay->updateGlass();
+    }
+
     void hoverChanged() override
     {
         if (!isHovered()) {

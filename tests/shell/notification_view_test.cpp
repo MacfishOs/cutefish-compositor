@@ -223,7 +223,8 @@ TEST(NotificationMarkupTest, ReadsStyledText)
     EXPECT_EQ(700, spans[1].weight);
     EXPECT_EQ("bold", spans[1].text);
     EXPECT_EQ("link", spans[3].text);
-    EXPECT_EQ(link, spans[3].color);
+    ASSERT_TRUE(spans[3].color);
+    EXPECT_EQ(link, spans[3].color->fixedColor());
     EXPECT_EQ("x", spans[3].link);
 
     const auto styled = shell::styledTextSpans("<i>it</i><u>under</u><a href='https://e.org/a b'>go</a>", link);

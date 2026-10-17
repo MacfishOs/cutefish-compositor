@@ -448,6 +448,8 @@ void ShellWindow::produceFrame(render::Renderer &renderer, uint64_t frameTimeNs)
         return;
     m_texture->setFrameTime(frameTimeNs);
     m_producing = true;
+    if (m_window && m_shell->host())
+        m_shell->host()->frameStarting(this);
     std::shared_ptr<render::Texture> texture = m_texture->sharedTexture(renderer, true);
     m_producing = false;
     if (!texture || !m_shown)

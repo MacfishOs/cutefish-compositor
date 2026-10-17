@@ -42,6 +42,8 @@ public:
 
     // Called by ShellWindow; not part of the public API.
     void windowDestroying(ShellWindow *window);
+    // Called by ShellWindow before it renders a frame; not part of the public API.
+    void frameStarting(ShellWindow *window);
 
     // ui::EmbeddedHost:
     void popupShown(ui::EmbeddedWindow *popup) override;
@@ -59,6 +61,8 @@ private:
     // Popups let go of, destroyed on the next loop turn: the toolkit hides a
     // popup from inside input the seat is still dispatching to its surface.
     std::vector<std::unique_ptr<ShellWindow>> m_released;
+    // The dark mode each window's glass was tinted for.
+    std::map<const ui::EmbeddedWindow *, bool> m_glassDark;
     std::unique_ptr<ShellDrag> m_drag;
     std::unique_ptr<ShellTextInput> m_textInput;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);

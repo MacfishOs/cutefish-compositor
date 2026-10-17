@@ -107,7 +107,7 @@ public:
         m_kind = entry.kind;
         m_title->setText(model.title(row));
         const ui::Theme &theme = ui::Theme::current();
-        m_title->setColor(selected ? theme.highlightedText : theme.text);
+        m_title->setColor(selected ? ui::ColorId::HighlightedText : ui::ColorId::Text);
         m_title->setFontSize(theme.fontSize());
         m_title->setFontFamily(theme.fontFamily);
 
@@ -342,10 +342,10 @@ void ClipboardPickerView::reset()
     m_filter->setFontSize(theme.fontSize() * 1.4);
     m_previewText->setFontSize(theme.fontSize());
     m_previewText->setFontFamily(theme.fontFamily);
-    m_previewText->setColor(theme.text);
+    m_previewText->setColor(ui::ColorId::Text);
     m_empty->setFontSize(theme.fontSize() * 1.2);
     m_empty->setFontFamily(theme.fontFamily);
-    m_empty->setColor(theme.disabledText);
+    m_empty->setColor(ui::ColorId::DisabledText);
     m_overlay->updateFont();
 
     setConfirmingClear(false);

@@ -56,6 +56,7 @@ public:
         m_text->setFontSize(kTextSize);
         m_text->setWrap(true);
         m_text->setFixedLineHeight(20);
+        m_text->setColor(ui::ColorId::DisabledText);
         m_cancel = addChild<ui::DialogButton>("Cancel");
         m_cancel->onClicked = [this] { m_dialog->finish(false); };
         m_confirm = addChild<ui::DialogButton>(std::string(), true);
@@ -93,8 +94,6 @@ public:
 protected:
     void layout() override
     {
-        const ui::Theme &theme = ui::Theme::current();
-        m_text->setColor(theme.disabledText);
         const double width = geometry().width;
         m_close->setGeometry({width - kCloseMargin - kCloseButton, kCloseMargin, kCloseButton, kCloseButton});
         const double textWidth = this->textWidth();

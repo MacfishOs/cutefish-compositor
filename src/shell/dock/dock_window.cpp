@@ -138,6 +138,13 @@ protected:
             m_dock->hideTooltip();
     }
 
+    // A theme change lays every window out again.
+    void layout() override
+    {
+        if (m_dock->m_glassDark != ui::Theme::current().darkMode)
+            m_dock->updateGlass();
+    }
+
     void paint(ui::Painter &painter) override
     {
         const ui::Color line = ui::color(toolkit::CompositorColor::DockDivider);
@@ -798,6 +805,7 @@ void DockWindow::updateGlass()
     // GlassEffect's radius: whole pixels, at most half the region.
     const double radius = std::min(cornerRadius(),
                                    double(std::min(m_panelRect.width(), m_panelRect.height())) / 2);
+    m_glassDark = ui::Theme::current().darkMode;
     m_window->setBackgroundBlur(m_panelRect, int(std::lround(radius)), glass());
 }
 

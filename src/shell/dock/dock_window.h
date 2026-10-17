@@ -193,6 +193,8 @@ private:
     DrawnDockMetrics m_drawn;
     base::Rect m_windowRect;
     base::Rect m_panelRect;
+    // The dark mode the glass was tinted for.
+    bool m_glassDark = false;
     base::RectF m_divider;
     base::RectF m_trailingDivider;
     double m_trailingOpacity = 0;
