@@ -136,12 +136,15 @@ void DragOffer::receive(const std::string &mime, int fd)
 bool DragOffer::finish()
 {
     const auto alive = weak_from_this().lock();
-    if (m_state != State::Dropped || !m_source || !m_source->alive() || m_mime.empty() || !m_action
-        || m_action == 4)
+    if (m_state != State::Dropped || !m_source || m_mime.empty() || !m_action || m_action == 4)
         return false;
     m_state = State::Finished;
-    m_source->finished();
-    m_source->invalidate();
+    // A source gone since the drop has nobody left to tell; the finish is
+    // still a timely one.
+    if (m_source->alive()) {
+        m_source->finished();
+        m_source->invalidate();
+    }
     return true;
 }
 

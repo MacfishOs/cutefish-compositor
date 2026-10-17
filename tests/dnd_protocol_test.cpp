@@ -623,6 +623,33 @@ TEST(DndProtocol, AnOfferDestroyedAfterTheDropWithoutFinishCancelsTheSource)
     EXPECT_FALSE(h.seat.cursorOverride());
 }
 
+// The source owner quitting after the drop does not make the target's finish
+// untimely.
+TEST(DndProtocol, FinishingAfterTheSourceWentAwayIsNoError)
+{
+    Harness h;
+    auto &a = h.addClient();
+    auto &b = h.addClient();
+    map(h, a, 0);
+    map(h, b, 150);
+    auto *source = start(h, a);
+    h.seat.onPointerMotion({}, {160, 10});
+    h.sync(b);
+    accept(h, b);
+    h.seat.onPointerButton({}, {160, 10}, BTN_LEFT, false);
+    h.sync(b);
+    h.sync(a);
+    ASSERT_EQ(1u, b.drops);
+    ASSERT_EQ(1u, a.performed);
+    wl_data_source_destroy(source);
+    std::erase(a.sources, source);
+    h.sync(a);
+    EXPECT_EQ("", h.receive(b, b.dragOffer, "text/plain"));
+    wl_data_offer_finish(b.dragOffer);
+    h.sync(b);
+    EXPECT_EQ(0, wl_display_get_error(b.display));
+}
+
 // Exo's PointerTest.DragDropAndPointerEnterLeaveEvents: the origin loses
 // pointer focus once when the drag starts and sees no pointer input while it
 // runs. Exo re-enters on the next motion after Ash's nested drag loop; here the
