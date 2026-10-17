@@ -58,11 +58,12 @@ Value sortedMembers(const Value &value)
     return Value::object(std::move(members));
 }
 
-Value describe(const wm::Window *window, bool withTitle)
+Value describe(const wm::Window *window)
 {
     Value object = Value::object({
             {"id", std::to_string(window->id())},
             {"appId", window->applicationId()},
+            {"title", window->title()},
             {"popup", window->isPopup()},
             {"role", wm::toString(window->role())},
             {"state", wm::toString(window->stateType())},
@@ -74,8 +75,6 @@ Value describe(const wm::Window *window, bool withTitle)
             {"contentBounds", rectArray(window->contentBounds())},
             {"minimizedGeometry", rectArray(window->minimizedGeometry())},
     });
-    if (withTitle)
-        object.insert("title", window->title());
     if (const auto *animation = dynamic_cast<const scene::WindowAnimation *>(window->node())) {
         object.insert("opacity", double(animation->opacity()));
         object.insert("scale", double(animation->targetPresentationScale()));
@@ -184,16 +183,15 @@ bool WindowDebugService::registerService()
 
 std::string WindowDebugService::ListWindows() const
 {
-    const bool withTitles = isGateOpen();
     Value::Array windows;
     for (const wm::Window *window : m_manager->windows())
-        windows.push_back(describe(window, withTitles));
+        windows.push_back(describe(window));
     return sortedMembers(Value(std::move(windows))).serialize();
 }
 
 bool WindowDebugService::MoveWindow(uint64_t id, int x, int y)
 {
-    wm::Window *window = isGateOpen() ? m_manager->windowById(id) : nullptr;
+    wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
     window->requestBounds(base::Rect(base::Point(x, y), window->bounds().size()));
@@ -202,7 +200,7 @@ bool WindowDebugService::MoveWindow(uint64_t id, int x, int y)
 
 bool WindowDebugService::SetWindowBounds(uint64_t id, int x, int y, int width, int height)
 {
-    wm::Window *window = isGateOpen() ? m_manager->windowById(id) : nullptr;
+    wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
     window->requestBounds(base::Rect(x, y, width, height));
@@ -211,7 +209,7 @@ bool WindowDebugService::SetWindowBounds(uint64_t id, int x, int y, int width, i
 
 bool WindowDebugService::ActivateWindow(uint64_t id)
 {
-    wm::Window *window = isGateOpen() ? m_manager->windowById(id) : nullptr;
+    wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
     window->activate();
@@ -220,7 +218,7 @@ bool WindowDebugService::ActivateWindow(uint64_t id)
 
 bool WindowDebugService::MinimizeWindow(uint64_t id)
 {
-    wm::Window *window = isGateOpen() ? m_manager->windowById(id) : nullptr;
+    wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
     window->minimize();
@@ -229,7 +227,7 @@ bool WindowDebugService::MinimizeWindow(uint64_t id)
 
 bool WindowDebugService::SnapWindow(uint64_t id, bool primary)
 {
-    wm::Window *window = isGateOpen() ? m_manager->windowById(id) : nullptr;
+    wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
     if (primary)
@@ -241,7 +239,7 @@ bool WindowDebugService::SnapWindow(uint64_t id, bool primary)
 
 bool WindowDebugService::RestoreWindow(uint64_t id)
 {
-    wm::Window *window = isGateOpen() ? m_manager->windowById(id) : nullptr;
+    wm::Window *window = m_manager->windowById(id);
     if (!window)
         return false;
     window->restore();
@@ -253,19 +251,16 @@ std::vector<std::string> WindowDebugService::OutputStats() const
     return m_outputStats ? m_outputStats() : std::vector<std::string>();
 }
 
-bool WindowDebugService::isGateOpen() const
+bool WindowDebugService::acceptsInput() const
 {
-    if (m_gate.empty())
+    if (!m_input)
+        return false;
+    if (m_inputGate.empty())
         return true;
     // lstat: a symlink to a root-owned file is not the administrator's switch.
     struct stat info = {};
-    return lstat(m_gate.c_str(), &info) == 0 && S_ISREG(info.st_mode) && info.st_uid == 0
+    return lstat(m_inputGate.c_str(), &info) == 0 && S_ISREG(info.st_mode) && info.st_uid == 0
             && !(info.st_mode & (S_IWGRP | S_IWOTH));
-}
-
-bool WindowDebugService::acceptsInput() const
-{
-    return m_input && isGateOpen();
 }
 
 bool WindowDebugService::PointerMotion(double x, double y)

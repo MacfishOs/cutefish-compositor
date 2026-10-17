@@ -39,12 +39,11 @@ public:
 
     // The input methods below feed it as a device would.
     void setInput(input::InputManager *input) { m_input = input; }
-    // A real session changes windows, takes input and names window titles
-    // only while the file at `path` exists, belongs to root and only root may
-    // write it: whoever can make it can already inject input through uinput,
-    // so a caller gains nothing new. Unset, as headless, the gate is open.
-    void setGate(std::string path) { m_gate = std::move(path); }
-    bool isGateOpen() const;
+    // A real session takes that input only while the file at `path` exists,
+    // belongs to root and only root may write it: whoever can make it can
+    // already inject input through uinput, so a caller gains nothing new.
+    // Unset, as headless, the input is always taken.
+    void setInputGate(std::string path) { m_inputGate = std::move(path); }
     bool acceptsInput() const;
 
     // Supplies one scheduling stats line per output, as the compositor logs on
@@ -55,11 +54,10 @@ public:
     }
 
     // Every window bottom to top, as a JSON array. Rects are [x, y, width,
-    // height] in logical output coordinates. Titles only while the gate is
-    // open.
+    // height] in logical output coordinates.
     std::string ListWindows() const;
     // Each goes through the window's state machine, as a user's move would.
-    // False when no window has that id, or while the gate is closed.
+    // False when no window has that id.
     bool MoveWindow(uint64_t id, int x, int y);
     bool SetWindowBounds(uint64_t id, int x, int y, int width, int height);
     bool ActivateWindow(uint64_t id);
@@ -80,7 +78,7 @@ public:
 private:
     wm::WindowManager *m_manager;
     input::InputManager *m_input = nullptr;
-    std::string m_gate;
+    std::string m_inputGate;
     std::function<std::vector<std::string>()> m_outputStats;
     base::dbus::Connection *m_bus;
     std::unique_ptr<base::dbus::Object> m_object;
