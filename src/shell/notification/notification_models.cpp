@@ -313,8 +313,11 @@ void NotificationBanners::invokeAction(uint32_t id, const std::string &actionKey
 
 void NotificationBanners::add(const Notification &notification)
 {
-    if (m_bannersSuppressed || m_settings.doNotDisturb()
-        || m_settings.applicationMode(notification.applicationKey()) == NotificationSettings::CenterOnly) {
+    const bool critical = notification.urgency >= 2;
+    if (m_bannersSuppressed
+        || (!critical
+            && (m_settings.doNotDisturb()
+                || m_settings.applicationMode(notification.applicationKey()) == NotificationSettings::CenterOnly))) {
         m_history.add(notification);
         return;
     }

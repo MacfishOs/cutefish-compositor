@@ -269,6 +269,13 @@ TEST_F(NotificationServiceTest, FollowsTheApplicationModesAndDoNotDisturb)
     settle();
     EXPECT_EQ(notifications->banners().count(), 0);
     EXPECT_EQ(notifications->history().count(), 2);
+
+    // A critical notification shows as a banner through both.
+    notify("Battery", 0, {{"urgency", dbus::Variant(uint8_t(2))}});
+    settle();
+    ASSERT_EQ(notifications->banners().count(), 1);
+    EXPECT_EQ(notifications->banners().notifications().front().summary, "Battery");
+    EXPECT_EQ(notifications->history().count(), 2);
 }
 
 TEST_F(NotificationServiceTest, KeepsAtMostFiveBanners)
