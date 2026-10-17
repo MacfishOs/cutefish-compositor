@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 #include <wayland-server-core.h>
 
@@ -42,6 +43,13 @@ public:
 
     bool isTrusted(const wl_client *client) const { return client && client == m_shell.client; }
 
+    // A connection for a capture helper the compositor starts, such as the
+    // screen recorder: the client on one end of a new socketpair may capture,
+    // as long as it lasts, whatever executable runs on the other. Returns that
+    // other end for the caller to hand to the helper and close, or -1.
+    int createCaptureConnection();
+    bool isCaptureConnection(const wl_client *client) const;
+
     // Globals only the trusted shell may see or bind.
     void addPrivateGlobal(wl_global *global);
     void addRestrictedGlobal(wl_global *global, std::function<bool(const wl_client *)> authorize);
@@ -72,6 +80,7 @@ private:
 
     wl_display *m_display = nullptr;
     TrustedConnection m_shell {nullptr, "shell", {}, false};
+    std::vector<std::unique_ptr<TrustedConnection>> m_captureConnections;
     std::vector<wl_global *> m_privateGlobals;
     std::map<const wl_global *, std::function<bool(const wl_client *)>> m_restrictedGlobals;
 };

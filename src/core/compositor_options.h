@@ -47,6 +47,11 @@ struct CompositorOptions {
     bool demoEnabled() const { return wmDemo || wmDemoScript; }
 };
 
+// The executables whose processes may capture outputs: the portal backend and
+// those given with --capture-client. The screenshot tool and the recorder are
+// not among them: anyone could run them.
+std::vector<std::string> captureExecutables(const CompositorOptions &options);
+
 } // namespace cutefish::core
 
 #endif // CUTEFISH_CORE_COMPOSITOR_OPTIONS_H_

@@ -7,7 +7,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <utility>
 
 #include "accelerators/accelerator_configuration.h"
@@ -112,13 +111,6 @@ std::vector<std::string> withExecutables(std::vector<std::string> builtIn,
 {
     builtIn.insert(builtIn.end(), added.begin(), added.end());
     return builtIn;
-}
-
-// Where this executable lives, for the tools installed next to it.
-std::string executableDirectory()
-{
-    std::error_code error;
-    return std::filesystem::read_symlink("/proc/self/exe", error).parent_path();
 }
 
 // Fire and forget, as the session's AppRuntime answers nothing of use here.
@@ -738,12 +730,10 @@ shell::ScreenCaptureServices CompositorShell::screenCaptureServices(shell::DockW
     services.selection = m_seat.selection();
     services.settingsPath = preferencesFile("shell");
     services.recorder = CUTEFISH_SCREEN_RECORDER;
-    // The recorder is a capture client of its own, on the public socket.
     services.recorderEnvironment = childEnvironment();
-    std::erase_if(services.recorderEnvironment, [](const std::string &entry) {
-        return entry.starts_with("WAYLAND_DISPLAY=") || entry.starts_with("WAYLAND_SOCKET=");
-    });
-    services.recorderEnvironment.push_back("WAYLAND_DISPLAY=" + socketName());
+    services.recorderConnection = [this] {
+        return m_globals ? m_globals->privileged()->createCaptureConnection() : -1;
+    };
     services.dock = [dockWindow]() -> std::optional<shell::CaptureDock> {
         shell::ShellWindow *window = dockWindow->window();
         if (!window || !window->wmWindow())
@@ -765,9 +755,7 @@ bool CompositorShell::initWayland()
 
     m_security = std::make_unique<wayland::ExecutableSecurityDelegate>(
             withExecutables({"/usr/bin/cutefish-services"}, m_options.clipboardClients),
-            withExecutables({executableDirectory() + "/cutefish-screenshot",
-                             CUTEFISH_PORTAL_BACKEND, CUTEFISH_SCREEN_RECORDER},
-                            m_options.captureClients),
+            captureExecutables(m_options),
             // Permission prompts and authentication dialogs.
             std::vector<std::string> {"/usr/bin/cutefish-services",
                                       "/usr/bin/cutefish-polkit-agent"},

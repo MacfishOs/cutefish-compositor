@@ -925,9 +925,9 @@ add_executable(cutefish-compositor
 )
 target_link_libraries(cutefish-compositor PRIVATE cutefish-display-runtime
     cutefish-auth cutefish-switcher cutefish-shell cutefish-wayland-globals cutefish-headless)
-# The portal backend streams outputs to PipeWire through the same capture
-# globals as cutefish-screenshot, and cutefish-core's screen recorder encodes them
-# to files, so both are allowlisted by their installed paths.
+# The portal backend streams outputs to PipeWire through the capture globals and
+# is allowlisted by its installed path; cutefish-core's screen recorder is started
+# by the shell on a capture connection of its own.
 target_compile_definitions(cutefish-compositor PRIVATE
     CUTEFISH_PORTAL_BACKEND="${CMAKE_INSTALL_FULL_LIBEXECDIR}/xdg-desktop-portal-cutefish"
     CUTEFISH_SCREEN_RECORDER="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-screenrecorder")
@@ -940,8 +940,7 @@ target_link_libraries(cutefish-compositor
 
 pkg_check_modules(WaylandCaptureClient REQUIRED IMPORTED_TARGET wayland-client)
 add_executable(cutefish-screenshot src/tools/screenshot.cpp)
-target_link_libraries(cutefish-screenshot PRIVATE cutefish-protocols PkgConfig::WaylandCaptureClient
-    Cutefish::Toolkit)
+target_link_libraries(cutefish-screenshot PRIVATE PkgConfig::WaylandCaptureClient Cutefish::ToolkitBase)
 
 add_executable(cutefish-displayctl src/tools/displayctl.cpp)
 target_link_libraries(cutefish-displayctl PRIVATE cutefish-display-ipc Cutefish::ToolkitBase)

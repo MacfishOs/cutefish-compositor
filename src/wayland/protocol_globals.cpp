@@ -163,14 +163,15 @@ bool ProtocolGlobals::registerClipboard()
 
 bool ProtocolGlobals::registerCapture()
 {
-    // The shell takes screenshots itself; recordings run in an allowlisted helper.
+    // The shell takes screenshots itself; recordings run in a helper it starts on
+    // a capture connection.
     // The computer-use service reads the screen only while the user lets it
     // control the computer, but binds the output managers beforehand: it cannot
     // bind once it has dropped its /proc identity. It never sees window lists.
     const auto authorize = [security = m_deps.security, privileged = m_privileged.get(),
                             control = m_deps.computerControl](const wl_client *client) {
-        return privileged->isTrusted(client) || security->canCaptureOutputs(client)
-                || (control && control->allowsCapture(client));
+        return privileged->isTrusted(client) || privileged->isCaptureConnection(client)
+                || security->canCaptureOutputs(client) || (control && control->allowsCapture(client));
     };
     const auto visible = [security = m_deps.security, authorize](const wl_client *client) {
         return authorize(client) || security->canControlComputer(client);

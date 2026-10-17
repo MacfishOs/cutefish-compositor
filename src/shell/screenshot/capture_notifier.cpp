@@ -109,9 +109,19 @@ ui::Bitmap CaptureNotifier::thumbnail(const ui::Bitmap &image)
 
 void CaptureNotifier::notifyCopied(const ui::Bitmap &image)
 {
+    notifyPicture("Copied to the clipboard", image);
+}
+
+void CaptureNotifier::notifyTaken(const ui::Bitmap &image)
+{
+    notifyPicture("Taken from the command line", image);
+}
+
+void CaptureNotifier::notifyPicture(const std::string &body, const ui::Bitmap &image)
+{
     m_thumbnails.push_back(base::runInThread([image] { return thumbnail(image); },
-                                             [this](ui::Bitmap small) {
-                                                 notify("Screenshot", "Copied to the clipboard", {}, {}, small);
+                                             [this, body](ui::Bitmap small) {
+                                                 notify("Screenshot", body, {}, {}, small);
                                                  std::erase_if(m_thumbnails, [](const base::Job &job) {
                                                      return !job.isPending();
                                                  });

@@ -11,7 +11,6 @@
 #include <ext-image-copy-capture-v1-client-protocol.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <wayland-client.h>
 #include <wayland-server-core.h>
@@ -22,7 +21,6 @@
 #include "scene/scene.h"
 #include "session/secure_container.h"
 #include "session/session_controller.h"
-#include "temporary_directory.h"
 #include "ui/bitmap.h"
 #include "wayland/protocols/image_capture.h"
 #include "wayland/protocols/wl_output.h"
@@ -806,58 +804,6 @@ TEST_F(ImageCaptureTest, InvalidDamageIsProtocolError)
     EXPECT_FALSE(roundtrip());
     EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
               EXT_IMAGE_COPY_CAPTURE_FRAME_V1_ERROR_INVALID_BUFFER_DAMAGE);
-}
-
-TEST_F(ImageCaptureTest, ScreenshotExecutableWritesPng)
-{
-    test::TemporaryDirectory directory;
-    ASSERT_TRUE(directory.isValid());
-    const std::string path = directory.filePath("capture.png");
-    int sockets[2];
-    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets), 0);
-    const pid_t child = fork();
-    ASSERT_GE(child, 0);
-    if (child == 0) {
-        if (dup2(sockets[1], 198) < 0)
-            _exit(126);
-        setenv("WAYLAND_SOCKET", "198", 1);
-        execl(SCREENSHOT_EXECUTABLE, SCREENSHOT_EXECUTABLE, "--cursor", path.c_str(), nullptr);
-        _exit(127);
-    }
-    close(sockets[1]);
-    ASSERT_NE(wl_client_create(server, sockets[0]), nullptr);
-    const auto started = std::chrono::steady_clock::now();
-    bool cursors = false;
-    bool changed = false;
-    int status = 0;
-    pid_t exited = 0;
-    while (std::chrono::steady_clock::now() - started < std::chrono::milliseconds(7000)) {
-        wl_event_loop_dispatch(wl_display_get_event_loop(server), 10);
-        manager->renderPending(renderer, [&](bool include) {
-            cursors = include;
-        });
-        if (cursors && !changed) {
-            changed = true;
-            model.pixelSize = {32, 24};
-            wayland::updateOutputGlobal(outputGlobal, &model);
-        }
-        manager->presented(17, 1234567890);
-        wl_display_flush_clients(server);
-        exited = waitpid(child, &status, WNOHANG);
-        if (exited != 0)
-            break;
-    }
-    if (exited == 0) {
-        kill(child, SIGKILL);
-        waitpid(child, &status, 0);
-    }
-    ASSERT_EQ(exited, child);
-    ASSERT_TRUE(WIFEXITED(status));
-    ASSERT_EQ(WEXITSTATUS(status), 0);
-    EXPECT_TRUE(cursors);
-    const ui::Bitmap image = ui::Bitmap::decodeFile(path);
-    ASSERT_EQ(image.size(), base::Size(8, 6));
-    EXPECT_EQ(image.pixel(0, 0), 0xff0c2238u);
 }
 
 TEST_F(ImageCaptureTest, TruncatedDestinationFailsWithoutExtendingFile)

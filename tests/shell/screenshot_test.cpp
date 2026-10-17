@@ -12,6 +12,9 @@
 
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
@@ -563,6 +566,44 @@ TEST_F(ScreenshotTest, ServesComCutefishScreenshot)
     EXPECT_EQ("outputs 1", grabber->calls.back());
 }
 
+// cutefish-screenshot captures nothing itself: the shell takes the picture,
+// with the shutter and a notification, and hands it over.
+TEST_F(ScreenshotTest, TheCommandLineToolGetsItsPictureFromTheShell)
+{
+    base::dbus::Connection *bus = base::dbus::Connection::session(core::mainLoop());
+    ASSERT_NE(nullptr, bus);
+    makeShell(bus);
+    ASSERT_TRUE(capture->registerService());
+    const auto run = [](std::vector<std::string> arguments) {
+        const pid_t child = fork();
+        if (child == 0) {
+            std::vector<char *> argv {const_cast<char *>(SCREENSHOT_EXECUTABLE)};
+            for (std::string &argument : arguments)
+                argv.push_back(argument.data());
+            argv.push_back(nullptr);
+            execv(SCREENSHOT_EXECUTABLE, argv.data());
+            _exit(127);
+        }
+        int status = -1;
+        EXPECT_TRUE(test::runUntil([&] { return waitpid(child, &status, WNOHANG) == child; },
+                                   std::chrono::seconds(10)));
+        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    };
+
+    const std::string path = directory.filePath("screen.png");
+    EXPECT_EQ(0, run({"--cursor", path}));
+    EXPECT_EQ("outputs 1 cursor", grabber->calls.back());
+    EXPECT_EQ(1, shutters);
+    const ui::Bitmap image = ui::Bitmap::decodeFile(path);
+    EXPECT_EQ(grabber->outputSize, image.size());
+    EXPECT_EQ(0xff336699u, image.pixel(0, 0));
+
+    const std::string missing = directory.filePath("missing.png");
+    EXPECT_EQ(1, run({"--output", "HDMI-9", missing}));
+    EXPECT_FALSE(std::filesystem::exists(missing));
+    EXPECT_EQ(1, shutters);
+}
+
 TEST(ScreenshotHelpers, PicturesAreTurnedUpright)
 {
     ui::Bitmap image(base::Size(3, 2), ui::Bitmap::Format::Argb32Premultiplied);
@@ -592,6 +633,58 @@ TEST(ScreenshotHelpers, TheRecorderIsToldWhatToRecord)
     window.cursor = false;
     EXPECT_EQ((std::vector<std::string> {"--window", "cutefish-42", "/tmp/b.mp4"}),
               shell::ScreenRecording::arguments(window, "/tmp/b.mp4"));
+}
+
+// The recorder captures on a connection the compositor made for it, never by
+// finding the public socket.
+TEST(ScreenshotHelpers, TheRecorderRunsOnTheConnectionItIsGiven)
+{
+    test::TemporaryDirectory directory;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(directory.write("recorder", "#!/bin/sh\n"
+                                            "[ \"$WAYLAND_SOCKET\" = 3 ] && [ -z \"$WAYLAND_DISPLAY\" ] || exit 3\n"
+                                            "printf connected >&3\n"
+                                            "echo started\n"
+                                            "read line\n"));
+    ASSERT_EQ(0, chmod(directory.filePath("recorder").c_str(), 0755));
+    int compositorEnd = -1;
+    shell::ScreenRecording recording(directory.filePath("recorder"), {"WAYLAND_DISPLAY=wayland-0", "PATH=/usr/bin:/bin"},
+                                     [&compositorEnd] {
+                                         int fds[2];
+                                         if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds))
+                                             return -1;
+                                         compositorEnd = fds[0];
+                                         return fds[1];
+                                     });
+    std::optional<bool> ok;
+    base::Subscription finished = recording.finished.connect([&](bool success, const std::string &) { ok = success; });
+    bool started = false;
+    base::Subscription changed = recording.recordingChanged.connect([&] { started = true; });
+    shell::ScreenRecording::Target target;
+    target.output = "eDP-1";
+    ASSERT_TRUE(recording.start(target, directory.filePath("a.mp4")));
+    ASSERT_GE(compositorEnd, 0);
+    ASSERT_TRUE(test::runUntil([&] { return started || ok.has_value(); }));
+    ASSERT_FALSE(ok.has_value());
+    char text[16] = {};
+    EXPECT_EQ(9, recv(compositorEnd, text, sizeof(text) - 1, MSG_DONTWAIT));
+    EXPECT_EQ(std::string("connected"), text);
+    recording.stop();
+    ASSERT_TRUE(test::runUntil([&] { return ok.has_value(); }));
+    EXPECT_TRUE(*ok);
+    // The recorder held the only other end.
+    char byte = 0;
+    EXPECT_EQ(0, recv(compositorEnd, &byte, 1, 0));
+    close(compositorEnd);
+
+    // No connection, no recorder.
+    shell::ScreenRecording refused(directory.filePath("recorder"), {}, [] { return -1; });
+    std::optional<bool> refusedOk;
+    base::Subscription refusedFinished =
+            refused.finished.connect([&](bool success, const std::string &) { refusedOk = success; });
+    refused.start(target, directory.filePath("b.mp4"));
+    EXPECT_FALSE(refused.isRunning());
+    EXPECT_EQ(std::optional<bool>(false), refusedOk);
 }
 
 TEST(ScreenshotHelpers, AThumbnailCoversTheCentresSquare)

@@ -103,7 +103,8 @@ ScreenCapture::ScreenCapture(Shell *shell, ScreenCaptureServices services)
     , m_settings(std::make_unique<CaptureSettings>(m_services.settingsPath))
     , m_clipboard(std::make_unique<CaptureClipboard>(m_services.selection))
     , m_notifier(std::make_unique<CaptureNotifier>(shell->bus()))
-    , m_recording(std::make_unique<ScreenRecording>(m_services.recorder, m_services.recorderEnvironment))
+    , m_recording(std::make_unique<ScreenRecording>(m_services.recorder, m_services.recorderEnvironment,
+                                                    m_services.recorderConnection))
     , m_saving(std::make_shared<SavingNames>())
 {
     m_countdownTimer.setInterval(std::chrono::milliseconds(1000));
@@ -195,6 +196,25 @@ bool ScreenCapture::registerService()
                       dbus::ArgumentNames {{"toClipboard"}, {}});
     object->addMethod("startCaptureMode", [this] { startCaptureMode(); });
     object->addMethod("stopRecording", [this] { stopRecording(); });
+    object->addMethod(
+            "captureOutput", "sb", "ay",
+            [this](dbus::MethodCall &call) {
+                std::string output;
+                bool cursor = false;
+                if (!call.read(output, cursor)) {
+                    call.replyError("org.freedesktop.DBus.Error.InvalidArgs", "Expected an output and a flag");
+                    return;
+                }
+                captureOutput(output, cursor,
+                              [call](std::optional<std::string> png, const std::string &error) mutable {
+                                  if (!png) {
+                                      call.replyError("com.cutefish.Screenshot.Error.Failed", error);
+                                      return;
+                                  }
+                                  call.reply(std::vector<uint8_t>(png->begin(), png->end()));
+                              });
+            },
+            dbus::ArgumentNames {{"output", "cursor"}, {"png"}});
     if (!object->publish() || !bus->requestName("com.cutefish.Screenshot", dbus::Connection::DoNotQueue)) {
         CF_WARNING(cfScreenshot) << "Cannot own com.cutefish.Screenshot";
         return false;
@@ -315,6 +335,44 @@ void ScreenCapture::startCaptureMode()
 void ScreenCapture::stopRecording()
 {
     m_recording->stop();
+}
+
+void ScreenCapture::captureOutput(const std::string &output, bool cursor, PictureDone done)
+{
+    const std::vector<Shell::Output> &outputs = m_shell->outputs();
+    const auto named = std::find_if(outputs.begin(), outputs.end(), [&](const Shell::Output &candidate) {
+        return !output.empty() && candidate.name == output;
+    });
+    if (output.empty() ? outputs.size() != 1 : named == outputs.end()) {
+        done(std::nullopt, "Select an output with --output NAME; use --list to see names");
+        return;
+    }
+    const std::string name = output.empty() ? outputs.front().name : output;
+    ScreenGrabber *grabber = m_services.grabber.get();
+    if (!grabber) {
+        done(std::nullopt, "The screen could not be captured.");
+        return;
+    }
+    grabber->grabOutputs({name}, cursor,
+                         [this, done, alive = std::weak_ptr<bool>(m_alive)](std::vector<ui::Bitmap> images) {
+                             if (alive.expired())
+                                 return;
+                             if (images.empty() || images.front().isNull()) {
+                                 done(std::nullopt, "The screen could not be captured.");
+                                 return;
+                             }
+                             m_notifier->playShutter();
+                             m_notifier->notifyTaken(images.front());
+                             m_jobs.push_back(base::runInThread(
+                                     [image = std::move(images.front())] { return image.encodePng(); },
+                                     [this, done](std::optional<std::string> png) {
+                                         std::erase_if(m_jobs, [](const base::Job &job) { return !job.isPending(); });
+                                         if (!png)
+                                             done(std::nullopt, "The screenshot could not be encoded.");
+                                         else
+                                             done(std::move(png), {});
+                                     }));
+                         });
 }
 
 void ScreenCapture::setMode(int type, int source)

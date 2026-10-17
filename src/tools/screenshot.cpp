@@ -4,132 +4,32 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <ext-image-capture-source-v1-client-protocol.h>
-#include <ext-image-copy-capture-v1-client-protocol.h>
-#include <functional>
 #include <memory>
-#include <poll.h>
-#include <sys/mman.h>
-#include <unistd.h>
+#include <string>
 #include <vector>
 #include <wayland-client.h>
 
 #include "base/command_line.h"
+#include "base/dbus.h"
+#include "base/event_loop.h"
 #include "base/file.h"
-#include "base/geometry.h"
-#include "base/transform.h"
-#include "ui/bitmap.h"
 
 namespace {
 
 namespace base = cutefish::base;
-namespace ui = cutefish::ui;
+namespace dbus = cutefish::base::dbus;
 
 struct Output {
     wl_output *proxy = nullptr;
     std::string name;
 };
 
-struct Capture {
-    wl_display *display = nullptr;
-    wl_registry *registry = nullptr;
-    wl_shm *shm = nullptr;
-    ext_output_image_capture_source_manager_v1 *sources = nullptr;
-    ext_image_copy_capture_manager_v1 *copies = nullptr;
-    ext_image_capture_source_v1 *source = nullptr;
-    ext_image_copy_capture_session_v1 *session = nullptr;
-    ext_image_copy_capture_frame_v1 *frame = nullptr;
-    wl_buffer *buffer = nullptr;
-    std::vector<std::unique_ptr<Output>> outputs;
-    base::Size size;
-    bool argb = false;
-    bool constraints = false;
-    bool finished = false;
-    bool ready = false;
-    uint32_t transform = 0;
-    std::string error;
-    void *pixels = MAP_FAILED;
-    size_t length = 0;
-
-    ~Capture()
-    {
-        if (frame)
-            ext_image_copy_capture_frame_v1_destroy(frame);
-        if (buffer)
-            wl_buffer_destroy(buffer);
-        if (session)
-            ext_image_copy_capture_session_v1_destroy(session);
-        if (source)
-            ext_image_capture_source_v1_destroy(source);
-        if (copies)
-            ext_image_copy_capture_manager_v1_destroy(copies);
-        if (sources)
-            ext_output_image_capture_source_manager_v1_destroy(sources);
-        for (auto &output : outputs)
-            wl_output_destroy(output->proxy);
-        if (shm)
-            wl_shm_destroy(shm);
-        if (registry)
-            wl_registry_destroy(registry);
-        if (display)
-            wl_display_disconnect(display);
-        if (pixels != MAP_FAILED)
-            munmap(pixels, length);
-    }
-
-    bool wait(const std::function<bool()> &done)
-    {
-        const auto start = std::chrono::steady_clock::now();
-        while (!done() && !finished) {
-            if (wl_display_dispatch_pending(display) < 0)
-                return false;
-            if (done() || finished)
-                break;
-            if (wl_display_flush(display) < 0 && errno != EAGAIN)
-                return false;
-            pollfd fd {wl_display_get_fd(display), POLLIN, 0};
-            const int remaining = 5000
-                    - int(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::steady_clock::now() - start)
-                                  .count());
-            if (remaining <= 0) {
-                error = "Capture timed out";
-                return false;
-            }
-            const int result = poll(&fd, 1, remaining);
-            if (result < 0 && errno == EINTR)
-                continue;
-            if (result <= 0 || (fd.revents & (POLLERR | POLLHUP)))
-                return false;
-            if (wl_display_dispatch(display) < 0)
-                return false;
-        }
-        return done();
-    }
-
-    bool sync()
-    {
-        bool done = false;
-        auto *callback = wl_display_sync(display);
-        static const wl_callback_listener listener = {[](void *data, wl_callback *, uint32_t) {
-            *static_cast<bool *>(data) = true;
-        }};
-        wl_callback_add_listener(callback, &listener, &done);
-        const bool result = wait([&] {
-            return done;
-        });
-        wl_callback_destroy(callback);
-        return result;
-    }
-};
-
 const wl_output_listener outputListener = {
-        [](void *, wl_output *, int32_t, int32_t, int32_t, int32_t, int32_t, const char *,
-           const char *, int32_t) {},
+        [](void *, wl_output *, int32_t, int32_t, int32_t, int32_t, int32_t, const char *, const char *,
+           int32_t) {},
         [](void *, wl_output *, uint32_t, int32_t, int32_t, int32_t) {},
         [](void *, wl_output *) {},
         [](void *, wl_output *, int32_t) {},
@@ -139,190 +39,73 @@ const wl_output_listener outputListener = {
         [](void *, wl_output *, const char *) {}};
 
 const wl_registry_listener registryListener = {
-        [](void *data, wl_registry *registry, uint32_t name, const char *interface,
-           uint32_t version) {
-            auto &capture = *static_cast<Capture *>(data);
-            if (!strcmp(interface, wl_output_interface.name)) {
-                auto output = std::make_unique<Output>();
-                output->proxy = static_cast<wl_output *>(wl_registry_bind(
-                        registry, name, &wl_output_interface, std::min(version, 4u)));
-                wl_output_add_listener(output->proxy, &outputListener, output.get());
-                capture.outputs.push_back(std::move(output));
-            } else if (!strcmp(interface, wl_shm_interface.name)) {
-                capture.shm = static_cast<wl_shm *>(
-                        wl_registry_bind(registry, name, &wl_shm_interface, 1));
-            } else if (!strcmp(interface,
-                               ext_output_image_capture_source_manager_v1_interface.name)) {
-                capture.sources = static_cast<ext_output_image_capture_source_manager_v1 *>(
-                        wl_registry_bind(registry, name,
-                                         &ext_output_image_capture_source_manager_v1_interface, 1));
-            } else if (!strcmp(interface, ext_image_copy_capture_manager_v1_interface.name)) {
-                capture.copies = static_cast<ext_image_copy_capture_manager_v1 *>(wl_registry_bind(
-                        registry, name, &ext_image_copy_capture_manager_v1_interface, 1));
-            }
+        [](void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
+            if (strcmp(interface, wl_output_interface.name) != 0)
+                return;
+            auto output = std::make_unique<Output>();
+            output->proxy = static_cast<wl_output *>(
+                    wl_registry_bind(registry, name, &wl_output_interface, std::min(version, 4u)));
+            wl_output_add_listener(output->proxy, &outputListener, output.get());
+            static_cast<std::vector<std::unique_ptr<Output>> *>(data)->push_back(std::move(output));
         },
         [](void *, wl_registry *, uint32_t) {}};
 
-const ext_image_copy_capture_session_v1_listener sessionListener = {
-        [](void *data, ext_image_copy_capture_session_v1 *, uint32_t w, uint32_t h) {
-            auto &capture = *static_cast<Capture *>(data);
-            capture.size = w > 0 && h > 0 && w <= 16384 && h <= 16384 ? base::Size(int(w), int(h))
-                                                                      : base::Size();
-            capture.argb = false;
-        },
-        [](void *data, ext_image_copy_capture_session_v1 *, uint32_t format) {
-            if (format == WL_SHM_FORMAT_ARGB8888)
-                static_cast<Capture *>(data)->argb = true;
-        },
-        [](void *, ext_image_copy_capture_session_v1 *, wl_array *) {},
-        [](void *, ext_image_copy_capture_session_v1 *, uint32_t, wl_array *) {},
-        [](void *data, ext_image_copy_capture_session_v1 *) {
-            static_cast<Capture *>(data)->constraints = true;
-        },
-        [](void *data, ext_image_copy_capture_session_v1 *) {
-            auto &capture = *static_cast<Capture *>(data);
-            capture.finished = true;
-            capture.error = "Capture source stopped";
-        }};
-
-const ext_image_copy_capture_frame_v1_listener frameListener = {
-        [](void *data, ext_image_copy_capture_frame_v1 *, uint32_t transform) {
-            static_cast<Capture *>(data)->transform = transform;
-        },
-        [](void *, ext_image_copy_capture_frame_v1 *, int32_t, int32_t, int32_t, int32_t) {},
-        [](void *, ext_image_copy_capture_frame_v1 *, uint32_t, uint32_t, uint32_t) {},
-        [](void *data, ext_image_copy_capture_frame_v1 *) {
-            auto &capture = *static_cast<Capture *>(data);
-            capture.ready = capture.finished = true;
-        },
-        [](void *data, ext_image_copy_capture_frame_v1 *, uint32_t reason) {
-            auto &capture = *static_cast<Capture *>(data);
-            capture.error = "Capture failed (reason " + std::to_string(reason) + ")";
-            capture.finished = true;
-        }};
-// The frame turned upright: a mirror for the flipped transforms, then whole
-// quarter turns, each pixel moved whole.
-ui::Bitmap orient(const ui::Bitmap &source, uint32_t outputTransform)
+// The output names, from the wl_output globals every client sees.
+bool listOutputs()
 {
-    base::AffineTransform transform;
-    if (outputTransform & 4)
-        transform.scale(-1, 1);
-    transform.rotate(90 * int(outputTransform & 3));
-    const bool turned = outputTransform & 1;
-    const int width = turned ? source.height() : source.width();
-    const int height = turned ? source.width() : source.height();
-    // Where the source's corner lands, so the turned frame starts at 0, 0.
-    double minX = 0, minY = 0;
-    for (const auto &[x, y] : {std::pair<double, double> {0, 0},
-                              {double(source.width()), 0},
-                              {0, double(source.height())},
-                              {double(source.width()), double(source.height())}}) {
-        double mappedX = 0, mappedY = 0;
-        transform.map(x, y, &mappedX, &mappedY);
-        minX = std::min(minX, mappedX);
-        minY = std::min(minY, mappedY);
+    wl_display *display = wl_display_connect(nullptr);
+    if (!display)
+        return false;
+    std::vector<std::unique_ptr<Output>> outputs;
+    wl_registry *registry = wl_display_get_registry(display);
+    wl_registry_add_listener(registry, &registryListener, &outputs);
+    const bool ok = wl_display_roundtrip(display) >= 0 && wl_display_roundtrip(display) >= 0;
+    for (const auto &output : outputs) {
+        printf("%s\n", output->name.c_str());
+        wl_output_destroy(output->proxy);
     }
-    ui::Bitmap result(width, height, source.format());
-    for (int y = 0; y < source.height(); ++y) {
-        const auto *row = reinterpret_cast<const uint32_t *>(source.constScanLine(y));
-        for (int x = 0; x < source.width(); ++x) {
-            double mappedX = 0, mappedY = 0;
-            transform.map(x + 0.5, y + 0.5, &mappedX, &mappedY);
-            const int toX = int(std::floor(mappedX - minX));
-            const int toY = int(std::floor(mappedY - minY));
-            reinterpret_cast<uint32_t *>(result.scanLine(toY))[toX] = row[x];
-        }
-    }
-    return result;
+    wl_registry_destroy(registry);
+    wl_display_disconnect(display);
+    return ok;
 }
 
 } // namespace
 
+// The picture itself is the shell's to take: the compositor lets no program
+// read the screen merely for running this one.
 int main(int argc, char **argv)
 {
     base::CommandLineParser parser;
-    parser.setApplicationDescription("Capture a Wayland output to PNG.");
+    parser.setApplicationDescription("Save a picture of an output to PNG, taken by the shell.");
     parser.addHelpOption();
     parser.addOption({"list", "List output names."});
     parser.addOption({"output", "Output to capture (required with multiple outputs).", "name"});
     parser.addOption({"cursor", "Include the pointer cursor."});
     parser.addPositionalArgument("file", "Destination PNG file.", "[file]");
     parser.process(argc, argv);
-    Capture capture;
-    const auto fail = [&](const std::string &message) {
+    const auto fail = [](const std::string &message) {
         fprintf(stderr, "%s\n", message.c_str());
         return 1;
     };
-    capture.display = wl_display_connect(nullptr);
-    if (!capture.display)
-        return fail("Cannot connect to Wayland display");
-    capture.registry = wl_display_get_registry(capture.display);
-    wl_registry_add_listener(capture.registry, &registryListener, &capture);
-    if (!capture.sync() || !capture.sync())
-        return fail("Cannot enumerate outputs");
-    if (parser.isSet("list")) {
-        for (const auto &output : capture.outputs)
-            printf("%s\n", output->name.c_str());
-        return 0;
-    }
+    if (parser.isSet("list"))
+        return listOutputs() ? 0 : fail("Cannot connect to Wayland display");
     if (parser.positionalArguments().size() != 1)
         return fail("Specify one destination PNG file");
-    if (!capture.sources || !capture.copies || !capture.shm)
-        return fail("Output capture is unavailable or this executable is not authorized");
-    Output *output = nullptr;
-    for (auto &candidate : capture.outputs) {
-        if (candidate->name == parser.value("output")
-            || (!parser.isSet("output") && capture.outputs.size() == 1))
-            output = candidate.get();
-    }
-    if (!output)
-        return fail("Select an output with --output NAME; use --list to see names");
-    capture.source = ext_output_image_capture_source_manager_v1_create_source(capture.sources,
-                                                                              output->proxy);
-    capture.session = ext_image_copy_capture_manager_v1_create_session(
-            capture.copies, capture.source,
-            parser.isSet("cursor") ? EXT_IMAGE_COPY_CAPTURE_MANAGER_V1_OPTIONS_PAINT_CURSORS : 0);
-    ext_image_copy_capture_session_v1_add_listener(capture.session, &sessionListener, &capture);
-    if (!capture.wait([&] {
-            return capture.constraints;
-        })
-        || capture.size.isEmpty() || !capture.argb)
-        return fail(capture.error.empty() ? "No supported SHM capture format" : capture.error);
-    const base::Size bufferSize = capture.size;
-    capture.length = size_t(bufferSize.width()) * bufferSize.height() * 4;
-    const int fd = memfd_create("cutefish-screenshot", MFD_CLOEXEC);
-    if (fd < 0)
-        return fail("Cannot allocate screenshot buffer");
-    if (ftruncate(fd, capture.length) != 0) {
-        close(fd);
-        return fail("Cannot size screenshot buffer");
-    }
-    capture.pixels = mmap(nullptr, capture.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (capture.pixels == MAP_FAILED) {
-        close(fd);
-        return fail("Cannot map screenshot buffer");
-    }
-    auto *pool = wl_shm_create_pool(capture.shm, fd, capture.length);
-    close(fd);
-    capture.buffer = wl_shm_pool_create_buffer(pool, 0, bufferSize.width(), bufferSize.height(),
-                                               bufferSize.width() * 4, WL_SHM_FORMAT_ARGB8888);
-    wl_shm_pool_destroy(pool);
-    capture.frame = ext_image_copy_capture_session_v1_create_frame(capture.session);
-    ext_image_copy_capture_frame_v1_add_listener(capture.frame, &frameListener, &capture);
-    ext_image_copy_capture_frame_v1_attach_buffer(capture.frame, capture.buffer);
-    ext_image_copy_capture_frame_v1_damage_buffer(capture.frame, 0, 0, bufferSize.width(),
-                                                  bufferSize.height());
-    ext_image_copy_capture_frame_v1_capture(capture.frame);
-    if (!capture.wait([&] {
-            return capture.ready;
-        }))
-        return fail(capture.error.empty() ? "Capture did not complete" : capture.error);
-    const ui::Bitmap captured =
-            ui::Bitmap::wrap(capture.pixels, bufferSize.width(), bufferSize.height(),
-                             size_t(bufferSize.width()) * 4, ui::Bitmap::Format::Argb32Premultiplied);
-    const std::optional<std::string> png =
-            orient(captured, capture.transform).encodePng();
-    if (!png || !base::file::writeAtomically(parser.positionalArguments().front(), *png))
+
+    base::EventLoop loop;
+    std::unique_ptr<dbus::Connection> bus = dbus::Connection::open(dbus::Connection::Bus::Session, &loop);
+    if (!bus)
+        return fail("Cannot connect to the session bus");
+    dbus::Proxy shell(bus.get(), "com.cutefish.Screenshot", "/Screenshot", "com.cutefish.Screenshot");
+    shell.setTimeout(std::chrono::seconds(30));
+    const dbus::Reply reply = shell.call("captureOutput", parser.value("output"), parser.isSet("cursor"));
+    if (reply.isError())
+        return fail(reply.error().message.empty() ? reply.error().name : reply.error().message);
+    const std::optional<std::vector<uint8_t>> png = reply.value<std::vector<uint8_t>>();
+    if (!png || png->empty())
+        return fail("The shell sent no picture");
+    if (!base::file::writeAtomically(parser.positionalArguments().front(),
+                                     std::string(png->begin(), png->end())))
         return fail("Cannot save PNG");
     return 0;
 }

@@ -4,9 +4,12 @@
 
 #include "shell/screenshot/screen_recording.h"
 
+#include <algorithm>
 #include <chrono>
 #include <format>
 #include <utility>
+
+#include <unistd.h>
 
 #include "base/event_loop.h"
 #include "base/process.h"
@@ -18,9 +21,10 @@ namespace cutefish::shell {
 // Completing the file moves its index to the front, which reads it once more.
 static constexpr std::chrono::milliseconds kFinishTimeout {30000};
 
-ScreenRecording::ScreenRecording(std::string program, std::vector<std::string> environment)
+ScreenRecording::ScreenRecording(std::string program, std::vector<std::string> environment, Connect connect)
     : m_program(std::move(program))
     , m_environment(std::move(environment))
+    , m_connect(std::move(connect))
 {
     m_killTimer.setSingleShot(true);
     m_killTimer.onTimeout = [this] {
@@ -72,15 +76,39 @@ bool ScreenRecording::start(const Target &target, const std::string &path)
     m_path = path;
     m_output.clear();
     m_process = std::make_unique<base::Process>(core::mainLoop());
-    if (!m_environment.empty())
+    int connection = -1;
+    if (m_connect) {
+        connection = m_connect();
+        if (connection < 0) {
+            m_process.reset();
+            finished(false, "The screen recorder could not be started.");
+            return true;
+        }
+        std::vector<std::string> environment = m_environment;
+        if (environment.empty()) {
+            for (char **entry = environ; *entry; ++entry)
+                environment.emplace_back(*entry);
+        }
+        std::erase_if(environment, [](const std::string &entry) {
+            return entry.starts_with("WAYLAND_DISPLAY=") || entry.starts_with("WAYLAND_SOCKET=");
+        });
+        environment.push_back("WAYLAND_SOCKET=" + std::to_string(base::Process::kInheritedFd));
+        m_process->setEnvironment(std::move(environment));
+        m_process->setInheritedFd(connection);
+    } else if (!m_environment.empty()) {
         m_process->setEnvironment(m_environment);
+    }
     // The recorder stops at the end of its input: it stays open until stop().
     m_process->setStandardInputOpen(true);
     // Its loss ends only the recording.
     m_process->setOomProtectionDropped(true);
     m_process->onStandardOutput = [this](std::string_view output) { onOutput(output); };
     m_process->onFinished = [this](int exitCode, bool crashed) { onFinished(exitCode, crashed); };
-    if (!m_process->start(m_program, arguments(target, path))) {
+    const bool started = m_process->start(m_program, arguments(target, path));
+    // The recorder holds the only other end, so its exit ends the connection.
+    if (connection >= 0)
+        close(connection);
+    if (!started) {
         m_process.reset();
         finished(false, "The screen recorder could not be started.");
         return true;

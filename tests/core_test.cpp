@@ -65,6 +65,22 @@ TEST(CompositorOptionsTest, ReadsValuesAndRepeats)
     EXPECT_EQ(options->logRules, "cutefish.drm.debug=true");
 }
 
+// Anyone can run the screenshot tool or the recorder with arguments of their
+// choosing, so their paths grant nothing.
+TEST(CompositorOptionsTest, OnlyThePortalBackendCapturesByItsPath)
+{
+    const auto defaults = parse({});
+    ASSERT_TRUE(defaults);
+    EXPECT_EQ(core::captureExecutables(*defaults), (std::vector<std::string> {CUTEFISH_PORTAL_BACKEND}));
+    const auto added = parse({"--capture-client", "/a"});
+    ASSERT_TRUE(added);
+    const std::vector<std::string> executables = core::captureExecutables(*added);
+    EXPECT_EQ(executables, (std::vector<std::string> {CUTEFISH_PORTAL_BACKEND, "/a"}));
+    for (const std::string &tool : {std::string(CUTEFISH_BINDIR "/cutefish-screenshot"),
+                                    std::string(CUTEFISH_SCREEN_RECORDER)})
+        EXPECT_EQ(std::find(executables.begin(), executables.end(), tool), executables.end()) << tool;
+}
+
 TEST(CompositorOptionsTest, RejectsInvalidValues)
 {
     EXPECT_FALSE(parse({"--scale", "5"}));

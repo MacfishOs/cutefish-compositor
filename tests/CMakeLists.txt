@@ -33,6 +33,10 @@ endfunction()
 cutefish_add_test(main_loop_test cutefish-toolkit-host)
 cutefish_add_test(core_test)
 target_sources(core_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/compositor_options.cpp)
+target_compile_definitions(core_test PRIVATE
+    CUTEFISH_PORTAL_BACKEND="${CMAKE_INSTALL_FULL_LIBEXECDIR}/xdg-desktop-portal-cutefish"
+    CUTEFISH_SCREEN_RECORDER="${CMAKE_INSTALL_FULL_LIBEXECDIR}/cutefish-screenrecorder"
+    CUTEFISH_BINDIR="${CMAKE_INSTALL_FULL_BINDIR}")
 
 cutefish_add_test(image_capture_test cutefish-compositor-core cutefish-session PkgConfig::WaylandClient)
 cutefish_add_test(serial_tracker_test cutefish-wayland)
@@ -341,8 +345,6 @@ cutefish_add_test(wallpaper_pixel_test cutefish-scene cutefish-render)
 set_tests_properties(wallpaper_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 set_tests_properties(image_capture_test PROPERTIES TIMEOUT 15)
 
-add_dependencies(image_capture_test cutefish-screenshot)
-target_compile_definitions(image_capture_test PRIVATE SCREENSHOT_EXECUTABLE="$<TARGET_FILE:cutefish-screenshot>")
 
 cutefish_add_test(damage_test cutefish-compositor-core)
 cutefish_add_test(damage_pixel_test cutefish-scene cutefish-render)

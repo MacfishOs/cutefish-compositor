@@ -127,4 +127,11 @@ std::optional<CompositorOptions> CompositorOptions::parse(int argc, char **argv)
     return options;
 }
 
+std::vector<std::string> captureExecutables(const CompositorOptions &options)
+{
+    std::vector<std::string> executables {CUTEFISH_PORTAL_BACKEND};
+    executables.insert(executables.end(), options.captureClients.begin(), options.captureClients.end());
+    return executables;
+}
+
 } // namespace cutefish::core

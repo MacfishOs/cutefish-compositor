@@ -5,6 +5,7 @@
 #include "wayland/privileged_client.h"
 
 #include <algorithm>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "core/logging.h"
@@ -27,6 +28,9 @@ PrivilegedClients::~PrivilegedClients()
 void PrivilegedClients::shutdown()
 {
     forget(m_shell);
+    for (const auto &connection : m_captureConnections)
+        forget(*connection);
+    m_captureConnections.clear();
     if (m_display)
         wl_display_set_global_filter(m_display, nullptr, nullptr);
     m_display = nullptr;
@@ -120,6 +124,37 @@ wl_client *PrivilegedClients::adopt(TrustedConnection &connection, int fd)
 wl_client *PrivilegedClients::adoptShellConnection(int fd)
 {
     return adopt(m_shell, fd);
+}
+
+int PrivilegedClients::createCaptureConnection()
+{
+    if (!m_display)
+        return -1;
+    std::erase_if(m_captureConnections, [](const std::unique_ptr<TrustedConnection> &connection) {
+        return !connection->client;
+    });
+    int fds[2] {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds)) {
+        CF_WARNING(cfWayland) << "Cannot create a capture connection";
+        return -1;
+    }
+    auto connection = std::make_unique<TrustedConnection>();
+    connection->label = "capture";
+    if (!adopt(*connection, fds[0])) {
+        close(fds[1]);
+        return -1;
+    }
+    m_captureConnections.push_back(std::move(connection));
+    return fds[1];
+}
+
+bool PrivilegedClients::isCaptureConnection(const wl_client *client) const
+{
+    return client
+            && std::any_of(m_captureConnections.begin(), m_captureConnections.end(),
+                           [client](const std::unique_ptr<TrustedConnection> &connection) {
+                               return connection->client == client;
+                           });
 }
 
 } // namespace cutefish::wayland

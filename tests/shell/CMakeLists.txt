@@ -25,7 +25,9 @@ target_compile_definitions(shell_components_test PRIVATE CUTEFISH_SOURCE_DIR="${
 cutefish_add_shell_test(clipboard_picker_test cutefish-shell-clipboard-view)
 cutefish_add_shell_test(not_responding_test cutefish-shell-notresponding)
 cutefish_add_shell_test(screenshot_test DBUS cutefish-shell-screenshot)
-target_compile_definitions(screenshot_test PRIVATE CUTEFISH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_compile_definitions(screenshot_test PRIVATE CUTEFISH_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    SCREENSHOT_EXECUTABLE="$<TARGET_FILE:cutefish-screenshot>")
+add_dependencies(screenshot_test cutefish-screenshot)
 # Its fake services answer through sd-bus fallback handlers.
 pkg_check_modules(Libsystemd REQUIRED IMPORTED_TARGET libsystemd)
 cutefish_add_shell_test(secret_prompts_test DBUS cutefish-shell-secrets PkgConfig::Libsystemd)

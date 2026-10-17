@@ -33,6 +33,8 @@ public:
     void notifySaved(const std::string &path, bool video);
     // A copy has no file to name or show; its picture says what was taken.
     void notifyCopied(const ui::Bitmap &image);
+    // A picture another program asked for and saves itself.
+    void notifyTaken(const ui::Bitmap &image);
     void notifyFailed(const std::string &summary, const std::string &reason);
 
     // The sound file for the event; empty when the theme has none.
@@ -48,6 +50,7 @@ public:
 private:
     void notify(const std::string &summary, const std::string &body, const std::string &image,
                 const std::string &path, const ui::Bitmap &thumbnail = {});
+    void notifyPicture(const std::string &body, const ui::Bitmap &image);
     void actionInvoked(uint32_t id, const std::string &action);
 
     base::dbus::Connection *m_bus;

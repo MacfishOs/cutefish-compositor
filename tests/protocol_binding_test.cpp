@@ -140,8 +140,14 @@ protected:
         EXPECT_NE(nullptr, serverClient);
         if (computerUse)
             m_security.computerUse = serverClient;
+        return connectTo(fds[1]);
+    }
+
+    // A client on `fd`, the other end of a connection the compositor made.
+    std::unique_ptr<Client> connectTo(int fd)
+    {
         auto client = std::make_unique<Client>();
-        client->display = wl_display_connect_to_fd(fds[1]);
+        client->display = wl_display_connect_to_fd(fd);
         EXPECT_NE(nullptr, client->display);
         client->registry = wl_display_get_registry(client->display);
         static const wl_registry_listener listener = {
@@ -292,6 +298,34 @@ TEST_F(ProtocolBindingTest, TheComputerUseServiceBindsOutputCaptureButSeesNoWind
     }
     EXPECT_GE(roundtrip(*client), 0);
     EXPECT_EQ(0, wl_display_get_error(client->display));
+}
+
+// The recorder the shell starts captures on the connection the compositor made
+// for it, and on nothing else: neither its executable nor the connection makes
+// it the shell.
+TEST_F(ProtocolBindingTest, ACaptureConnectionSeesTheCaptureGlobalsAlone)
+{
+    const int fd = m_globals->privileged()->createCaptureConnection();
+    ASSERT_GE(fd, 0);
+    auto recorder = connectTo(fd);
+    auto ordinary = connect();
+    for (const char *capture : {
+                 "ext_output_image_capture_source_manager_v1",
+                 "ext_foreign_toplevel_image_capture_source_manager_v1",
+                 "ext_image_copy_capture_manager_v1",
+                 "ext_foreign_toplevel_list_v1",
+         }) {
+        EXPECT_TRUE(recorder->globals.contains(capture)) << capture;
+        EXPECT_FALSE(ordinary->globals.contains(capture)) << capture;
+    }
+    for (const char *hidden : {"cutefish_shell_v1", "ext_data_control_manager_v1", "zwlr_data_control_manager_v1"})
+        EXPECT_FALSE(recorder->globals.contains(hidden)) << hidden;
+    const auto global = recorder->globals.find(ext_image_copy_capture_manager_v1_interface.name);
+    ASSERT_NE(recorder->globals.end(), global);
+    recorder->bound.push_back(static_cast<wl_proxy *>(wl_registry_bind(
+            recorder->registry, global->second.name, &ext_image_copy_capture_manager_v1_interface, 1)));
+    EXPECT_GE(roundtrip(*recorder), 0);
+    EXPECT_EQ(0, wl_display_get_error(recorder->display));
 }
 
 // Exo's security binding checks: a hidden global stays out of reach even when

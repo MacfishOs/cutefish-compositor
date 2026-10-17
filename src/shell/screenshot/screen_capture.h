@@ -66,9 +66,11 @@ struct ScreenCaptureServices {
     clipboard::SelectionController *selection = nullptr;
     // shell.conf.
     std::string settingsPath;
-    // cutefish-screenrecorder and the environment it runs with.
+    // cutefish-screenrecorder, the environment it runs with, and the capture
+    // connection each run gets; unset, it finds the compositor on its own.
     std::string recorder;
     std::vector<std::string> recorderEnvironment;
+    std::function<int()> recorderConnection;
     std::function<std::optional<CaptureDock>()> dock;
     // The desktop of an output as it is picked: its wallpaper with the
     // desktop window over it. Unset or null captures the window alone.
@@ -123,6 +125,12 @@ public:
     void startCaptureMode();
     void stopRecording();
     bool isRecording() const;
+    // A picture of one output as PNG for a program that saves it itself, as
+    // cutefish-screenshot does: taken at once, with the shutter and a
+    // notification, so no capture goes unseen. An empty name means the only
+    // output. `done` gets the PNG, or nothing and why.
+    using PictureDone = std::function<void(std::optional<std::string> png, const std::string &error)>;
+    void captureOutput(const std::string &output, bool cursor, PictureDone done);
 
     // --- What the interface shows ---
 

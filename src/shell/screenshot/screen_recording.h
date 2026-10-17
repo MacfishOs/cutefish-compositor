@@ -38,9 +38,13 @@ public:
         std::string microphone;
     };
 
-    // `environment`: what the recorder runs with, the compositor's socket
-    // in WAYLAND_DISPLAY; empty keeps this process's.
-    ScreenRecording(std::string program, std::vector<std::string> environment);
+    // Gives the recorder its Wayland connection, one end of a socketpair the
+    // compositor lets capture; -1 when there is none.
+    using Connect = std::function<int()>;
+
+    // `environment`: what the recorder runs with; empty keeps this process's.
+    // Without `connect` the recorder finds the compositor on its own.
+    ScreenRecording(std::string program, std::vector<std::string> environment, Connect connect = {});
     ~ScreenRecording();
 
     bool isRunning() const { return m_process != nullptr; }
@@ -65,6 +69,7 @@ private:
 
     const std::string m_program;
     const std::vector<std::string> m_environment;
+    const Connect m_connect;
     std::unique_ptr<base::Process> m_process;
     int64_t m_pid = 0;
     std::string m_path;
