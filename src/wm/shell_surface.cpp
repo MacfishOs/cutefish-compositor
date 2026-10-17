@@ -487,11 +487,12 @@ void ShellSurface::close()
     callback();
 }
 
-void ShellSurface::grab()
+void ShellSurface::grab(const void *client)
 {
     if (m_role != Role::Popup)
         return;
     m_hasGrab = true;
+    m_grabClient = client;
     m_manager->pushPopupGrab(this);
 }
 

@@ -340,7 +340,9 @@ public:
 
     // The chain of popups holding an explicit grab, outermost first. A pointer
     // press outside the chain dismisses all of it and is not delivered, except
-    // on the status bar the chain hangs from (see isPopupGrabMenuBar()).
+    // on the status bar the chain hangs from (see isPopupGrabMenuBar()). The
+    // chain belongs to one client, or to the shell: a grab from anyone else
+    // dismisses it first.
     void pushPopupGrab(ShellSurface *popup);
     void removePopupGrab(ShellSurface *popup);
 

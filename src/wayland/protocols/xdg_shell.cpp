@@ -687,7 +687,7 @@ void xdg_popup_destroy(wl_client*, wl_resource* resource)
     wl_resource_destroy(resource);
 }
 
-void xdg_popup_grab(wl_client*, wl_resource* resource, wl_resource*, uint32_t)
+void xdg_popup_grab(wl_client* client, wl_resource* resource, wl_resource*, uint32_t)
 {
     auto* popup = getUserDataAs<WaylandPopup>(resource);
     ShellSurface* shellSurface = popup->shellSurface();
@@ -696,7 +696,7 @@ void xdg_popup_grab(wl_client*, wl_resource* resource, wl_resource*, uint32_t)
                                "the surface has already been destroyed");
         return;
     }
-    shellSurface->grab();
+    shellSurface->grab(client);
 }
 
 void xdg_popup_reposition(wl_client*, wl_resource* resource, wl_resource* positionerResource,

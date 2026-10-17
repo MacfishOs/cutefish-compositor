@@ -51,6 +51,7 @@
 #include "wayland/serial_tracker.h"
 #include "wayland/server.h"
 #include "wm/activation.h"
+#include "wm/shell_surface.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -470,6 +471,18 @@ protected:
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         return false;
+    }
+
+    // Another client of the same server, from inside run()'s body.
+    std::unique_ptr<Client> connectClient()
+    {
+        int fds[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) != 0)
+            return nullptr;
+        check([&] {
+            EXPECT_TRUE(wl_client_create(server.display(), fds[0]));
+        });
+        return std::make_unique<Client>(fds[1]);
     }
 
     void run(std::function<void(Client &)> body,
@@ -1578,6 +1591,111 @@ TEST_F(XdgShellProtocolTest, APopupWithAGrabIsDismissedByAPressOutsideIt)
         check([&] {
             EXPECT_TRUE(windowManager.popupGrabs().empty());
         });
+    });
+}
+
+// A grabbing popup on `parent`, mapped, anchored at `anchor` in its parent.
+XdgWindow *makeGrabbingPopup(Client &c, XdgWindow *parent, const base::Point &anchor)
+{
+    XdgWindow *popup = c.makeXdgSurface();
+    xdg_positioner *positioner = xdg_wm_base_create_positioner(c.wmBase);
+    xdg_positioner_set_size(positioner, 100, 80);
+    xdg_positioner_set_anchor_rect(positioner, anchor.x(), anchor.y(), 1, 1);
+    xdg_positioner_set_anchor(positioner, XDG_POSITIONER_ANCHOR_TOP_LEFT);
+    xdg_positioner_set_gravity(positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+    popup->popup = xdg_surface_get_popup(popup->xdgSurface, parent->xdgSurface, positioner);
+    xdg_popup_add_listener(popup->popup, &popupListener, popup);
+    xdg_popup_grab(popup->popup, c.seat, c.lastEnterSerial);
+    xdg_positioner_destroy(positioner);
+    c.sync();
+    c.ackAndAttach(popup, base::Size(100, 80));
+    return popup;
+}
+
+TEST_F(XdgShellProtocolTest, AGrabFromAnotherClientDismissesTheGrabChainHeldNow)
+{
+    run([&](Client &a) {
+        a.bindSeat();
+        XdgWindow *parentA = a.makeMappedToplevel(base::Size(300, 300));
+        check([&] {
+            onlyWindow()->setBounds(base::Rect(0, 0, 300, 300));
+        });
+        a.sync();
+        XdgWindow *menu = makeGrabbingPopup(a, parentA, base::Point(10, 10));
+        XdgWindow *submenu = makeGrabbingPopup(a, menu, base::Point(90, 10));
+        check([&] {
+            EXPECT_EQ(2u, windowManager.popupGrabs().size());
+        });
+        EXPECT_EQ(0, menu->popupDones);
+        EXPECT_EQ(0, submenu->popupDones);
+
+        std::unique_ptr<Client> b = connectClient();
+        b->bindSeat();
+        XdgWindow *parentB = b->makeMappedToplevel(base::Size(300, 300));
+        check([&] {
+            windowManager.windowForSurface(compositor.surfaces()[3])
+                    ->setBounds(base::Rect(400, 0, 300, 300));
+        });
+        b->sync();
+        XdgWindow *popupB = makeGrabbingPopup(*b, parentB, base::Point(10, 10));
+        a.sync();
+
+        EXPECT_EQ(1, menu->popupDones);
+        EXPECT_EQ(1, submenu->popupDones);
+        EXPECT_EQ(0, popupB->popupDones);
+        check([&] {
+            ASSERT_EQ(1u, windowManager.popupGrabs().size());
+            EXPECT_EQ(windowManager.windowForSurface(compositor.surfaces()[4]),
+                      windowManager.popupGrabs().front()->window());
+        });
+
+        // The new chain works as a chain of its own: a press inside it reaches
+        // the client and leaves it open.
+        const int pressesBefore = b->buttonPresses;
+        check([&] {
+            manager.onPointerMotionAbsolute(at(1), base::PointF(450, 50));
+            manager.onPointerButton(at(2), BTN_LEFT, true);
+            manager.onPointerButton(at(3), BTN_LEFT, false);
+        });
+        b->sync();
+        EXPECT_EQ(pressesBefore + 1, b->buttonPresses);
+        EXPECT_EQ(0, popupB->popupDones);
+        check([&] {
+            EXPECT_EQ(1u, windowManager.popupGrabs().size());
+        });
+
+        a.destroyWindowObjects(submenu);
+        a.destroyWindowObjects(menu);
+        a.sync();
+        b.reset();
+        a.sync();
+    });
+}
+
+TEST_F(XdgShellProtocolTest, AClientsNestedGrabsStackOnItsOwnChain)
+{
+    run([&](Client &c) {
+        c.bindSeat();
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(300, 300));
+        check([&] {
+            onlyWindow()->setBounds(base::Rect(0, 0, 300, 300));
+        });
+        c.sync();
+        XdgWindow *menu = makeGrabbingPopup(c, parent, base::Point(10, 10));
+        XdgWindow *submenu = makeGrabbingPopup(c, menu, base::Point(90, 10));
+        XdgWindow *subsubmenu = makeGrabbingPopup(c, submenu, base::Point(90, 10));
+
+        EXPECT_EQ(0, menu->popupDones);
+        EXPECT_EQ(0, submenu->popupDones);
+        EXPECT_EQ(0, subsubmenu->popupDones);
+        check([&] {
+            EXPECT_EQ(3u, windowManager.popupGrabs().size());
+        });
+
+        c.destroyWindowObjects(subsubmenu);
+        c.destroyWindowObjects(submenu);
+        c.destroyWindowObjects(menu);
+        c.sync();
     });
 }
 

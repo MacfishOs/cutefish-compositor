@@ -235,7 +235,11 @@ public:
 
     // --- xdg_popup ---
 
-    void grab();
+    // `client` identifies the client taking the grab and is only compared;
+    // null is the shell's own menus.
+    void grab(const void *client = nullptr);
+
+    const void *grabClient() const { return m_grabClient; }
 
     // Sends xdg_popup.configure for the current bounds, followed by
     // xdg_surface.configure, and records the serial so ack_configure can find
@@ -438,6 +442,7 @@ private:
     // Repositioned bounds the client has acknowledged but not yet committed.
     std::optional<base::Rect> m_pendingPopupBounds;
     bool m_hasGrab = false;
+    const void *m_grabClient = nullptr;
     bool m_popupMapped = false;
 };
 

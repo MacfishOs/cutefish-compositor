@@ -1165,6 +1165,40 @@ TEST_F(ShellSurfaceTest, AGrabbingPopupLeavesTheGrabChainWhenItUnmaps)
     EXPECT_TRUE(manager.popupGrabs().empty());
 }
 
+TEST_F(ShellSurfaceTest, AClientGrabAndAShellMenuGrabDismissEachOther)
+{
+    const int client = 0;
+    ShellSurface *application = makeMappedToplevel(base::Size(400, 300));
+    ShellSurface *bar = makeMappedToplevel(base::Size(800, 30));
+
+    ShellSurface *shellMenu = makeShell();
+    ASSERT_TRUE(shellMenu->setPopup(bar, base::Rect(10, 30, 100, 80)));
+    int shellMenuCloses = 0;
+    shellMenu->setCloseCallback([&] {
+        ++shellMenuCloses;
+    });
+    shellMenu->grab();
+    ASSERT_EQ(1u, manager.popupGrabs().size());
+
+    ShellSurface *clientMenu = makeShell();
+    ASSERT_TRUE(clientMenu->setPopup(application, base::Rect(10, 20, 100, 80)));
+    int clientMenuCloses = 0;
+    clientMenu->setCloseCallback([&] {
+        ++clientMenuCloses;
+    });
+    clientMenu->grab(&client);
+    EXPECT_EQ(1, shellMenuCloses);
+    ASSERT_EQ(1u, manager.popupGrabs().size());
+    EXPECT_EQ(clientMenu, manager.popupGrabs().front());
+
+    ShellSurface *nextShellMenu = makeShell();
+    ASSERT_TRUE(nextShellMenu->setPopup(bar, base::Rect(120, 30, 100, 80)));
+    nextShellMenu->grab();
+    EXPECT_EQ(1, clientMenuCloses);
+    ASSERT_EQ(1u, manager.popupGrabs().size());
+    EXPECT_EQ(nextShellMenu, manager.popupGrabs().front());
+}
+
 } // namespace
 
 TEST_F(ShellSurfaceTest, BoundsAnimationWaitsForCommitAfterLatestConfigureAcknowledgement)

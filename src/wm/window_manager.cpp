@@ -1119,6 +1119,13 @@ void WindowManager::pushPopupGrab(ShellSurface *popup)
         || std::find(m_popupGrabs.begin(), m_popupGrabs.end(), popup) != m_popupGrabs.end()) {
         return;
     }
+    // A grab taken by another client, or by the shell, ends the chain held
+    // now; a chain only ever holds one client's popups.
+    while (!m_popupGrabs.empty() && m_popupGrabs.back()->grabClient() != popup->grabClient()) {
+        ShellSurface *innermost = m_popupGrabs.back();
+        m_popupGrabs.pop_back();
+        innermost->close();
+    }
     m_popupGrabs.push_back(popup);
     updatePopupKeyboard();
 }
