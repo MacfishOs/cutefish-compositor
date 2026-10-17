@@ -725,7 +725,7 @@ void OverviewController::move(const base::PointF &location)
         setHover(hitTest(location));
         return;
     }
-        m_node->setDragged(m_dragged, draggedBounds(location));
+    m_node->setDragged(m_dragged, draggedBounds(location));
     updateChrome();
 }
 
@@ -738,11 +738,12 @@ base::RectF OverviewController::draggedBounds(const base::PointF &location) cons
         const auto &bar = m_bars[index];
         if (!bar.output.contains(location.toPoint()) || full.isEmpty())
             continue;
-        // It shrinks over the last half of its own height before the bar.
+        // It shrinks from where it sits in the overview up to the bar.
         const double barHeight = bar.bounds.height();
-        const double reach = full.height() / 2;
+        const double start = item.bounds.top() + m_dragOffset.y();
+        const double reach = start - bar.bounds.bottom();
         const double distance = std::max(0.0, location.y() - bar.bounds.bottom());
-        if (distance >= reach)
+        if (distance >= reach && reach > 0)
             break;
         // On the bar, the window at the bar's share of the output's height.
         const base::SizeF window = item.window->bounds().size();
@@ -753,7 +754,7 @@ base::RectF OverviewController::draggedBounds(const base::PointF &location) cons
             onBar = onBar * (minimum / shorter);
         if (onBar.width() > full.width())
             onBar = full;
-        const double t = 1 - distance / reach;
+        const double t = reach > 0 ? 1 - distance / reach : 1;
         size = full + (onBar - full) * t;
         break;
     }

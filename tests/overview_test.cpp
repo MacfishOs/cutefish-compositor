@@ -701,10 +701,12 @@ TEST_F(OverviewTest, ADraggedWindowShrinksOnItsWayToTheBar)
     };
     moveTo(place.center());
     input.onPointerButton(at(now), BTN_LEFT, true);
-    // Away from the bar, the size it has in the overview.
-    moveTo(place.center() + base::PointF(0, -10));
+    // Level with or below where it sits, the size it has in the overview.
+    moveTo(place.center() + base::PointF(40, 10));
     EXPECT_EQ(place.size(), dragged().size());
-    EXPECT_TRUE(dragged().contains(place.center() + base::PointF(0, -10)));
+    EXPECT_TRUE(dragged().contains(place.center() + base::PointF(40, 10)));
+    moveTo(place.center() + base::PointF(-40, 0));
+    EXPECT_EQ(place.size(), dragged().size());
 
     // On the bar, the window at the expanded bar's share of the output's
     // height: 6 + 80 + 24 + 6 of 800.
@@ -716,8 +718,8 @@ TEST_F(OverviewTest, ADraggedWindowShrinksOnItsWayToTheBar)
     EXPECT_NEAR(400 * expanded / 800, dragged().height(), 0.01);
     EXPECT_TRUE(dragged().contains(onBar));
 
-    // Half its reach below the bar, halfway there.
-    const base::PointF between(onBar.x(), bar.bounds.top() + expanded + place.height() / 4);
+    // Halfway up from where it sits to the bar, halfway there.
+    const base::PointF between(onBar.x(), (place.center().y() + bar.bounds.top() + expanded) / 2);
     moveTo(between);
     EXPECT_NEAR((place.width() + 500 * expanded / 800) / 2, dragged().width(), 0.01);
     input.onPointerButton(at(now), BTN_LEFT, false);
