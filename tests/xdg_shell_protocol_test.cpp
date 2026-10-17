@@ -34,6 +34,7 @@
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
+#include "display/display_manager.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
 #include "loop_test_util.h"
@@ -1953,6 +1954,73 @@ TEST_F(XdgShellProtocolTest, DesktopPopupRespectsPanelAndDockExclusiveZones)
         EXPECT_EQ(28, popup->popupConfigures.back().y);
         xdg_positioner_destroy(positioner);
     });
+}
+
+TEST_F(XdgShellProtocolTest, APopupIsConstrainedToItsParentsOutput)
+{
+    display::DisplayManager displays;
+    std::vector<display::DisplaySnapshot> physical;
+    for (const char *name : {"a", "b"}) {
+        display::DisplaySnapshot snapshot;
+        snapshot.sessionId = display::DisplayId(name);
+        snapshot.persistentKey = std::string("edid-") + name;
+        snapshot.portKey = std::string("port-") + name;
+        snapshot.connectorName = name;
+        snapshot.devicePath = "/dev/dri/card0";
+        snapshot.physicalSizeMm = {600, 340};
+        snapshot.modes = {{kOutput.size(), 60000, 148500, kOutput.width() + 100,
+                           kOutput.height() + 50, 0, "mode", true}};
+        snapshot.currentMode = snapshot.modes.front();
+        physical.push_back(snapshot);
+    }
+    ASSERT_TRUE(displays.installHardware({"instance", "seat0", 1, physical}));
+    const base::Rect secondary(800, 0, 800, 600);
+    const auto logical = [](const char *name, const base::Rect &bounds, bool primary) {
+        return display::LogicalDisplay {display::DisplayId(name),
+                                        {display::DisplayId(name)},
+                                        std::string("Cutefish-") + name,
+                                        bounds,
+                                        bounds.adjusted(0, 24, 0, 0),
+                                        {},
+                                        display::DisplayRotation::Normal,
+                                        primary};
+    };
+    ASSERT_TRUE(displays.installApplied(
+            {"instance",
+             1,
+             1,
+             {},
+             {logical("a", kOutput, true), logical("b", secondary, false)},
+             {{display::DisplayId("b"), display::DisplayId("a"), display::LayoutEdge::Right, 0}}}));
+    windowManager.setDisplayManager(&displays);
+
+    run([&](Client &c) {
+        XdgWindow *parent = c.makeMappedToplevel(base::Size(400, 300));
+        check([&] {
+            onlyWindow()->setBounds(base::Rect(900, 100, 400, 300));
+        });
+        c.sync();
+
+        XdgWindow *popup = c.makeXdgSurface();
+        xdg_positioner *positioner = xdg_wm_base_create_positioner(c.wmBase);
+        xdg_positioner_set_size(positioner, 120, 90);
+        xdg_positioner_set_anchor_rect(positioner, 20, 40, 1, 1);
+        xdg_positioner_set_anchor(positioner, XDG_POSITIONER_ANCHOR_BOTTOM_LEFT);
+        xdg_positioner_set_gravity(positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+        xdg_positioner_set_constraint_adjustment(positioner,
+                                                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
+                                                         | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
+        popup->popup = xdg_surface_get_popup(popup->xdgSurface, parent->xdgSurface, positioner);
+        xdg_popup_add_listener(popup->popup, &popupListener, popup);
+        xdg_positioner_destroy(positioner);
+        c.sync();
+
+        // Well inside the secondary output, so nothing moves it.
+        ASSERT_EQ(1u, popup->popupConfigures.size());
+        EXPECT_EQ(20, popup->popupConfigures.front().x);
+        EXPECT_EQ(41, popup->popupConfigures.front().y);
+    });
+    windowManager.setDisplayManager(nullptr);
 }
 
 namespace {

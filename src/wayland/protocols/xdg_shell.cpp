@@ -670,8 +670,14 @@ private:
 // window geometry, which is what xdg_positioner uses.
 base::Rect popupWorkArea(WaylandXdgShell* shell, ShellSurface* parent)
 {
-    // Exo constrains popups to display.work_area(), including shell-owned menus.
-    base::Rect workArea = shell->windowManager()->workAreaFor(nullptr);
+    // Exo constrains popups to the work area of the display nearest the parent,
+    // including shell-owned menus.
+    wm::WindowManager* manager = shell->windowManager();
+    const wm::Window* owner = parent->ownerWindow();
+    base::Rect workArea =
+        owner ? manager->workAreaForOutput(manager->outputBoundsFor(owner)) : base::Rect();
+    if (workArea.isEmpty())
+        workArea = manager->workAreaFor(nullptr);
     workArea.translate(-parent->absoluteOrigin());
     return workArea;
 }
