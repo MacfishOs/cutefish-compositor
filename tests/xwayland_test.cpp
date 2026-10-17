@@ -895,6 +895,78 @@ TEST_F(XwaylandTest, NetWmStateAboveAndSkipTaskbarReachTheWindow)
     }));
 }
 
+TEST_F(XwaylandTest, RemovingMaximizedStateLeavesAnUnmaximizedWindowAlone)
+{
+    ASSERT_TRUE(start()) << xwayland->error();
+    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
+    auto *c = xcbReply([&] {
+        return xcb_connect(xwayland->display().c_str(), nullptr);
+    });
+    ASSERT_EQ(xcb_connection_has_error(c), 0);
+    base::ScopeGuard cleanup([&] {
+        xcb_disconnect(c);
+    });
+    auto *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
+    const auto id = xcb_generate_id(c);
+    const uint32_t values[] = {screen->white_pixel};
+    xcb_create_window(c, XCB_COPY_FROM_PARENT, id, screen->root, 0, 0, 200, 100, 0,
+                      XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, XCB_CW_BACK_PIXEL,
+                      values);
+    xcb_map_window(c, id);
+    xcb_flush(c);
+    ASSERT_TRUE(until([&] {
+        return manager->windows().size() == 1;
+    }));
+    auto *window = manager->windows()[0];
+
+    const xcb_atom_t netWmState = intern(c, "_NET_WM_STATE");
+    auto request = [&](uint32_t action, xcb_atom_t first, xcb_atom_t second) {
+        xcb_client_message_event_t e {};
+        e.response_type = XCB_CLIENT_MESSAGE;
+        e.format = 32;
+        e.window = id;
+        e.type = netWmState;
+        e.data.data32[0] = action;
+        e.data.data32[1] = first;
+        e.data.data32[2] = second;
+        e.data.data32[3] = 1;
+        xcb_send_event(c, 0, screen->root,
+                       XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY | XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT,
+                       reinterpret_cast<const char *>(&e));
+        xcb_flush(c);
+    };
+    const xcb_atom_t horizontal = intern(c, "_NET_WM_STATE_MAXIMIZED_HORZ");
+    const xcb_atom_t vertical = intern(c, "_NET_WM_STATE_MAXIMIZED_VERT");
+
+    request(1, intern(c, "_NET_WM_STATE_FULLSCREEN"), 0);
+    ASSERT_TRUE(until([&] {
+        return window->stateType() == wm::WindowStateType::Fullscreen;
+    }));
+    request(0, horizontal, vertical);
+    until([] {
+        return false;
+    }, 300);
+    EXPECT_EQ(wm::WindowStateType::Fullscreen, window->stateType());
+
+    window->minimize();
+    ASSERT_TRUE(window->state()->isMinimized());
+    request(0, horizontal, vertical);
+    until([] {
+        return false;
+    }, 300);
+    EXPECT_TRUE(window->state()->isMinimized());
+
+    window->restore();
+    request(1, horizontal, vertical);
+    ASSERT_TRUE(until([&] {
+        return window->stateType() == wm::WindowStateType::Maximized;
+    }));
+    request(0, horizontal, vertical);
+    EXPECT_TRUE(until([&] {
+        return window->stateType() != wm::WindowStateType::Maximized;
+    }));
+}
+
 TEST_F(XwaylandTest, NetWmWindowOpacityFadesTheWholeWindow)
 {
     ASSERT_TRUE(start()) << xwayland->error();

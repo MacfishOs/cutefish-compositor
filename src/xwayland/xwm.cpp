@@ -2001,7 +2001,7 @@ void Xwm::event(xcb_generic_event_t *generic)
                             continue;
                         if (d[0] == 1 || (d[0] == 2 && current != wm::WindowStateType::Maximized))
                             w.window->maximize();
-                        else
+                        else if (current == wm::WindowStateType::Maximized)
                             w.window->restore();
                     }
                 }
