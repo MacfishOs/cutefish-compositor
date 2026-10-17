@@ -101,9 +101,9 @@ private:
 
 // A status panel without its window: the header (title,
 // detail, accessory), the body a panel fills, and the separator and settings
-// link on the bottom edge. The window is as tall as the work area allows and
-// never resized while up; the panel is drawn shownBottom() tall, which
-// follows contentHeight() with FrameTween's 380 ms curve while shown.
+// link on the bottom edge. The panel is drawn shownBottom() tall, which
+// follows contentHeight() with FrameTween's 380 ms curve while shown, and
+// its window with it.
 class StatusPanelView : public ui::View
 {
 public:

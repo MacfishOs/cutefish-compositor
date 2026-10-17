@@ -404,17 +404,18 @@ TEST_F(ControlCenterTest, TheWifiPanelListsNetworksAndJoinsThem)
     frame();
     shell::ShellWindow *window = center->popupWindow(Panel::Network);
     ASSERT_NE(nullptr, window);
-    // As tall as the work area allows; drawn and taking input to its content.
+    // As tall as its content, glass and input over all of it, and allowed
+    // to grow to the work area's height.
     const base::Rect bounds = window->drawnBounds();
-    // Kept 6 inside the work area's right edge.
-    EXPECT_EQ(base::Rect(1440 - 320 - 6, 38, 320, 960 - kStatusBar - kDock - 12), bounds);
     auto *panel = static_cast<shell::NetworkPanel *>(center->statusPanel(Panel::Network));
     const int shown = int(std::lround(panel->shownBottom()));
     EXPECT_EQ(int(panel->contentHeight()), shown);
-    EXPECT_LT(shown, bounds.height());
+    // Kept 6 inside the work area's right edge.
+    EXPECT_EQ(base::Rect(1440 - 320 - 6, 38, 320, shown), bounds);
+    EXPECT_EQ(base::Rect(1440 - 320 - 6, 38, 320, 960 - kStatusBar - kDock - 12),
+              center->panelGeometry(Panel::Network, bar.get(), item(293)));
     EXPECT_EQ(base::Rect(0, 0, 320, shown), window->surface()->backgroundBlurRect());
-    ASSERT_TRUE(window->surface()->inputRegion());
-    EXPECT_EQ(base::Region(base::Rect(0, 0, 320, shown)), *window->surface()->inputRegion());
+    EXPECT_FALSE(window->surface()->inputRegion());
     EXPECT_EQ(1, services->scans);
 
     ASSERT_EQ(4u, panel->rows().size());
@@ -442,9 +443,15 @@ TEST_F(ControlCenterTest, TheWifiPanelListsNetworksAndJoinsThem)
     frame();
     EXPECT_LT(panel->shownBottom(), open);
     EXPECT_GT(panel->shownBottom(), panel->contentHeight());
+    // The window and its glass shrink with it, frame by frame.
+    window = center->popupWindow(Panel::Network);
+    const int shrinking = int(std::lround(panel->shownBottom()));
+    EXPECT_EQ(shrinking, window->geometry().height());
+    EXPECT_EQ(base::Rect(0, 0, 320, shrinking), window->surface()->backgroundBlurRect());
     test::runFor(std::chrono::milliseconds(400));
     frame();
     EXPECT_DOUBLE_EQ(panel->contentHeight(), panel->shownBottom());
+    EXPECT_EQ(int(panel->contentHeight()), window->geometry().height());
 
     // The settings link closes the panel and opens Settings.
     clickView(Panel::Network, panel->settingsLink());

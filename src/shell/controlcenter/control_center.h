@@ -88,7 +88,9 @@ private:
     static size_t index(Panel panel);
     void close(Panel panel);
     void refresh();
-    void applyGlass(Panel panel);
+    // A status panel's window as tall as the panel is drawn, and the glass
+    // over the window.
+    void updateWindow(Panel panel);
     void resizeControlCenter();
     void fitToWorkArea(Panel panel);
     void updatePower();

@@ -176,7 +176,8 @@ base::Rect ControlCenter::panelGeometry(Panel panel, ShellWindow *bar, const bas
 
     const base::Rect area = output ? m_shell->workArea(*output) : screen;
     const int width = int(status_panel::kWidth);
-    // Never resized while up: the window is as tall as the work area allows.
+    // As tall as the work area allows the panel to grow; the window is as
+    // tall as the panel is drawn.
     const int height = std::max(0, area.height() - margin * 2);
     const int x = std::max(area.x() + margin, std::min(position.x(), area.x() + area.width() - width - margin));
     const int y = std::max(area.y() + margin, std::min(position.y() + margin, area.y() + area.height() - height - margin));
@@ -216,7 +217,7 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
     if (open.panel) {
         content.reset(open.panel);
         open.panel->onCloseRequested = [this, panel] { close(panel); };
-        open.panel->onShownBottomChanged = [this, panel] { applyGlass(panel); };
+        open.panel->onShownBottomChanged = [this, panel] { updateWindow(panel); };
     }
 
     open.bar = bar;
@@ -239,7 +240,7 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
     open.root->onLayout = [this, panel] {
         Open &shown = m_open[index(panel)];
         if (shown.dark != ui::Theme::current().darkMode)
-            applyGlass(panel);
+            updateWindow(panel);
     };
     open.window->setContentView(std::move(root));
     open.window->addShortcut(ui::NoModifier, ui::key::Escape, [this, panel] {
@@ -261,7 +262,9 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
         open.window->setScale(bar->scale());
         open.geometry.setHeight(int(open.controlCenter->windowHeight(bar->scale())));
     }
-    open.window->resize({double(open.geometry.width()), double(open.geometry.height())});
+    // A status panel's window takes its height from the panel once shown.
+    open.window->resize({double(open.geometry.width()),
+                         open.panel ? std::max(1.0, open.panel->contentHeight()) : double(open.geometry.height())});
     open.window->show();
     if (open.panel) {
         // Measured at the output's scale now: no open animation.
@@ -269,11 +272,11 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
         open.panel->setShown(true);
         open.panel->opened();
     }
-    applyGlass(panel);
+    updateWindow(panel);
     panelsChanged();
 }
 
-void ControlCenter::applyGlass(Panel panel)
+void ControlCenter::updateWindow(Panel panel)
 {
     Open &open = m_open[index(panel)];
     ShellWindow *window = popupWindow(panel);
@@ -282,10 +285,10 @@ void ControlCenter::applyGlass(Panel panel)
     open.dark = ui::Theme::current().darkMode;
     int height = open.geometry.height();
     if (open.panel) {
-        // The compositor draws the outline and the shadow round this region,
-        // so they move in the same frame as the content.
-        height = int(std::lround(open.panel->shownBottom()));
-        window->setInputRegion(base::Region(base::Rect(0, 0, open.geometry.width(), height)));
+        // The window follows the panel's height as it animates, and the
+        // compositor's outline and shadow follow the window.
+        height = std::max(1, int(std::lround(open.panel->shownBottom())));
+        open.window->resize({double(open.geometry.width()), double(height)});
     }
     window->setBackgroundBlur(base::Rect(0, 0, open.geometry.width(), height), int(panel::kTileRadius),
                               panel::panelGlass());
@@ -301,8 +304,7 @@ void ControlCenter::fitToWorkArea(Panel panel)
         return;
     open.geometry.setHeight(geometry.height());
     open.panel->setMaximumHeight(geometry.height());
-    open.window->resize({double(open.geometry.width()), double(open.geometry.height())});
-    applyGlass(panel);
+    updateWindow(panel);
 }
 
 void ControlCenter::resizeControlCenter()
@@ -316,7 +318,7 @@ void ControlCenter::resizeControlCenter()
         return;
     open.geometry.setHeight(height);
     open.window->resize({double(open.geometry.width()), double(height)});
-    applyGlass(Panel::ControlCenter);
+    updateWindow(Panel::ControlCenter);
 }
 
 void ControlCenter::close(Panel panel)
