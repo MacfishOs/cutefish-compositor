@@ -340,12 +340,8 @@ void SystemTrayView::openContextMenu(TrayItemView *item, const ui::PointF &posit
         return;
     m_menuItem = item;
     item->setContextMenuPressed(true);
-    const DBusMenuItem *root = menu->item(0);
-    if (root && root->childrenLoaded) {
-        showMenu(item, menu);
-        return;
-    }
-    // A menu opens with the rows it has; wait a moment for the first ones.
+    // The menu opens with the rows it has once AboutToShow's answer and any
+    // layout it asked for arrived, or after a moment without them.
     m_menuLoaded = menu->menuUpdated.connect([this, item, menu](int32_t id) {
         if (id != 0 || m_menuItem != item)
             return;
@@ -369,6 +365,7 @@ void SystemTrayView::showMenu(TrayItemView *item, DBusMenu *menu)
     if (m_popup && m_popup->menu().isOpen())
         return;
     m_popup = std::make_unique<DBusMenuPopup>(menu, 0);
+    m_popup->setPrepared();
     m_popupItem = item;
     m_popup->onClosed = [this] { menuClosed(); };
     ui::Menu &popup = m_popup->menu();

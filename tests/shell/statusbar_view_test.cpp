@@ -6,6 +6,7 @@
 // items, panels, the tray, the clock and the colours it takes from what is
 // behind it, headless on a fake renderer and a private bus.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -423,6 +424,43 @@ TEST_F(StatusBarViewTest, TrayItemsSitRightToLeftAndTakeClicks)
     move(700, 500);
     EXPECT_FALSE(view->isPlateShown());
     EXPECT_TRUE(test::runUntil([&] { return exporter.called("Event 0 closed"); }));
+}
+
+TEST_F(StatusBarViewTest, ARightClickOpensTheTrayMenuOnce)
+{
+    ASSERT_TRUE(bar->statusBar().registerServices());
+    test::DBusTestClient application;
+    test::FakeTrayItem item(application.connection.get());
+    item.menuPath = "/MenuBar";
+    test::FakeMenuExporter exporter(application.connection.get(), "/MenuBar");
+    exporter.layouts[0] = test::layout(0, {}, {test::layout(1, {{"label", dbus::Variant(std::string("_Open"))}})});
+    application.call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "org.kde.StatusNotifierWatcher",
+                     "RegisterStatusNotifierItem", std::string("/StatusNotifierItem"));
+    ASSERT_TRUE(test::runUntil([&] { return bar->tray()->count() == 1; }));
+    frame();
+    ASSERT_TRUE(test::runUntil([&] { return bar->statusBar().systemTray().at(0)->menu(); }));
+    ASSERT_TRUE(test::runUntil([&] { return exporter.called("GetLayout 0 1"); }));
+
+    const ui::RectF slot = onScreen(bar->tray()->item(0));
+    click(slot.x + 20, 16, BTN_RIGHT);
+    ASSERT_TRUE(test::runUntil([&] { return bar->tray()->openMenu() != nullptr; }));
+    ASSERT_TRUE(test::runUntil([&] { return exporter.called("Event 0 opened"); }));
+    test::runFor(std::chrono::milliseconds(100));
+
+    // AboutToShow, then "opened" once the menu is up, and "closed" as it goes.
+    std::vector<std::string> events;
+    for (const std::string &call : exporter.calls) {
+        if (!call.starts_with("GetLayout"))
+            events.push_back(call);
+    }
+    EXPECT_EQ((std::vector<std::string>{"AboutToShow 0", "Event 0 opened"}), events);
+    EXPECT_TRUE(item.calls.empty());
+
+    click(slot.x + 20, 16, BTN_RIGHT);
+    EXPECT_EQ(nullptr, bar->tray()->openMenu());
+    ASSERT_TRUE(test::runUntil([&] { return exporter.called("Event 0 closed"); }));
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_EQ(1, std::count(exporter.calls.begin(), exporter.calls.end(), "Event 0 closed"));
 }
 
 TEST_F(StatusBarViewTest, AnItemThatLeavesTakesItsOpenMenu)

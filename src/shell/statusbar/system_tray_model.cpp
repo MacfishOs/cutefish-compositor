@@ -105,7 +105,7 @@ DBusMenu *SystemTrayModel::contextMenu(const std::string &id, int x, int y)
     if (!item)
         return nullptr;
     if (DBusMenu *menu = item->menu()) {
-        menu->aboutToShow(0);
+        menu->prepare(0);
         return menu;
     }
     item->requestContextMenu(x, y);

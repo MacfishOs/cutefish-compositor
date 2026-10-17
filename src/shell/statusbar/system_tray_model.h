@@ -42,8 +42,8 @@ public:
 
     void leftButtonClick(const std::string &id, int x, int y);
     void middleButtonClick(const std::string &id, int x, int y);
-    // The item's menu, asked to get ready to show; null for an item that
-    // exports none, which is then asked to show its own.
+    // The item's menu, asked AboutToShow; null for an item that exports
+    // none, which is then asked to show its own.
     DBusMenu *contextMenu(const std::string &id, int x, int y);
     void move(int from, int to);
 

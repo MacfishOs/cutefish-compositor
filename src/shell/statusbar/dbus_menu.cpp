@@ -277,6 +277,15 @@ void DBusMenu::aboutToShow(int32_t id)
 {
     if (!m_items.count(id))
         return;
+    prepare(id);
+    // Some exporters act on AboutToShow and others only on "opened": both go.
+    opened(id);
+}
+
+void DBusMenu::prepare(int32_t id)
+{
+    if (!m_items.count(id))
+        return;
 
     // A refetch from the last show whose LayoutUpdated never came must not
     // swallow the next real update; this show refetches anyway.
@@ -300,7 +309,10 @@ void DBusMenu::aboutToShow(int32_t id)
                 },
                 id);
     });
-    // Some exporters act on AboutToShow and others only on "opened": both go.
+}
+
+void DBusMenu::opened(int32_t id)
+{
     sendEvent(id, "opened");
 }
 

@@ -15,6 +15,7 @@ namespace cutefish::shell {
 struct DBusMenuPopup::State {
     DBusMenu *dbus = nullptr;
     DBusMenuPopup *owner = nullptr;
+    bool prepared = false;
 };
 
 DBusMenuPopup::DBusMenuPopup(DBusMenu *menu, int32_t id)
@@ -40,6 +41,11 @@ void DBusMenuPopup::detach()
     m_state->dbus = nullptr;
 }
 
+void DBusMenuPopup::setPrepared()
+{
+    m_state->prepared = true;
+}
+
 std::string DBusMenuPopup::plainLabel(const std::string &label)
 {
     std::string text;
@@ -62,13 +68,19 @@ void DBusMenuPopup::wire(const std::shared_ptr<State> &state, ui::Menu &menu, in
     ui::Menu *target = &menu;
     // The exporter fills the menu on aboutToShow, and the
     // rows show what has arrived so far.
-    menu.onAboutToShow = [state, target, id] {
+    const bool root = id == (state->owner ? state->owner->m_id : -1);
+    menu.onAboutToShow = [state, target, id, root] {
         if (!state->dbus)
             return;
-        state->dbus->aboutToShow(id);
+        if (root && state->prepared) {
+            state->prepared = false;
+            state->dbus->opened(id);
+        } else {
+            state->dbus->aboutToShow(id);
+        }
         fill(state, *target, id);
     };
-    menu.onClosed = [state, id, root = id == (state->owner ? state->owner->m_id : -1)] {
+    menu.onClosed = [state, id, root] {
         if (!state->dbus)
             return;
         state->dbus->closed(id);

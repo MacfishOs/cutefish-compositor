@@ -40,6 +40,9 @@ public:
 
     // The exporter is gone: nothing reaches it from here on.
     void detach();
+    // The opener already asked AboutToShow for the menu and waited for its
+    // entries: its next opening only sends "opened".
+    void setPrepared();
 
     // The menu closed, by a choice, Escape or a press elsewhere.
     std::function<void()> onClosed;

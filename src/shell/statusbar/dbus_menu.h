@@ -86,9 +86,13 @@ public:
 
     // Fetches the entries of `id` again.
     void refresh(int32_t id);
-    // The submenu `id` opens: AboutToShow and the "opened" event; its
-    // entries are refetched when needed, and menuUpdated follows either way.
+    // The submenu `id` opens: prepare() and opened() at once.
     void aboutToShow(int32_t id);
+    // The submenu `id` is about to open: AboutToShow; its entries are
+    // refetched when needed, and menuUpdated follows either way.
+    void prepare(int32_t id);
+    // The submenu `id` is on screen: the "opened" event.
+    void opened(int32_t id);
     // The submenu `id` closed.
     void closed(int32_t id);
     // The entry was chosen.
