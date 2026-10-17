@@ -89,6 +89,29 @@ TEST(DrmSelection, PrefersThePreferredMode)
     EXPECT_EQ(mode->vdisplay, 720);
 }
 
+TEST(DrmSelection, ModesDifferingOnlyInSyncPositionsAreOneMode)
+{
+    drmModeModeInfo moved = makeMode(1920, 1080, DRM_MODE_TYPE_PREFERRED);
+    moved.hsync_start = 2008;
+    moved.hsync_end = 2052;
+    drmModeModeInfo plain = moved;
+    plain.type = 0;
+    plain.hsync_start = 1968;
+    plain.hsync_end = 2012;
+    const drmModeModeInfo modes[] = {plain, makeMode(1280, 720), moved, plain};
+
+    const auto distinct = distinctModes(modes, 4);
+    ASSERT_EQ(distinct.size(), 2u);
+    EXPECT_EQ(distinct[0].hsync_start, 2008);
+    EXPECT_TRUE(distinct[0].type & DRM_MODE_TYPE_PREFERRED);
+    EXPECT_EQ(distinct[1].hdisplay, 1280);
+
+    drmModeModeInfo interlaced = plain;
+    interlaced.flags = DRM_MODE_FLAG_INTERLACE;
+    const drmModeModeInfo different[] = {plain, interlaced};
+    EXPECT_EQ(distinctModes(different, 2).size(), 2u);
+}
+
 TEST(DrmSelection, FallsBackToTheLargestMode)
 {
     const drmModeModeInfo modes[] = {

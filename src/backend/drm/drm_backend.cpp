@@ -382,16 +382,15 @@ bool DrmBackend::createOutputs()
                                       .value("non-desktop");
         if (!isDesktopOutput(info))
             continue;
-        const auto mode = selectMode(connector->modes, connector->count_modes);
+        auto modes = distinctModes(connector->modes, connector->count_modes);
+        const auto mode = selectMode(modes.data(), int(modes.size()));
         if (!mode)
             continue;
         ConnectedConnector entry;
         entry.connector = connector;
         entry.name = connectorName(connector->connector_type, connector->connector_type_id);
         entry.mode = *mode;
-        entry.modes.reserve(connector->count_modes);
-        for (int index = 0; index < connector->count_modes; ++index)
-            entry.modes.push_back(connector->modes[index]);
+        entry.modes = std::move(modes);
         for (int i = 0; i < connector->count_encoders; ++i) {
             drmModeEncoder *encoder = drmModeGetEncoder(m_fd, connector->encoders[i]);
             if (!encoder)

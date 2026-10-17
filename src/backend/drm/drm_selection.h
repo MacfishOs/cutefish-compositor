@@ -42,6 +42,11 @@ std::optional<int> selectConnector(const std::vector<ConnectorInfo>& connectors)
 // refresh breaks ties), else the largest interlaced one, else nothing.
 std::optional<drmModeModeInfo> selectMode(const drmModeModeInfo* modes, int count);
 
+// The modes with duplicates dropped: modes of the same size, clock, totals and
+// flags, which differ only in sync positions, are one mode to the display
+// configuration. A preferred duplicate replaces the one kept.
+std::vector<drmModeModeInfo> distinctModes(const drmModeModeInfo* modes, int count);
+
 // Picks a free CRTC from `crtcIds` (in drmModeRes order, so bit N of
 // `possibleCrtcs` maps to index N). The CRTC the connector is already attached
 // to wins when it is compatible and free, which avoids a needless modeset.

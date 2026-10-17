@@ -79,6 +79,30 @@ std::optional<drmModeModeInfo> selectMode(const drmModeModeInfo* modes, int coun
     return *best;
 }
 
+std::vector<drmModeModeInfo> distinctModes(const drmModeModeInfo* modes, int count)
+{
+    std::vector<drmModeModeInfo> result;
+    for (int i = 0; modes && i < count; ++i) {
+        const drmModeModeInfo& mode = modes[i];
+        const auto kept = std::find_if(result.begin(), result.end(),
+                                       [&mode](const drmModeModeInfo& other) {
+                                           return other.hdisplay == mode.hdisplay
+                                               && other.vdisplay == mode.vdisplay
+                                               && other.clock == mode.clock
+                                               && other.htotal == mode.htotal
+                                               && other.vtotal == mode.vtotal
+                                               && other.vscan == mode.vscan
+                                               && other.flags == mode.flags;
+                                       });
+        if (kept == result.end())
+            result.push_back(mode);
+        else if ((mode.type & DRM_MODE_TYPE_PREFERRED) && !(kept->type & DRM_MODE_TYPE_PREFERRED))
+            *kept = mode;
+    }
+
+    return result;
+}
+
 uint32_t selectCrtc(uint32_t possibleCrtcs,
                     const std::vector<uint32_t>& crtcIds,
                     uint32_t usedCrtcMask,
