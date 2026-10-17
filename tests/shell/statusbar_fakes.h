@@ -105,6 +105,7 @@ public:
             return std::tuple<std::string, std::vector<Pixmap>, std::string, std::string>("", {}, toolTip, "sub");
         });
         object.addProperty("Menu", [this] { return dbus::ObjectPath{menuPath}; });
+        object.addProperty("ItemIsMenu", [this] { return itemIsMenu; });
         object.addMethod("Activate", [this](int32_t x, int32_t y) {
             calls.push_back("Activate " + std::to_string(x) + "," + std::to_string(y));
         });
@@ -125,6 +126,7 @@ public:
     std::string toolTip = "Tip";
     std::vector<Pixmap> pixmaps;
     std::string menuPath = "/NO_DBUSMENU";
+    bool itemIsMenu = false;
     std::vector<std::string> calls;
 };
 

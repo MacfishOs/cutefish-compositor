@@ -463,6 +463,41 @@ TEST_F(StatusBarViewTest, ARightClickOpensTheTrayMenuOnce)
     EXPECT_EQ(1, std::count(exporter.calls.begin(), exporter.calls.end(), "Event 0 closed"));
 }
 
+TEST_F(StatusBarViewTest, ALeftClickOpensTheMenuOfAnItemThatIsOnlyAMenu)
+{
+    ASSERT_TRUE(bar->statusBar().registerServices());
+    test::DBusTestClient application;
+    test::FakeTrayItem item(application.connection.get());
+    item.menuPath = "/MenuBar";
+    item.itemIsMenu = true;
+    test::FakeMenuExporter exporter(application.connection.get(), "/MenuBar");
+    exporter.layouts[0] = test::layout(0, {}, {test::layout(1, {{"label", dbus::Variant(std::string("_Open"))}})});
+    application.call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "org.kde.StatusNotifierWatcher",
+                     "RegisterStatusNotifierItem", std::string("/StatusNotifierItem"));
+    ASSERT_TRUE(test::runUntil([&] { return bar->tray()->count() == 1; }));
+    frame();
+    ASSERT_TRUE(test::runUntil([&] { return bar->statusBar().systemTray().at(0)->menu(); }));
+
+    const ui::RectF slot = onScreen(bar->tray()->item(0));
+    click(slot.x + 20, 16);
+    ASSERT_TRUE(test::runUntil([&] { return bar->tray()->openMenu() != nullptr; }));
+    EXPECT_TRUE(exporter.called("AboutToShow 0"));
+    // Again, it closes.
+    click(slot.x + 20, 16);
+    EXPECT_EQ(nullptr, bar->tray()->openMenu());
+    test::runFor(std::chrono::milliseconds(50));
+    EXPECT_TRUE(item.calls.empty());
+
+    // No longer only a menu: a left click activates it again.
+    item.itemIsMenu = false;
+    item.object.emitSignal("NewTitle");
+    test::runFor(std::chrono::milliseconds(100));
+    click(slot.x + 20, 16);
+    ASSERT_TRUE(test::runUntil([&] { return !item.calls.empty(); }));
+    EXPECT_EQ("Activate " + std::to_string(int(slot.x + 20)) + ",16", item.calls.front());
+    EXPECT_EQ(nullptr, bar->tray()->openMenu());
+}
+
 TEST_F(StatusBarViewTest, AnItemThatLeavesTakesItsOpenMenu)
 {
     ASSERT_TRUE(bar->statusBar().registerServices());

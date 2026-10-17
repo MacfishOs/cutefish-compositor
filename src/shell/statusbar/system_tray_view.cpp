@@ -306,8 +306,13 @@ void SystemTrayView::itemClicked(TrayItemView *item, const ui::PointerEvent &eve
     const ui::PointF origin = m_host.origin ? m_host.origin() : ui::PointF {};
     const int x = int(std::lround(origin.x + inWindow.x));
     const int y = int(std::lround(origin.y + inWindow.y));
+    const StatusNotifierItem *source = m_model->find(item->itemId());
     switch (event.button) {
     case ui::MouseButton::Left:
+        if (source && source->itemIsMenu()) {
+            toggleMenu(item, {double(x), double(y)});
+            break;
+        }
         if (m_host.closePopups)
             m_host.closePopups();
         m_model->leftButtonClick(item->itemId(), x, y);
@@ -318,12 +323,17 @@ void SystemTrayView::itemClicked(TrayItemView *item, const ui::PointerEvent &eve
         m_model->middleButtonClick(item->itemId(), x, y);
         break;
     case ui::MouseButton::Right:
-        if (m_menuItem == item && openMenu())
-            closeMenu();
-        else
-            openContextMenu(item, {double(x), double(y)});
+        toggleMenu(item, {double(x), double(y)});
         break;
     }
+}
+
+void SystemTrayView::toggleMenu(TrayItemView *item, const ui::PointF &position)
+{
+    if (m_menuItem == item && openMenu())
+        closeMenu();
+    else
+        openContextMenu(item, position);
 }
 
 void SystemTrayView::openContextMenu(TrayItemView *item, const ui::PointF &position)

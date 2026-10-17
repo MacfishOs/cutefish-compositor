@@ -58,6 +58,9 @@ public:
     // usable icon of its own: a theme name or an absolute path.
     const std::string &applicationIcon() const { return m_applicationIcon; }
 
+    // ItemIsMenu: the item only has a menu, which a left click shows too.
+    bool itemIsMenu() const { return m_itemIsMenu; }
+
     // The exported menu, or null when the item has none; then
     // requestContextMenu() asks the item to show its own.
     DBusMenu *menu() const { return m_menu.get(); }
@@ -101,6 +104,7 @@ private:
     std::string m_iconThemePath;
     std::vector<ui::Bitmap> m_pixmaps;
     std::string m_applicationIcon;
+    bool m_itemIsMenu = false;
     std::unique_ptr<DBusMenu> m_menu;
     base::Job m_decode;
     base::Subscription m_applicationsChanged;

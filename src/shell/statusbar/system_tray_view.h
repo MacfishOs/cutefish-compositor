@@ -35,7 +35,8 @@ class TrayItemView;
 // The tray: the StatusNotifierItems as 40 px bar items, the first
 // registered at the right end. Left click activates, middle click asks for
 // the secondary action, right click opens the item's menu (its exported one
-// as a FishUI menu, else the item is asked to show its own).
+// as a FishUI menu, else the item is asked to show its own), as a left click
+// does on an item that is only a menu.
 class SystemTrayView : public ui::View
 {
 public:
@@ -80,6 +81,7 @@ protected:
 
 private:
     void rebuild();
+    void toggleMenu(TrayItemView *item, const ui::PointF &position);
     void openContextMenu(TrayItemView *item, const ui::PointF &position);
     void showMenu(TrayItemView *item, DBusMenu *menu);
     void menuClosed();

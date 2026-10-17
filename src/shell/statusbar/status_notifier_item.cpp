@@ -102,6 +102,8 @@ void StatusNotifierItem::apply(const dbus::VariantMap &properties)
 
     m_title = property(properties, "Title");
     m_appId = property(properties, "Id");
+    const auto itemIsMenu = properties.find("ItemIsMenu");
+    m_itemIsMenu = itemIsMenu != properties.end() && itemIsMenu->second.value<bool>(false);
 
     const auto iconByName = [this](const std::string &name) -> std::string {
         if (name.empty() || !m_iconExists)
