@@ -168,6 +168,39 @@ TEST(DisplayConfigurationController, RejectedConcurrentRequestsDoNotReleaseTheAc
     EXPECT_EQ(fixture.manager.applied()->revision, 8u);
 }
 
+TEST(DisplayConfigurationController, ConfirmingAPreviewBeingRevertedKeepsTheRevert)
+{
+    Fixture fixture;
+    DeferredDelegate delegate;
+    display::DisplayConfigurationController controller(
+        &fixture.manager, &delegate, display::DisplayPreferences(fixture.path("display.json")));
+    controller.apply(request(fixture.snapshot), "owner", 1000);
+    delegate.complete();
+    delegate.complete();
+    const std::string preview = controller.previewToken();
+    ASSERT_FALSE(preview.empty());
+    ASSERT_FALSE(controller.busy());
+
+    controller.revert(preview, "owner");
+    ASSERT_TRUE(controller.busy());
+    bool confirmed = true;
+    const auto finished = controller.operationFinished.connect(
+            [&](const std::string& token, const display::ConfigurationResult& result) {
+                if (token.starts_with("confirm-"))
+                    confirmed = result.succeeded;
+            });
+    controller.confirm(preview, "owner");
+    EXPECT_FALSE(confirmed);
+    EXPECT_TRUE(controller.busy());
+
+    delegate.complete();
+    delegate.complete();
+    EXPECT_FALSE(controller.busy());
+    EXPECT_TRUE(controller.previewToken().empty());
+    EXPECT_EQ(fixture.manager.primaryDisplay()->id, id("internal"));
+    EXPECT_FALSE(std::filesystem::exists(fixture.path("display.json")));
+}
+
 TEST(DisplayConfigurationController, SnapshotInvalidationDuringTestPreventsCommit)
 {
     Fixture fixture;

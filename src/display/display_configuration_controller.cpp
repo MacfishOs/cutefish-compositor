@@ -223,6 +223,14 @@ void DisplayConfigurationController::confirm(const std::string &token, const std
                                 std::nullopt});
         return;
     }
+    if (m_operationActive) {
+        operationFinished(operationToken,
+                          {false,
+                           false,
+                           {DisplayErrorCode::Busy, "The display preview is being reverted", {}},
+                           std::nullopt});
+        return;
+    }
     DisplayError error;
     if (!m_manager->hardware()
         || !m_preferences.save(*m_manager->hardware(), m_preview->requested, &error)) {
