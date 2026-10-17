@@ -138,6 +138,13 @@ void DesksController::removeDesk(Desk *desk, DesksCreationRemovalSource source)
 {
     if (!canRemoveDesks() || deskIndex(desk) < 0)
         return;
+    // A running switch knows its desks by index, which the removal shifts:
+    // it lands first. A removal it was making may take `desk` with it.
+    if (m_animation) {
+        m_animation->finishNow();
+        if (!canRemoveDesks() || deskIndex(desk) < 0)
+            return;
+    }
 
     // In the overview the next desk takes over at once, as upstream: the
     // removal animation's strip is black where the removed desk's frame was.

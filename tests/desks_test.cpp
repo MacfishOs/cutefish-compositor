@@ -920,6 +920,23 @@ TEST_F(DeskAnimationTest, AWindowSentAwaySlidesOffTheScreen)
     EXPECT_FALSE(slideOut->isActive());
 }
 
+TEST_F(DeskAnimationTest, RemovingAnotherDeskMidSwitchStillLandsOnTheChosenDesk)
+{
+    addDesks(2);
+    Desk *first = desk(0);
+    Desk *chosen = desk(1);
+    desks->activateDesk(chosen, DesksSwitchSource::MiniViewButton);
+    ASSERT_NE(nullptr, desks->animation());
+    // As the overview's close button does while the switch slides.
+    desks->removeDesk(first, DesksCreationRemovalSource::Button);
+    finish();
+    EXPECT_EQ(nullptr, desks->animation());
+    ASSERT_EQ(2u, desks->desks().size());
+    EXPECT_EQ(chosen, desks->activeDesk());
+    EXPECT_TRUE(chosen->isActive());
+    EXPECT_FALSE(desk(1)->isActive());
+}
+
 TEST_F(DeskAnimationTest, ActivatingAWindowElsewhereMidSwitchLandsTheSwitchFirst)
 {
     addDesks(2);
