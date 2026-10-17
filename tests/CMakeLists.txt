@@ -291,7 +291,9 @@ set_tests_properties(window_visual_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWA
 add_executable(toolkit-resize-client visuals/toolkit_client.cpp)
 target_link_libraries(toolkit-resize-client PRIVATE Cutefish::Toolkit)
 if(Qt6Widgets_FOUND AND Qt6Quick_FOUND)
-    cutefish_add_test(window_visual_toolkit_test cutefish-wayland-input cutefish-wayland-shell
+    # DBUS: the Qt and GTK clients activate portal and gvfs services on the
+    # session bus.
+    cutefish_add_test(window_visual_toolkit_test DBUS cutefish-wayland-input cutefish-wayland-shell
         cutefish-decoration cutefish-render PkgConfig::WaylandClient)
     target_compile_definitions(window_visual_toolkit_test PRIVATE
         QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"

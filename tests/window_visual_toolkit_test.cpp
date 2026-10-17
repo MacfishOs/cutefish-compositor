@@ -183,9 +183,17 @@ void acceptClient(const std::string &program, std::vector<std::string> arguments
         env["CUTEFISH_TEST_SCROLL"] = "1";
         env["QT_QUICK_BACKEND"] = "software";
     }
-    client.setEnvironment(test::environmentWith(removed, env));
-    for (auto &arg : arguments)
+    bool chromium = false;
+    for (auto &arg : arguments) {
+        chromium = chromium || arg.find("@PROFILE@") != std::string::npos;
         arg = base::strings::replaceAll(arg, "@PROFILE@", runtime.path() + "/profile");
+    }
+    // Chromium and Electron start a11y, secret, portal and gvfs services on
+    // any session bus they reach, and those run with the bus's environment
+    // rather than this test's display.
+    if (chromium)
+        env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + runtime.path() + "/no-bus";
+    client.setEnvironment(test::environmentWith(removed, env));
     client.start(program, arguments);
     std::string log;
     uint64_t generation = 0;
