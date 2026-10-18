@@ -491,11 +491,15 @@ void DockWindow::rebuild()
             icon->setWindowId(entry.id);
             icon->setDraggable(true);
         }
-        const std::string iconName = minimized.iconName(row);
-        icon->setIcon(iconName.empty() ? "application-x-desktop" : iconName);
-        icon->setToolTip(minimized.title(row));
-        icon->setThumbnail(minimized.thumbnail(row), minimized.aspect(row));
-        icon->setBadgeOpacity(entry.landed ? 1 : 0);
+        // Its window can go before its row does; what leaves is still the
+        // thumbnail it was.
+        if (m_shell->taskWindows().window(entry.id)) {
+            const std::string iconName = minimized.iconName(row);
+            icon->setIcon(iconName.empty() ? "application-x-desktop" : iconName);
+            icon->setToolTip(minimized.title(row));
+            icon->setThumbnail(minimized.thumbnail(row), minimized.aspect(row));
+            icon->setBadgeOpacity(entry.landed ? 1 : 0);
+        }
         windowIcons[entry.id] = icon;
         m_minimizedStates[entry.id] = entry;
     }

@@ -1030,6 +1030,43 @@ TEST_F(ShellComponentsTest, AMinimizedWindowClosedUnderADragLeavesNothingHovered
     EXPECT_FALSE(dock->minimizedIcon(ids[0])->isDragHidden());
 }
 
+TEST_F(ShellComponentsTest, AClosedMinimizedWindowFadesOutAsItsThumbnail)
+{
+    auto *dock = openDock("[Dock]\nPinned=files\n");
+    shell::TaskWindow window;
+    window.appId = "terminal";
+    window.title = "One";
+    window.geometry = base::Rect(100, 100, 400, 200);
+    window.minimized = true;
+    const uint64_t id = windows->add(window);
+    windows->m_snapshots[id] = ui::Bitmap(base::Size(40, 20), ui::Bitmap::Format::Argb32Premultiplied);
+    windows->minimizeLanded(id);
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        return !dock->minimizedPresentation()->isRunning() && !dock->applicationPresentation()->isRunning();
+    }));
+    shell::DockIcon *icon = dock->minimizedIcon(id);
+    ASSERT_NE(nullptr, icon);
+    ASSERT_TRUE(icon->hasThumbnail());
+    const std::string iconName = icon->iconName();
+
+    // Its image and its application go with the window, before the dock lets
+    // the slot go: what leaves is still the thumbnail, not a stand-in icon.
+    windows->m_snapshots.erase(id);
+    windows->remove(id);
+    bool faded = false;
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        if (shell::DockIcon *leaving = dock->minimizedIcon(id)) {
+            EXPECT_TRUE(leaving->hasThumbnail());
+            EXPECT_EQ(iconName, leaving->iconName());
+            faded = faded || (leaving->presentationOpacity() > 0 && leaving->presentationOpacity() < 1);
+        }
+        return !dock->minimizedIcon(id);
+    }));
+    EXPECT_TRUE(faded);
+}
+
 TEST_F(ShellComponentsTest, AMinimizingWindowAimsAtWhereItsThumbnailComesToRest)
 {
     auto *dock = openDock("[Dock]\nPinned=files\n");

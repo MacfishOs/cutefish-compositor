@@ -49,6 +49,7 @@ public:
 
     // A theme icon's name, or an SVG file for the launcher.
     void setIcon(std::string name, bool file = false);
+    const std::string &iconName() const { return m_iconName; }
     void setToolTip(std::string text) { m_toolTip = std::move(text); }
     const std::string &toolTipText() const { return m_toolTip; }
     void setRunning(bool running);
