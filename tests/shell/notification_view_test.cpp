@@ -527,6 +527,37 @@ TEST_F(NotificationViewTest, TheCentreStacksEachApplicationAndFansItOut)
     EXPECT_FALSE(rows[3]->isDetailed());
 }
 
+TEST_F(NotificationViewTest, ALongGroupGlidesOnlyTheCardsInView)
+{
+    for (int i = 1; i <= 30; ++i)
+        addHistory("org.example.Chat", "Chat", "Chat " + std::to_string(i));
+    centre().open(statusBar.get(), base::Point(1440 - 120, kStatusBar));
+    frames(100);
+    const auto &rows = centre().rows();
+    ASSERT_EQ(30u, rows.size());
+    const base::Point origin = centre().geometry().topLeft();
+    click(centreOf(rows[0]->card(), origin).x(), centreOf(rows[0]->card(), origin).y());
+    ASSERT_TRUE(centre().isExpanded("org.example.Chat"));
+
+    // In view: on its way.
+    EXPECT_LT(rows[1]->geometry().y, rows[1]->targetY());
+    // Past the bottom of the list: there already, whole.
+    const shell::NotificationCentre::Row *last = rows.back();
+    EXPECT_GT(last->targetY(), centre().geometry().height());
+    EXPECT_DOUBLE_EQ(last->targetY(), last->geometry().y);
+    EXPECT_DOUBLE_EQ(1, last->contentOpacity());
+    frames(450);
+    EXPECT_DOUBLE_EQ(rows[1]->targetY(), rows[1]->geometry().y);
+
+    // The list scrolls down to them.
+    const base::Point at = centreOf(rows[1]->card(), origin).toPoint();
+    move(at.x(), at.y());
+    for (int i = 0; i < 10; ++i)
+        input.onPointerAxis(input::Timestamp(std::chrono::milliseconds(++ms)), {0, 10}, true);
+    frames(450);
+    EXPECT_LT(rows[1]->mapToWindow({0, 0}).y, 0);
+}
+
 TEST_F(NotificationViewTest, TheCentreDismissesAfterTheCardsFade)
 {
     addHistory("org.example.Mail", "Mail", "Mail 1");

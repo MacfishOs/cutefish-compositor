@@ -43,6 +43,16 @@ static double smallSpacing()
     return ui::Theme::current().smallSpacing;
 }
 
+// On whole device pixels while gliding, so text lands on the same subpixel
+// phase every frame and draws from its cached coverage.
+static double pixelAligned(const Tween &tween)
+{
+    if (!tween.isTicking() || !tween.window())
+        return tween.value();
+    const double scale = tween.window()->scale();
+    return std::round(tween.value() * scale) / scale;
+}
+
 // "%n more notification(s)".
 static std::string moreText(int count)
 {
@@ -200,9 +210,17 @@ void NotificationCentre::Row::moveTo(double y, bool animate)
     place();
 }
 
-void NotificationCentre::Row::apply()
+bool NotificationCentre::Row::isSeenWithin(double top, double bottom, double y) const
 {
-    const bool animated = m_centre->m_motion;
+    const double height = contentHeight();
+    const auto overlaps = [top, bottom, height](double at) { return at < bottom && at + height > top; };
+    if (m_opacity.value() > 0 && overlaps(m_y.value() + m_contentY.value()))
+        return true;
+    return (isShown() || dismissing) && overlaps(y);
+}
+
+void NotificationCentre::Row::apply(bool animated)
+{
     const bool shown = isShown();
 
     const std::chrono::milliseconds fade = dismissing ? kDismissFade : kMotionDuration;
@@ -238,7 +256,7 @@ void NotificationCentre::Row::disarmUnless(ui::PointF windowPoint)
 
 void NotificationCentre::Row::place()
 {
-    setGeometry({0, m_y.value(), double(kWidth), targetHeight()});
+    setGeometry({0, pixelAligned(m_y), double(kWidth), targetHeight()});
     placeContent();
 }
 
@@ -246,7 +264,7 @@ void NotificationCentre::Row::placeContent()
 {
     const double width = kCardWidth;
     const double height = m_card->implicitHeight(width) + peekCount() * kPeekStep;
-    m_content->setGeometry({kInset, m_contentY.value(), width, height});
+    m_content->setGeometry({kInset, pixelAligned(m_contentY), width, height});
     m_content->setOpacity(m_opacity.value());
     const double scale = m_scale.value();
     ui::Transform transform;
@@ -321,7 +339,7 @@ void NotificationCentre::GroupHeader::disarmUnless(ui::PointF windowPoint)
 
 void NotificationCentre::GroupHeader::place()
 {
-    setGeometry({0, m_y.value(), double(kWidth), targetHeight()});
+    setGeometry({0, pixelAligned(m_y), double(kWidth), targetHeight()});
     setOpacity(m_opacity.value());
     const bool visible = m_shown || m_opacity.value() > 0;
     if (visible != isVisible()) {
@@ -741,6 +759,11 @@ void NotificationCentre::layoutPass()
             ++present[row->groupKey()];
     }
 
+    // Rows glide only where they can be seen; the rest go straight to where
+    // they end, so a long group opens at the cost of the cards in view.
+    const double viewTop = m_scroll->scrollPosition().y;
+    const double viewBottom = viewTop + m_scroll->geometry().height;
+
     double y = 0;
     std::map<std::string, bool> leads;
     std::set<std::string> headers;
@@ -778,8 +801,9 @@ void NotificationCentre::layoutPass()
             row->groupExpanded = expanded;
             row->stackCount = lead ? count - 1 : 0;
         }
-        row->apply();
-        row->moveTo(y, m_motion && row->placed);
+        const bool animate = m_motion && row->placed && row->isSeenWithin(viewTop, viewBottom, y);
+        row->apply(animate);
+        row->moveTo(y, animate);
         row->placed = true;
 
         y += row->targetHeight();
@@ -861,7 +885,7 @@ void NotificationCentre::dismissRows(const std::function<bool(const Row &)> &pre
     for (Row *row : m_rows) {
         if (!row->dismissing && predicate(*row)) {
             row->dismissing = true;
-            row->apply();
+            row->apply(m_motion);
             row->startGoneTimer();
         }
     }

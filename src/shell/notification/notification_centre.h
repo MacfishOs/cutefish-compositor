@@ -201,9 +201,11 @@ public:
     void setDetailed(bool detailed);
     bool isDetailed() const;
     void moveTo(double y, bool animate);
-    // Brings what the row shows in line with its state, gliding when the
-    // centre is in motion.
-    void apply();
+    // Whether any of the card shows between `top` and `bottom` of the list,
+    // as drawn now or once it is at `y` as its state says.
+    bool isSeenWithin(double top, double bottom, double y) const;
+    // Brings what the row shows in line with its state.
+    void apply(bool animated);
     void startGoneTimer();
     void disarmUnless(ui::PointF windowPoint);
     // Puts the row and its content where the tweens are now.
