@@ -182,6 +182,15 @@ std::string WaylandXdgActivation::createToken(wl_client *client, wl_resource *se
     return token;
 }
 
+std::string WaylandXdgActivation::createShellToken()
+{
+    prune();
+    const auto token = base::Uuid::generate().toString();
+    if (m_tokens.size() < kMaxTokens)
+        m_tokens.emplace(token, Clock::now() + kTokenLifetime);
+    return token;
+}
+
 bool WaylandXdgActivation::activateMapped(compositor::Surface *surface)
 {
     auto *window = m_manager->windowForSurface(surface);

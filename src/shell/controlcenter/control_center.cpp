@@ -98,7 +98,7 @@ ControlCenter::~ControlCenter()
 std::unique_ptr<ControlCenter> ControlCenter::create(Shell *shell, StatusBar &statusBar,
                                                      NotificationSettings *notifications)
 {
-    return std::make_unique<ControlCenter>(shell, createSessionServices(shell->bus(), statusBar, notifications),
+    return std::make_unique<ControlCenter>(shell, createSessionServices(shell, statusBar, notifications),
                                            &statusBar.powerActions());
 }
 

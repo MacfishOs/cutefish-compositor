@@ -38,8 +38,10 @@ public:
                        const std::string &appId, Done done = {});
     // Asks the runtime to end what still runs of the application.
     void quitApplication(const std::string &appId);
-    // Runs a program of the session's own, such as Settings, on its own.
-    static bool startDetached(const std::string &program, const std::vector<std::string> &arguments = {});
+    // Runs a program of the session's own, such as Settings, on its own;
+    // `environment` holds `NAME=value` entries set over the compositor's.
+    static bool startDetached(const std::string &program, const std::vector<std::string> &arguments = {},
+                              const std::vector<std::string> &environment = {});
 
 private:
     base::dbus::Proxy m_runtime;

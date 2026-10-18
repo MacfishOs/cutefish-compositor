@@ -34,6 +34,9 @@ public:
 
     std::string createToken(wl_client *client, wl_resource *seat, uint32_t serial,
                             wl_resource *surface, bool surfaceWasSet);
+    // A token for a program the compositor's own shell starts on the user's
+    // input to it, which the shell vouches for.
+    std::string createShellToken();
     void activate(const char *token, compositor::Surface *surface);
     void onSurfaceDestroying(compositor::Surface *surface) override;
     void onSurfaceCommit(compositor::Surface *surface) override;

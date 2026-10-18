@@ -6,7 +6,6 @@
 
 #include <algorithm>
 
-#include "shell/common/app_launcher.h"
 #include "shell/common/task_windows.h"
 #include "shell/shell.h"
 #include "shell/statusbar/app_menu_registrar.h"
@@ -92,8 +91,9 @@ MenuBarModel::~MenuBarModel()
 void MenuBarModel::buildUserMenu()
 {
     ui::Menu &menu = *m_userMenu;
-    menu.addItem("About", [] { ApplicationLauncher::startDetached("cutefish-settings", {"-m", "about"}); });
-    menu.addItem("Settings", [] { ApplicationLauncher::startDetached("cutefish-settings"); });
+    Shell *shell = m_shell;
+    menu.addItem("About", [shell] { shell->openSettings({"-m", "about"}); });
+    menu.addItem("Settings", [shell] { shell->openSettings(); });
     menu.addSeparator();
     PowerActions *power = m_power;
     menu.addItem("Suspend", [power] {

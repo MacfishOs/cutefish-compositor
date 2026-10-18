@@ -168,6 +168,17 @@ ApplicationLauncher &Shell::launcher()
     return *m_launcher;
 }
 
+void Shell::openSettings(const std::vector<std::string> &arguments)
+{
+    // A running Settings takes the request from the new process, and comes
+    // forward with its token.
+    const std::string token = m_environment.createActivationToken ? m_environment.createActivationToken()
+                                                                  : std::string();
+    ApplicationLauncher::startDetached("cutefish-settings", arguments,
+                                       token.empty() ? std::vector<std::string>()
+                                                     : std::vector<std::string> {"XDG_ACTIVATION_TOKEN=" + token});
+}
+
 void Shell::setApplications(std::unique_ptr<Applications> applications)
 {
     m_applications = std::move(applications);

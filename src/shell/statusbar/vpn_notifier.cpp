@@ -4,8 +4,6 @@
 
 #include "shell/statusbar/vpn_notifier.h"
 
-#include "shell/common/app_launcher.h"
-
 namespace cutefish::shell {
 
 namespace dbus = base::dbus;
@@ -17,7 +15,6 @@ VpnNotifier::VpnNotifier(dbus::Connection *bus)
     : m_bus(bus)
     , m_server(bus, kService, kPath, kService)
 {
-    openSettings = [] { ApplicationLauncher::startDetached("cutefish-settings", {"-m", "vpn"}); };
     if (!m_bus)
         return;
     dbus::MatchRule rule;

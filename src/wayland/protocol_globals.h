@@ -126,6 +126,8 @@ public:
 
     InputMethodManager *inputMethod() { return m_inputMethod.get(); }
 
+    WaylandXdgActivation *xdgActivation() { return m_xdgActivation.get(); }
+
 private:
     bool registerCoreGlobals();
     bool registerInputMethod();

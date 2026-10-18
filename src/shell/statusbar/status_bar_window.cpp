@@ -91,6 +91,7 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
 {
     base::dbus::Connection *bus = m_shell->bus();
     m_vpnNotifier = std::make_unique<VpnNotifier>(bus);
+    m_vpnNotifier->openSettings = [shell] { shell->openSettings({"-m", "vpn"}); };
     m_window = std::make_unique<ShellWindow>(shell, wm::WindowRole::Panel);
     m_window->setFocusPolicy(wm::FocusPolicy::NoFocus);
     m_window->window()->setBackgroundColor(ui::Color {0, 0, 0, 0});

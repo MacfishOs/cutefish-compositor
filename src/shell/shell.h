@@ -5,6 +5,7 @@
 #ifndef CUTEFISH_SHELL_SHELL_H_
 #define CUTEFISH_SHELL_SHELL_H_
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -75,6 +76,9 @@ struct ShellEnvironment {
     // The session's services.conf, for the icon theme and the font; empty
     // reads the user's.
     std::string servicesSettings;
+    // An xdg-activation token for a program the shell starts on the user's
+    // input; null where there is none (tests).
+    std::function<std::string()> createActivationToken;
 };
 
 // The desktop shell inside the compositor, after ash::Shell's shell parts: it
@@ -132,6 +136,9 @@ public:
     TaskWindows &taskWindows();
     TaskManager &tasks();
     ApplicationLauncher &launcher();
+    // Starts Settings with `arguments`, such as {"-m", "sound"}, and brings a
+    // running Settings forward, minimized or hidden as it may be.
+    void openSettings(const std::vector<std::string> &arguments = {});
     // Tests hand in their own before the first use.
     void setApplications(std::unique_ptr<Applications> applications);
     void setTaskWindows(std::unique_ptr<TaskWindows> windows);

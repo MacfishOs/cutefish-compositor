@@ -83,6 +83,7 @@
 #include "wayland/protocols/linux_drm_syncobj.h"
 #include "wayland/protocols/wl_output.h"
 #include "wayland/protocols/wp_presentation.h"
+#include "wayland/protocols/xdg_activation.h"
 #include "wayland/security_delegate.h"
 #include "wayland/server.h"
 #include "wayland/shell_control_channel.h"
@@ -641,6 +642,10 @@ void CompositorShell::initShell()
     environment.bus = base::dbus::Connection::session(mainLoop());
     if (m_globals && m_globals->inputMethod())
         environment.inputMethod = m_globals->inputMethod()->relay();
+    if (m_globals && m_globals->xdgActivation()) {
+        wayland::WaylandXdgActivation *activation = m_globals->xdgActivation();
+        environment.createActivationToken = [activation] { return activation->createShellToken(); };
+    }
     environment.theme = &m_decorationTheme;
     m_shell = std::make_unique<shell::Shell>(environment);
 

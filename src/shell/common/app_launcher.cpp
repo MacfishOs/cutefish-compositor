@@ -91,9 +91,10 @@ void ApplicationLauncher::quitApplication(const std::string &appId)
         m_runtime.send("quitApplication", appId);
 }
 
-bool ApplicationLauncher::startDetached(const std::string &program, const std::vector<std::string> &arguments)
+bool ApplicationLauncher::startDetached(const std::string &program, const std::vector<std::string> &arguments,
+                                        const std::vector<std::string> &environment)
 {
-    return base::Process::startDetached(program, arguments) > 0;
+    return base::Process::startDetached(program, arguments, {}, environment) > 0;
 }
 
 } // namespace cutefish::shell

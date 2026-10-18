@@ -21,9 +21,9 @@
 #include "cutefish/networkmanager/network_model.h"
 #include "cutefish/powerprofiles/power_profiles.h"
 #include "cutefish/upower/battery_status.h"
-#include "shell/common/app_launcher.h"
 #include "shell/common/pending_calls.h"
 #include "shell/notification/notification_settings.h"
+#include "shell/shell.h"
 #include "shell/statusbar/status_bar.h"
 #include "shell/statusbar/wireless_status.h"
 
@@ -52,8 +52,9 @@ struct PendingJoin {
 class SessionServices final : public ControlCenterServices
 {
 public:
-    SessionServices(dbus::Connection *sessionBus, StatusBar &statusBar, NotificationSettings *notifications)
-        : m_statusBar(statusBar)
+    SessionServices(Shell *shell, StatusBar &statusBar, NotificationSettings *notifications)
+        : m_shell(shell)
+        , m_statusBar(statusBar)
         , m_notifications(notifications)
         , m_client(nm::Client::instance())
         , m_wireless(std::make_unique<WirelessStatus>())
@@ -61,7 +62,7 @@ public:
         , m_networks(std::make_unique<nm::NetworkModel>())
         , m_bluetooth(bluez::Manager::shared())
         , m_audio(std::make_unique<audio::AudioModel>(audio::AudioObject::Sink, audio::Backend::shared()))
-        , m_appearance(sessionBus, "com.cutefish.Services", "/com/cutefish/Services/Appearance",
+        , m_appearance(shell->bus(), "com.cutefish.Services", "/com/cutefish/Services/Appearance",
                        "com.cutefish.Services.Appearance")
         , m_privacy(dbus::Connection::system(), kPrivacyService, kPrivacyPath, kPrivacyInterface)
     {
@@ -373,7 +374,7 @@ public:
 
     void openSettings(const std::vector<std::string> &arguments) override
     {
-        ApplicationLauncher::startDetached("cutefish-settings", arguments);
+        m_shell->openSettings(arguments);
     }
 
 private:
@@ -431,6 +432,7 @@ private:
         }
     }
 
+    Shell *m_shell;
     StatusBar &m_statusBar;
     NotificationSettings *m_notifications;
     nm::Client *m_client;
@@ -451,10 +453,10 @@ private:
     std::vector<dbus::Match> m_matches;
 };
 
-std::unique_ptr<ControlCenterServices> createSessionServices(dbus::Connection *sessionBus, StatusBar &statusBar,
+std::unique_ptr<ControlCenterServices> createSessionServices(Shell *shell, StatusBar &statusBar,
                                                              NotificationSettings *notifications)
 {
-    return std::make_unique<SessionServices>(sessionBus, statusBar, notifications);
+    return std::make_unique<SessionServices>(shell, statusBar, notifications);
 }
 
 } // namespace cutefish::shell

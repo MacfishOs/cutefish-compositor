@@ -30,7 +30,7 @@ public:
     // NetworkManager's Handler::vpnFailed.
     void vpnFailed(const std::string &name, const std::string &message);
 
-    // What a click does; Settings' VPN page unless a test sets it.
+    // What a click does: the owner opens Settings' VPN page.
     std::function<void()> openSettings;
 
 private:

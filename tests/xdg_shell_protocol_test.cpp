@@ -427,6 +427,8 @@ protected:
     std::mutex mutex;
     std::function<void()> pendingCheck;
     int pingTimeoutMs = wayland::kXdgPingTimeoutMs;
+    // While run() runs.
+    wayland::WaylandXdgActivation *xdgActivation = nullptr;
 
     void SetUp() override
     {
@@ -491,6 +493,7 @@ protected:
         auto waylandSeat = std::make_unique<wayland::WaylandSeat>(&seat, server.serialTracker());
         wayland::WaylandXdgActivation activation(&windowManager, waylandSeat.get());
         ASSERT_TRUE(wayland::createXdgActivationGlobal(server.display(), &activation));
+        xdgActivation = &activation;
         auto xdgShell = std::make_unique<wayland::WaylandXdgShell>(&compositor, &windowManager,
                                                                    &seat, server.serialTracker());
         xdgShell->setPingTimeout(pingTimeoutMs);
@@ -2217,6 +2220,39 @@ TEST_F(XdgShellProtocolTest, ActivationTokenIsSingleUseAndRestoresMinimizedTarge
         const auto reused =
                 requestActivationToken(c, activation, source->surface, c.lastButtonSerial);
         xdg_activation_v1_activate(activation, reused.c_str(), target->surface);
+        c.sync();
+        check([&] {
+            EXPECT_EQ(sourceWindow, windowManager.activation()->activeWindow());
+        });
+        xdg_activation_v1_destroy(activation);
+    });
+}
+
+TEST_F(XdgShellProtocolTest, ShellTokenRestoresAMinimizedWindowOnce)
+{
+    run([&](Client &c) {
+        auto *target = c.makeMappedToplevel({200, 150});
+        wm::Window *targetWindow = nullptr;
+        check([&] {
+            targetWindow = onlyWindow();
+        });
+        c.makeMappedToplevel({200, 150});
+        wm::Window *sourceWindow = nullptr;
+        std::string token;
+        check([&] {
+            sourceWindow = windowManager.activation()->activeWindow();
+            targetWindow->minimize();
+            token = xdgActivation->createShellToken();
+        });
+        auto *activation = bindActivation(c);
+        xdg_activation_v1_activate(activation, token.c_str(), target->surface);
+        c.sync();
+        check([&] {
+            EXPECT_EQ(targetWindow, windowManager.activation()->activeWindow());
+            EXPECT_FALSE(targetWindow->state()->isMinimized());
+            sourceWindow->activate();
+        });
+        xdg_activation_v1_activate(activation, token.c_str(), target->surface);
         c.sync();
         check([&] {
             EXPECT_EQ(sourceWindow, windowManager.activation()->activeWindow());
