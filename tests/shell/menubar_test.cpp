@@ -393,6 +393,16 @@ TEST_F(MenuBarTest, TheUserMenuOpensUnderItsPlateAndClosesOnASecondClick)
     EXPECT_FALSE(view->entry(0)->isChecked());
     EXPECT_TRUE(manager.popupGrabs().empty());
 
+    // A second click soon enough to make a double click closes it too.
+    click(entryCentre(0).x(), 16);
+    ASSERT_EQ(0, view->currentIndex());
+    input.onPointerButton(at(time += 5), BTN_LEFT, true);
+    input.onPointerButton(at(time += 5), BTN_LEFT, false);
+    frame();
+    EXPECT_EQ(-1, view->currentIndex());
+    EXPECT_FALSE(menu->isOpen());
+    EXPECT_TRUE(manager.popupGrabs().empty());
+
     // The right button opens nothing.
     click(entryCentre(0).x(), 16, BTN_RIGHT);
     EXPECT_EQ(-1, view->currentIndex());

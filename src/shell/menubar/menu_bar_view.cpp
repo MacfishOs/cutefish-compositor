@@ -177,10 +177,6 @@ void MenuBarView::rebuildEntries()
             else
                 open(index);
         };
-        entry->onDoubleClicked = [this, index](const ui::PointerEvent &event) {
-            if (event.button == ui::MouseButton::Left)
-                open(index);
-        };
         // While one menu is open, moving onto another entry switches to it.
         entry->onEntered = [this, index] {
             if (m_currentIndex != -1 && m_currentIndex != index)
