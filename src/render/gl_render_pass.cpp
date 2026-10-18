@@ -424,7 +424,11 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     if (bounds.isEmpty())
         return false;
     ScopedGlState state(*m_context);
-    const base::RectF deviceBounds(base::PointF(bounds.topLeft()) * renderer.rasterScale(),
+    // Device pixels counted from the viewport's origin, the grid pixelAligned()
+    // puts content on: a window captured on its own has a viewport whose origin
+    // falls inside a pixel at a fractional scale.
+    const base::PointF origin = renderer.outputContext().logicalViewport.topLeft();
+    const base::RectF deviceBounds((base::PointF(bounds.topLeft()) - origin) * renderer.rasterScale(),
                               base::SizeF(bounds.size()) * renderer.rasterScale());
     const base::Rect coverage = deviceBounds.toEnclosingRect();
     // Rounded outward, the coverage is a pixel wider or taller depending on
@@ -448,7 +452,7 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
         target = static_cast<GlTexture *>(texture.get());
         target->inverted = true;
     } else if (!repaint.isEmpty()) {
-        scissor = base::RectF(base::PointF(repaint.topLeft()) * renderer.rasterScale(),
+        scissor = base::RectF((base::PointF(repaint.topLeft()) - origin) * renderer.rasterScale(),
                          base::SizeF(repaint.size()) * renderer.rasterScale())
                           .toEnclosingRect()
                           .translated(-coverage.topLeft())
@@ -487,7 +491,7 @@ bool GlRenderPass::render(Renderer &renderer, std::unique_ptr<Texture> &texture,
     context.scale = renderer.rasterScale();
     renderer.Renderer::setOutputContext(context);
     m_viewport = allocation;
-    m_offset = base::PointF(coverage.topLeft()) / renderer.rasterScale();
+    m_offset = origin + base::PointF(coverage.topLeft()) / renderer.rasterScale();
     glViewport(0, 0, allocation.width(), allocation.height());
     if (scissor.isEmpty()) {
         glDisable(GL_SCISSOR_TEST);

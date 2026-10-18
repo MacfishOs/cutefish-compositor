@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <vector>
+
 #include <GLES3/gl3.h>
 #include <gtest/gtest.h>
 
@@ -193,5 +195,49 @@ TEST(CapturePixels, ACopiedOutputFrameMatchesThePaintedCapture)
         ASSERT_FALSE(expected.isNull());
         EXPECT_EQ(copied, expected) << "transform " << transform;
     }
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST(CapturePixels, AWindowAtAFractionalDeviceOriginKeepsItsLayerOnPixels)
+{
+    auto renderer = render::EglRendererTestAccess::create();
+    ASSERT_NE(renderer, nullptr);
+    const EGLint attrs[] = {EGL_WIDTH, 64, EGL_HEIGHT, 48, EGL_NONE};
+    auto surface = eglCreatePbufferSurface(renderer->eglDisplay(), renderer->eglConfig(), attrs);
+    ASSERT_NE(surface, EGL_NO_SURFACE);
+    auto target = std::make_unique<render::EglRenderTarget>(renderer->eglDisplay(), surface,
+                                                            nullptr, base::Size(64, 48));
+    render::TargetRetirement retire {renderer.get(), target.get()};
+    renderer->setOutputContext({"test", base::Rect(0, 0, 64, 48), {64, 48}, 1, 0, 1});
+    ASSERT_TRUE(renderer->beginFrame(target.get()));
+
+    // Columns one device pixel wide, alternately black and white.
+    constexpr int kPixels = 56;
+    std::vector<uint8_t> columns(kPixels * kPixels * 4);
+    for (int y = 0; y < kPixels; ++y) {
+        for (int x = 0; x < kPixels; ++x) {
+            const uint8_t value = x % 2 ? 255 : 0;
+            uint8_t *pixel = &columns[(y * kPixels + x) * 4];
+            pixel[0] = pixel[1] = pixel[2] = value;
+            pixel[3] = 255;
+        }
+    }
+    auto texture = renderer->createTexture({kPixels, kPixels}, columns.data());
+    ASSERT_NE(texture, nullptr);
+
+    // 83 logical units are 145.25 device pixels at 1.75.
+    const base::Rect body(83, 0, 32, 32);
+    const render::OutputRenderContext window {"test", body, {kPixels, kPixels}, 1.75, 0, 1};
+    std::unique_ptr<render::Texture> layer;
+    const ui::Bitmap image = renderer->captureImage(window, {kPixels, kPixels}, [&] {
+        ASSERT_TRUE(renderer->renderToTexture(layer, body, [&] {
+            renderer->drawTextureMapped(texture.get(), body, 1, base::AffineTransform());
+        }));
+        renderer->drawTexture(layer.get(), body, 1);
+    });
+    renderer->cancelFrame();
+    ASSERT_EQ(image.size(), base::Size(kPixels, kPixels));
+    for (int x = 0; x < kPixels; ++x)
+        EXPECT_EQ(image.pixel(x, kPixels / 2), x % 2 ? 0xffffffffu : kBlack) << "column " << x;
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
