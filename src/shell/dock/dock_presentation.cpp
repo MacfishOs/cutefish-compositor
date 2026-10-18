@@ -24,6 +24,11 @@ double outQuint(double t)
     return t * t * t * t * t + 1;
 }
 
+double outQuad(double t)
+{
+    return t * (2 - t);
+}
+
 } // namespace
 
 void DockPresentation::Tween::snap(double target)
@@ -31,7 +36,8 @@ void DockPresentation::Tween::snap(double target)
     value = from = to = target;
     active = false;
     pending = false;
-    delayed = false;
+    revealing = false;
+    opening = false;
 }
 
 bool DockPresentation::Tween::retarget(double target)
@@ -41,7 +47,7 @@ bool DockPresentation::Tween::retarget(double target)
     from = value;
     to = target;
     active = true;
-    delayed = false;
+    revealing = false;
     return true;
 }
 
@@ -86,6 +92,7 @@ void DockPresentation::setKeys(const std::vector<std::string> &keys)
         entry.cells.snap(slotIndex(first));
         entry.gaps.snap(slotGaps(row));
         entry.appearance.snap(m_animationsEnabled ? 0 : 1);
+        m_opening = m_opening || (m_opensForNewIcons && m_animationsEnabled && !entry.dropped);
         m_entries.push_back(entry);
     }
     retarget();
@@ -244,7 +251,7 @@ double DockPresentation::appearance(const Entry &entry) const
 
 double DockPresentation::iconScale(const Entry &entry) const
 {
-    return entry.leaving ? 1 : 0.75 + 0.25 * entry.appearance.value;
+    return entry.appearance.revealing ? entry.appearance.value : 1;
 }
 
 double DockPresentation::length() const
@@ -292,9 +299,9 @@ void DockPresentation::retarget()
         if (!animate) {
             entry.appearance.snap(1);
         } else if (entry.appearance.retarget(1)) {
-            entry.appearance.delayed = entry.appearance.from == 0;
+            entry.appearance.revealing = entry.appearance.from == 0;
             begin(entry.appearance);
-        } else if (entry.appearance.delayed && entry.appearance.value == 0) {
+        } else if (entry.appearance.revealing && entry.appearance.value == 0) {
             begin(entry.appearance);
         }
     }
@@ -329,10 +336,12 @@ bool DockPresentation::advance(Tween &tween, double nowMs)
 {
     if (!tween.active || tween.pending)
         return false;
-    const double progress = std::clamp((nowMs - tween.startMs) / kDurationMs, 0.0, 1.0);
-    double eased = outQuint(progress);
-    if (tween.delayed)
-        eased = std::max(0.0, (eased - 0.75) / 0.25);
+    const double duration = tween.revealing ? kRevealDurationMs
+            : tween.opening                 ? kOpeningDurationMs
+                                            : kDurationMs;
+    const double delay = tween.revealing ? kRevealDelayMs : 0;
+    const double progress = std::clamp((nowMs - tween.startMs - delay) / duration, 0.0, 1.0);
+    const double eased = tween.opening && !tween.revealing ? outQuad(progress) : outQuint(progress);
     const double next = progress >= 1 ? tween.to : tween.from + (tween.to - tween.from) * eased;
     tween.active = progress < 1;
     if (next == tween.value)
@@ -356,8 +365,10 @@ void DockPresentation::tick(uint64_t frameTimeNs)
         if (tween->pending) {
             tween->pending = false;
             tween->startMs = nowMs - kFrameIntervalMs;
+            tween->opening = m_opening;
         }
     }
+    m_opening = false;
     bool moved = false;
     bool active = false;
     for (Tween *tween : tweens) {

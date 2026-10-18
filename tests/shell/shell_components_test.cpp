@@ -441,6 +441,26 @@ TEST_F(ShellComponentsTest, TheDockFollowsRunningApplicationsAndTakesClicks)
     shell::DockIcon *icon = dock->applicationIcon("terminal");
     EXPECT_TRUE(icon->isRunning());
     EXPECT_FALSE(dock->applicationIcon("files")->isRunning());
+    // It grows out of its centre.
+    bool grew = false;
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        const ui::RectF rect = icon->iconRect();
+        const ui::PointF centre = icon->mapToWindow({rect.x + rect.width / 2, rect.y + rect.height / 2});
+        for (const auto &child : icon->children()) {
+            if (child->transform().scale == 1 || child->transform().scale == 0)
+                continue;
+            grew = true;
+            EXPECT_FALSE(icon->isDotShown());
+            const ui::PointF start = child->mapToWindow({0, 0});
+            const ui::PointF end = child->mapToWindow({child->geometry().width, child->geometry().height});
+            EXPECT_NEAR(centre.x, (start.x + end.x) / 2, 1e-6);
+            EXPECT_NEAR(centre.y, (start.y + end.y) / 2, 1e-6);
+        }
+        return !dock->applicationPresentation()->isRunning();
+    }));
+    EXPECT_TRUE(grew);
+    EXPECT_TRUE(icon->isDotShown());
     // A running application past the pins brings the trailing divider.
     test::runFor(std::chrono::milliseconds(400));
     frame();
@@ -665,6 +685,69 @@ TEST_F(ShellComponentsTest, ALeavingIconFadesWhereItIs)
     EXPECT_LT(presentation.position(entry("editor")), 2 * 70);
     presentation.tick(ns(1000 + shell::DockPresentation::kDurationMs));
     EXPECT_EQ(2u, presentation.entries().size());
+}
+
+TEST_F(ShellComponentsTest, ANewIconGrowsAndFadesInShortlyAfterItsSlotStartsOpening)
+{
+    class Presentation : public shell::DockPresentation
+    {
+    public:
+        using shell::DockPresentation::DockPresentation;
+        using shell::DockPresentation::tick;
+    };
+
+    auto *dock = openDock("[Dock]\nPinned=files\n");
+    Presentation presentation(dock->window()->window());
+    presentation.setKeys({"files", "editor"});
+    presentation.setAnimationsEnabled(true);
+    presentation.setOpensForNewIcons(true);
+    const auto ns = [](double ms) { return uint64_t(ms * 1e6); };
+    const auto entry = [&](const std::string &key) {
+        for (const shell::DockPresentation::Entry &e : presentation.entries()) {
+            if (e.key == key)
+                return e;
+        }
+        return shell::DockPresentation::Entry {};
+    };
+
+    // Hidden while its slot, opening more gently than other changes, starts.
+    presentation.setKeys({"files", "editor", "terminal"});
+    const double start = 1000 - shell::DockPresentation::kFrameIntervalMs;
+    const double reveal = start + shell::DockPresentation::kRevealDelayMs;
+    presentation.tick(ns(1000));
+    presentation.tick(ns(reveal - 1));
+    EXPECT_EQ(0, presentation.appearance(entry("terminal")));
+    EXPECT_EQ(0, presentation.iconScale(entry("terminal")));
+    EXPECT_GT(presentation.length(), 2 * 70);
+
+    // Then its size and opacity grow together on OutQuint.
+    double last = 0;
+    for (double ms = 1000.0 / 60; ms < shell::DockPresentation::kRevealDurationMs - 10; ms += 1000.0 / 60) {
+        presentation.tick(ns(reveal + ms));
+        const double scale = presentation.iconScale(entry("terminal"));
+        EXPECT_EQ(scale, presentation.appearance(entry("terminal")));
+        EXPECT_GT(scale, last);
+        EXPECT_LT(scale, 1);
+        last = scale;
+    }
+    presentation.tick(ns(reveal + shell::DockPresentation::kRevealDurationMs / 2));
+    EXPECT_NEAR(1 - std::pow(0.5, 5), presentation.iconScale(entry("terminal")), 1e-6);
+    presentation.tick(ns(start + shell::DockPresentation::kOpeningDurationMs + 1));
+    EXPECT_EQ(3 * 70, presentation.length());
+    presentation.tick(ns(reveal + shell::DockPresentation::kRevealDurationMs + 1));
+    EXPECT_EQ(1, presentation.iconScale(entry("terminal")));
+    EXPECT_FALSE(presentation.isRunning());
+
+    // One taken out while it grows fades out from the opacity it had.
+    presentation.setKeys({"files", "editor", "calendar"});
+    presentation.tick(ns(2000));
+    presentation.tick(ns(2000 + shell::DockPresentation::kRevealDelayMs + 30));
+    const double shown = presentation.appearance(entry("calendar"));
+    EXPECT_GT(shown, 0);
+    EXPECT_LT(shown, 1);
+    presentation.setKeys({"files", "editor"});
+    EXPECT_EQ(shown, presentation.appearance(entry("calendar")));
+    EXPECT_EQ(1, presentation.iconScale(entry("calendar")));
 }
 
 TEST_F(ShellComponentsTest, ADraggedIconNothingTakesGoesBackToItsSlot)

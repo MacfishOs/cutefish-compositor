@@ -53,6 +53,8 @@ public:
     const std::string &toolTipText() const { return m_toolTip; }
     void setRunning(bool running);
     bool isRunning() const { return m_running; }
+    // The running dot: not while the icon appears, only once it is whole.
+    bool isDotShown() const { return m_running && m_opacity == 1; }
     // A minimized window's image; null shows the icon.
     void setThumbnail(const ui::Bitmap *thumbnail, double aspect);
     bool hasThumbnail() const { return !m_thumbnail.isNull(); }
@@ -61,12 +63,12 @@ public:
     void setBadgeOpacity(double opacity);
     double badgeOpacity() const { return m_badgeOpacity; }
 
-    // Where the icon is in this view, and how the slot draws it:
-    // the appearance animation's scale (about the icon's centre, or its
-    // leading edge while leaving) and opacity.
+    // Where the icon is in this view, and how the slot draws it: scaled
+    // about the icon's centre, and its opacity.
     void setIconRect(const ui::RectF &rect);
     ui::RectF iconRect() const { return m_iconRect; }
-    void setPresentation(double scale, double opacity, bool leading);
+    void setPresentation(double scale, double opacity);
+    void setPresentationOpacity(double opacity);
     double presentationScale() const { return m_scale; }
     double presentationOpacity() const { return m_opacity; }
     // The running dot, in this view.
@@ -137,7 +139,6 @@ private:
     ui::RectF m_dotRect;
     double m_scale = 1;
     double m_opacity = 1;
-    bool m_leading = false;
     bool m_hovered = false;
     bool m_pressed = false;
     bool m_menuOpen = false;

@@ -206,6 +206,8 @@ DockWindow::DockWindow(Shell *shell, std::unique_ptr<Dock> dock)
     ui::Window *window = m_window->window();
     m_applications = std::make_unique<DockPresentation>(window);
     m_minimized = std::make_unique<DockPresentation>(window);
+    // Not for minimized windows, which fly into their slots themselves.
+    m_applications->setOpensForNewIcons(true);
     m_applications->onChanged = [this] { layoutItems(); };
     m_minimized->onChanged = [this] { layoutItems(); };
 
@@ -656,14 +658,13 @@ void DockWindow::layoutItems()
         return ui::RectF {0, start - m_drawn.iconGap / 2, drawnThickness,
                           itemSize + m_drawn.iconGap};
     };
-    const auto placeIcon = [&](DockIcon *icon, double position, double scale, double opacity,
-                               bool leading) {
+    const auto placeIcon = [&](DockIcon *icon, double position, double scale, double opacity) {
         const ui::RectF slot = slotRect(position);
         icon->setGeometry({slot.x + panel.x(), slot.y + panel.y(), slot.width, slot.height});
         const ui::RectF iconRect = bottom ? ui::RectF {m_drawn.iconGap / 2, across, itemSize, itemSize}
                                           : ui::RectF {across, m_drawn.iconGap / 2, itemSize, itemSize};
         icon->setIconRect(iconRect);
-        icon->setPresentation(scale * itemScale, opacity, leading);
+        icon->setPresentation(scale * itemScale, opacity);
         m_leavingIcons.erase(icon);
         const double dot = m_metrics.dotSize;
         const double dotGap = m_metrics.dotGap;
@@ -680,7 +681,7 @@ void DockWindow::layoutItems()
     const auto leave = [&](DockIcon *icon, double opacity) {
         if (m_leavingIcons.insert(icon).second)
             m_panel->raiseChild(icon);
-        icon->setPresentation(icon->presentationScale(), opacity, false);
+        icon->setPresentationOpacity(opacity);
         icon->setEnabled(false);
     };
     const auto staying = [](const DockPresentation &presentation) {
@@ -708,7 +709,7 @@ void DockWindow::layoutItems()
         }
         const double position = along(m_applications->position(entry), m_applications->targetPosition(entry))
                 + itemGrowth;
-        placeIcon(icon, position, m_applications->iconScale(entry), m_applications->appearance(entry), false);
+        placeIcon(icon, position, m_applications->iconScale(entry), m_applications->appearance(entry));
         icon->setEnabled(true);
     }
     for (auto it = m_applicationIcons.begin(); it != m_applicationIcons.end();) {
@@ -751,7 +752,7 @@ void DockWindow::layoutItems()
                 + itemGrowth;
         const bool revealed = state == m_minimizedStates.end() || !state->second.flownIn;
         placeIcon(icon, position, revealed ? m_minimized->iconScale(entry) : 1,
-                  !landed ? 0 : revealed ? m_minimized->appearance(entry) : 1, false);
+                  !landed ? 0 : revealed ? m_minimized->appearance(entry) : 1);
         icon->setEnabled(true);
     }
     for (auto it = m_minimizedIcons.begin(); it != m_minimizedIcons.end();) {
@@ -773,7 +774,7 @@ void DockWindow::layoutItems()
     placeIcon(m_trash,
               along(minimizedStart + m_minimized->length(), settledMinimizedStart + m_minimized->targetLength())
                       + itemGrowth,
-              1, 1, false);
+              1, 1);
 
     // The dividers: 48/86 of the thickness, centred across the panel, in the
     // middle of their gap with the leading edge half a pixel before it.

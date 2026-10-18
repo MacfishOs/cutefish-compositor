@@ -17,8 +17,10 @@ namespace cutefish::shell {
 // Where each of a row of dock items is drawn while the row changes. One clock
 // for every transition, 260 ms on OutQuint, stepped on the window's frames;
 // positions are counted in slots and section gaps so a new icon size rescales
-// the motion in flight. A new icon is revealed in the last quarter of its slot
-// opening; a leaving one fades out while its slot closes.
+// the motion in flight. With opening for new icons, what moves as a new icon
+// arrives takes 260 ms on OutQuad instead, and from 75 ms on the icon grows out
+// of the middle of its slot and fades in, in 200 ms on OutQuint; a leaving icon
+// fades out while its slot closes.
 class DockPresentation : public ui::FrameClient
 {
 public:
@@ -26,6 +28,9 @@ public:
     // The frame interval a new transition is backdated by, so its first
     // frame already shows one step of motion.
     static constexpr double kFrameIntervalMs = 1000.0 / 60;
+    static constexpr double kOpeningDurationMs = 260;
+    static constexpr double kRevealDelayMs = 75;
+    static constexpr double kRevealDurationMs = 200;
 
     struct Tween {
         double value = 0;
@@ -34,8 +39,11 @@ public:
         double startMs = 0;
         bool active = false;
         bool pending = false;
-        // An appearing icon is revealed only once its slot is mostly open.
-        bool delayed = false;
+        // An appearing icon, which grows as it fades in: kRevealDurationMs
+        // after kRevealDelayMs.
+        bool revealing = false;
+        // Started as a new icon arrived.
+        bool opening = false;
 
         void snap(double target);
         // Whether it has somewhere new to go.
@@ -65,6 +73,7 @@ public:
     void setItemSize(double size) { m_itemSize = size; }
     // What is there when the dock first appears is shown at once.
     void setAnimationsEnabled(bool enabled) { m_animationsEnabled = enabled; }
+    void setOpensForNewIcons(bool enabled) { m_opensForNewIcons = enabled; }
     bool animationsEnabled() const { return m_animationsEnabled; }
 
     // A drag of row `row` over the dock (-1 for one from outside): with
@@ -87,7 +96,6 @@ public:
     double position(const Entry &entry) const;
     double targetPosition(const Entry &entry) const;
     double appearance(const Entry &entry) const;
-    // An appearing icon grows from three quarters.
     double iconScale(const Entry &entry) const;
 
     double length() const;
@@ -136,6 +144,9 @@ private:
     Tween m_trailing;
     Tween m_resize;
     bool m_animationsEnabled = false;
+    bool m_opensForNewIcons = false;
+    // A new icon arrived since the last frame: what starts by then opens.
+    bool m_opening = false;
     // The dragged row by its key, so it stays the same row while rows move.
     std::string m_dragKey;
     bool m_dragging = false;

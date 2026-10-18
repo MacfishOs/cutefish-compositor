@@ -283,13 +283,8 @@ void DockIcon::setIconRect(const ui::RectF &rect)
     m_iconRect = rect;
     const ui::Transform transform = [&] {
         ui::Transform result;
-        if (m_scale == 1)
-            return result;
-        // About the icon's centre, or its leading edge while it leaves.
-        const ui::PointF origin = m_leading ? ui::PointF {0, rect.height / 2}
-                                            : ui::PointF {rect.width / 2, rect.height / 2};
+        // ui::Transform scales about the view's centre.
         result.scale = m_scale;
-        result.translation = {origin.x * (1 - m_scale), origin.y * (1 - m_scale)};
         return result;
     }();
     for (ui::View *face : {static_cast<ui::View *>(m_themeFace), static_cast<ui::View *>(m_svgFace),
@@ -321,14 +316,18 @@ void DockIcon::setIconRect(const ui::RectF &rect)
     requestPaint();
 }
 
-void DockIcon::setPresentation(double scale, double opacity, bool leading)
+void DockIcon::setPresentation(double scale, double opacity)
 {
-    if (scale == m_scale && opacity == m_opacity && leading == m_leading)
+    if (scale == m_scale && opacity == m_opacity)
         return;
     m_scale = scale;
     m_opacity = opacity;
-    m_leading = leading;
     setIconRect(m_iconRect);
+}
+
+void DockIcon::setPresentationOpacity(double opacity)
+{
+    setPresentation(m_scale, opacity);
 }
 
 void DockIcon::setDotRect(const ui::RectF &rect)
@@ -409,7 +408,7 @@ void DockIcon::paint(ui::Painter &painter)
         return;
     if (!m_thumbnail.isNull())
         paintThumbnail(painter);
-    if (m_running && m_dotRect.width > 0) {
+    if (isDotShown() && m_dotRect.width > 0) {
         painter.drawSmoothRectangle(m_dotRect, m_dotRect.width / 2, ui::Theme::current().text);
     }
 }
