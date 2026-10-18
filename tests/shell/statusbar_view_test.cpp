@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include "compositor/compositor.h"
+#include "compositor/surface.h"
 #include "dbus_test_client.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
@@ -45,6 +46,7 @@
 #include "ui/menu.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
+#include "wm/window_visual_controller.h"
 
 using namespace cutefish;
 namespace dbus = base::dbus;
@@ -210,8 +212,11 @@ TEST_F(StatusBarViewTest, ItemsAbutTheEdgeAndEachOther)
     EXPECT_DOUBLE_EQ(clock.x, control.x + control.width);
     EXPECT_EQ(shell::shellDataFile("statusbar/light/control.svg").empty(), false);
 
-    // Hovered, the plate shows inset 3 each side, 4 from the top, 24 tall.
+    // Hovering lights nothing; checked, the plate shows inset 3 each side,
+    // 4 from the top, 24 tall.
     move(control.x + 20, 16);
+    EXPECT_FALSE(bar->controlIcon()->isPlateShown());
+    bar->controlIcon()->setChecked(true);
     EXPECT_TRUE(bar->controlIcon()->isPlateShown());
     const ui::RectF plate = bar->controlIcon()->plateRect();
     EXPECT_DOUBLE_EQ(3, plate.x);
@@ -222,6 +227,7 @@ TEST_F(StatusBarViewTest, ItemsAbutTheEdgeAndEachOther)
     EXPECT_FALSE(bar->lightContents());
     EXPECT_EQ(26, bar->controlIcon()->plateColor().a);
     EXPECT_EQ(0, bar->controlIcon()->plateColor().r);
+    bar->controlIcon()->setChecked(false);
 
     // Without indicators there is no volume or Wi-Fi icon.
     EXPECT_FALSE(bar->volumeIcon()->isVisible());
@@ -243,8 +249,12 @@ TEST_F(StatusBarViewTest, AnUnchangedClockDrawsNoFrame)
     bar->updateClock();
     frame();
     EXPECT_EQ(rendered, statistics.rendered);
-
+    // Hovering changes nothing either.
     move(onScreen(bar->clock()).x + 20, 16);
+    EXPECT_EQ(rendered, statistics.rendered);
+
+    bar->clock()->setChecked(true);
+    frame();
     EXPECT_GT(statistics.rendered, rendered);
 }
 
@@ -308,16 +318,34 @@ TEST_F(StatusBarViewTest, AnIconTogglesItsPanelUnderItsPlate)
     EXPECT_TRUE(bar->controlIcon()->isChecked());
     EXPECT_TRUE(bar->panelOpen());
 
-    // While a panel is up only its own item is lit.
+    // The plate shown is blurred behind, with no outline; it keeps its own colour.
+    const compositor::Surface *surface = bar->window()->surface();
+    const auto blurBehind = [&](const shell::BarItem *item) {
+        const ui::RectF plate = item->plateRect();
+        const ui::PointF origin = item->mapToWindow({plate.x, plate.y});
+        const int left = int(std::floor(origin.x));
+        return base::Rect(left, 4, int(std::ceil(origin.x + plate.width)) - left, 24);
+    };
+    EXPECT_EQ(blurBehind(bar->controlIcon()), surface->backgroundBlurRect());
+    EXPECT_EQ(8, surface->backgroundBlurRadius());
+    EXPECT_FALSE(surface->glass().enabled);
+    EXPECT_FALSE(surface->backgroundBlurShape().isEmpty());
+    EXPECT_FALSE(wm::WindowVisualController::evaluate(*bar->window()->wmWindow()).drawOutline);
+
     const ui::RectF clock = onScreen(bar->clock());
-    move(clock.x + 20, 16);
-    EXPECT_FALSE(bar->clock()->isPlateShown());
 
     // Its icon again closes it, and opens nothing.
     click(control.x + 20, 16);
     EXPECT_EQ(1u, panels.opened.size());
     EXPECT_FALSE(bar->controlIcon()->isChecked());
     EXPECT_FALSE(bar->panelOpen());
+
+    // The plate and its blur go with the panel; hovering brings neither back.
+    EXPECT_FALSE(bar->controlIcon()->isPlateShown());
+    EXPECT_TRUE(surface->backgroundBlurRect().isEmpty());
+    move(clock.x + 20, 16);
+    EXPECT_FALSE(bar->clock()->isPlateShown());
+    EXPECT_TRUE(surface->backgroundBlurRect().isEmpty());
 
     // The clock's panel is nobody's here.
     click(clock.x + 20, 16);

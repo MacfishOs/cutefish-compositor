@@ -177,7 +177,6 @@ public:
     }
 
     bool lightContents() const override { return light; }
-    bool panelOpen() const override { return false; }
 
     std::unique_ptr<shell::ShellWindow> window;
     ui::View *slot = nullptr;

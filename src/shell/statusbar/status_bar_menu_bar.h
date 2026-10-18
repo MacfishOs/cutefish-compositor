@@ -17,7 +17,7 @@ class StatusBar;
 
 // What the bar gives the menu bar it hosts.
 struct StatusBarMenuBarHost {
-    // The bar's look: lightContents(), menuTextColor(), panelOpen(); entries are
+    // The bar's look: lightContents(), menuTextColor(); entries are
     // BarItems with BarLabels (bar_item.h) on it.
     BarContext *bar = nullptr;
     // The backend: the AppMenu registrar, the power actions.

@@ -35,7 +35,6 @@ public:
 
     void setLightContents(bool light);
     bool lightContents() const override { return m_lightContents; }
-    bool panelOpen() const override { return false; }
 
     // The icons' width, the last one reaching as near the edge as the
     // status bar's last item does; 0 when neither shows.

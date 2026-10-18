@@ -40,8 +40,9 @@ public:
     ui::Color textColor() const;
     // The menu bar's: #FFFFFF on a dark backdrop, black otherwise.
     ui::Color menuTextColor() const;
-    // A panel is open: only its own item stays lit.
-    virtual bool panelOpen() const = 0;
+    // An item painted, with its plate or without; the bar puts its blur
+    // behind the plate shown, in the frame that shows it.
+    virtual void platePainted() {}
 };
 
 // A clickable slot of the bar with the rounded plate behind it,
@@ -64,7 +65,6 @@ public:
     bool isChecked() const { return m_checked; }
     void setContextMenuPressed(bool pressed);
 
-    bool containsPress() const { return m_pressed && m_containsMouse; }
     bool isPressed() const { return m_pressed; }
     // Forgets the held press, which a drag took over.
     void cancelPress();
@@ -93,7 +93,6 @@ public:
 
 protected:
     void pointerEnter() override;
-    void pointerLeave() override;
     void pointerPress(const ui::PointerEvent &event) override;
     void pointerMove(const ui::PointerEvent &event) override;
     void pointerRelease(const ui::PointerEvent &event) override;
@@ -110,7 +109,6 @@ private:
     double m_glyphWidth = 0;
     bool m_checked = false;
     bool m_contextMenuPressed = false;
-    bool m_containsMouse = false;
     bool m_pressed = false;
     bool m_doubleClicked = false;
     ui::MouseButton m_pressedButton = ui::MouseButton::Left;

@@ -87,9 +87,7 @@ double BarItem::plateWidth(double scale) const
 
 bool BarItem::isPlateShown() const
 {
-    // While a panel is open, only its own item stays lit.
-    const bool hovered = m_containsMouse && !m_bar->panelOpen();
-    return m_checked || m_contextMenuPressed || hovered;
+    return m_checked || m_contextMenuPressed;
 }
 
 ui::RectF BarItem::plateRect() const
@@ -106,16 +104,12 @@ ui::RectF BarItem::plateRect() const
 ui::Color BarItem::plateColor() const
 {
     // The verdict on what is behind the bar, as the contents' colour.
-    const bool light = m_bar->lightContents();
-    if (m_checked || m_contextMenuPressed)
-        return light ? ui::Color {255, 255, 255, 51} : ui::Color {0, 0, 0, 26};
-    if (containsPress())
-        return light ? ui::Color {255, 255, 255, 77} : ui::Color {0, 0, 0, 51};
-    return light ? ui::Color {255, 255, 255, 51} : ui::Color {0, 0, 0, 26};
+    return m_bar->lightContents() ? ui::Color {255, 255, 255, 51} : ui::Color {0, 0, 0, 26};
 }
 
 void BarItem::paint(ui::Painter &painter)
 {
+    m_bar->platePainted();
     const ui::RectF plate = plateRect();
     if (plate.width <= 0 || plate.height <= 0)
         return;
@@ -124,16 +118,8 @@ void BarItem::paint(ui::Painter &painter)
 
 void BarItem::pointerEnter()
 {
-    m_containsMouse = true;
-    requestPaint();
     if (onEntered)
         onEntered();
-}
-
-void BarItem::pointerLeave()
-{
-    m_containsMouse = false;
-    requestPaint();
 }
 
 void BarItem::pointerPress(const ui::PointerEvent &event)
@@ -142,7 +128,6 @@ void BarItem::pointerPress(const ui::PointerEvent &event)
     m_pressedButton = event.button;
     m_pressPosition = event.position;
     m_doubleClicked = false;
-    requestPaint();
     if (event.clickCount == 2 && onDoubleClicked) {
         m_doubleClicked = true;
         onDoubleClicked(event);
@@ -154,11 +139,6 @@ void BarItem::pointerPress(const ui::PointerEvent &event)
 
 void BarItem::pointerMove(const ui::PointerEvent &event)
 {
-    const bool inside = localRect().contains(event.position);
-    if (inside != m_containsMouse) {
-        m_containsMouse = inside;
-        requestPaint();
-    }
     if (onPositionChanged)
         onPositionChanged(event);
 }
@@ -167,8 +147,6 @@ void BarItem::cancelPress()
 {
     m_pressed = false;
     m_doubleClicked = false;
-    m_containsMouse = false;
-    requestPaint();
 }
 
 void BarItem::pointerRelease(const ui::PointerEvent &event)
@@ -176,7 +154,6 @@ void BarItem::pointerRelease(const ui::PointerEvent &event)
     const bool click = m_pressed && localRect().contains(event.position) && !m_doubleClicked;
     m_pressed = false;
     m_doubleClicked = false;
-    requestPaint();
     if (click && onClicked) {
         ui::PointerEvent clicked = event;
         clicked.button = m_pressedButton;

@@ -26,6 +26,7 @@
 #include "shell/statusbar/vpn_notifier.h"
 #include "ui/embedded_window.h"
 #include "ui/cell_layout.h"
+#include "ui/path.h"
 #include "ui/theme.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -63,6 +64,9 @@ protected:
             });
         }
     }
+
+    // The plate moves with its item, wherever in the row it sits.
+    void childrenLaidOut() override { m_bar->updatePlateBlur(); }
 
 private:
     StatusBarWindow *m_bar;
@@ -248,6 +252,57 @@ void StatusBarWindow::updateLook()
     m_agentControl->updateLook();
 }
 
+void StatusBarWindow::platePainted()
+{
+    updatePlateBlur();
+}
+
+static const BarItem *findPlate(const ui::View *view)
+{
+    if (!view->isVisible())
+        return nullptr;
+    if (const auto *item = dynamic_cast<const BarItem *>(view); item && item->isPlateShown())
+        return item;
+    for (const auto &child : view->children()) {
+        if (const BarItem *item = findPlate(child.get()))
+            return item;
+    }
+    return nullptr;
+}
+
+void StatusBarWindow::updatePlateBlur()
+{
+    if (!m_window || !m_root)
+        return;
+    // A surface has one blur, and one plate shows at a time: opening a panel
+    // or a menu closes the others.
+    const BarItem *item = findPlate(m_root);
+    ui::RectF plate = item ? item->plateRect() : ui::RectF();
+    if (plate.width > 0 && plate.height > 0) {
+        const ui::PointF origin = item->mapToWindow({plate.x, plate.y});
+        plate = {origin.x, origin.y, plate.width, plate.height};
+    } else {
+        plate = {};
+    }
+    if (plate == m_blurPlate)
+        return;
+    m_blurPlate = plate;
+    if (plate.width <= 0) {
+        m_window->setBackgroundBlur(base::Rect(), 0);
+        return;
+    }
+    // The rectangle in whole logical pixels; the shape clips the blur to the
+    // plate as drawn, which sits on fractional ones at most scales.
+    const double radius = ui::Theme::current().smallRadius;
+    const int left = int(std::floor(plate.x));
+    const int top = int(std::floor(plate.y));
+    const base::Rect rect(left, top, int(std::ceil(plate.x + plate.width)) - left,
+                          int(std::ceil(plate.y + plate.height)) - top);
+    ui::Path shape;
+    shape.addRoundedRect(plate, radius, radius);
+    m_window->setBackgroundBlur(rect, int(std::lround(radius)), {}, shape);
+}
+
 void StatusBarWindow::updateBattery()
 {
     const Battery &battery = m_statusBar->battery();
@@ -405,8 +460,6 @@ void StatusBarWindow::updateChecked()
         StatusBarPanels *panels = panelsFor(panel);
         itemFor(panel)->setChecked(panels && panels->isOpen(panel));
     }
-    // Hover plates stay off while any panel is up.
-    updateLook();
 }
 
 void StatusBarWindow::togglePanel(Panel panel)
