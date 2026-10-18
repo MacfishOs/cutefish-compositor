@@ -3,8 +3,12 @@
 add_library(cutefish-shell-common STATIC
     app_launcher.cpp
     app_launcher.h
+    application_badges.cpp
+    application_badges.h
     applications.cpp
     applications.h
+    count_badge.cpp
+    count_badge.h
     file_thread.cpp
     file_thread.h
     list_model.h

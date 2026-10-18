@@ -9,6 +9,7 @@
 #include <set>
 
 #include "core/main_loop.h"
+#include "shell/common/application_badges.h"
 #include "shell/launcher/launcher.h"
 #include "shell/launcher/launcher_cell.h"
 #include "shell/launcher/launcher_search_field.h"
@@ -183,9 +184,10 @@ private:
     LauncherTween m_colorTween;
 };
 
-LauncherView::LauncherView(Launcher &launcher, LauncherWallpaper &wallpaper)
+LauncherView::LauncherView(Launcher &launcher, LauncherWallpaper &wallpaper, ApplicationBadges &badges)
     : m_launcher(launcher)
     , m_wallpaper(wallpaper)
+    , m_badges(badges)
     , m_wheelReset(core::mainLoop())
     , m_searchTimer(core::mainLoop())
     , m_reorderTimer(core::mainLoop())
@@ -253,6 +255,10 @@ LauncherView::LauncherView(Launcher &launcher, LauncherWallpaper &wallpaper)
     m_subscriptions.push_back(m_wallpaper.changed.connect([this] {
         updateBackdrop();
         requestPaint();
+    }));
+    m_subscriptions.push_back(m_badges.changed.connect([this] {
+        for (const auto &[id, cell] : m_cells)
+            cell->setCount(m_badges.count(id));
     }));
 }
 
@@ -453,6 +459,7 @@ void LauncherView::syncCells()
         }
         cell->setVisible(true);
         cell->setItem(item);
+        cell->setCount(m_badges.count(item.id));
         cell->setMetrics(m_metrics);
         cell->setBackdrop(backdrop);
         cell->setSlot(pageIndex, index);

@@ -9,6 +9,7 @@
 #include <optional>
 
 #include "core/main_loop.h"
+#include "shell/common/count_badge.h"
 #include "shell/dock/dock_window.h"
 #include "shell/shell_window.h"
 #include "ui/animation.h"
@@ -313,7 +314,37 @@ void DockIcon::setIconRect(const ui::RectF &rect)
                                     m_badgeOpacity);
         }
     }
+    placeCountBadge();
     requestPaint();
+}
+
+void DockIcon::setCount(int64_t count)
+{
+    if (!m_countBadge) {
+        if (count <= 0)
+            return;
+        m_countBadge = addChild<CountBadge>();
+    }
+    m_countBadge->setCount(count);
+    placeCountBadge();
+}
+
+void DockIcon::placeCountBadge()
+{
+    if (!m_countBadge)
+        return;
+    raiseChild(m_countBadge);
+    m_countBadge->setIconRect(m_iconRect);
+    // Scaled with the icon about the icon's centre; ui::Transform scales
+    // about the badge's own.
+    const ui::RectF badge = m_countBadge->geometry();
+    ui::Transform transform;
+    transform.scale = m_scale;
+    transform.translation = {(m_scale - 1) * (badge.x + badge.width / 2 - (m_iconRect.x + m_iconRect.width / 2)),
+                             (m_scale - 1) * (badge.y + badge.height / 2 - (m_iconRect.y + m_iconRect.height / 2))};
+    m_countBadge->setTransform(transform);
+    m_countBadge->setOpacity(m_opacity);
+    m_countBadge->setVisible(m_countBadge->count() > 0 && !m_dragHidden);
 }
 
 void DockIcon::setPresentation(double scale, double opacity)

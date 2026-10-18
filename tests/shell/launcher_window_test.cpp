@@ -6,6 +6,7 @@
 // paging, menu and drags, headless on a fake renderer.
 
 #include <chrono>
+#include <cmath>
 
 #include <linux/input-event-codes.h>
 
@@ -23,6 +24,7 @@
 #include "scene/scene.h"
 #include "shell/common/file_thread.h"
 #include "shell/common/app_launcher.h"
+#include "shell/common/count_badge.h"
 #include "shell/common/task_manager.h"
 #include "shell/launcher/launcher.h"
 #include "shell/launcher/launcher_cell.h"
@@ -81,7 +83,14 @@ protected:
         input.setBounds(kOutput.size());
         input.setEventSink(&manager);
         directory.write("services.conf", "[Appearance]\nBackgroundType=1\nBackgroundColor=#336699\n");
-        shell::ShellEnvironment environment {&compositor, &manager, &seat};
+        startShell(nullptr);
+    }
+
+    // A shell on `bus`, which may be null.
+    void startShell(base::dbus::Connection *bus)
+    {
+        shell.reset();
+        shell::ShellEnvironment environment {&compositor, &manager, &seat, bus};
         environment.servicesSettings = directory.filePath("services.conf");
         shell = std::make_unique<shell::Shell>(environment);
         auto apps = std::make_unique<test::FakeApplications>();
@@ -455,4 +464,41 @@ TEST_F(LauncherWindowTest, ThePictureIsTheDesktopsDecodeShrunkAndBlurred)
     EXPECT_FALSE(wallpaper->cache().cached(directory.filePath("grey.png"), kOutput.size()).isNull());
     // The icons sit on the average under the dimmer.
     EXPECT_EQ((ui::Color {77, 77, 77, 255}), launcherWindow->wallpaper().backdropColor());
+}
+
+TEST_F(LauncherWindowTest, AnApplicationsCountSitsOnItsIconsCorner)
+{
+    namespace dbus = base::dbus;
+    dbus::Connection *bus = dbus::Connection::session(core::mainLoop());
+    ASSERT_NE(nullptr, bus);
+    startShell(bus);
+    open();
+    test::roundTrip(bus);
+    launcher().show();
+    frame();
+
+    test::DBusTestClient client;
+    client.sendLauncherEntry("application://terminal.desktop",
+                             dbus::VariantMap {{"count", dbus::Variant(int64_t(5))},
+                                               {"count-visible", dbus::Variant(true)}});
+    shell::LauncherCell *cell = view()->cell("terminal");
+    ASSERT_NE(nullptr, cell);
+    ASSERT_TRUE(test::runUntil([cell] { return cell->countBadge() && cell->countBadge()->isVisible(); }));
+    shell::CountBadge *badge = cell->countBadge();
+    EXPECT_EQ("5", badge->text());
+    const ui::RectF icon = cell->iconRect();
+    const double height = shell::CountBadge::heightFor(icon.width, shell::CountBadge::kLauncherRatio);
+    const double outset = std::round(height * 0.2);
+    EXPECT_EQ(ui::RectF(icon.x + icon.width + outset - height, icon.y - outset, height, height), badge->geometry());
+    EXPECT_EQ(nullptr, view()->cell("app00")->countBadge());
+    frame();
+
+    // Hidden with its cell while dragged.
+    cell->setDragging(true);
+    EXPECT_FALSE(badge->isVisible());
+    cell->setDragging(false);
+    EXPECT_TRUE(badge->isVisible());
+
+    client.sendLauncherEntry("application://terminal.desktop", dbus::VariantMap {{"count", dbus::Variant(int64_t(0))}});
+    ASSERT_TRUE(test::runUntil([badge] { return !badge->isVisible(); }));
 }

@@ -21,13 +21,14 @@ class ThemeIcon;
 
 namespace cutefish::shell {
 
+class CountBadge;
 class DockWindow;
 
 // One slot of the dock (an application, a minimized window or the trash):
 // the icon, or a minimized window's thumbnail with its
-// application's badge, the running dot, and the slot's hit area. The view's
-// geometry is that hit area: the dock's whole thickness and half the gap to
-// each neighbour.
+// application's badge, the application's count, the running dot, and the
+// slot's hit area. The view's geometry is that hit area: the dock's whole
+// thickness and half the gap to each neighbour.
 class DockIcon : public ui::View
 {
 public:
@@ -63,6 +64,9 @@ public:
     // the first value is taken at once.
     void setBadgeOpacity(double opacity);
     double badgeOpacity() const { return m_badgeOpacity; }
+    // The application's count on the icon's corner; 0 for none.
+    void setCount(int64_t count);
+    CountBadge *countBadge() const { return m_countBadge; }
 
     // Where the icon is in this view, and how the slot draws it: scaled
     // about the icon's centre, and its opacity.
@@ -110,6 +114,7 @@ private:
     void updateFace();
     void updateMask();
     void applyBadgeOpacity();
+    void placeCountBadge();
 
     DockWindow *m_dock;
     const Kind m_kind;
@@ -136,6 +141,8 @@ private:
     double m_badgeTarget = 1;
     bool m_badgeSet = false;
     std::unique_ptr<ui::Animation> m_badgeFade;
+    // Above the icon and its pressed look.
+    CountBadge *m_countBadge = nullptr;
     ui::RectF m_iconRect;
     ui::RectF m_dotRect;
     double m_scale = 1;

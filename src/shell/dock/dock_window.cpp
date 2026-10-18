@@ -14,6 +14,7 @@
 #include "core/main_loop.h"
 #include "input/drag.h"
 #include "input/seat.h"
+#include "shell/common/application_badges.h"
 #include "shell/common/task_manager.h"
 #include "shell/common/task_windows.h"
 #include "shell/dock/dock.h"
@@ -278,6 +279,10 @@ DockWindow::DockWindow(Shell *shell, std::unique_ptr<Dock> dock)
         m_subscriptions.push_back(model->modelReset.connect(changed));
     }
     m_subscriptions.push_back(applications.sectionsChanged.connect(changed));
+    m_subscriptions.push_back(m_shell->badges().changed.connect([this] {
+        for (const auto &[id, icon] : m_applicationIcons)
+            icon->setCount(m_shell->badges().count(id));
+    }));
     // What is there when the dock first appears is shown at once; later changes animate.
     m_subscriptions.push_back(applications.loaded.connect([this] {
         rebuild();
@@ -468,6 +473,7 @@ void DockWindow::rebuild()
             icon->setIcon(item.iconName.empty() ? "application-x-desktop" : item.iconName);
         icon->setToolTip(item.visibleName);
         icon->setRunning(!item.windows.empty());
+        icon->setCount(m_shell->badges().count(item.id));
         icons[item.id] = icon;
     }
     // Icons that left stay while they shrink away; layoutItems() drops them.

@@ -5,6 +5,7 @@
 #ifndef CUTEFISH_SHELL_LAUNCHER_LAUNCHER_CELL_H_
 #define CUTEFISH_SHELL_LAUNCHER_LAUNCHER_CELL_H_
 
+#include <cstdint>
 #include <string>
 
 #include "shell/launcher/launcher_metrics.h"
@@ -19,9 +20,10 @@ class ThemeIcon;
 
 namespace cutefish::shell {
 
+class CountBadge;
 class LauncherView;
 
-// One application in the launcher's grid: its icon,
+// One application in the launcher's grid: its icon and its count,
 // its name in up to two lines, the new mark, the keyboard selection and the
 // pressed silhouette. Only the icon takes the pointer; the rest of the cell
 // is the page behind it.
@@ -34,6 +36,9 @@ public:
     const std::string &id() const { return m_id; }
 
     void setItem(const LauncherItem &item);
+    // The application's count on the icon's corner; 0 for none.
+    void setCount(int64_t count);
+    CountBadge *countBadge() const { return m_countBadge; }
     const std::string &iconName() const { return m_iconName; }
     void setMetrics(const LauncherMetrics &metrics);
     // The page the cell is on and its index there.
@@ -76,6 +81,7 @@ private:
     class Icon;
 
     void updateMask();
+    void updateCountBadge();
 
     LauncherView *m_view;
     std::string m_id;
@@ -86,6 +92,8 @@ private:
     int m_index = 0;
     Icon *m_icon = nullptr;
     ui::ThemeIcon *m_mask = nullptr;
+    // Above the icon and its pressed look.
+    CountBadge *m_countBadge = nullptr;
     ui::Label *m_label = nullptr;
     ui::Color m_backdrop {0, 0, 0, 255};
     bool m_selected = false;

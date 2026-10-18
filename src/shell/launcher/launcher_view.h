@@ -26,6 +26,7 @@ class Menu;
 
 namespace cutefish::shell {
 
+class ApplicationBadges;
 class Launcher;
 class LauncherCell;
 class LauncherSearchField;
@@ -41,7 +42,7 @@ public:
     // desktop id, as UTF-8.
     static constexpr const char *kDesktopIdMimeType = "application/x-cutefish-desktop-id";
 
-    LauncherView(Launcher &launcher, LauncherWallpaper &wallpaper);
+    LauncherView(Launcher &launcher, LauncherWallpaper &wallpaper, ApplicationBadges &badges);
     ~LauncherView() override;
 
     void setMargins(const LauncherMetrics::Margins &margins);
@@ -156,6 +157,7 @@ private:
 
     Launcher &m_launcher;
     LauncherWallpaper &m_wallpaper;
+    ApplicationBadges &m_badges;
     LauncherMetrics::Margins m_margins;
     LauncherMetrics m_metrics;
     bool m_shown = false;

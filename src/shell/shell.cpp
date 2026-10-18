@@ -15,6 +15,7 @@
 #include "decoration/decoration_theme.h"
 #include "display/display_manager.h"
 #include "shell/common/app_launcher.h"
+#include "shell/common/application_badges.h"
 #include "shell/common/applications.h"
 #include "shell/common/file_thread.h"
 #include "shell/common/task_manager.h"
@@ -107,6 +108,7 @@ Shell::~Shell()
     while (!m_components.empty())
         m_components.pop_back();
     m_outputsChanged.reset();
+    m_badges.reset();
     m_launcher.reset();
     m_tasks.reset();
     m_taskWindows.reset();
@@ -166,6 +168,13 @@ ApplicationLauncher &Shell::launcher()
     if (!m_launcher)
         m_launcher = std::make_unique<ApplicationLauncher>(bus());
     return *m_launcher;
+}
+
+ApplicationBadges &Shell::badges()
+{
+    if (!m_badges)
+        m_badges = std::make_unique<ApplicationBadges>(bus());
+    return *m_badges;
 }
 
 void Shell::openSettings(const std::vector<std::string> &arguments)

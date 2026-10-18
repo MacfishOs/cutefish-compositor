@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "shell/common/count_badge.h"
 #include "shell/launcher/launcher_view.h"
 #include "ui/icon.h"
 #include "ui/label.h"
@@ -89,6 +90,27 @@ void LauncherCell::setItem(const LauncherItem &item)
     }
 }
 
+void LauncherCell::setCount(int64_t count)
+{
+    if (!m_countBadge) {
+        if (count <= 0)
+            return;
+        m_countBadge = addChild<CountBadge>();
+        m_countBadge->setHeightRatio(CountBadge::kLauncherRatio);
+    }
+    m_countBadge->setCount(count);
+    updateCountBadge();
+}
+
+void LauncherCell::updateCountBadge()
+{
+    if (!m_countBadge)
+        return;
+    raiseChild(m_countBadge);
+    m_countBadge->setIconRect(iconRect());
+    m_countBadge->setVisible(m_countBadge->count() > 0 && !m_dragging);
+}
+
 void LauncherCell::setMetrics(const LauncherMetrics &metrics)
 {
     if (metrics == m_metrics)
@@ -119,6 +141,7 @@ void LauncherCell::setDragging(bool dragging)
     m_icon->setVisible(!dragging);
     m_label->setVisible(!dragging);
     updateMask();
+    updateCountBadge();
     requestPaint();
 }
 
@@ -148,6 +171,7 @@ void LauncherCell::updateMask()
         m_mask->setColor(ui::Color {0, 0, 0, 255});
         m_mask->setOpacity(0.4);
         m_mask->setGeometry(iconRect());
+        updateCountBadge();
     }
     if (m_mask)
         m_mask->setVisible(isPressDimmed());
@@ -233,6 +257,7 @@ void LauncherCell::layout()
     m_icon->setGeometry(icon);
     if (m_mask)
         m_mask->setGeometry(icon);
+    updateCountBadge();
     const ui::RectF label = labelArea(m_metrics);
     // Lines the label's height cannot hold go before the maximum:
     // with a font taller than 1.3 em the two-line area holds one.

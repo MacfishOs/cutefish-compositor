@@ -27,7 +27,7 @@ LauncherWindow::LauncherWindow(Shell *shell, std::unique_ptr<Launcher> launcher,
     , m_wallpaper(std::make_unique<LauncherWallpaper>(wallpaper))
 {
     m_window = std::make_unique<ShellWindow>(shell, wm::WindowRole::Launcher);
-    auto view = std::make_unique<LauncherView>(*m_launcher, *m_wallpaper);
+    auto view = std::make_unique<LauncherView>(*m_launcher, *m_wallpaper, shell->badges());
     m_view = view.get();
     m_window->setContentView(std::move(view));
     // Transparent: until the wallpaper decodes, the dimmer darkens what is

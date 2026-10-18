@@ -24,6 +24,7 @@
 #include "scene/scene.h"
 #include "scene/surface_node.h"
 #include "shell/common/app_launcher.h"
+#include "shell/common/count_badge.h"
 #include "shell/common/task_manager.h"
 #include "shell/dock/dock.h"
 #include "shell/dock/dock_icon.h"
@@ -533,6 +534,60 @@ TEST_F(ShellComponentsTest, TheDockFollowsRunningApplicationsAndTakesClicks)
         return !dock->applicationIcon("terminal");
     }));
     EXPECT_TRUE(faded);
+}
+
+TEST_F(ShellComponentsTest, AnApplicationsCountSitsOnItsIconsCorner)
+{
+    namespace dbus = base::dbus;
+    dbus::Connection *bus = dbus::Connection::session(core::mainLoop());
+    ASSERT_NE(nullptr, bus);
+    shell::ShellEnvironment environment {&compositor, &manager, &seat, bus};
+    environment.servicesSettings = directory.filePath("services.conf");
+    shell.reset();
+    shell = std::make_unique<shell::Shell>(environment);
+    auto apps = std::make_unique<test::FakeApplications>();
+    apps->addSimple("files", "Files", "folder");
+    apps->addSimple("terminal", "Terminal", "utilities-terminal");
+    apps->scan();
+    shell->setApplications(std::move(apps));
+    shell->setTaskWindows(std::make_unique<test::FakeTaskWindows>());
+    auto *dock = openDock("[Dock]\nPinned=files, terminal\n");
+    test::roundTrip(bus);
+    shell::DockIcon *files = dock->applicationIcon("files");
+    ASSERT_NE(nullptr, files);
+    EXPECT_EQ(nullptr, files->countBadge());
+
+    test::DBusTestClient client;
+    client.sendLauncherEntry("application://files.desktop",
+                             dbus::VariantMap {{"count", dbus::Variant(int64_t(7))},
+                                               {"count-visible", dbus::Variant(true)}});
+    ASSERT_TRUE(test::runUntil([files] { return files->countBadge() && files->countBadge()->isVisible(); }));
+    shell::CountBadge *badge = files->countBadge();
+    EXPECT_EQ("7", badge->text());
+    EXPECT_EQ(nullptr, dock->applicationIcon("terminal")->countBadge());
+    // A circle a third of the icon high, 4 past the icon's top and right edges.
+    const ui::RectF icon = files->iconRect();
+    EXPECT_EQ(ui::RectF(icon.x + icon.width + 4 - 18, icon.y - 4, 18, 18), badge->geometry());
+    frame();
+
+    // Two digits widen it into a pill, "99+" a little more; its corner stays.
+    client.sendLauncherEntry("application://files.desktop", dbus::VariantMap {{"count", dbus::Variant(int64_t(42))}});
+    ASSERT_TRUE(test::runUntil([badge] { return badge->count() == 42; }));
+    EXPECT_EQ("42", badge->text());
+    const double twoDigits = badge->geometry().width;
+    EXPECT_GT(twoDigits, 18);
+    EXPECT_EQ(18, badge->geometry().height);
+    EXPECT_EQ(icon.x + icon.width + 4, badge->geometry().right());
+    client.sendLauncherEntry("application://files.desktop", dbus::VariantMap {{"count", dbus::Variant(int64_t(120))}});
+    ASSERT_TRUE(test::runUntil([badge] { return badge->count() == 120; }));
+    EXPECT_EQ("99+", badge->text());
+    EXPECT_GT(badge->geometry().width, twoDigits);
+    EXPECT_EQ(icon.x + icon.width + 4, badge->geometry().right());
+    frame();
+
+    client.sendLauncherEntry("application://files.desktop",
+                             dbus::VariantMap {{"count-visible", dbus::Variant(false)}});
+    ASSERT_TRUE(test::runUntil([badge] { return !badge->isVisible(); }));
 }
 
 TEST_F(ShellComponentsTest, ADismissedMenuGivesTheTooltipBack)

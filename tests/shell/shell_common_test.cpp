@@ -4,6 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include "dbus_test_client.h"
+#include "shell/common/application_badges.h"
+#include "shell/common/count_badge.h"
 #include "shell/common/task_manager.h"
 #include "shell/common/text_match.h"
 #include "shell_test_util.h"
@@ -152,4 +155,66 @@ TEST_F(TaskManagerTest, FindsTheEntryOfAProcessThroughItsAncestors)
     commands[200] = {"/usr/bin/org.example.Editor", "org.example.Editor"};
     EXPECT_EQ(tasks->resolveProcess({}, 200, {})->id, "org.example.Editor");
     EXPECT_EQ(tasks->entryForProcess(300), nullptr);
+}
+
+TEST(ApplicationBadgesTest, NamesTheDesktopIdOfALauncherUri)
+{
+    EXPECT_EQ(shell::ApplicationBadges::desktopId("application://org.telegram.desktop.desktop"),
+              "org.telegram.desktop");
+    EXPECT_EQ(shell::ApplicationBadges::desktopId("application://code"), "code");
+    EXPECT_EQ(shell::ApplicationBadges::desktopId("file:///usr/share/applications/code.desktop"), "");
+}
+
+TEST(ApplicationBadgesTest, ShowsUpTo99)
+{
+    EXPECT_EQ(shell::CountBadge::textFor(0), "");
+    EXPECT_EQ(shell::CountBadge::textFor(1), "1");
+    EXPECT_EQ(shell::CountBadge::textFor(99), "99");
+    EXPECT_EQ(shell::CountBadge::textFor(100), "99+");
+    EXPECT_EQ(shell::CountBadge::textFor(9999), "99+");
+}
+
+TEST(ApplicationBadgesTest, FollowsTheCountsApplicationsSend)
+{
+    namespace dbus = base::dbus;
+    dbus::Connection *bus = dbus::Connection::session(core::mainLoop());
+    ASSERT_NE(nullptr, bus);
+    shell::ApplicationBadges badges(bus);
+    int changes = 0;
+    const base::Subscription changed = badges.changed.connect([&changes] { ++changes; });
+    test::roundTrip(bus);
+
+    auto client = std::make_unique<test::DBusTestClient>();
+    client->sendLauncherEntry("application://org.example.Chat.desktop",
+                              dbus::VariantMap {{"count", dbus::Variant(int64_t(7))},
+                                                {"count-visible", dbus::Variant(true)}});
+    ASSERT_TRUE(test::runUntil([&] { return badges.count("org.example.Chat") == 7; }));
+    EXPECT_EQ(changes, 1);
+    // Desktop ids match ignoring case.
+    EXPECT_EQ(badges.count("org.example.chat"), 7);
+    EXPECT_EQ(badges.count("org.example.Other"), 0);
+
+    // Each update carries only what changed.
+    client->sendLauncherEntry("application://org.example.Chat.desktop",
+                              dbus::VariantMap {{"count", dbus::Variant(int64_t(120))}});
+    ASSERT_TRUE(test::runUntil([&] { return badges.count("org.example.Chat") == 120; }));
+    client->sendLauncherEntry("application://org.example.Chat.desktop",
+                              dbus::VariantMap {{"count-visible", dbus::Variant(false)}});
+    ASSERT_TRUE(test::runUntil([&] { return badges.count("org.example.Chat") == 0; }));
+    client->sendLauncherEntry("application://org.example.Chat.desktop",
+                              dbus::VariantMap {{"count-visible", dbus::Variant(true)}});
+    ASSERT_TRUE(test::runUntil([&] { return badges.count("org.example.Chat") == 120; }));
+    // A count of zero shows nothing.
+    client->sendLauncherEntry("application://org.example.Chat.desktop",
+                              dbus::VariantMap {{"count", dbus::Variant(int64_t(0))}});
+    ASSERT_TRUE(test::runUntil([&] { return badges.count("org.example.Chat") == 0; }));
+    client->sendLauncherEntry("application://org.example.Chat.desktop",
+                              dbus::VariantMap {{"count", dbus::Variant(int64_t(3))}});
+    ASSERT_TRUE(test::runUntil([&] { return badges.count("org.example.Chat") == 3; }));
+    changes = 0;
+
+    // The count goes with the application.
+    client.reset();
+    ASSERT_TRUE(test::runUntil([&] { return badges.count("org.example.Chat") == 0; }));
+    EXPECT_EQ(changes, 1);
 }

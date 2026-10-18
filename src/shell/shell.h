@@ -44,6 +44,7 @@ class WindowManager;
 
 namespace cutefish::shell {
 
+class ApplicationBadges;
 class ApplicationLauncher;
 class Applications;
 class ShellHost;
@@ -131,11 +132,12 @@ public:
 
     // What the components share, made on first use: the installed
     // applications, the application windows, which application each belongs
-    // to, and application starts.
+    // to, application starts and the applications' counts.
     Applications &applications();
     TaskWindows &taskWindows();
     TaskManager &tasks();
     ApplicationLauncher &launcher();
+    ApplicationBadges &badges();
     // Starts Settings with `arguments`, such as {"-m", "sound"}, and brings a
     // running Settings forward, minimized or hidden as it may be.
     void openSettings(const std::vector<std::string> &arguments = {});
@@ -178,6 +180,7 @@ private:
     std::unique_ptr<TaskWindows> m_taskWindows;
     std::unique_ptr<TaskManager> m_tasks;
     std::unique_ptr<ApplicationLauncher> m_launcher;
+    std::unique_ptr<ApplicationBadges> m_badges;
     base::Subscription m_outputsChanged;
     base::Timer m_trimTimer;
     // Last: the first to go.

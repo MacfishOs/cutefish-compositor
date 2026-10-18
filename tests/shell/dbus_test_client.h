@@ -64,9 +64,27 @@ public:
 
     std::vector<base::dbus::Message> signalsSeen;
 
+    // com.canonical.Unity.LauncherEntry's Update, as an application putting
+    // a count on its icon sends it.
+    void sendLauncherEntry(const std::string &uri, const base::dbus::VariantMap &properties)
+    {
+        EXPECT_TRUE(connection->emitSignal("/com/canonical/unity/launcherentry/1",
+                                           "com.canonical.Unity.LauncherEntry", "Update", uri, properties));
+    }
+
 private:
     std::vector<base::dbus::Match> m_matches;
 };
+
+// Waits until the bus has handled what `bus` sent so far, such as the match
+// rules of its subscriptions.
+inline void roundTrip(base::dbus::Connection *bus)
+{
+    bool done = false;
+    base::dbus::Proxy daemon(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus");
+    base::dbus::PendingCall pending = daemon.callAsync("GetId", [&done](const base::dbus::Reply &) { done = true; });
+    EXPECT_TRUE(runUntil([&done] { return done; }));
+}
 
 } // namespace cutefish::test
 
