@@ -491,12 +491,28 @@ TEST_F(ShellComponentsTest, TheDockFollowsRunningApplicationsAndTakesClicks)
     menu->close();
     EXPECT_FALSE(icon->isDimmed());
 
-    // Gone, it shrinks away on the dock's frames and leaves.
-    windows->remove(id);
+    // Gone, it fades out above the dock where it was while the dock closes
+    // up, then leaves.
     ASSERT_TRUE(test::runUntil([&] {
         frame();
+        return !dock->applicationPresentation()->isRunning();
+    }));
+    const ui::RectF leavingAt = icon->geometry();
+    const double leavingScale = icon->presentationScale();
+    windows->remove(id);
+    bool faded = false;
+    ASSERT_TRUE(test::runUntil([&] {
+        frame();
+        if (shell::DockIcon *leaving = dock->applicationIcon("terminal")) {
+            EXPECT_EQ(leavingAt, leaving->geometry());
+            EXPECT_EQ(leavingScale, leaving->presentationScale());
+            EXPECT_EQ(leaving, leaving->parent()->children().back().get());
+            EXPECT_EQ(window, dock->window()->geometry());
+            faded = faded || (leaving->presentationOpacity() > 0 && leaving->presentationOpacity() < 1);
+        }
         return !dock->applicationIcon("terminal");
     }));
+    EXPECT_TRUE(faded);
 }
 
 TEST_F(ShellComponentsTest, ADismissedMenuGivesTheTooltipBack)
@@ -611,6 +627,44 @@ TEST_F(ShellComponentsTest, AnIconThatFinishedLeavingIsAnnouncedOnTheFrameThatDr
     presentation.tick(ns(start + shell::DockPresentation::kDurationMs + 1));
     EXPECT_EQ(1u, presentation.entries().size());
     EXPECT_EQ(before + 1, changes);
+}
+
+TEST_F(ShellComponentsTest, ALeavingIconFadesWhereItIs)
+{
+    class Presentation : public shell::DockPresentation
+    {
+    public:
+        using shell::DockPresentation::DockPresentation;
+        using shell::DockPresentation::tick;
+    };
+
+    auto *dock = openDock("[Dock]\nPinned=files\n");
+    Presentation presentation(dock->window()->window());
+    presentation.setKeys({"files", "terminal", "editor"});
+    presentation.setAnimationsEnabled(true);
+    const auto ns = [](double ms) { return uint64_t(ms * 1e6); };
+    const auto entry = [&](const std::string &key) {
+        for (const shell::DockPresentation::Entry &e : presentation.entries()) {
+            if (e.key == key)
+                return e;
+        }
+        return shell::DockPresentation::Entry {};
+    };
+
+    // Taken out of the middle, it fades in its slot as the dock shrinks and
+    // the next icon slides over it.
+    presentation.setKeys({"files", "editor"});
+    const double terminalAt = presentation.position(entry("terminal"));
+    presentation.tick(ns(1000));
+    const double halfway = 1000 + shell::DockPresentation::kDurationMs / 2;
+    presentation.tick(ns(halfway));
+    EXPECT_EQ(terminalAt, presentation.position(entry("terminal")));
+    EXPECT_GT(presentation.appearance(entry("terminal")), 0);
+    EXPECT_LT(presentation.appearance(entry("terminal")), 1);
+    EXPECT_LT(presentation.length(), 3 * 70);
+    EXPECT_LT(presentation.position(entry("editor")), 2 * 70);
+    presentation.tick(ns(1000 + shell::DockPresentation::kDurationMs));
+    EXPECT_EQ(2u, presentation.entries().size());
 }
 
 TEST_F(ShellComponentsTest, ADraggedIconNothingTakesGoesBackToItsSlot)

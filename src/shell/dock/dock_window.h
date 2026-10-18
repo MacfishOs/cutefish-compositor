@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -187,6 +188,8 @@ private:
     std::map<uint64_t, DockIcon *> m_minimizedIcons;
     // The last model state of each slot, kept while a removed one leaves.
     std::map<uint64_t, MinimizedWindows::Entry> m_minimizedStates;
+    // Leaving icons, drawn above the rest where they last were.
+    std::set<DockIcon *> m_leavingIcons;
     DockIcon *m_trash = nullptr;
     DockMetrics m_metrics;
     DrawnDockMetrics m_fromMetrics;

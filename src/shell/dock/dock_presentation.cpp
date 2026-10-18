@@ -7,8 +7,6 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
-#include <numeric>
-#include <tuple>
 
 namespace cutefish::shell {
 
@@ -246,7 +244,7 @@ double DockPresentation::appearance(const Entry &entry) const
 
 double DockPresentation::iconScale(const Entry &entry) const
 {
-    return entry.leaving ? entry.appearance.value : 0.75 + 0.25 * entry.appearance.value;
+    return entry.leaving ? 1 : 0.75 + 0.25 * entry.appearance.value;
 }
 
 double DockPresentation::length() const
@@ -278,27 +276,12 @@ void DockPresentation::retarget()
     apply(m_lengthGaps, m_sectionRow >= 0 ? 1 : 0, animate);
     apply(m_trailing, m_sectionRow >= 0 && m_rowCount > m_sectionRow ? 1 : 0, animate);
 
-    // A leaving icon closes up with the next one that stays, in the order the
-    // layout had until now; leaving ones sort before a staying one they meet.
-    std::vector<size_t> order(m_entries.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::stable_sort(order.begin(), order.end(), [this](size_t a, size_t b) {
-        const Entry &first = m_entries[a];
-        const Entry &second = m_entries[b];
-        return std::tuple(first.cells.to, first.gaps.to, first.row >= 0)
-                < std::tuple(second.cells.to, second.gaps.to, second.row >= 0);
-    });
-    std::map<size_t, long> closesWith;
-    long staying = -1;
-    for (auto index = order.rbegin(); index != order.rend(); ++index) {
-        if (m_entries[*index].row >= 0)
-            staying = long(*index);
-        else
-            closesWith[*index] = staying;
-    }
-
     for (Entry &entry : m_entries) {
         if (entry.row < 0) {
+            if (!entry.leaving) {
+                entry.cells.snap(entry.cells.value);
+                entry.gaps.snap(entry.gaps.value);
+            }
             entry.leaving = true;
             entry.dropped = false;
             apply(entry.appearance, 0, animate);
@@ -314,10 +297,6 @@ void DockPresentation::retarget()
         } else if (entry.appearance.delayed && entry.appearance.value == 0) {
             begin(entry.appearance);
         }
-    }
-    for (const auto &[index, next] : closesWith) {
-        apply(m_entries[index].cells, next >= 0 ? m_entries[size_t(next)].cells.to : m_lengthCells.to,
-              animate);
     }
     if (!animate) {
         m_resize.snap(1);

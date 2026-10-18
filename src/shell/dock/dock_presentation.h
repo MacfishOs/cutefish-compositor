@@ -18,8 +18,7 @@ namespace cutefish::shell {
 // for every transition, 260 ms on OutQuint, stepped on the window's frames;
 // positions are counted in slots and section gaps so a new icon size rescales
 // the motion in flight. A new icon is revealed in the last quarter of its slot
-// opening, a leaving one shrinks away while its slot closes onto the next icon
-// that stays.
+// opening; a leaving one fades out while its slot closes.
 class DockPresentation : public ui::FrameClient
 {
 public:
@@ -88,7 +87,7 @@ public:
     double position(const Entry &entry) const;
     double targetPosition(const Entry &entry) const;
     double appearance(const Entry &entry) const;
-    // An appearing icon grows from three quarters; a leaving one shrinks away.
+    // An appearing icon grows from three quarters.
     double iconScale(const Entry &entry) const;
 
     double length() const;

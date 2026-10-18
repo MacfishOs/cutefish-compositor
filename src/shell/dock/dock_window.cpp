@@ -664,6 +664,7 @@ void DockWindow::layoutItems()
                                           : ui::RectF {across, m_drawn.iconGap / 2, itemSize, itemSize};
         icon->setIconRect(iconRect);
         icon->setPresentation(scale * itemScale, opacity, leading);
+        m_leavingIcons.erase(icon);
         const double dot = m_metrics.dotSize;
         const double dotGap = m_metrics.dotGap;
         if (bottom)
@@ -674,19 +675,41 @@ void DockWindow::layoutItems()
             icon->setDotRect({iconRect.x + itemSize + dotGap, iconRect.y + (itemSize - dot) / 2, dot, dot});
     };
 
+    // Out of the layout, above the icons that close up under it, where it was
+    // last placed.
+    const auto leave = [&](DockIcon *icon, double opacity) {
+        if (m_leavingIcons.insert(icon).second)
+            m_panel->raiseChild(icon);
+        icon->setPresentation(icon->presentationScale(), opacity, false);
+        icon->setEnabled(false);
+    };
+    const auto staying = [](const DockPresentation &presentation) {
+        std::set<std::string> keys;
+        for (const DockPresentation::Entry &entry : presentation.entries()) {
+            if (!entry.leaving)
+                keys.insert(entry.key);
+        }
+        return keys;
+    };
+
     std::set<std::string> present;
+    const std::set<std::string> stayingApplications = staying(*m_applications);
     for (const DockPresentation::Entry &entry : m_applications->entries()) {
         DockIcon *icon = applicationIcon(entry.key);
         if (!icon)
             continue;
         present.insert(entry.key);
+        if (entry.leaving) {
+            if (!stayingApplications.contains(entry.key)) {
+                leave(icon, m_applications->appearance(entry));
+                icon->setRunning(false);
+            }
+            continue;
+        }
         const double position = along(m_applications->position(entry), m_applications->targetPosition(entry))
-                + (entry.leaving ? 0 : itemGrowth);
-        placeIcon(icon, position, m_applications->iconScale(entry), m_applications->appearance(entry),
-                  entry.leaving);
-        icon->setEnabled(!entry.leaving);
-        if (entry.leaving)
-            icon->setRunning(false);
+                + itemGrowth;
+        placeIcon(icon, position, m_applications->iconScale(entry), m_applications->appearance(entry), false);
+        icon->setEnabled(true);
     }
     for (auto it = m_applicationIcons.begin(); it != m_applicationIcons.end();) {
         if (present.contains(it->first)) {
@@ -706,24 +729,30 @@ void DockWindow::layoutItems()
     std::set<uint64_t> windows;
     const double minimizedStart = m_minimizedStart;
     const double settledMinimizedStart = m_applications->targetLength() + m_applications->targetTrailingExtent();
+    const std::set<std::string> stayingWindows = staying(*m_minimized);
     for (const DockPresentation::Entry &entry : m_minimized->entries()) {
         const uint64_t id = std::stoull(entry.key);
         DockIcon *icon = minimizedIcon(id);
         if (!icon)
             continue;
         windows.insert(id);
-        const double position = along(minimizedStart + m_minimized->position(entry),
-                                      settledMinimizedStart + m_minimized->targetPosition(entry))
-                + (entry.leaving ? 0 : itemGrowth);
         // A window that flies in arrives in its slot itself and becomes its
         // thumbnail whole; one shown again from hidden is revealed like an
-        // icon, and a closed one shrinks away with its slot.
+        // icon, and a closed one fades out where it was.
         const auto state = m_minimizedStates.find(id);
         const bool landed = state == m_minimizedStates.end() || state->second.landed;
-        const bool revealed = entry.leaving || state == m_minimizedStates.end() || !state->second.flownIn;
+        if (entry.leaving) {
+            if (!stayingWindows.contains(entry.key))
+                leave(icon, landed ? m_minimized->appearance(entry) : 0);
+            continue;
+        }
+        const double position = along(minimizedStart + m_minimized->position(entry),
+                                      settledMinimizedStart + m_minimized->targetPosition(entry))
+                + itemGrowth;
+        const bool revealed = state == m_minimizedStates.end() || !state->second.flownIn;
         placeIcon(icon, position, revealed ? m_minimized->iconScale(entry) : 1,
-                  !landed ? 0 : revealed ? m_minimized->appearance(entry) : 1, entry.leaving);
-        icon->setEnabled(!entry.leaving);
+                  !landed ? 0 : revealed ? m_minimized->appearance(entry) : 1, false);
+        icon->setEnabled(true);
     }
     for (auto it = m_minimizedIcons.begin(); it != m_minimizedIcons.end();) {
         if (windows.contains(it->first)) {
@@ -779,6 +808,7 @@ void DockWindow::retire(DockIcon *icon)
 {
     // Not from inside the frame that laid it out: destroyed on the next turn.
     icon->setVisible(false);
+    m_leavingIcons.erase(icon);
     m_retired.push_back(m_panel->takeChild(icon));
     if (m_retired.size() == 1) {
         core::mainLoop()->post([this, alive = m_alive] {
