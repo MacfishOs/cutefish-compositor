@@ -13,6 +13,7 @@
 
 #include "base/dbus.h"
 #include "base/file.h"
+#include "base/i18n.h"
 #include "base/logging.h"
 #include "base/event_loop.h"
 #include "core/main_loop.h"
@@ -28,6 +29,9 @@
 #include "ui/file_chooser.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -130,7 +134,7 @@ ScreenCapture::ScreenCapture(Shell *shell, ScreenCaptureServices services)
         if (ok)
             m_notifier->notifySaved(m_recording->path(), true);
         else
-            m_notifier->notifyFailed("Screen Recording Failed", error);
+            m_notifier->notifyFailed(tr("Screen Recording Failed"), error);
         recordingChanged();
         if (m_service)
             m_service->emitPropertiesChanged({"recording"});
@@ -600,7 +604,7 @@ void ScreenCapture::chooseFolder()
 
     m_chooser = std::make_unique<ui::FileChooser>();
     m_chooser->setMode(ui::FileChooser::Mode::OpenFolder);
-    m_chooser->setTitle("Choose a Folder");
+    m_chooser->setTitle(tr("Choose a Folder"));
     m_chooser->setCurrentFolder(video ? m_settings->videoFolder() : m_settings->imageFolder());
     // Back to the toolbar either way, the way it was left.
     const auto reopen = [this, alive = std::weak_ptr<bool>(m_alive)] {
@@ -799,7 +803,7 @@ void ScreenCapture::deliverImages(std::vector<ui::Bitmap> images, std::vector<ba
         placed.push_back(i < geometries.size() ? geometries[i] : base::Rect());
     }
     if (pictures.empty()) {
-        m_notifier->notifyFailed("Screenshot Failed", "The screen could not be captured.");
+        m_notifier->notifyFailed(tr("Screenshot Failed"), tr("The screen could not be captured."));
         return;
     }
 
@@ -812,7 +816,7 @@ void ScreenCapture::deliverImages(std::vector<ui::Bitmap> images, std::vector<ba
         if (m_clipboard->setImage(image))
             m_notifier->notifyCopied(image);
         else
-            m_notifier->notifyFailed("Screenshot Failed", "The screenshot could not be copied.");
+            m_notifier->notifyFailed(tr("Screenshot Failed"), tr("The screenshot could not be copied."));
         return;
     }
     saveImages(std::move(pictures));
@@ -846,7 +850,7 @@ void ScreenCapture::saveImages(std::vector<ui::Bitmap> pictures)
                 if (onSaved)
                     onSaved(saved);
                 if (saved.empty()) {
-                    m_notifier->notifyFailed("Screenshot Failed", "The screenshot could not be saved.");
+                    m_notifier->notifyFailed(tr("Screenshot Failed"), tr("The screenshot could not be saved."));
                     return;
                 }
                 for (const std::string &path : saved)
@@ -884,8 +888,8 @@ void ScreenCapture::startRecording(const Target &target)
                 std::erase_if(m_jobs, [](const base::Job &job) { return !job.isPending(); });
                 m_recordingStarting = false;
                 if (path.empty()) {
-                    m_notifier->notifyFailed("Screen Recording Failed",
-                                             std::format("{} cannot be written to.", folder));
+                    m_notifier->notifyFailed(tr("Screen Recording Failed"),
+                                             format(tr("{folder} cannot be written to."), {{"folder", folder}}));
                     return;
                 }
                 if (m_recording->isRunning())

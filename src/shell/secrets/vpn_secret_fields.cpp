@@ -7,6 +7,10 @@
 #include <cstdint>
 #include <cstdlib>
 
+#include "base/i18n.h"
+
+using cutefish::i18n::tr;
+
 namespace cutefish::shell {
 
 static const std::string kServicePrefix = "org.freedesktop.NetworkManager.";
@@ -56,7 +60,7 @@ std::vector<VpnSecretField> vpnSecretFields(const std::string &serviceType,
     const auto required = [&flags](const std::string &key) { return !(flags(key) & kNotRequired); };
     const auto has = [&data](const std::string &key) { return data.count(key) > 0; };
 
-    const std::string password = "Password";
+    const std::string password = tr("Password");
     std::vector<VpnSecretField> fields;
 
     // Hints name exactly what NetworkManager is missing, a one-time code for instance.
@@ -73,9 +77,9 @@ std::vector<VpnSecretField> vpnSecretFields(const std::string &serviceType,
         } else if (hint.starts_with(challenge)) {
             field.label = hint.substr(challenge.size());
         } else if (hint == "cert-pass") {
-            field.label = "Private key password";
+            field.label = tr("Private key password");
         } else if (hint == "http-proxy-password") {
-            field.label = "Proxy password";
+            field.label = tr("Proxy password");
         }
         fields.push_back(field);
     }
@@ -88,45 +92,45 @@ std::vector<VpnSecretField> vpnSecretFields(const std::string &serviceType,
         if ((type == "password" || type == "password-tls") && required("password"))
             fields.push_back({"password", password});
         if ((type == "tls" || type == "password-tls") && has("key") && required("cert-pass"))
-            fields.push_back({"cert-pass", "Private key password"});
+            fields.push_back({"cert-pass", tr("Private key password")});
         if (has("proxy-server") && required("http-proxy-password"))
-            fields.push_back({"http-proxy-password", "Proxy password"});
+            fields.push_back({"http-proxy-password", tr("Proxy password")});
     } else if (kind == "l2tp") {
         const std::string user = value("user-auth-type");
         const std::string machine = value("machine-auth-type");
         if ((user.empty() || user == "password") && required("password"))
             fields.push_back({"password", password});
         else if (user == "tls" && required("user-certpass"))
-            fields.push_back({"user-certpass", "Certificate password"});
+            fields.push_back({"user-certpass", tr("Certificate password")});
         if (machine == "psk" && required("ipsec-psk"))
-            fields.push_back({"ipsec-psk", "Pre-shared key"});
+            fields.push_back({"ipsec-psk", tr("Pre-shared key")});
         else if (machine == "tls" && required("machine-certpass"))
-            fields.push_back({"machine-certpass", "Machine certificate password"});
+            fields.push_back({"machine-certpass", tr("Machine certificate password")});
     } else if (kind == "vpnc") {
         if (required("Xauth password"))
             fields.push_back({"Xauth password", password});
         if (required("IPSec secret"))
-            fields.push_back({"IPSec secret", "Group password"});
+            fields.push_back({"IPSec secret", tr("Group password")});
     } else if (kind == "strongswan") {
         const std::string method = value("method");
         if (method == "agent" || value("secret_type") == "unused")
             return fields;
         if (method == "key")
-            fields.push_back({"password", "Private key password"});
+            fields.push_back({"password", tr("Private key password")});
         else if (method == "smartcard")
-            fields.push_back({"password", "PIN"});
+            fields.push_back({"password", tr("PIN")});
         else
             fields.push_back({"password", password});
     } else if (kind == "libreswan") {
         if (value("xauthpasswordinputmodes") != "unused")
             fields.push_back({"xauthpassword", password});
         if (value("pskinputmodes") != "unused")
-            fields.push_back({"pskvalue", "Group password"});
+            fields.push_back({"pskvalue", tr("Group password")});
     } else if (kind == "fortisslvpn") {
         if (required("password"))
             fields.push_back({"password", password});
         if (flags("otp") == kNotSaved)
-            fields.push_back({"otp", "One-time password", false});
+            fields.push_back({"otp", tr("One-time password"), false});
     } else if (kind == "openconnect") {
         // Its sign-in is a conversation with the server, which no password prompt covers.
     } else if (required("password")) {

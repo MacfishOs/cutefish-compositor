@@ -9,10 +9,14 @@
 #include <memory>
 
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include "ui/check_box.h"
 #include "ui/dialog_window.h"
 #include "ui/text_field.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -34,10 +38,6 @@ static constexpr const char *kPasswordCharacter = "\u25cf";
 // Sensitive data without word prediction, for a shown password.
 static constexpr uint32_t kSecretHints = ui::SensitiveDataHint;
 
-static std::string quoted(const std::string &name)
-{
-    return "“" + name + "”";
-}
 
 // --- WirelessPasswordDialog ---
 
@@ -51,25 +51,27 @@ std::string WirelessPasswordDialog::title(NetworkSecretAgent::Kind kind)
 {
     switch (kind) {
     case NetworkSecretAgent::Kind::PrivateKeyPassword:
-        return "Private Key Password Required";
+        return tr("Private Key Password Required");
     case NetworkSecretAgent::Kind::WepKey:
     case NetworkSecretAgent::Kind::WpaPassword:
-        return "Wi-Fi Password Required";
+        return tr("Wi-Fi Password Required");
     default:
-        return "Network Authentication Required";
+        return tr("Network Authentication Required");
     }
 }
 
 std::string WirelessPasswordDialog::text(const NetworkSecretAgent &agent)
 {
-    const std::string name = quoted(agent.connectionName());
+    const std::string name = agent.connectionName();
     if (agent.retry())
-        return "The password for " + name + " was not accepted. Try again.";
+        return format(tr("The password for “{name}” was not accepted. Try again."), {{"name", name}});
     if (agent.kind() == NetworkSecretAgent::Kind::WepKey)
-        return "Enter the WEP key for " + name + ".";
+        return format(tr("Enter the WEP key for “{name}”."), {{"name", name}});
     if (!agent.identity().empty())
-        return "Enter the password of " + agent.identity() + " for " + name + ".";
-    return "Enter the password for " + name + ".";
+        // TRANSLATORS: {identity} is the user name the network signs in with.
+        return format(tr("Enter the password of {identity} for “{name}”."),
+                      {{"identity", agent.identity()}, {"name", name}});
+    return format(tr("Enter the password for “{name}”."), {{"name", name}});
 }
 
 bool WirelessPasswordDialog::acceptable(NetworkSecretAgent::Kind kind, const std::string &text)
@@ -115,7 +117,7 @@ void WirelessPasswordDialog::build(ui::View *frame)
     };
     m_field->onAccepted = [this] { accept(); };
 
-    m_show = frame->addChild<ui::CheckBox>("Show password");
+    m_show = frame->addChild<ui::CheckBox>(tr("Show password"));
     m_show->onToggled = [this](bool checked) {
         m_field->setEchoMode(checked ? ui::TextField::EchoMode::Normal : ui::TextField::EchoMode::Password);
     };
@@ -139,9 +141,14 @@ void WirelessPasswordDialog::update()
     const NetworkSecretAgent::Kind kind = m_agent->kind();
     setTitle(title(kind));
     setText(text(*m_agent));
-    m_field->setPlaceholder(kind == NetworkSecretAgent::Kind::WepKey ? "WEP key" : "Password");
-    primaryButton()->setText("Connect");
+    m_field->setPlaceholder(kind == NetworkSecretAgent::Kind::WepKey ? tr("WEP key") : tr("Password"));
+    primaryButton()->setText(tr("Connect"));
     primaryButton()->setEnabled(acceptable(kind, m_field->text()));
+}
+
+void WirelessPasswordDialog::retranslateRows()
+{
+    m_show->setText(tr("Show password"));
 }
 
 void WirelessPasswordDialog::requestChanged()
@@ -167,14 +174,14 @@ std::string VpnPasswordDialog::text(const NetworkSecretAgent &agent)
     if (!agent.message().empty())
         return agent.message();
     if (agent.retry())
-        return "Signing in to " + quoted(agent.connectionName()) + " failed. Try again.";
-    return "Enter the password for " + quoted(agent.connectionName()) + ".";
+        return format(tr("Signing in to “{name}” failed. Try again."), {{"name", agent.connectionName()}});
+    return format(tr("Enter the password for “{name}”."), {{"name", agent.connectionName()}});
 }
 
 void VpnPasswordDialog::build(ui::View *frame)
 {
     m_frame = frame;
-    m_show = frame->addChild<ui::CheckBox>("Show password");
+    m_show = frame->addChild<ui::CheckBox>(tr("Show password"));
     m_show->onToggled = [this](bool) { applyEcho(); };
     rebuildFields();
 }
@@ -243,10 +250,23 @@ void VpnPasswordDialog::accept()
 
 void VpnPasswordDialog::update()
 {
-    setTitle("VPN Password Required");
+    setTitle(tr("VPN Password Required"));
     setText(text(*m_agent));
-    primaryButton()->setText("Connect");
+    primaryButton()->setText(tr("Connect"));
     primaryButton()->setEnabled(complete());
+}
+
+// The fields keep what was typed; only their labels change.
+void VpnPasswordDialog::retranslateRows()
+{
+    m_show->setText(tr("Show password"));
+    const std::vector<NetworkSecretAgent::Field> fields = m_agent->fields();
+    if (fields.size() != m_fieldInfo.size())
+        return;
+    for (size_t i = 0; i < fields.size(); ++i) {
+        m_fieldInfo[i].label = fields[i].label;
+        m_fields[i]->setPlaceholder(fields[i].label);
+    }
 }
 
 void VpnPasswordDialog::requestChanged()

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 
+#include "base/i18n.h"
 #include "shell/controlcenter/control_center_services.h"
 #include "shell/controlcenter/level_slider.h"
 #include "shell/controlcenter/panel_style.h"
@@ -14,6 +15,8 @@
 #include "ui/label.h"
 #include "ui/theme.h"
 #include "ui/window.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -28,8 +31,7 @@ static double windowScale(const ui::View *view)
 ControlCenterView::ControlCenterView(ControlCenterServices &services)
     : m_services(services)
 {
-    // Header
-    m_title = addChild<ui::Label>("Control Center");
+    m_title = addChild<ui::Label>(tr("Control Center"));
     m_title->setFontSize(15.0);
     m_title->setElide(ui::Label::Elide::Right);
 
@@ -64,7 +66,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_wireless = addChild<CardItem>();
     m_wireless->setMode(CardItem::Mode::TopCard);
     m_wireless->setArtwork("wifi");
-    m_wireless->setTitle("Wi-Fi");
+    m_wireless->setTitle(tr("Wi-Fi"));
     m_wireless->setActiveColor(ui::Color::rgb(0x007AFF));
     m_wireless->setShowChevron(true);
     m_wireless->onClicked = [this] { m_services.enableWireless(!m_wireless->isChecked()); };
@@ -82,7 +84,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_bluetooth = addChild<CardItem>();
     m_bluetooth->setMode(CardItem::Mode::TopCard);
     m_bluetooth->setArtwork("bluetooth-symbolic");
-    m_bluetooth->setTitle("Bluetooth");
+    m_bluetooth->setTitle(tr("Bluetooth"));
     m_bluetooth->setActiveColor(ui::Color::rgb(0x007AFF));
     m_bluetooth->setShowChevron(true);
     m_bluetooth->onClicked = [this] { m_services.setBluetoothEnabled(!m_services.bluetoothEnabled()); };
@@ -100,7 +102,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_wirelessShare = addChild<CardItem>();
     m_wirelessShare->setMode(CardItem::Mode::TopCard);
     m_wirelessShare->setArtwork("wireless-share");
-    m_wirelessShare->setTitle("Wireless Share");
+    m_wirelessShare->setTitle(tr("Wireless Share"));
     m_wirelessShare->setActiveColor(ui::Color::rgb(0x007AFF));
     m_wirelessShare->setShowChevron(false);
     m_wirelessShare->onClicked = [this] {
@@ -111,7 +113,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_kdeConnect = addChild<CardItem>();
     m_kdeConnect->setMode(CardItem::Mode::TopCard);
     m_kdeConnect->setArtwork("phone");
-    m_kdeConnect->setTitle("KDE Connect");
+    m_kdeConnect->setTitle(tr("KDE Connect"));
     m_kdeConnect->setActiveColor(ui::Color::rgb(0x34C759));
     m_kdeConnect->setShowChevron(true);
 
@@ -123,7 +125,8 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_media->onNext = [this] { m_services.mediaNext(); };
 
     // Sliders
-    m_brightness = addChild<TileSlider>("Display");
+    // TRANSLATORS: the title of the screen brightness slider.
+    m_brightness = addChild<TileSlider>(tr("Display"));
     m_brightness->slider()->setRange(1, 100, 1);
     m_brightness->slider()->setIcon(panel::artwork("brightness", false));
     m_brightnessTimer.setSingleShot(true);
@@ -133,7 +136,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     };
     m_brightness->slider()->onMoved = [this](double) { m_brightnessTimer.start(); };
 
-    m_sound = addChild<TileSlider>("Sound");
+    m_sound = addChild<TileSlider>(tr("Sound"));
     m_sound->slider()->setRange(0, 1, 0.01);
     m_sound->slider()->onMoved = [this](double value) {
         if (!m_services.hasSink())
@@ -159,7 +162,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_nightShiftToggle = addChild<CardItem>();
     m_nightShiftToggle->setMode(CardItem::Mode::QuickToggle);
-    m_nightShiftToggle->setTitle("Night");
+    m_nightShiftToggle->setTitle(tr("Night"));
     m_nightShiftToggle->setActiveColor(ui::Color::rgb(0xFF9500));
     m_nightShiftToggle->onClicked = [this] {
         m_nightLightEnabled = !m_nightLightEnabled;
@@ -168,7 +171,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_captureToggle = addChild<CardItem>();
     m_captureToggle->setMode(CardItem::Mode::QuickToggle);
-    m_captureToggle->setTitle("Capture");
+    m_captureToggle->setTitle(tr("Capture"));
     m_captureToggle->setArtwork("screenshot");
     m_captureToggle->onClicked = [this] {
         if (onScreenshotRequested)
@@ -177,7 +180,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_doNotDisturbToggle = addChild<CardItem>();
     m_doNotDisturbToggle->setMode(CardItem::Mode::QuickToggle);
-    m_doNotDisturbToggle->setTitle("Focus");
+    m_doNotDisturbToggle->setTitle(tr("Focus"));
     m_doNotDisturbToggle->setActiveColor(ui::Color::rgb(0x5856D6));
     m_doNotDisturbToggle->onClicked = [this] {
         m_services.setDoNotDisturb(!m_services.doNotDisturb());
@@ -200,7 +203,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_cameraToggle = addChild<CardItem>();
     m_cameraToggle->setMode(CardItem::Mode::QuickToggle);
-    m_cameraToggle->setTitle("Camera");
+    m_cameraToggle->setTitle(tr("Camera"));
     m_cameraToggle->setArtwork("camera");
     m_cameraToggle->setActiveColor(ui::Color::rgb(0x007AFF));
     m_cameraToggle->onClicked = [this] {
@@ -209,7 +212,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_logoutToggle = addChild<CardItem>();
     m_logoutToggle->setMode(CardItem::Mode::QuickToggle);
-    m_logoutToggle->setTitle("Logout");
+    m_logoutToggle->setTitle(tr("Logout"));
     m_logoutToggle->setArtwork("system-log-out");
     m_logoutToggle->onClicked = [this] {
         if (onPowerActionRequested)
@@ -218,7 +221,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_restartToggle = addChild<CardItem>();
     m_restartToggle->setMode(CardItem::Mode::QuickToggle);
-    m_restartToggle->setTitle("Restart");
+    m_restartToggle->setTitle(tr("Restart"));
     m_restartToggle->setArtwork("system-reboot");
     m_restartToggle->onClicked = [this] {
         if (onPowerActionRequested)
@@ -227,7 +230,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_powerOffToggle = addChild<CardItem>();
     m_powerOffToggle->setMode(CardItem::Mode::QuickToggle);
-    m_powerOffToggle->setTitle("Power Off");
+    m_powerOffToggle->setTitle(tr("Power Off"));
     m_powerOffToggle->setArtwork("system-shutdown");
     m_powerOffToggle->setActiveColor(ui::Color::rgb(0xFF3B30));
     m_powerOffToggle->setChecked(true);
@@ -238,7 +241,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_locationToggle = addChild<CardItem>();
     m_locationToggle->setMode(CardItem::Mode::QuickToggle);
-    m_locationToggle->setTitle("Location");
+    m_locationToggle->setTitle(tr("Location"));
     m_locationToggle->setArtwork("location-mode");
     m_locationToggle->setActiveColor(ui::Color::rgb(0x007AFF));
     m_locationToggle->setVisible(false);
@@ -247,6 +250,28 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 }
 
 ControlCenterView::~ControlCenterView() = default;
+
+void ControlCenterView::retranslate()
+{
+    m_title->setText(tr("Control Center"));
+    m_wireless->setTitle(tr("Wi-Fi"));
+    m_bluetooth->setTitle(tr("Bluetooth"));
+    m_wirelessShare->setTitle(tr("Wireless Share"));
+    m_kdeConnect->setTitle(tr("KDE Connect"));
+    m_nightShiftToggle->setTitle(tr("Night"));
+    m_captureToggle->setTitle(tr("Capture"));
+    m_doNotDisturbToggle->setTitle(tr("Focus"));
+    m_cameraToggle->setTitle(tr("Camera"));
+    m_logoutToggle->setTitle(tr("Logout"));
+    m_restartToggle->setTitle(tr("Restart"));
+    m_powerOffToggle->setTitle(tr("Power Off"));
+    m_locationToggle->setTitle(tr("Location"));
+    // TRANSLATORS: the title of the screen brightness slider.
+    m_brightness->setTitle(tr("Display"));
+    m_sound->setTitle(tr("Sound"));
+    m_users->retranslate();
+    refresh();
+}
 
 void ControlCenterView::refresh()
 {
@@ -260,11 +285,11 @@ void ControlCenterView::refresh()
     m_settingsButton->setVisible(isMain);
 
     if (m_subPanel == SubPanel::Wifi)
-        m_title->setText("Wi-Fi Networks");
+        m_title->setText(tr("Wi-Fi Networks"));
     else if (m_subPanel == SubPanel::Bluetooth)
-        m_title->setText("Bluetooth Devices");
+        m_title->setText(tr("Bluetooth Devices"));
     else
-        m_title->setText("Control Center");
+        m_title->setText(tr("Control Center"));
 
     m_lockButton->setIcon(panel::artwork("lock", dark));
     m_settingsButton->setIcon(panel::artwork("settings", dark));
@@ -276,21 +301,21 @@ void ControlCenterView::refresh()
     m_wireless->setChecked(m_services.wirelessEnabled());
     m_wireless->setArtwork(m_services.wirelessEnabled() ? "wifi" : "wifi_disabled");
     const std::string network = m_services.wirelessName();
-    m_wireless->setStatus(!m_wireless->isChecked() ? "Off" : !network.empty() ? network : "On");
+    m_wireless->setStatus(!m_wireless->isChecked() ? tr("Off") : !network.empty() ? network : tr("On"));
 
     m_bluetooth->setVisible(isMain && m_services.bluetoothAvailable());
     m_bluetooth->setChecked(m_services.bluetoothEnabled());
     m_bluetooth->setArtwork(m_services.bluetoothEnabled() ? "bluetooth-symbolic" : "bluetooth-off");
-    m_bluetooth->setStatus(m_bluetooth->isChecked() ? "On" : "Off");
+    m_bluetooth->setStatus(m_bluetooth->isChecked() ? tr("On") : tr("Off"));
 
     m_wirelessShare->setVisible(isMain);
     m_wirelessShare->setChecked(m_wirelessShareEnabled);
-    m_wirelessShare->setStatus(m_wirelessShareEnabled ? "On" : "Off");
+    m_wirelessShare->setStatus(m_wirelessShareEnabled ? tr("On") : tr("Off"));
     m_wirelessShare->setArtwork(m_wirelessShareEnabled ? "wireless-share" : "wireless-share-off");
 
     m_kdeConnect->setVisible(isMain);
     m_kdeConnect->setChecked(false);
-    m_kdeConnect->setStatus("Not Connected");
+    m_kdeConnect->setStatus(tr("Not Connected"));
 
     m_media->setVisible(isMain);
     m_media->setState(m_services.media());
@@ -317,17 +342,17 @@ void ControlCenterView::refresh()
     // Power Mode
     const std::string profile = m_services.powerProfile();
     if (profile == "performance") {
-        m_powerModeToggle->setTitle("Perf");
+        m_powerModeToggle->setTitle(tr("Perf"));
         m_powerModeToggle->setArtwork("turbo");
         m_powerModeToggle->setActiveColor(ui::Color::rgb(0xFF9500));
         m_powerModeToggle->setChecked(true);
     } else if (profile == "power-saver") {
-        m_powerModeToggle->setTitle("Saver");
+        m_powerModeToggle->setTitle(tr("Saver"));
         m_powerModeToggle->setArtwork("power-saver");
         m_powerModeToggle->setActiveColor(ui::Color::rgb(0x34C759));
         m_powerModeToggle->setChecked(true);
     } else {
-        m_powerModeToggle->setTitle("Balanced");
+        m_powerModeToggle->setTitle(tr("Balanced"));
         m_powerModeToggle->setArtwork("balanced");
         m_powerModeToggle->setChecked(false);
     }
@@ -343,20 +368,20 @@ void ControlCenterView::refresh()
 
     // Dark Mode
     m_darkModeToggle->setChecked(dark);
-    m_darkModeToggle->setTitle(dark ? "Dark" : "Light");
+    m_darkModeToggle->setTitle(dark ? tr("Dark") : tr("Light"));
     m_darkModeToggle->setArtwork(dark ? "dark-mode" : "light-mode");
 
     // Key Light
     if (m_keyLightLevel == 2) {
-        m_keyLightToggle->setTitle("Key High");
+        m_keyLightToggle->setTitle(tr("Key High"));
         m_keyLightToggle->setArtwork("keyboard-backlight-high");
         m_keyLightToggle->setChecked(true);
     } else if (m_keyLightLevel == 1) {
-        m_keyLightToggle->setTitle("Key Low");
+        m_keyLightToggle->setTitle(tr("Key Low"));
         m_keyLightToggle->setArtwork("keyboard-backlight-low");
         m_keyLightToggle->setChecked(true);
     } else {
-        m_keyLightToggle->setTitle("Backlight");
+        m_keyLightToggle->setTitle(tr("Backlight"));
         m_keyLightToggle->setArtwork("keyboard-backlight-off");
         m_keyLightToggle->setChecked(false);
     }
@@ -408,7 +433,7 @@ void ControlCenterView::layout()
         m_media->setState(m_services.media());
     }
 
-    const double contentWidth = kWidth - 2 * kGap; // 340
+    const double contentWidth = kWidth - 2 * kGap; // 350
     double y = kGap;
 
     const bool isMain = m_subPanel == SubPanel::Main;
@@ -433,7 +458,7 @@ void ControlCenterView::layout()
     }
 
     // 2x2 Top Cards Grid
-    const double cardWidth = (contentWidth - kGap) / 2.0; // 165
+    const double cardWidth = (contentWidth - kGap) / 2.0;
     m_wireless->setGeometry({kGap, y, cardWidth, CardItem::kHeight});
     m_bluetooth->setGeometry({kGap + cardWidth + kGap, y, cardWidth, CardItem::kHeight});
     y += CardItem::kHeight + kGap;
@@ -457,7 +482,7 @@ void ControlCenterView::layout()
     }
 
     // 2x5 Quick Toggles Grid
-    const double toggleWidth = (contentWidth - 4 * 7.5) / 5.0; // ~62
+    const double toggleWidth = (contentWidth - 4 * 7.5) / 5.0;
     const double toggleGap = 7.5;
 
     std::vector<CardItem *> row1 = {m_powerModeToggle, m_nightShiftToggle, m_captureToggle, m_doNotDisturbToggle,

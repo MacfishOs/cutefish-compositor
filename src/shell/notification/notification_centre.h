@@ -108,6 +108,7 @@ private:
     void destroyWindow();
     void applyGlass();
     void onHidden();
+    void retranslate();
 
     // The model's rows.
     void insertRows(int first, int count);
@@ -242,6 +243,7 @@ public:
 
     const std::string &groupKey() const { return m_groupKey; }
     void setAppName(const std::string &name);
+    void retranslate();
     bool placed = false;
     bool isShown() const { return m_shown; }
     void setShown(bool shown);

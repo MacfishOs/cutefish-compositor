@@ -24,7 +24,9 @@
 #include "shell/shell_input.h"
 #include "shell/window_renderer.h"
 #include "toolkit/toolkit_host.h"
+#include "ui/application.h"
 #include "ui/theme.h"
+#include "wm/overview/overview_controller.h"
 #include "wm/window_manager.h"
 
 namespace cutefish::shell {
@@ -85,7 +87,16 @@ Shell::Shell(const ShellEnvironment &environment)
     : m_environment(environment)
 {
     // Before any window: it sets the toolkit up on the main loop.
-    toolkit::application();
+    ui::Application &application = toolkit::application();
+    // The compositor's toolkit has no session bus of its own: the shell's
+    // follows cutefish-services for it.
+    if (bus())
+        application.followSessionLanguage(bus());
+    // The overview belongs to the window manager, which has no toolkit.
+    m_languageChanged = application.languageChanged.connect([this] {
+        if (wm::OverviewController *overview = windowManager()->overview())
+            overview->retranslate();
+    });
     m_renderer = std::make_unique<WindowRenderer>(m_environment.compositor);
     m_input = std::make_unique<ShellInput>(this);
     m_host = std::make_unique<ShellHost>(this, m_environment.inputMethod);
@@ -108,6 +119,7 @@ Shell::~Shell()
     while (!m_components.empty())
         m_components.pop_back();
     m_outputsChanged.reset();
+    m_languageChanged.reset();
     m_badges.reset();
     m_launcher.reset();
     m_tasks.reset();

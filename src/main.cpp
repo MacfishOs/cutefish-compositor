@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "core/compositor_options.h"
 #include "core/compositor_shell.h"
 #include "core/logging.h"
@@ -47,6 +48,7 @@ int main(int argc, char *argv[])
     // The user's locale from the start, not only once the embedded toolkit
     // sets it when the lock screen first appears.
     setlocale(LC_ALL, "");
+    cutefish::i18n::setDomain("cutefish-compositor");
     const cutefish::ScopedFd signalFdOwner(createSignalFd());
     const int signalFd = signalFdOwner.get();
     // Outlives the shell, whose objects may watch, time or post on it.

@@ -10,6 +10,7 @@
 #include "shell/secrets/bluetooth_pairing_dialog.h"
 #include "shell/secrets/network_dialogs.h"
 #include "shell/secrets/network_secret_agent.h"
+#include "ui/application.h"
 
 namespace cutefish::shell {
 
@@ -57,6 +58,7 @@ SecretPrompts::~SecretPrompts()
     m_requestSubscription.reset();
     m_pairingSubscription.reset();
     m_errorSubscription.reset();
+    m_languageChanged.reset();
     m_wireless.reset();
     m_vpn.reset();
     m_pairing.reset();
@@ -104,8 +106,20 @@ void SecretPrompts::start()
         });
         m_bluetooth->setAgentEnabled(true);
     }
+    m_languageChanged = ui::Application::instance()->languageChanged.connect([this] { retranslate(); });
     networkRequestChanged();
     pairingChanged();
+}
+
+// The prompts stay up with what was typed in them, still answering the same
+// requests.
+void SecretPrompts::retranslate()
+{
+    m_agent->retranslate();
+    m_wireless->retranslate();
+    m_vpn->retranslate();
+    if (m_pairing)
+        m_pairing->retranslate();
 }
 
 void SecretPrompts::networkRequestChanged()

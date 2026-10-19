@@ -47,6 +47,7 @@ protected:
     ui::View *initialFocus() const override;
     void accept() override;
     void update() override;
+    void retranslateRows() override;
 
 private:
     NetworkSecretAgent *m_agent;
@@ -74,6 +75,7 @@ protected:
     ui::View *initialFocus() const override;
     void accept() override;
     void update() override;
+    void retranslateRows() override;
 
 private:
     void rebuildFields();

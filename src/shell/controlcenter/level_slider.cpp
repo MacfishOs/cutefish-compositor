@@ -169,6 +169,12 @@ TileSlider::TileSlider(std::string title)
     m_slider = addChild<LevelSlider>();
 }
 
+void TileSlider::setTitle(std::string title)
+{
+    m_title->setText(std::move(title));
+    requestLayout();
+}
+
 double TileSlider::heightForWidth(double) const
 {
     return 30.0;

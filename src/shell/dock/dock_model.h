@@ -134,6 +134,10 @@ public:
     // The id of the entry a window belongs to; empty if none has it yet.
     std::string appIdForWindow(uint64_t window) const;
 
+    // Takes the launcher button's name again after the session language
+    // changed.
+    void retranslate();
+
     // pinnedCount() may have changed.
     base::Signal<> sectionsChanged;
     base::Signal<> loaded;

@@ -9,6 +9,7 @@
 
 #include "compositor/surface.h"
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include "shell/shell.h"
 #include "shell/shell_window.h"
@@ -20,6 +21,9 @@
 #include "ui/painter.h"
 #include "ui/theme.h"
 #include "wm/shell_surface.h"
+
+using cutefish::i18n::tr;
+using cutefish::i18n::trNoop;
 
 namespace cutefish::shell {
 
@@ -35,7 +39,7 @@ static constexpr double kButtonSpacing = 8;
 static constexpr double kDragDistance = 10;
 static constexpr int kDemiBold = 600;
 
-static const char kText[] = "Every application is asked to quit first, so you can save your work.";
+static const char *const kText = trNoop("Every application is asked to quit first, so you can save your work.");
 
 // The dialog's window content: the close button in the header's corner, the
 // title and text clear of it, the buttons at the bottom right; a drag
@@ -52,18 +56,24 @@ public:
         m_title->setFontSize(kTextSize);
         m_title->setWeight(kDemiBold);
         m_title->setWrap(true);
-        m_text = addChild<ui::Label>(kText);
+        m_text = addChild<ui::Label>(tr(kText));
         m_text->setFontSize(kTextSize);
         m_text->setWrap(true);
         m_text->setFixedLineHeight(20);
         m_text->setColor(ui::ColorId::DisabledText);
-        m_cancel = addChild<ui::DialogButton>("Cancel");
+        m_cancel = addChild<ui::DialogButton>(tr("Cancel"));
         m_cancel->onClicked = [this] { m_dialog->finish(false); };
         m_confirm = addChild<ui::DialogButton>(std::string(), true);
         m_confirm->onClicked = [this] { m_dialog->finish(true); };
     }
 
     ui::DialogButton *cancel() const { return m_cancel; }
+
+    void retranslate()
+    {
+        m_text->setText(tr(kText));
+        m_cancel->setText(tr("Cancel"));
+    }
 
     void setAction(Action action)
     {
@@ -162,26 +172,26 @@ std::string PowerDialog::title(Action action)
 {
     switch (action) {
     case Action::Reboot:
-        return "Restart now?";
+        return tr("Restart now?");
     case Action::Shutdown:
-        return "Shut down now?";
+        return tr("Shut down now?");
     case Action::Logout:
         break;
     }
-    return "Log out now?";
+    return tr("Log out now?");
 }
 
 std::string PowerDialog::confirmText(Action action)
 {
     switch (action) {
     case Action::Reboot:
-        return "Restart";
+        return tr("Restart");
     case Action::Shutdown:
-        return "Shut Down";
+        return tr("Shut Down");
     case Action::Logout:
         break;
     }
-    return "Log Out";
+    return tr("Log Out");
 }
 
 bool PowerDialog::isOpen() const
@@ -215,6 +225,14 @@ void PowerDialog::open(Action action)
     m_window->show();
     m_window->activate();
     m_content->cancel()->setFocus();
+}
+
+void PowerDialog::retranslate()
+{
+    if (!m_window)
+        return;
+    m_content->retranslate();
+    open(m_action);
 }
 
 void PowerDialog::resize()

@@ -80,6 +80,7 @@ public:
     explicit TileSlider(std::string title);
 
     LevelSlider *slider() const { return m_slider; }
+    void setTitle(std::string title);
     double heightForWidth(double width) const override;
     ui::SizeF sizeHint() const override;
 

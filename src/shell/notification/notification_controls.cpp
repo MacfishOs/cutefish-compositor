@@ -7,11 +7,15 @@
 #include <algorithm>
 #include <cmath>
 
+#include "base/i18n.h"
 #include "shell/notification/notification_motion.h"
+#include "ui/application.h"
 #include "ui/label.h"
 #include "ui/painter.h"
 #include "ui/path.h"
 #include "ui/theme.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -75,7 +79,7 @@ ClearButton::ClearButton(ui::Window *window, Kind kind)
     , m_confirm(kind == Kind::Clear)
     , m_progress(std::make_unique<Tween>(window, std::chrono::milliseconds(240), outCubic))
 {
-    m_label = addChild<ui::Label>("Clear");
+    m_label = addChild<ui::Label>(tr("Clear"));
     m_label->setWeight(500);
     m_label->setElide(ui::Label::Elide::None);
     m_label->setVisible(false);
@@ -86,6 +90,12 @@ ClearButton::ClearButton(ui::Window *window, Kind kind)
         if (onWidthChanged)
             onWidthChanged();
     };
+    m_languageChanged = ui::Application::instance()->languageChanged.connect([this] {
+        m_label->setText(tr("Clear"));
+        requestLayout();
+        if (onWidthChanged)
+            onWidthChanged();
+    });
 }
 
 ClearButton::~ClearButton() = default;
@@ -240,6 +250,12 @@ PillButton::PillButton(std::string text)
     m_label = addChild<ui::Label>(std::move(text));
     m_label->setWeight(500);
     m_label->setElide(ui::Label::Elide::None);
+}
+
+void PillButton::setText(std::string text)
+{
+    m_label->setText(std::move(text));
+    requestLayout();
 }
 
 double PillButton::preferredWidth() const

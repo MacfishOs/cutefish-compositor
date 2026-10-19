@@ -41,6 +41,7 @@
 #include "shell/shell_window.h"
 #include "shell_test_util.h"
 #include "temporary_directory.h"
+#include "ui/application.h"
 #include "ui/check_box.h"
 #include "ui/dialog_window.h"
 #include "ui/embedded_window.h"
@@ -788,6 +789,39 @@ TEST_F(SecretPromptsTest, VpnSecretsAreAskedForInTheirOwnWindowAndKept)
     ASSERT_TRUE(test::runUntil([&quiet] { return quiet.has_value(); }));
     EXPECT_FALSE(quiet->isError());
     EXPECT_TRUE(vpnSecretsOf(*quiet).empty());
+}
+
+TEST_F(SecretPromptsTest, LanguageChangeKeepsThePromptAndWhatWasTyped)
+{
+    start();
+    std::optional<base::dbus::Reply> reply;
+    auto pending = getSecrets(vpnConnection(kPasswordData), "vpn", kAllowInteraction, &reply);
+    ASSERT_TRUE(test::runUntil([this] { return agent->pending(); }));
+    shell::VpnPasswordDialog *dialog = prompts->vpnDialog();
+    ASSERT_TRUE(dialog->isOpen());
+    ASSERT_EQ(1u, dialog->fields().size());
+    ui::TextField *field = dialog->fields()[0];
+    field->setText("s3cret");
+    dialog->showPassword()->setChecked(true);
+    dialog->showPassword()->onToggled(true);
+
+    ui::Application::instance()->languageChanged.emit();
+    test::runFor(std::chrono::milliseconds(5));
+    frame();
+    EXPECT_TRUE(dialog->isOpen());
+    EXPECT_TRUE(agent->pending());
+    ASSERT_EQ(1u, dialog->fields().size());
+    EXPECT_EQ(field, dialog->fields()[0]);
+    EXPECT_EQ("s3cret", field->text());
+    EXPECT_TRUE(dialog->showPassword()->isChecked());
+    EXPECT_EQ(ui::TextField::EchoMode::Normal, field->echoMode());
+    EXPECT_EQ("VPN Password Required", dialogWindow(dialog)->title());
+    EXPECT_FALSE(reply.has_value());
+
+    ASSERT_TRUE(dialog->primaryButton()->isEnabled());
+    dialog->primaryButton()->onClicked();
+    ASSERT_TRUE(test::runUntil([&reply] { return reply.has_value(); }));
+    EXPECT_EQ("s3cret", vpnSecretsOf(*reply)["password"]);
 }
 
 TEST_F(SecretPromptsTest, ReturnInAVpnFieldMovesOnToTheNextRequest)

@@ -8,9 +8,11 @@
 #include <cmath>
 
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include "shell/common/task_manager.h"
 #include "shell/shell_window.h"
+#include "ui/application.h"
 #include "ui/dialog_window.h"
 #include "ui/embedded_window.h"
 #include "ui/icon.h"
@@ -21,6 +23,9 @@
 #include "wm/shell_surface.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -33,13 +38,14 @@ static constexpr double kButtonsGap = 12 + 8;
 static constexpr double kButtonSpacing = 8;
 
 NotRespondingView::NotRespondingView(std::string name, std::string icon)
-    : m_icon(addChild<ui::ThemeIcon>(std::move(icon), kIconSize))
-    , m_title(addChild<ui::Label>("“" + name + "” is not responding"))
-    , m_body(addChild<ui::Label>(
-              "You can wait for it to respond, or force quit it. Anything it has not saved will be lost."))
-    , m_forceQuit(addChild<ui::DialogButton>("Force Quit", true))
-    , m_wait(addChild<ui::DialogButton>("Wait"))
+    : m_name(std::move(name))
+    , m_icon(addChild<ui::ThemeIcon>(std::move(icon), kIconSize))
+    , m_title(addChild<ui::Label>())
+    , m_body(addChild<ui::Label>())
+    , m_forceQuit(addChild<ui::DialogButton>(std::string(), true))
+    , m_wait(addChild<ui::DialogButton>())
 {
+    retranslate();
     m_title->setWrap(true);
     m_title->setFontSize(14);
     m_title->setWeight(600);
@@ -60,6 +66,15 @@ NotRespondingView::NotRespondingView(std::string name, std::string icon)
 const std::string &NotRespondingView::title() const
 {
     return m_title->text();
+}
+
+void NotRespondingView::retranslate()
+{
+    m_title->setText(format(tr("“{name}” is not responding"), {{"name", m_name}}));
+    m_body->setText(tr("You can wait for it to respond, or force quit it. Anything it has not saved will be lost."));
+    m_forceQuit->setText(tr("Force Quit"));
+    m_wait->setText(tr("Wait"));
+    requestLayout();
 }
 
 void NotRespondingView::applyTheme()
@@ -121,8 +136,19 @@ NotRespondingSheets::NotRespondingSheets(Shell *shell)
     m_subscriptions.push_back(manager->windowAdded.connect([this](wm::Window *window) { observe(window); }));
     m_subscriptions.push_back(
             manager->windowRemoved.connect([this](wm::Window *window) { onWindowRemoved(window); }));
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
     for (wm::Window *window : manager->windows())
         observe(window);
+}
+
+void NotRespondingSheets::retranslate()
+{
+    for (auto &[application, sheet] : m_sheets) {
+        sheet.view->retranslate();
+        sheet.window->shellSurface()->setTitle(sheet.view->title());
+        const double height = std::ceil(sheet.view->implicitHeight(NotRespondingView::kWidth));
+        sheet.window->setSize(base::Size(NotRespondingView::kWidth, int(height)));
+    }
 }
 
 NotRespondingSheets::~NotRespondingSheets()

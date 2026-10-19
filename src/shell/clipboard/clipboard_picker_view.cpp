@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "base/i18n.h"
 #include "shell/clipboard/clipboard_history.h"
+#include "ui/application.h"
 #include "ui/button.h"
 #include "ui/icon.h"
 #include "ui/image_view.h"
@@ -18,6 +20,8 @@
 #include "ui/theme.h"
 #include "ui/window.h"
 #include "toolkit/compositor_colors.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -212,9 +216,9 @@ class ClipboardPickerView::Overlay : public ui::View
 public:
     explicit Overlay(ClipboardPickerView *picker)
         : m_picker(picker)
-        , m_question(addChild<ui::Label>("Clear the clipboard history?"))
-        , m_cancel(addChild<ui::Button>("Cancel"))
-        , m_clear(addChild<ui::Button>("Clear"))
+        , m_question(addChild<ui::Label>(tr("Clear the clipboard history?")))
+        , m_cancel(addChild<ui::Button>(tr("Cancel")))
+        , m_clear(addChild<ui::Button>(tr("Clear")))
     {
         m_cancel->onClicked = [this] { m_picker->setConfirmingClear(false); };
         m_clear->onClicked = [this] { clear(); };
@@ -224,6 +228,14 @@ public:
     {
         m_picker->m_history.clear();
         m_picker->setConfirmingClear(false);
+    }
+
+    void retranslate()
+    {
+        m_question->setText(tr("Clear the clipboard history?"));
+        m_cancel->setText(tr("Cancel"));
+        m_clear->setText(tr("Clear"));
+        requestLayout();
     }
 
     void updateFont()
@@ -296,7 +308,7 @@ ClipboardPickerView::ClipboardPickerView(ClipboardHistory &history)
     // The whole header row is the field, for the pointer too.
     m_filter->setFrameVisible(false);
     m_filter->setTextMargins(kPadding, kPadding);
-    m_filter->setPlaceholder("Search Clipboard");
+    m_filter->setPlaceholder(tr("Search Clipboard"));
     m_filter->onKey = [this](const ui::KeyEvent &event) { return handleKey(event); };
     m_filter->onTextChanged = [this] {
         m_history.model().setFilterText(m_filter->text());
@@ -331,7 +343,18 @@ ClipboardPickerView::ClipboardPickerView(ClipboardHistory &history)
     ClipboardHistoryModel &model = m_history.model();
     m_subscriptions.push_back(model.modelReset.connect([this] { modelChanged(); }));
     m_subscriptions.push_back(model.dataChanged.connect([this](int, int) { m_list->reload(); }));
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
     modelChanged();
+}
+
+// The filter, the selection and a question being asked stay.
+void ClipboardPickerView::retranslate()
+{
+    m_filter->setPlaceholder(tr("Search Clipboard"));
+    m_overlay->retranslate();
+    m_list->reload();
+    updatePreview();
+    updateEmpty();
 }
 
 ClipboardPickerView::~ClipboardPickerView() = default;
@@ -502,7 +525,7 @@ void ClipboardPickerView::updateEmpty()
 {
     ClipboardHistoryModel &model = m_history.model();
     m_empty->setVisible(model.count() == 0);
-    m_empty->setText(model.historyEmpty() ? "Clipboard Is Empty" : "No Results");
+    m_empty->setText(model.historyEmpty() ? tr("Clipboard Is Empty") : tr("No Results"));
 }
 
 void ClipboardPickerView::updatePreview()

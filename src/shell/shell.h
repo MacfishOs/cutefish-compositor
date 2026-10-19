@@ -182,6 +182,7 @@ private:
     std::unique_ptr<ApplicationLauncher> m_launcher;
     std::unique_ptr<ApplicationBadges> m_badges;
     base::Subscription m_outputsChanged;
+    base::Subscription m_languageChanged;
     base::Timer m_trimTimer;
     // Last: the first to go.
     std::vector<std::unique_ptr<Component>> m_components;

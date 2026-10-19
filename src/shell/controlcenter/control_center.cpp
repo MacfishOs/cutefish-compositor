@@ -18,6 +18,7 @@
 #include "shell/shell_window.h"
 #include "shell/statusbar/power_actions.h"
 #include "shell/statusbar/status_bar.h"
+#include "ui/application.h"
 #include "ui/embedded_window.h"
 #include "ui/keys.h"
 #include "ui/theme.h"
@@ -82,6 +83,7 @@ ControlCenter::ControlCenter(Shell *shell, std::unique_ptr<ControlCenterServices
         for (Panel panel : {Panel::Network, Panel::Volume, Panel::Battery})
             fitToWorkArea(panel);
     }));
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
     m_audio = audio();
     m_network = network();
 }
@@ -367,6 +369,20 @@ void ControlCenter::close(Panel panel)
     // Not from inside its own event handling.
     core::mainLoop()->post([doomed] {});
     panelsChanged();
+}
+
+// The open panels and the power dialog stay as they are, with their text
+// taken again.
+void ControlCenter::retranslate()
+{
+    if (m_open[0].controlCenter)
+        m_open[0].controlCenter->retranslate();
+    for (size_t i = 1; i < m_open.size(); ++i) {
+        if (m_open[i].panel)
+            m_open[i].panel->retranslate();
+    }
+    if (m_powerDialog)
+        m_powerDialog->retranslate();
 }
 
 void ControlCenter::closePanels()

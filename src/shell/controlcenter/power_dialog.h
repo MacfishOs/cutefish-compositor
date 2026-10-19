@@ -40,6 +40,9 @@ public:
     void close();
     bool isOpen() const;
     Action action() const { return m_action; }
+    // Takes its text again after the session language changed, still asking
+    // what it asked.
+    void retranslate();
 
     ShellWindow *window() const { return m_window.get(); }
 

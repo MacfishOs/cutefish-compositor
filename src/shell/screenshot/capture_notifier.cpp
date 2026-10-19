@@ -8,9 +8,12 @@
 #include <filesystem>
 #include <tuple>
 
+#include "base/i18n.h"
 #include "base/paths.h"
 #include "base/process.h"
 #include "base/url.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -91,7 +94,7 @@ void CaptureNotifier::playShutter()
 
 void CaptureNotifier::notifySaved(const std::string &path, bool video)
 {
-    notify(video ? "Screen Recording" : "Screenshot", fileName(path), video ? std::string() : path, path);
+    notify(video ? tr("Screen Recording") : tr("Screenshot"), fileName(path), video ? std::string() : path, path);
 }
 
 ui::Bitmap CaptureNotifier::thumbnail(const ui::Bitmap &image)
@@ -109,19 +112,19 @@ ui::Bitmap CaptureNotifier::thumbnail(const ui::Bitmap &image)
 
 void CaptureNotifier::notifyCopied(const ui::Bitmap &image)
 {
-    notifyPicture("Copied to the clipboard", image);
+    notifyPicture(tr("Copied to the clipboard"), image);
 }
 
 void CaptureNotifier::notifyTaken(const ui::Bitmap &image)
 {
-    notifyPicture("Taken from the command line", image);
+    notifyPicture(tr("Taken from the command line"), image);
 }
 
 void CaptureNotifier::notifyPicture(const std::string &body, const ui::Bitmap &image)
 {
     m_thumbnails.push_back(base::runInThread([image] { return thumbnail(image); },
                                              [this, body](ui::Bitmap small) {
-                                                 notify("Screenshot", body, {}, {}, small);
+                                                 notify(tr("Screenshot"), body, {}, {}, small);
                                                  std::erase_if(m_thumbnails, [](const base::Job &job) {
                                                      return !job.isPending();
                                                  });
@@ -162,7 +165,7 @@ void CaptureNotifier::notify(const std::string &summary, const std::string &body
     }
     std::vector<std::string> actions;
     if (!path.empty())
-        actions = {"default", "", kShowInFolder, "Show in Folder"};
+        actions = {"default", "", kShowInFolder, tr("Show in Folder")};
     m_calls.track([&](std::function<void()> finished) {
         return m_notifications.callAsync(
                 "Notify",

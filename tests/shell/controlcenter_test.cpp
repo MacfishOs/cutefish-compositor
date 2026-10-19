@@ -38,6 +38,7 @@
 #include "shell/statusbar/status_icon.h"
 #include "shell_test_util.h"
 #include "temporary_directory.h"
+#include "ui/application.h"
 #include "ui/dialog_window.h"
 #include "ui/switch.h"
 #include "ui/window.h"
@@ -487,6 +488,37 @@ TEST_F(ControlCenterTest, TheSoundAndBatteryPanelsPickOutputsAndModes)
     test::runFor(std::chrono::milliseconds(5));
     EXPECT_EQ("power-saver", services->profile);
     EXPECT_TRUE(battery->rows()[0]->isActive());
+}
+
+TEST_F(ControlCenterTest, LanguageChangeKeepsTheOpenPanels)
+{
+    center->openPanel(Panel::ControlCenter, bar.get(), item(178));
+    frame();
+    shell::ControlCenterView *view = center->controlCenterView();
+    ASSERT_NE(nullptr, view);
+    const int height = center->popupWindow(Panel::ControlCenter)->drawnBounds().height();
+    ui::Application::instance()->languageChanged.emit();
+    test::runFor(std::chrono::milliseconds(5));
+    frame();
+    EXPECT_TRUE(center->isOpen(Panel::ControlCenter));
+    EXPECT_EQ(view, center->controlCenterView());
+    EXPECT_EQ(height, center->popupWindow(Panel::ControlCenter)->drawnBounds().height());
+    EXPECT_TRUE(view->wirelessCard()->isChecked());
+    center->closePanels();
+    test::runFor(std::chrono::milliseconds(5));
+
+    center->openPanel(Panel::Battery, bar.get(), item(247));
+    frame();
+    auto *battery = static_cast<shell::BatteryPanel *>(center->statusPanel(Panel::Battery));
+    ASSERT_NE(nullptr, battery);
+    ui::Application::instance()->languageChanged.emit();
+    test::runFor(std::chrono::milliseconds(5));
+    frame();
+    EXPECT_TRUE(center->isOpen(Panel::Battery));
+    EXPECT_EQ(battery, center->statusPanel(Panel::Battery));
+    ASSERT_EQ(3u, battery->rows().size());
+    EXPECT_TRUE(battery->rows()[1]->isActive());
+    EXPECT_FALSE(battery->rows()[2]->isVisible());
 }
 
 TEST_F(ControlCenterTest, TheBarIndicatorsFollowTheServices)

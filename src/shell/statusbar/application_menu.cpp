@@ -6,10 +6,13 @@
 
 #include <set>
 
+#include "base/i18n.h"
 #include "shell/common/task_manager.h"
 #include "shell/common/task_windows.h"
 #include "shell/statusbar/app_menu_registrar.h"
 #include "shell/statusbar/dbus_menu.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -73,6 +76,12 @@ void ApplicationMenu::setDesktop(bool desktop)
         return;
     m_desktop = desktop;
     scheduleUpdate();
+}
+
+void ApplicationMenu::retranslate()
+{
+    if (m_desktop)
+        scheduleUpdate();
 }
 
 void ApplicationMenu::menuAddressOf(uint64_t window, std::string *service, std::string *path) const
@@ -279,7 +288,7 @@ void ApplicationMenu::commit(const std::string &title, DBusMenu *menu)
 std::string ApplicationMenu::applicationTitle() const
 {
     if (m_desktop)
-        return "Desktop";
+        return tr("Desktop");
     const uint64_t window = m_windows.activeWindow();
     const TaskWindow *client = m_windows.window(window);
     if (!client || !client->isTaskListWindow())

@@ -36,6 +36,9 @@ public:
     ~ControlCenterView() override;
 
     void refresh();
+    // Takes its text again after the session language changed.
+    void retranslate();
+    // The window height at `scale`: the layout's, on whole device pixels.
     double windowHeight(double scale) const;
 
     SubPanel subPanel() const { return m_subPanel; }

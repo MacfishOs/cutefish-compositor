@@ -6,10 +6,13 @@
 
 #include <cmath>
 
+#include "base/i18n.h"
 #include "ui/icon.h"
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/painter.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -83,7 +86,7 @@ LauncherSearchField::LauncherSearchField()
     m_placeholder->setOpacity(0.6);
     m_glyph = m_placeholder->addChild<ui::Icon>("search");
     m_glyph->setColor(kWhite);
-    m_label = m_placeholder->addChild<ui::Label>("Search");
+    m_label = m_placeholder->addChild<ui::Label>(tr("Search"));
     m_label->setColor(kWhite);
 }
 
@@ -107,6 +110,12 @@ bool LauncherSearchField::hasFieldFocus() const
 void LauncherSearchField::focusField()
 {
     m_field->setFocus();
+}
+
+void LauncherSearchField::retranslate()
+{
+    m_label->setText(tr("Search"));
+    layoutPlaceholder();
 }
 
 void LauncherSearchField::setMetrics(const LauncherMetrics &metrics)

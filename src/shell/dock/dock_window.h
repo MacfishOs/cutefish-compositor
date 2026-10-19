@@ -142,6 +142,7 @@ private:
     };
 
     void rebuild();
+    void retranslate();
     void updateMetrics(bool animate);
     void resize(bool animate);
     void layoutItems();

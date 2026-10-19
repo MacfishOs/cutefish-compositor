@@ -9,6 +9,7 @@
 
 #include "compositor/surface.h"
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include "shell/shell.h"
 #include "shell/shell_window.h"
@@ -20,6 +21,8 @@
 #include "ui/painter.h"
 #include "ui/theme.h"
 #include "wm/shell_surface.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -49,7 +52,7 @@ public:
         m_body->setFontSize(kTextSize);
         m_body->setFixedLineHeight(kBodyLineHeight);
         m_body->setWrap(true);
-        m_cancel = addChild<ui::DialogButton>("Cancel");
+        m_cancel = addChild<ui::DialogButton>(tr("Cancel"));
         m_cancel->onClicked = [this] { m_dialog->dismiss(); };
         m_primary = addChild<ui::DialogButton>(std::string(), true);
         m_primary->onClicked = [this] { m_dialog->accept(); };
@@ -249,6 +252,15 @@ void SecretDialog::setRows(std::vector<Row> rows)
 {
     if (m_frame)
         m_frame->setRows(std::move(rows));
+}
+
+void SecretDialog::retranslate()
+{
+    if (!m_frame)
+        return;
+    m_frame->cancel()->setText(tr("Cancel"));
+    retranslateRows();
+    refresh();
 }
 
 void SecretDialog::refresh()

@@ -123,6 +123,8 @@ public:
     // Reads the services again.
     virtual void refresh() = 0;
     virtual void opened() {}
+    // Takes its text again after the session language changed.
+    virtual void retranslate() = 0;
 
     ui::View *settingsLink() const;
 
@@ -132,6 +134,7 @@ public:
     std::function<void()> onCloseRequested;
 
 protected:
+    void setTitles(std::string title, std::string settingsText);
     void setTitleDetail(std::string detail);
     // A view of the panel's, centred on the title's capitals at the
     // header's trailing end.
@@ -195,6 +198,7 @@ public:
 
     void refresh() override;
     void opened() override;
+    void retranslate() override;
     void setShownForScans(bool shown);
 
     ui::Switch *wirelessSwitch() const { return m_switch; }
@@ -226,6 +230,7 @@ public:
     ~VolumePanel() override;
 
     void refresh() override;
+    void retranslate() override;
 
     const std::vector<PanelRow *> &rows() const { return m_rows; }
 
@@ -249,6 +254,7 @@ public:
     ~BatteryPanel() override;
 
     void refresh() override;
+    void retranslate() override;
 
     const std::vector<PanelRow *> &rows() const { return m_rows; }
 

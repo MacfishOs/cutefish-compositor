@@ -44,6 +44,8 @@ public:
     NotRespondingView(std::string name, std::string icon);
 
     const std::string &title() const;
+    // Takes its text again after the session language changed.
+    void retranslate();
     // The window's height for the layout at its width.
     double implicitHeight(double width) const;
 
@@ -60,6 +62,7 @@ protected:
 private:
     void applyTheme();
 
+    std::string m_name;
     ui::ThemeIcon *m_icon;
     ui::Label *m_title;
     ui::Label *m_body;
@@ -114,6 +117,7 @@ private:
     void show(wm::Window *window, int64_t application);
     void hang(Sheet &sheet, wm::Window *parent);
     void close(int64_t application);
+    void retranslate();
 
     Shell *m_shell;
     // By application: every window of a stalled client stops answering together.

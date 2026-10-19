@@ -102,6 +102,8 @@ public:
     void exit(Window *window = nullptr);
     // Gone at once, with no animation.
     void exitImmediately();
+    // Names the desks again after the session language changed.
+    void retranslate();
     // Lands a transition at once where it was heading: all the way in, or
     // gone. Not while the fingers hold it.
     void completeTransition();

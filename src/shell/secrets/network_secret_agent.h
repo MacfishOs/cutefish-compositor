@@ -81,6 +81,9 @@ public:
     // A VPN's secrets by key.
     void respondFields(const std::map<std::string, std::string> &values);
     void cancel();
+    // Names the VPN secrets of the requests again after the session language
+    // changed.
+    void retranslate();
 
     // org.cutefish.SecretAgent.ConnectWireless: asks for the password of the
     // access point, and joins it with a new profile once given.
@@ -107,6 +110,8 @@ private:
         bool noErrors = false;
         // A VPN asks for several secrets, which its data says how to keep.
         std::vector<VpnSecretField> fields;
+        std::string vpnServiceType;
+        std::vector<std::string> hints;
         std::map<std::string, std::string> vpnData;
         std::map<std::string, std::string> values;
         std::string serverMessage;

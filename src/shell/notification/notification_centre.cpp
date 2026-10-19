@@ -8,6 +8,7 @@
 #include <cmath>
 #include <map>
 
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include "shell/notification/notification_card.h"
 #include "shell/notification/notification_controls.h"
@@ -16,6 +17,7 @@
 #include "shell/shell_data.h"
 #include "shell/shell_host.h"
 #include "shell/shell_window.h"
+#include "ui/application.h"
 #include "ui/embedded_window.h"
 #include "ui/keys.h"
 #include "ui/label.h"
@@ -23,6 +25,9 @@
 #include "ui/scroll_view.h"
 #include "ui/theme.h"
 #include "toolkit/compositor_colors.h"
+
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 namespace cutefish::shell {
 
@@ -56,7 +61,7 @@ static double pixelAligned(const Tween &tween)
 // "%n more notification(s)".
 static std::string moreText(int count)
 {
-    return std::to_string(count) + (count == 1 ? " more notification" : " more notifications");
+    return trn("{n} more notification", "{n} more notifications", count);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +296,7 @@ NotificationCentre::GroupHeader::GroupHeader(NotificationCentre *centre, ui::Win
 {
     m_label = addChild<ui::Label>();
     m_label->setWeight(600);
-    m_showLess = addChild<PillButton>("Show Less");
+    m_showLess = addChild<PillButton>(tr("Show Less"));
     m_showLess->onClicked = [this] { m_centre->setExpanded(m_groupKey, false); };
     m_clear = addChild<ClearButton>(window, ClearButton::Kind::Clear);
     m_clear->onClicked = [this] { m_centre->dismissGroup(m_groupKey); };
@@ -309,6 +314,12 @@ NotificationCentre::GroupHeader::~GroupHeader() = default;
 void NotificationCentre::GroupHeader::setAppName(const std::string &name)
 {
     m_label->setText(name);
+}
+
+void NotificationCentre::GroupHeader::retranslate()
+{
+    m_showLess->setText(tr("Show Less"));
+    requestLayout();
 }
 
 double NotificationCentre::GroupHeader::targetHeight() const
@@ -484,6 +495,7 @@ NotificationCentre::NotificationCentre(Shell *shell, NotificationHistory &histor
             m_window->resize({double(m_geometry.width()), double(m_geometry.height())});
         }
     }));
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
 }
 
 NotificationCentre::~NotificationCentre()
@@ -585,6 +597,21 @@ void NotificationCentre::onHidden()
     pruneHeaders();
 }
 
+// The list stays as it is, open or not: the labels, the stacks' counts and
+// the relative times are taken again. The clear buttons follow on their own.
+void NotificationCentre::retranslate()
+{
+    if (!m_window)
+        return;
+    m_title->setText(tr("Notification Center"));
+    m_empty->setText(tr("No Notifications"));
+    for (GroupHeader *header : m_headers)
+        header->retranslate();
+    m_history.updateTime();
+    m_content->requestLayout();
+    relayout();
+}
+
 void NotificationCentre::destroyWindow()
 {
     m_rows.clear();
@@ -616,14 +643,14 @@ void NotificationCentre::build(const Placement &placement)
 
     auto content = std::make_unique<Content>(this);
     m_content = content.get();
-    m_title = content->addChild<ui::Label>("Notification Center");
+    m_title = content->addChild<ui::Label>(tr("Notification Center"));
     m_clear = content->addChild<ClearButton>(window, ClearButton::Kind::Clear);
     m_clear->onClicked = [this] { dismissRows([](const Row &) { return true; }); };
     m_clear->onWidthChanged = [this] { m_content->requestLayout(); };
     m_scroll = content->addChild<ui::ScrollView>();
     m_scroll->setElastic(false);
     m_list = m_scroll->setContent<List>(this, window);
-    m_empty = content->addChild<ui::Label>("No Notifications");
+    m_empty = content->addChild<ui::Label>(tr("No Notifications"));
     m_empty->setElide(ui::Label::Elide::None);
     m_window->setContentView(std::move(content));
     m_window->resize({double(m_geometry.width()), double(m_geometry.height())});

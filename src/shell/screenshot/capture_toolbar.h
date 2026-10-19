@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/signal.h"
 #include "base/timer.h"
 #include "ui/geometry.h"
 #include "ui/view.h"
@@ -47,6 +48,7 @@ public:
     bool isChecked() const { return m_checked; }
     void setText(const std::string &text);
     const std::string &tip() const { return m_tip; }
+    void setTip(std::string tip);
     bool isPressed() const { return m_pressed; }
     bool isPointerOver() const { return m_hovered; }
     // Options: a label and a chevron instead of the button's own label.
@@ -140,6 +142,7 @@ protected:
 
 private:
     void buttonStateChanged(ToolbarButton *button);
+    void retranslate();
     std::vector<double> separatorPositions() const;
     void buildMenu();
 
@@ -153,6 +156,7 @@ private:
     std::unique_ptr<CaptureTooltip> m_tooltip;
     std::unique_ptr<ui::Menu> m_menu;
     std::unique_ptr<audio::AudioModel> m_sources;
+    base::Subscription m_languageChanged;
     bool m_menuOpen = false;
     // A press on Options while its menu was up only closes it.
     bool m_closesOptions = false;

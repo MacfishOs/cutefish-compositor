@@ -8,12 +8,14 @@
 #include <cmath>
 #include <set>
 
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include "shell/common/application_badges.h"
 #include "shell/launcher/launcher.h"
 #include "shell/launcher/launcher_cell.h"
 #include "shell/launcher/launcher_search_field.h"
 #include "shell/launcher/launcher_wallpaper.h"
+#include "ui/application.h"
 #include "ui/drag.h"
 #include "ui/icon.h"
 #include "ui/keys.h"
@@ -26,6 +28,7 @@
 namespace cutefish::shell {
 
 using Clock = std::chrono::steady_clock;
+using cutefish::i18n::tr;
 
 static const ui::Color kWhite {255, 255, 255, 255};
 // AllAppsView's highlightMoveDuration, and how long a slide or swap keeps
@@ -198,7 +201,7 @@ LauncherView::LauncherView(Launcher &launcher, LauncherWallpaper &wallpaper, App
     setName("launcher");
     m_pagesView = addChild<Pages>(this);
     m_search = addChild<LauncherSearchField>();
-    m_notFound = addChild<ui::Label>("Not found");
+    m_notFound = addChild<ui::Label>(tr("Not found"));
     m_notFound->setColor(kWhite);
     m_notFound->setVisible(false);
     m_indicator = addChild<Indicator>(this);
@@ -260,6 +263,7 @@ LauncherView::LauncherView(Launcher &launcher, LauncherWallpaper &wallpaper, App
         for (const auto &[id, cell] : m_cells)
             cell->setCount(m_badges.count(id));
     }));
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
 }
 
 LauncherView::~LauncherView()
@@ -417,6 +421,17 @@ void LauncherView::updateBackdrop()
     const ui::Color backdrop = m_wallpaper.backdropColor();
     for (const auto &[id, cell] : m_cells)
         cell->setBackdrop(backdrop);
+}
+
+// The cell menu is made when it opens: an open one closes. The search
+// stays.
+void LauncherView::retranslate()
+{
+    if (m_menu)
+        m_menu->close();
+    m_search->retranslate();
+    m_notFound->setText(tr("Not found"));
+    requestLayout();
 }
 
 void LauncherView::syncCells()
@@ -937,11 +952,11 @@ void LauncherView::openMenu(LauncherCell *cell, ui::PointF windowPosition)
     m_menuId = id;
     auto menu = std::make_unique<ui::Menu>();
     Launcher &launcher = m_launcher;
-    menu->addItem("Open", [&launcher, id] { launcher.applications().launch(id); });
-    const size_t sendToDock = menu->addItem("Send to dock", [&launcher, id] { launcher.sendToDock(id); });
-    menu->addItem("Send to desktop", [&launcher, id] { launcher.applications().sendToDesktop(id); });
+    menu->addItem(tr("Open"), [&launcher, id] { launcher.applications().launch(id); });
+    const size_t sendToDock = menu->addItem(tr("Send to dock"), [&launcher, id] { launcher.sendToDock(id); });
+    menu->addItem(tr("Send to desktop"), [&launcher, id] { launcher.applications().sendToDesktop(id); });
     const size_t removeFromDock =
-            menu->addItem("Remove from dock", [&launcher, id] { launcher.removeFromDock(id); });
+            menu->addItem(tr("Remove from dock"), [&launcher, id] { launcher.removeFromDock(id); });
     const bool pinned = m_launcher.isPinnedInDock(id);
     menu->setItemVisible(sendToDock, !pinned);
     menu->setItemVisible(removeFromDock, pinned);

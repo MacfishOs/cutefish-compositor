@@ -5,6 +5,7 @@
 #include "auth/greetd_backend.h"
 #include "core/main_loop.h"
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+using cutefish::i18n::tr;
 
 namespace cutefish::auth {
 
@@ -255,7 +258,7 @@ void GreetdBackend::fail()
     if (m_phase == Phase::Complete)
         return;
     m_phase = Phase::Idle;
-    failed("Sign-in failed");
+    failed(tr("Sign-in failed"));
 }
 
 } // namespace cutefish::auth

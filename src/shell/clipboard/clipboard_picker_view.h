@@ -96,6 +96,7 @@ private:
     bool handleKey(const ui::KeyEvent &event);
     void removeCurrent();
     void modelChanged();
+    void retranslate();
     void updatePreview();
     void updateEmpty();
 

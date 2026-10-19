@@ -197,6 +197,8 @@ public:
 
     void setUsers(const std::vector<DeviceUser> &users);
     const std::vector<DeviceUser> &users() const { return m_users; }
+    // Takes the sentences again after the session language changed.
+    void retranslate();
 
     double heightForWidth(double width) const override;
     ui::SizeF sizeHint() const override { return {0, heightForWidth(0)}; }
