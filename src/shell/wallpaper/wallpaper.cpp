@@ -169,7 +169,6 @@ void Wallpaper::reloadAppearance()
     }
     m_settingsJob.cancel();
     Background background;
-    background.visible = m_appearance->backgroundVisible();
     background.type = m_appearance->backgroundType();
     background.path = localFile(m_appearance->wallpaper());
     background.color = parseColor(m_appearance->backgroundColor()).value_or(ui::Color {0, 0, 0, 255});
@@ -279,20 +278,17 @@ void Wallpaper::reload(Screen &screen)
         return;
 
     const Background &background = m_background;
-    if (!background.visible || background.type != 0) {
+    if (background.type != 0) {
         screen.pendingPath.clear();
         screen.pendingSize = {};
         screen.shownPath.clear();
         screen.shownSize = {};
         screen.showingImage = false;
-        screen.showingColor = background.visible;
+        screen.showingColor = true;
         screen.node->setPicture({});
-        screen.node->setColor(background.visible ? opaqueColor(background.color) : kBlack);
-        if (screen.output.primary) {
-            publish(background.visible,
-                    background.visible ? BarBackdrop::styleForSample(BarBackdrop::sampleColor(background.color))
-                                       : BarBackdrop::Style());
-        }
+        screen.node->setColor(opaqueColor(background.color));
+        if (screen.output.primary)
+            publish(true, BarBackdrop::styleForSample(BarBackdrop::sampleColor(background.color)));
         updateGradient();
         return;
     }
@@ -325,7 +321,7 @@ void Wallpaper::decoded(Screen &screen, const ui::Bitmap &image)
 void Wallpaper::tryCommit(Screen &screen)
 {
     const Background &background = m_background;
-    if (!m_hasBackground || !background.visible || background.type != 0)
+    if (!m_hasBackground || background.type != 0)
         return;
 
     const bool swap = screen.pendingPath != screen.shownPath || screen.pendingSize != screen.shownSize;
@@ -419,7 +415,7 @@ bool Wallpaper::isReady() const
 {
     if (!m_hasBackground || m_screens.empty())
         return false;
-    if (!m_background.visible || m_background.type != 0)
+    if (m_background.type != 0)
         return true;
     return std::all_of(m_screens.begin(), m_screens.end(), [](const std::unique_ptr<Screen> &screen) {
         const bool committed = screen->pendingPath == screen->shownPath && screen->pendingSize == screen->shownSize

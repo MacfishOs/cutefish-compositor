@@ -350,13 +350,6 @@ TEST_F(WallpaperTest, AColourOrNothing)
     EXPECT_TRUE(wallpaper->isJudged());
     EXPECT_FALSE(wallpaper->style().useLightForeground);
     ASSERT_TRUE(node()->gradient());
-
-    // Off: black, nothing judged, no gradient.
-    background.visible = false;
-    wallpaper->setBackground(background);
-    EXPECT_FLOAT_EQ(0, node()->color().g);
-    EXPECT_FALSE(wallpaper->isJudged());
-    EXPECT_FALSE(node()->gradient());
 }
 
 TEST_F(WallpaperTest, APressOnTheBareOutputDeactivates)

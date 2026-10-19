@@ -50,8 +50,6 @@ class Wallpaper final : public Component
 public:
     // What the desktop shows, as Appearance publishes it.
     struct Background {
-        // Appearance's backgroundVisible: false shows nothing.
-        bool visible = true;
         // BackgroundType: 0 a picture, otherwise the colour.
         int type = 0;
         // A local file.
