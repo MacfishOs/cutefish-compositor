@@ -13,8 +13,8 @@
 
 namespace cutefish::input {
 
-static constexpr auto service = "com.cutefish.Touchpad1";
-static constexpr auto path = "/com/cutefish/Touchpad1";
+static constexpr auto service = "org.cutefish.Touchpad1";
+static constexpr auto path = "/org/cutefish/Touchpad1";
 static constexpr auto group = "Touchpad/";
 
 TouchpadSettings::TouchpadSettings(const std::string &settingsFile)

@@ -29,11 +29,11 @@ namespace cutefish::shell {
 class SecretStore;
 
 // The session's NetworkManager secret agent (cutefish-framework's
-// NetworkSecretAgent): registered as com.cutefish.network with every
+// NetworkSecretAgent): registered as org.cutefish.network with every
 // NetworkManager that starts, it answers from the keyring and asks the user
 // through the prompt bound to it when NetworkManager allows interaction.
 // Typed agent-owned secrets go to the keyring, as SaveSecrets would not bring
-// them back. It also serves com.cutefish.SecretAgent's ConnectWireless, which
+// them back. It also serves org.cutefish.SecretAgent's ConnectWireless, which
 // asks for a new network's password before anything is added.
 class NetworkSecretAgent
 {
@@ -56,7 +56,7 @@ public:
     };
 
     // `client` is NetworkManager's on the system bus, where the agent object
-    // is exported; `session` serves com.cutefish.SecretAgent (after
+    // is exported; `session` serves org.cutefish.SecretAgent (after
     // registerService()) and reaches the keyring. Either may be null.
     NetworkSecretAgent(networkmanager::Client *client, base::dbus::Connection *session);
     ~NetworkSecretAgent();
@@ -64,7 +64,7 @@ public:
     NetworkSecretAgent(const NetworkSecretAgent &) = delete;
     NetworkSecretAgent &operator=(const NetworkSecretAgent &) = delete;
 
-    // Exports /SecretAgent on the session bus and owns com.cutefish.SecretAgent.
+    // Exports /SecretAgent on the session bus and owns org.cutefish.SecretAgent.
     bool registerService();
 
     // The request at the head of the queue, which the prompt shows.
@@ -82,7 +82,7 @@ public:
     void respondFields(const std::map<std::string, std::string> &values);
     void cancel();
 
-    // com.cutefish.SecretAgent.ConnectWireless: asks for the password of the
+    // org.cutefish.SecretAgent.ConnectWireless: asks for the password of the
     // access point, and joins it with a new profile once given.
     void connectWireless(const std::string &devicePath, const std::string &accessPointPath,
                          const std::string &name, bool wep);

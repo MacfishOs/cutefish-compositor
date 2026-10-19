@@ -77,8 +77,8 @@ TEST(TouchscreenSettings, DBusPropertiesMethodsAndServiceRestart)
     for (int iteration = 0; iteration < 2; ++iteration) {
         TouchscreenSettings settings(file);
         ASSERT_TRUE(settings.registerService());
-        RemoteObject proxy(loop, "com.cutefish.Touchscreen1", "/com/cutefish/Touchscreen1",
-                           "com.cutefish.Touchscreen1");
+        RemoteObject proxy(loop, "org.cutefish.Touchscreen1", "/org/cutefish/Touchscreen1",
+                           "org.cutefish.Touchscreen1");
         ASSERT_TRUE(proxy.isValid());
         EXPECT_EQ(proxy.property<Names>("disabledDevices").value_or(Names {"?"}).empty(),
                   iteration == 0);

@@ -27,7 +27,7 @@ Dock::Dock(dbus::Connection *bus, TaskManager &tasks, ApplicationLauncher &launc
 Dock::~Dock()
 {
     if (m_object && m_bus)
-        m_bus->releaseName("com.cutefish.Dock");
+        m_bus->releaseName("org.cutefish.Dock");
     waitForFileThread();
 }
 
@@ -43,7 +43,7 @@ bool Dock::registerService()
     if (!m_bus)
         return false;
 
-    auto object = std::make_unique<dbus::Object>(m_bus, "/Dock", "com.cutefish.Dock");
+    auto object = std::make_unique<dbus::Object>(m_bus, "/Dock", "org.cutefish.Dock");
     object->addMethod("setDirection",
                       [this](int32_t direction) { m_settings.setDirection(DockSettings::Direction(direction)); },
                       dbus::ArgumentNames{{"direction"}, {}});
@@ -56,8 +56,8 @@ bool Dock::registerService()
                       dbus::ArgumentNames{{"tint"}, {}});
     object->addMethod("setMinimizedArea", [this](bool enabled) { m_settings.setMinimizedArea(enabled); },
                       dbus::ArgumentNames{{"enabled"}, {}});
-    if (!object->publish() || !m_bus->requestName("com.cutefish.Dock", dbus::Connection::DoNotQueue)) {
-        CF_WARNING(cfDock) << "Cannot own com.cutefish.Dock";
+    if (!object->publish() || !m_bus->requestName("org.cutefish.Dock", dbus::Connection::DoNotQueue)) {
+        CF_WARNING(cfDock) << "Cannot own org.cutefish.Dock";
         return false;
     }
     m_object = std::move(object);

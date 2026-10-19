@@ -43,7 +43,7 @@ TEST(CompositorOptionsTest, Defaults)
     EXPECT_EQ(options->headlessOutputs, 1);
     EXPECT_EQ(options->readyFd, -1);
     EXPECT_EQ(options->scale.numerator(), 120u);
-    EXPECT_EQ(options->displayConfigService, "com.cutefish.DisplayConfig");
+    EXPECT_EQ(options->displayConfigService, "org.cutefish.DisplayConfig");
     EXPECT_TRUE(options->clipboardClients.empty());
     EXPECT_TRUE(options->logRules.empty());
 }

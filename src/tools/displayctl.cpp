@@ -174,7 +174,7 @@ int main(int argc, char **argv)
 {
     base::CommandLineParser parser;
     parser.addHelpOption();
-    parser.addOption({"service", "D-Bus service name", "name", "com.cutefish.DisplayConfig"});
+    parser.addOption({"service", "D-Bus service name", "name", "org.cutefish.DisplayConfig"});
     parser.addPositionalArgument("command", "list, test, apply, confirm, revert, reset, or power");
     parser.addPositionalArgument("arguments", "Command arguments", "[arguments...]");
     parser.process(argc, argv);
@@ -189,7 +189,7 @@ int main(int argc, char **argv)
         return 1;
     }
     const dbus::Proxy service(bus, parser.value("service"),
-                              "/com/cutefish/DisplayConfig1", "com.cutefish.DisplayConfig1");
+                              "/org/cutefish/DisplayConfig1", "org.cutefish.DisplayConfig1");
 
     const std::string &command = args.front();
     std::string powerToken;

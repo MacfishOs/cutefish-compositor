@@ -38,7 +38,7 @@ struct HotCornerBinding {
 };
 
 // The actions of the four screen corners, kept in compositor.conf [HotCorners]
-// and exported as com.cutefish.HotCorners1. An action is named as in the
+// and exported as org.cutefish.HotCorners1. An action is named as in the
 // shortcuts service; an empty one turns the corner off.
 class HotCornerSettings
 {

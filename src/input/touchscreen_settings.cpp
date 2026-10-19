@@ -11,8 +11,8 @@
 
 namespace cutefish::input {
 
-static constexpr auto service = "com.cutefish.Touchscreen1";
-static constexpr auto path = "/com/cutefish/Touchscreen1";
+static constexpr auto service = "org.cutefish.Touchscreen1";
+static constexpr auto path = "/org/cutefish/Touchscreen1";
 static constexpr auto disabledDevicesKey = "Touchscreen/disabledDevices";
 
 TouchscreenSettings::TouchscreenSettings(const std::string &settingsFile)

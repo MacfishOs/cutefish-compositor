@@ -78,7 +78,7 @@ Osd::~Osd()
 {
     m_subscriptions.clear();
     if (m_service && m_shell->bus())
-        m_shell->bus()->releaseName("com.cutefish.Osd");
+        m_shell->bus()->releaseName("org.cutefish.Osd");
     m_service.reset();
     m_window.reset();
 }
@@ -90,7 +90,7 @@ bool Osd::registerService()
     dbus::Connection *bus = m_shell->bus();
     if (!bus)
         return false;
-    auto object = std::make_unique<dbus::Object>(bus, "/Osd", "com.cutefish.Osd");
+    auto object = std::make_unique<dbus::Object>(bus, "/Osd", "org.cutefish.Osd");
     object->addMethod("volumeDown", [this] { volumeDown(); });
     object->addMethod("volumeUp", [this] { volumeUp(); });
     object->addMethod("toggleMute", [this] { toggleMute(); });
@@ -99,8 +99,8 @@ bool Osd::registerService()
     object->addMethod("brightnessUp", [this] { brightnessUp(); });
     object->addMethod("keyboardBrightnessDown", [this] { keyboardBrightnessDown(); });
     object->addMethod("keyboardBrightnessUp", [this] { keyboardBrightnessUp(); });
-    if (!object->publish() || !bus->requestName("com.cutefish.Osd", dbus::Connection::DoNotQueue)) {
-        CF_WARNING(cfOsd) << "Cannot own com.cutefish.Osd";
+    if (!object->publish() || !bus->requestName("org.cutefish.Osd", dbus::Connection::DoNotQueue)) {
+        CF_WARNING(cfOsd) << "Cannot own org.cutefish.Osd";
         return false;
     }
     m_service = std::move(object);

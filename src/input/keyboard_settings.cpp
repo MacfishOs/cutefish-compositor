@@ -14,8 +14,8 @@
 
 namespace cutefish::input {
 
-static constexpr auto service = "com.cutefish.Keyboard1";
-static constexpr auto path = "/com/cutefish/Keyboard1";
+static constexpr auto service = "org.cutefish.Keyboard1";
+static constexpr auto path = "/org/cutefish/Keyboard1";
 static constexpr auto group = "Keyboard/";
 
 static constexpr auto pcConvention = "pc";

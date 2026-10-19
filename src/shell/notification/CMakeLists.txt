@@ -1,5 +1,5 @@
 # org.freedesktop.Notifications, the banners, the history and
-# com.cutefish.Notification, without their views.
+# org.cutefish.Notification, without their views.
 add_library(cutefish-shell-notification STATIC
     notification.cpp
     notification.h

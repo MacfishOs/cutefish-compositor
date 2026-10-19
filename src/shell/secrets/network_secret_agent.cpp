@@ -26,11 +26,11 @@ static const std::string kAgentPath = "/org/freedesktop/NetworkManager/SecretAge
 static const std::string kAgentInterface = "org.freedesktop.NetworkManager.SecretAgent";
 static const std::string kAgentManagerPath = "/org/freedesktop/NetworkManager/AgentManager";
 static const std::string kAgentManagerInterface = "org.freedesktop.NetworkManager.AgentManager";
-static const std::string kAgentIdentifier = "com.cutefish.network";
+static const std::string kAgentIdentifier = "org.cutefish.network";
 
-static const std::string kPromptService = "com.cutefish.SecretAgent";
+static const std::string kPromptService = "org.cutefish.SecretAgent";
 static const std::string kPromptPath = "/SecretAgent";
-static const std::string kPromptInterface = "com.cutefish.SecretAgent";
+static const std::string kPromptInterface = "org.cutefish.SecretAgent";
 
 static const std::string kConnectionSetting = "connection";
 static const std::string kWirelessSecurity = "802-11-wireless-security";

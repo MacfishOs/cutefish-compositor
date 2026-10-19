@@ -19,8 +19,8 @@ const base::LogCategory &logs()
     return base::LogCategory::defaultCategory();
 }
 
-const std::string serviceName = "com.cutefish.Applications1";
-const std::string objectPath = "/com/cutefish/Applications1";
+const std::string serviceName = "org.cutefish.Applications1";
+const std::string objectPath = "/org/cutefish/Applications1";
 
 std::string outcomeName(wm::QuitAll::Outcome outcome)
 {

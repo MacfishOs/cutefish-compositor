@@ -97,8 +97,8 @@ TEST(InputMethodSettings, ExportsTheSessionService)
     writeFile(applications.filePath("ime.desktop"), provider("/bin/sh"));
     InputMethodSettings settings(directory.filePath("compositor.conf"), {applications.path()});
     ASSERT_TRUE(settings.registerService());
-    RemoteObject remote(loop, "com.cutefish.InputMethod1", "/com/cutefish/InputMethod1",
-                        "com.cutefish.InputMethod1");
+    RemoteObject remote(loop, "org.cutefish.InputMethod1", "/org/cutefish/InputMethod1",
+                        "org.cutefish.InputMethod1");
     ASSERT_TRUE(remote.isValid());
     EXPECT_EQ(Strings({"ime.desktop"}), remote.call("availableInputMethods").value<Strings>());
     EXPECT_EQ(false, remote.call("setInputMethod", std::string("nope.desktop")).value<bool>());

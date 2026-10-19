@@ -23,9 +23,9 @@ namespace cutefish::display::ipc {
 
 namespace dbus = base::dbus;
 
-static constexpr const char* kPath = "/com/cutefish/DisplayConfig1";
-static constexpr const char* kInterface = "com.cutefish.DisplayConfig1";
-static constexpr const char* kUnauthorized = "com.cutefish.DisplayConfig1.Error.Unauthorized";
+static constexpr const char* kPath = "/org/cutefish/DisplayConfig1";
+static constexpr const char* kInterface = "org.cutefish.DisplayConfig1";
+static constexpr const char* kUnauthorized = "org.cutefish.DisplayConfig1.Error.Unauthorized";
 
 DisplayConfigService::DisplayConfigService(DisplayManager* manager,
                                            DisplayConfigurationController* controller,

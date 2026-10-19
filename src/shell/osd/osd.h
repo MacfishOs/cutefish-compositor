@@ -56,13 +56,13 @@ public:
     base::Signal<> keyboardChangedByFirmware;
 };
 
-// The session's: PipeWire, com.cutefish.Services.Brightness and UPower.
+// The session's: PipeWire, org.cutefish.Services.Brightness and UPower.
 std::unique_ptr<OsdLevels> createSessionOsdLevels(base::dbus::Connection *sessionBus);
 
 // The on-screen display: the level a volume,
 // microphone or brightness key set, a glass panel with the control centre's
 // track, top centre below the status bar, gone 1.5 s after the last key.
-// Serves com.cutefish.Osd at /Osd, which the compositor's media keys call.
+// Serves org.cutefish.Osd at /Osd, which the compositor's media keys call.
 class Osd : public Component
 {
 public:

@@ -95,7 +95,7 @@ public:
     // Rows below this hold the fixed items, which nothing can go before.
     int firstMovableRow() const;
 
-    // com.cutefish.Dock: by desktop path or desktop id.
+    // org.cutefish.Dock: by desktop path or desktop id.
     void addItem(const std::string &desktopFile);
     void removeItem(const std::string &desktopFile);
     bool isDesktopPinned(const std::string &desktopFile) const;

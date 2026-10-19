@@ -29,8 +29,8 @@ const base::LogCategory &logs()
     return base::LogCategory::defaultCategory();
 }
 
-const std::string serviceName = "com.cutefish.WindowDebug1";
-const std::string objectPath = "/com/cutefish/WindowDebug1";
+const std::string serviceName = "org.cutefish.WindowDebug1";
+const std::string objectPath = "/org/cutefish/WindowDebug1";
 
 using base::json::Value;
 

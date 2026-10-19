@@ -16,8 +16,8 @@
 namespace cutefish::accelerators {
 namespace {
 
-constexpr auto service = "com.cutefish.HotCorners1";
-constexpr auto path = "/com/cutefish/HotCorners1";
+constexpr auto service = "org.cutefish.HotCorners1";
+constexpr auto path = "/org/cutefish/HotCorners1";
 
 // The D-Bus names, also the stem of the preference keys.
 constexpr std::array<std::pair<HotCorner, const char *>, 4> kCorners = {{

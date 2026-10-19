@@ -19,7 +19,7 @@ struct DesktopEntry;
 namespace cutefish::shell {
 
 // Starts applications the way every start in the session goes: through the
-// session's AppRuntime (com.cutefish.AppRuntime), which puts each in a scope
+// session's AppRuntime (org.cutefish.AppRuntime), which puts each in a scope
 // of its own, or here when the runtime does not answer. Nothing waits: the
 // runtime's answer, or its absence, arrives later.
 class ApplicationLauncher

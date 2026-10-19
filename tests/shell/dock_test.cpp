@@ -28,7 +28,7 @@ class FakeAppRuntime
 {
 public:
     explicit FakeAppRuntime(dbus::Connection *bus)
-        : object(bus, "/AppRuntime", "com.cutefish.AppRuntime")
+        : object(bus, "/AppRuntime", "org.cutefish.AppRuntime")
     {
         object.addMethod("launchApplication",
                          [this](const std::string &id, const std::vector<std::string> &, const std::string &) {
@@ -45,7 +45,7 @@ public:
             return true;
         });
         EXPECT_TRUE(object.publish());
-        EXPECT_TRUE(bus->requestName("com.cutefish.AppRuntime"));
+        EXPECT_TRUE(bus->requestName("org.cutefish.AppRuntime"));
     }
 
     dbus::Object object;
@@ -231,18 +231,18 @@ TEST_F(DockTest, PinsMovesAndDrops)
     EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, "terminal", "editor", "files"}));
 }
 
-TEST_F(DockTest, ServesComCutefishDock)
+TEST_F(DockTest, ServesOrgCutefishDock)
 {
     start("[Dock]\nPinned=files\n");
     ASSERT_TRUE(dock->registerService());
 
     test::DBusTestClient settings;
-    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "setDirection", int32_t(0));
-    settings.call("com.cutefish.Dock", "/Dock", "com.cutefish.Dock", "setGlassTint", 3.0);
+    settings.call("org.cutefish.Dock", "/Dock", "org.cutefish.Dock", "setDirection", int32_t(0));
+    settings.call("org.cutefish.Dock", "/Dock", "org.cutefish.Dock", "setGlassTint", 3.0);
     EXPECT_EQ(dock->settings().direction(), shell::DockSettings::Left);
     EXPECT_EQ(dock->settings().glassTint(), 1.0);
 
-    const std::string xml = settings.introspect("com.cutefish.Dock", "/Dock");
+    const std::string xml = settings.introspect("org.cutefish.Dock", "/Dock");
     EXPECT_NE(xml.find("name=\"direction\""), std::string::npos);
 
     shell::waitForFileThread();

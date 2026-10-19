@@ -31,7 +31,7 @@ class StatusPanelView;
 
 // The control centre and the status bar's Wi-Fi, Sound and
 // Battery panels, each a popup of the bar's window with the panels' glass,
-// and the power dialog the bar's menu and com.cutefish.Statusbar ask for.
+// and the power dialog the bar's menu and org.cutefish.Statusbar ask for.
 // Also tells the bar what its volume and Wi-Fi icons show.
 class ControlCenter : public Component, public StatusBarPanels, public StatusBarIndicators
 {

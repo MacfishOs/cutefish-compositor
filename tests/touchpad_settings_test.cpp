@@ -124,8 +124,8 @@ TEST(TouchpadSettings, DBusPropertiesMethodsAndServiceRestart)
     for (int iteration = 0; iteration < 2; ++iteration) {
         TouchpadSettings settings(file);
         ASSERT_TRUE(settings.registerService());
-        RemoteObject proxy(loop, "com.cutefish.Touchpad1", "/com/cutefish/Touchpad1",
-                           "com.cutefish.Touchpad1");
+        RemoteObject proxy(loop, "org.cutefish.Touchpad1", "/org/cutefish/Touchpad1",
+                           "org.cutefish.Touchpad1");
         ASSERT_TRUE(proxy.isValid());
         EXPECT_EQ(proxy.property<bool>("tapToClick"), iteration != 0);
         const auto invoke = [&proxy](const std::string &method, auto value) {

@@ -137,7 +137,7 @@ TEST_F(NotificationServiceTest, ShowsANotificationAsTheSendersApplication)
 
     // The sender is noted for Settings.
     const dbus::Reply applications =
-            client.call("com.cutefish.Notification", "/Notification", "com.cutefish.Notification", "applications");
+            client.call("org.cutefish.Notification", "/Notification", "org.cutefish.Notification", "applications");
     const auto list = applications.value<std::vector<dbus::VariantMap>>();
     ASSERT_TRUE(list.has_value());
     ASSERT_EQ(list->size(), 1u);
@@ -278,7 +278,7 @@ TEST_F(NotificationServiceTest, FollowsTheApplicationModesAndDoNotDisturb)
     EXPECT_TRUE(client.call(kService, kPath, kService, "CloseNotification", uint32_t(1)).isError());
 
     // Centre only: straight to the history.
-    EXPECT_FALSE(client.call("com.cutefish.Notification", "/Notification", "com.cutefish.Notification",
+    EXPECT_FALSE(client.call("org.cutefish.Notification", "/Notification", "org.cutefish.Notification",
                              "setApplicationMode", std::string("org.example.Chat"), int32_t(1))
                          .isError());
     notify("Quiet");
@@ -291,12 +291,12 @@ TEST_F(NotificationServiceTest, FollowsTheApplicationModesAndDoNotDisturb)
     base::Settings saved(directory.filePath("shell.conf"));
     EXPECT_EQ(saved.intValue("Notifications/Applications/org.example.Chat/Mode"), 1);
 
-    client.listen("com.cutefish.Notification");
-    client.call("com.cutefish.Notification", "/Notification", "com.cutefish.Notification", "setDoNotDisturb", true);
+    client.listen("org.cutefish.Notification");
+    client.call("org.cutefish.Notification", "/Notification", "org.cutefish.Notification", "setDoNotDisturb", true);
     EXPECT_TRUE(test::runUntil([&] { return !client.signalsSeen.empty(); }));
     EXPECT_EQ(client.signalsSeen.front().member(), "doNotDisturbChanged");
-    const dbus::Reply property = client.getProperty("com.cutefish.Notification", "/Notification",
-                                                    "com.cutefish.Notification", "doNotDisturb");
+    const dbus::Reply property = client.getProperty("org.cutefish.Notification", "/Notification",
+                                                    "org.cutefish.Notification", "doNotDisturb");
     EXPECT_EQ(property.value<dbus::Variant>().value_or(dbus::Variant()).value<bool>(), true);
     notify("Mail", 0, {}, {}, "Mail");
     settle();

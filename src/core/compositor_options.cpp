@@ -48,7 +48,7 @@ std::optional<CompositorOptions> CompositorOptions::parse(int argc, char **argv)
     parser.addOption({"scale", "Output scale, a decimal from 1.0 through 4.0.", "factor", "1.0"});
     parser.addOption({"display-config-service",
                       "Session D-Bus name for native display configuration.", "name",
-                      "com.cutefish.DisplayConfig"});
+                      "org.cutefish.DisplayConfig"});
 #ifdef CUTEFISH_ENABLE_XWAYLAND
     parser.addOption({"xwayland", "Enable the X11 frontend (enabled by default)."});
     parser.addOption({"no-xwayland", "Disable the X11 frontend; overrides --xwayland."});

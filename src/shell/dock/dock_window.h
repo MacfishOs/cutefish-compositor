@@ -41,7 +41,7 @@ class ShellWindow;
 // The dock: a strip along the
 // primary output's edge, the panel centred in it on the compositor's glass,
 // with the launcher, the pinned and the running applications, a divider,
-// the minimized windows and the trash. The models and com.cutefish.Dock are
+// the minimized windows and the trash. The models and org.cutefish.Dock are
 // the Dock it is given; this is the view, its window and its input.
 class DockWindow : public Component
 {

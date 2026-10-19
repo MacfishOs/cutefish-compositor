@@ -13,11 +13,11 @@ namespace cutefish::shell {
 namespace dbus = base::dbus;
 
 Brightness::Brightness(dbus::Connection *bus)
-    : m_proxy(bus, "com.cutefish.Services", "/com/cutefish/Services/Brightness", "com.cutefish.Services.Brightness")
+    : m_proxy(bus, "org.cutefish.Services", "/org/cutefish/Services/Brightness", "org.cutefish.Services.Brightness")
 {
     // Keys, dimming and the sliders all change it.
     m_changed = m_proxy.onSignal("brightnessChanged", [this](const dbus::Message &) { refresh(); });
-    m_owner = followServiceOwner(bus, "com.cutefish.Services", [this] { refresh(); });
+    m_owner = followServiceOwner(bus, "org.cutefish.Services", [this] { refresh(); });
 }
 
 void Brightness::refresh()

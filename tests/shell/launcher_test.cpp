@@ -154,7 +154,7 @@ TEST_F(LauncherTest, ShowsHidesAndRemembersOpenedApplications)
     launcher->hideWindow = [&] { --shown; };
 
     test::DBusTestClient session;
-    session.call("com.cutefish.Launcher", "/Launcher", "com.cutefish.Launcher", "toggle");
+    session.call("org.cutefish.Launcher", "/Launcher", "org.cutefish.Launcher", "toggle");
     EXPECT_TRUE(launcher->isShown());
     EXPECT_EQ(shown, 1);
     // A drag keeps it up when it loses activation.

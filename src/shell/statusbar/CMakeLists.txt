@@ -1,7 +1,7 @@
 # The status bar without its views: the tray (StatusNotifierWatcher and its
 # items), a dbusmenu client, the AppMenu registrar and the application menu,
 # media players, battery, Wi-Fi, brightness and power glue, the clock's format
-# and com.cutefish.Statusbar.
+# and org.cutefish.Statusbar.
 add_library(cutefish-shell-statusbar STATIC
     app_menu_registrar.cpp
     app_menu_registrar.h

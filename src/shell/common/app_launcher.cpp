@@ -16,7 +16,7 @@ namespace cutefish::shell {
 static constexpr std::chrono::seconds kRuntimeTimeout(5);
 
 ApplicationLauncher::ApplicationLauncher(base::dbus::Connection *bus)
-    : m_runtime(bus, "com.cutefish.AppRuntime", "/AppRuntime", "com.cutefish.AppRuntime")
+    : m_runtime(bus, "org.cutefish.AppRuntime", "/AppRuntime", "org.cutefish.AppRuntime")
 {
     m_runtime.setTimeout(kRuntimeTimeout);
 }

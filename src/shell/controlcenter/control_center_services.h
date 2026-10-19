@@ -130,7 +130,7 @@ public:
     virtual void mediaPause() = 0;
     virtual void mediaNext() = 0;
 
-    // --- Display (com.cutefish.Services.Brightness), percent ---
+    // --- Display (org.cutefish.Services.Brightness), percent ---
     virtual bool brightnessEnabled() const = 0;
     virtual int brightness() const = 0;
     virtual void setBrightness(int value) = 0;

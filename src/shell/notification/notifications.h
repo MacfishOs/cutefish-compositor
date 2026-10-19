@@ -21,7 +21,7 @@ class TaskManager;
 
 // The notifications component without its views: the
 // org.freedesktop.Notifications server, the banners on screen, the history,
-// the per-application settings, and com.cutefish.Notification at
+// the per-application settings, and org.cutefish.Notification at
 // /Notification, which Settings and the session call.
 class Notifications
 {
@@ -42,7 +42,7 @@ public:
     Notifications(const Notifications &) = delete;
     Notifications &operator=(const Notifications &) = delete;
 
-    // org.freedesktop.Notifications, then com.cutefish.Notification.
+    // org.freedesktop.Notifications, then org.cutefish.Notification.
     bool registerServices();
 
     NotificationSettings &settings() { return m_settings; }

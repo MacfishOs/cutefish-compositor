@@ -40,7 +40,7 @@ class MenuBarModel
 {
 public:
     // Where the file manager's desktop exports its menus.
-    static constexpr const char *kDesktopMenuPath = "/com/cutefish/DesktopMenu";
+    static constexpr const char *kDesktopMenuPath = "/org/cutefish/DesktopMenu";
 
     enum class Kind {
         User,

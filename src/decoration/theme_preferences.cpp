@@ -13,8 +13,8 @@ namespace cutefish::decoration {
 ThemePreferences::ThemePreferences(Theme &theme)
     : m_theme(theme)
     , m_settings(preferencesFile("services"))
-    , m_appearance(base::dbus::Connection::session(core::mainLoop()), "com.cutefish.Services",
-                   "/com/cutefish/Services/Appearance", "com.cutefish.Services.Appearance")
+    , m_appearance(base::dbus::Connection::session(core::mainLoop()), "org.cutefish.Services",
+                   "/org/cutefish/Services/Appearance", "org.cutefish.Services.Appearance")
 {
     std::error_code error;
     std::filesystem::create_directories(std::filesystem::path(m_settings.path()).parent_path(),

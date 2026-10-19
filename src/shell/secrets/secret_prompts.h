@@ -31,7 +31,7 @@ class VpnPasswordDialog;
 class WirelessPasswordDialog;
 
 // The session's secret agents and their prompts: NetworkManager's secret agent
-// (com.cutefish.network, the keyring behind it, and com.cutefish.SecretAgent
+// (org.cutefish.network, the keyring behind it, and org.cutefish.SecretAgent
 // for passwords asked before a network is added) with the Wi-Fi and VPN
 // password dialogs, and BlueZ's default pairing agent with the pairing dialog.
 // Each dialog is a window of its own, made while its request is up.
@@ -39,7 +39,7 @@ class SecretPrompts final : public Component
 {
 public:
     // `network` is NetworkManager on the system bus, `session` the session
-    // bus (com.cutefish.SecretAgent, the keyring), `bluetooth` BlueZ's
+    // bus (org.cutefish.SecretAgent, the keyring), `bluetooth` BlueZ's
     // manager; any may be null.
     SecretPrompts(Shell *shell, networkmanager::Client *network, base::dbus::Connection *session,
                   std::shared_ptr<bluez::Manager> bluetooth);
@@ -48,7 +48,7 @@ public:
     ~SecretPrompts() override;
 
     // Becomes the session's agents: registers with NetworkManager, serves
-    // com.cutefish.SecretAgent and takes BlueZ's default agent. Not for a
+    // org.cutefish.SecretAgent and takes BlueZ's default agent. Not for a
     // development instance, which would take the session's prompts.
     void start();
 

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// com.cutefish.WindowDebug1: the window list and direct window placement, for
+// org.cutefish.WindowDebug1: the window list and direct window placement, for
 // checking window-level behaviour from a script instead of by hand. Modelled on
 // ash/debug.cc and chromeos/ui/wm/debug_util.cc (PrintWindowHierarchy), which
 // dump the same facts for ChromeOS.

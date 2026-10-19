@@ -13,7 +13,7 @@
 
 namespace cutefish::shell {
 
-// The session's own services (com.cutefish.Services and its Battery,
+// The session's own services (org.cutefish.Services and its Battery,
 // Brightness, Language, Appearance objects) start after the compositor and
 // are not D-Bus activatable: a client's first read fails and nothing tells it
 // to read again. `appeared` runs each time `name` gets an owner, so the

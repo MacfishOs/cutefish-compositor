@@ -14,7 +14,7 @@ namespace cutefish::shell {
 
 // Log out, restart and shut down, which the user is asked to confirm first,
 // and suspend and lock, which act at once: the user menu's and the power
-// dialog's actions, through the session (com.cutefish.Session) and the
+// dialog's actions, through the session (org.cutefish.Session) and the
 // screen saver.
 class PowerActions
 {

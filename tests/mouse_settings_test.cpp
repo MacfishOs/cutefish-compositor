@@ -136,8 +136,8 @@ TEST(MouseSettings, DBusPropertiesMethodsAndServiceRestart)
     for (int iteration = 0; iteration < 2; ++iteration) {
         MouseSettings settings(file);
         ASSERT_TRUE(settings.registerService());
-        RemoteObject proxy(loop, "com.cutefish.Mouse1", "/com/cutefish/Mouse1",
-                           "com.cutefish.Mouse1");
+        RemoteObject proxy(loop, "org.cutefish.Mouse1", "/org/cutefish/Mouse1",
+                           "org.cutefish.Mouse1");
         ASSERT_TRUE(proxy.isValid());
         EXPECT_EQ(proxy.property<bool>("leftHanded"), iteration != 0);
         const auto invoke = [&proxy](const std::string &method, auto value) {
@@ -164,12 +164,12 @@ TEST(MouseSettings, SendsTheChangeSignalsSettingsListensTo)
     ASSERT_TRUE(directory.isValid());
     MouseSettings settings(directory.filePath("compositor.conf"));
     ASSERT_TRUE(settings.registerService());
-    RemoteObject proxy(loop, "com.cutefish.Mouse1", "/com/cutefish/Mouse1", "com.cutefish.Mouse1");
+    RemoteObject proxy(loop, "org.cutefish.Mouse1", "/org/cutefish/Mouse1", "org.cutefish.Mouse1");
     ASSERT_TRUE(proxy.isValid());
     std::vector<std::string> received;
     cutefish::base::dbus::MatchRule rule;
-    rule.path = "/com/cutefish/Mouse1";
-    rule.interface = "com.cutefish.Mouse1";
+    rule.path = "/org/cutefish/Mouse1";
+    rule.interface = "org.cutefish.Mouse1";
     auto match = proxy.connection()->subscribe(rule, [&received](const auto &message) {
         received.push_back(message.member() + "(" + message.signature() + ")");
     });

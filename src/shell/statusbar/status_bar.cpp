@@ -49,9 +49,9 @@ StatusBar::StatusBar(dbus::Connection *sessionBus, dbus::Connection *systemBus, 
 
     if (m_bus) {
         dbus::MatchRule rule;
-        rule.sender = "com.cutefish.Services";
-        rule.path = "/com/cutefish/Services/Language";
-        rule.interface = "com.cutefish.Services.Language";
+        rule.sender = "org.cutefish.Services";
+        rule.path = "/org/cutefish/Services/Language";
+        rule.interface = "org.cutefish.Services.Language";
         rule.member = "languageChanged";
         m_languageChanged = m_bus->subscribe(rule, [this](const dbus::Message &) { reloadLanguage(); });
     }
@@ -61,7 +61,7 @@ StatusBar::StatusBar(dbus::Connection *sessionBus, dbus::Connection *systemBus, 
 StatusBar::~StatusBar()
 {
     if (m_object && m_bus)
-        m_bus->releaseName("com.cutefish.Statusbar");
+        m_bus->releaseName("org.cutefish.Statusbar");
 }
 
 bool StatusBar::registerServices()
@@ -69,7 +69,7 @@ bool StatusBar::registerServices()
     if (!m_object) {
         if (!m_bus)
             return false;
-        auto object = std::make_unique<dbus::Object>(m_bus, "/Statusbar", "com.cutefish.Statusbar");
+        auto object = std::make_unique<dbus::Object>(m_bus, "/Statusbar", "org.cutefish.Statusbar");
         object->addMethod("setBatteryPercentage", [this](bool enabled) { m_battery->setShowPercentage(enabled); },
                           dbus::ArgumentNames{{"batteryPercentage"}, {}});
         object->addMethod("setTwentyFourTime", [this](bool enabled) { setTwentyFourTime(enabled); },
@@ -79,8 +79,8 @@ bool StatusBar::registerServices()
         object->addMethod("requestLogout", [this] { m_powerActions.request(PowerActions::Logout); });
         object->addMethod("requestReboot", [this] { m_powerActions.request(PowerActions::Reboot); });
         object->addMethod("requestShutdown", [this] { m_powerActions.request(PowerActions::Shutdown); });
-        if (!object->publish() || !m_bus->requestName("com.cutefish.Statusbar", dbus::Connection::DoNotQueue)) {
-            CF_WARNING(cfStatusBar) << "Cannot own com.cutefish.Statusbar";
+        if (!object->publish() || !m_bus->requestName("org.cutefish.Statusbar", dbus::Connection::DoNotQueue)) {
+            CF_WARNING(cfStatusBar) << "Cannot own org.cutefish.Statusbar";
             return false;
         }
         m_object = std::move(object);

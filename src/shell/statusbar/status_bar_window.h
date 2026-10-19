@@ -45,7 +45,7 @@ public:
     static constexpr int kHeight = 32;
 
     // `statusBar` is the backend: tray, registrar, battery, power actions,
-    // the clock's format and com.cutefish.Statusbar.
+    // the clock's format and org.cutefish.Statusbar.
     StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> statusBar);
     ~StatusBarWindow() override;
 

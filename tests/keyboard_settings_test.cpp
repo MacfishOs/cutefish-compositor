@@ -163,8 +163,8 @@ TEST(KeyboardSettings, DBusPropertiesAndMethods)
         return name != "broken";
     });
     ASSERT_TRUE(settings.registerService());
-    RemoteObject proxy(loop, "com.cutefish.Keyboard1", "/com/cutefish/Keyboard1",
-                       "com.cutefish.Keyboard1");
+    RemoteObject proxy(loop, "org.cutefish.Keyboard1", "/org/cutefish/Keyboard1",
+                       "org.cutefish.Keyboard1");
     ASSERT_TRUE(proxy.isValid());
     const auto invoke = [&proxy](const std::string &method, auto value) {
         const auto reply = proxy.call(method, value);
@@ -193,8 +193,8 @@ TEST(KeyboardSettings, IntrospectionNamesTheArguments)
     ASSERT_TRUE(directory.isValid());
     KeyboardSettings settings(directory.filePath("compositor.conf"));
     ASSERT_TRUE(settings.registerService());
-    RemoteObject proxy(loop, "com.cutefish.Keyboard1", "/com/cutefish/Keyboard1",
-                       "com.cutefish.Keyboard1");
+    RemoteObject proxy(loop, "org.cutefish.Keyboard1", "/org/cutefish/Keyboard1",
+                       "org.cutefish.Keyboard1");
     ASSERT_TRUE(proxy.isValid());
     const std::string xml = proxy.introspect();
     EXPECT_NE(xml.find("<method name=\"setRepeatDelay\">\n"

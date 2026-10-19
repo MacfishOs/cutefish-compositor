@@ -15,7 +15,7 @@ add_library(cutefish-shell-wallpaper STATIC
 target_link_libraries(cutefish-shell-wallpaper PUBLIC cutefish-shell Cutefish::AppearanceClient)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-wallpaper)
 
-# The on-screen display: com.cutefish.Osd and its level panel.
+# The on-screen display: org.cutefish.Osd and its level panel.
 add_library(cutefish-shell-osd STATIC
     src/shell/osd/level_track.cpp
     src/shell/osd/level_track.h
@@ -59,7 +59,7 @@ add_library(cutefish-shell-notresponding STATIC
 )
 target_link_libraries(cutefish-shell-notresponding PUBLIC cutefish-shell)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-notresponding)
-# The screen capture interface: com.cutefish.Screenshot, its overlays,
+# The screen capture interface: org.cutefish.Screenshot, its overlays,
 # toolbar and Options, pictures and recordings.
 add_library(cutefish-shell-screenshot STATIC
     src/shell/screenshot/capture_clipboard.cpp

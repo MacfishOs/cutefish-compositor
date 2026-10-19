@@ -30,9 +30,9 @@ Preferences::Preferences(Cursor &cursor)
         if (base::dbus::Connection *bus = base::dbus::Connection::session(loop)) {
             for (const char *signal : {"cursorThemeChanged", "cursorSizeChanged"}) {
                 base::dbus::MatchRule rule;
-                rule.sender = "com.cutefish.Services";
-                rule.path = "/com/cutefish/Services/Appearance";
-                rule.interface = "com.cutefish.Services.Appearance";
+                rule.sender = "org.cutefish.Services";
+                rule.path = "/org/cutefish/Services/Appearance";
+                rule.interface = "org.cutefish.Services.Appearance";
                 rule.member = signal;
                 m_appearanceSignals.push_back(
                         bus->subscribe(rule, [this](const base::dbus::Message &) { reload(); }));

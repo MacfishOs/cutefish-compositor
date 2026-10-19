@@ -188,7 +188,7 @@ ClipboardHistory::ClipboardHistory(base::dbus::Connection *bus, clipboard::Selec
 ClipboardHistory::~ClipboardHistory()
 {
     if (m_object && m_bus)
-        m_bus->releaseName("com.cutefish.ClipboardHistory");
+        m_bus->releaseName("org.cutefish.ClipboardHistory");
 }
 
 bool ClipboardHistory::registerService()
@@ -197,11 +197,11 @@ bool ClipboardHistory::registerService()
         return true;
     if (!m_bus)
         return false;
-    auto object = std::make_unique<base::dbus::Object>(m_bus, "/ClipboardHistory", "com.cutefish.ClipboardHistory");
+    auto object = std::make_unique<base::dbus::Object>(m_bus, "/ClipboardHistory", "org.cutefish.ClipboardHistory");
     object->addMethod("toggle", [this] { toggle(); });
     if (!object->publish()
-        || !m_bus->requestName("com.cutefish.ClipboardHistory", base::dbus::Connection::DoNotQueue)) {
-        CF_WARNING(cfClipboard) << "Cannot own com.cutefish.ClipboardHistory";
+        || !m_bus->requestName("org.cutefish.ClipboardHistory", base::dbus::Connection::DoNotQueue)) {
+        CF_WARNING(cfClipboard) << "Cannot own org.cutefish.ClipboardHistory";
         return false;
     }
     m_object = std::move(object);

@@ -66,8 +66,8 @@ protected:
     {
         auto pending = std::make_unique<Pending>();
         Pending *raw = pending.get();
-        dbus::Proxy proxy(client.get(), "com.cutefish.Applications1", "/com/cutefish/Applications1",
-                          "com.cutefish.Applications1");
+        dbus::Proxy proxy(client.get(), "org.cutefish.Applications1", "/org/cutefish/Applications1",
+                          "org.cutefish.Applications1");
         pending->call = proxy.callAsync("QuitAll", [raw](const dbus::Reply &reply) { raw->reply = reply; });
         return pending;
     }

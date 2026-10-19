@@ -19,20 +19,20 @@ class AcceleratorDelegate
 public:
     virtual ~AcceleratorDelegate() = default;
 
-    // com.cutefish.Launcher.toggle.
+    // org.cutefish.Launcher.toggle.
     virtual void toggleAppList() = 0;
 
-    // com.cutefish.Screenshot: every screen at once, a part of one chosen
+    // org.cutefish.Screenshot: every screen at once, a part of one chosen
     // with the pointer, the capture tools, and the end of a recording.
     virtual void takeScreenshot(bool toClipboard) = 0;
     virtual void takePartialScreenshot(bool toClipboard) = 0;
     virtual void startCaptureMode() = 0;
     virtual void stopScreenRecording() = 0;
 
-    // com.cutefish.ClipboardHistory.toggle: shows or hides the picker.
+    // org.cutefish.ClipboardHistory.toggle: shows or hides the picker.
     virtual void toggleClipboardHistory() = 0;
 
-    // com.cutefish.Osd: changes the level and shows it.
+    // org.cutefish.Osd: changes the level and shows it.
     virtual void volumeDown() = 0;
     virtual void volumeUp() = 0;
     virtual void toggleMute() = 0;

@@ -46,7 +46,7 @@ void Battery::followService(base::dbus::Connection *sessionBus,
         return;
     // A first read before the service was there failed, and a restarted
     // service may hold other values: read a fresh status each time.
-    m_owner = followServiceOwner(sessionBus, "com.cutefish.Services", [this] {
+    m_owner = followServiceOwner(sessionBus, "org.cutefish.Services", [this] {
         m_status = m_make();
         subscribe();
         changed();

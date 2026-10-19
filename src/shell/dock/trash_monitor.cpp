@@ -305,7 +305,7 @@ static void callFileManager(base::dbus::Connection *bus, const std::string &meth
     if (!bus)
         return;
     base::dbus::Message message =
-            bus->newMethodCall("com.cutefish.FileManager", "/FileManager", "com.cutefish.FileManager", method);
+            bus->newMethodCall("org.cutefish.FileManager", "/FileManager", "org.cutefish.FileManager", method);
     if (paths)
         message.append(*paths);
     bus->send(message);

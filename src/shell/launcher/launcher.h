@@ -21,7 +21,7 @@ class TaskManager;
 
 // The launcher as the rest of the session sees it, without its view: its
 // applications, whether it is up, what its icons need to know, and
-// com.cutefish.Launcher at /Launcher (show, hide, toggle).
+// org.cutefish.Launcher at /Launcher (show, hide, toggle).
 class Launcher
 {
 public:

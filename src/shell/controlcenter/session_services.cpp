@@ -34,10 +34,10 @@ namespace nm = networkmanager;
 
 static const base::LogCategory cfControlCenter("cutefish.shell.controlcenter");
 
-// com.cutefish.Privacy: the camera and microphone switches.
-static const char kPrivacyService[] = "com.cutefish.Privacy";
-static const char kPrivacyPath[] = "/com/cutefish/Privacy";
-static const char kPrivacyInterface[] = "com.cutefish.Privacy";
+// org.cutefish.Privacy: the camera and microphone switches.
+static const char kPrivacyService[] = "org.cutefish.Privacy";
+static const char kPrivacyPath[] = "/org/cutefish/Privacy";
+static const char kPrivacyInterface[] = "org.cutefish.Privacy";
 // The service's state: read here so that showing the switches starts no root process.
 static const char kPrivacyState[] = "/var/lib/cutefish-privacy/";
 
@@ -62,8 +62,8 @@ public:
         , m_networks(std::make_unique<nm::NetworkModel>())
         , m_bluetooth(bluez::Manager::shared())
         , m_audio(std::make_unique<audio::AudioModel>(audio::AudioObject::Sink, audio::Backend::shared()))
-        , m_appearance(shell->bus(), "com.cutefish.Services", "/com/cutefish/Services/Appearance",
-                       "com.cutefish.Services.Appearance")
+        , m_appearance(shell->bus(), "org.cutefish.Services", "/org/cutefish/Services/Appearance",
+                       "org.cutefish.Services.Appearance")
         , m_privacy(dbus::Connection::system(), kPrivacyService, kPrivacyPath, kPrivacyInterface)
     {
         const auto notify = [this] { scheduleChanged(); };

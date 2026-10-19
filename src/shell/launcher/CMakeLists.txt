@@ -1,5 +1,5 @@
 # The launcher without its view: its applications in the user's order, the
-# search, the pages, and com.cutefish.Launcher.
+# search, the pages, and org.cutefish.Launcher.
 add_library(cutefish-shell-launcher STATIC
     launcher.cpp
     launcher.h

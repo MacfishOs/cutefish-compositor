@@ -188,7 +188,7 @@ bool ScreenCapture::registerService()
     dbus::Connection *bus = m_shell->bus();
     if (!bus)
         return false;
-    auto object = std::make_unique<dbus::Object>(bus, "/Screenshot", "com.cutefish.Screenshot");
+    auto object = std::make_unique<dbus::Object>(bus, "/Screenshot", "org.cutefish.Screenshot");
     object->addProperty("recording", [this] { return isRecording(); });
     object->addMethod("takeScreenshot", [this](bool toClipboard) { takeScreenshot(toClipboard); },
                       dbus::ArgumentNames {{"toClipboard"}, {}});
@@ -208,15 +208,15 @@ bool ScreenCapture::registerService()
                 captureOutput(output, cursor,
                               [call](std::optional<std::string> png, const std::string &error) mutable {
                                   if (!png) {
-                                      call.replyError("com.cutefish.Screenshot.Error.Failed", error);
+                                      call.replyError("org.cutefish.Screenshot.Error.Failed", error);
                                       return;
                                   }
                                   call.reply(std::vector<uint8_t>(png->begin(), png->end()));
                               });
             },
             dbus::ArgumentNames {{"output", "cursor"}, {"png"}});
-    if (!object->publish() || !bus->requestName("com.cutefish.Screenshot", dbus::Connection::DoNotQueue)) {
-        CF_WARNING(cfScreenshot) << "Cannot own com.cutefish.Screenshot";
+    if (!object->publish() || !bus->requestName("org.cutefish.Screenshot", dbus::Connection::DoNotQueue)) {
+        CF_WARNING(cfScreenshot) << "Cannot own org.cutefish.Screenshot";
         return false;
     }
     m_service = std::move(object);

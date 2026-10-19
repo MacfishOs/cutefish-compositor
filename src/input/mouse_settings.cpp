@@ -13,8 +13,8 @@
 
 namespace cutefish::input {
 
-static constexpr auto service = "com.cutefish.Mouse1";
-static constexpr auto path = "/com/cutefish/Mouse1";
+static constexpr auto service = "org.cutefish.Mouse1";
+static constexpr auto path = "/org/cutefish/Mouse1";
 static constexpr auto group = "Mouse/";
 
 MouseSettings::MouseSettings(const std::string &settingsFile)

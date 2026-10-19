@@ -21,12 +21,12 @@ void call(const char *service, const char *path, const char *method, const Args 
 template<typename... Args>
 void callScreenshot(const char *method, const Args &...arguments)
 {
-    call("com.cutefish.Screenshot", "/Screenshot", method, arguments...);
+    call("org.cutefish.Screenshot", "/Screenshot", method, arguments...);
 }
 
 void callOsd(const char *method)
 {
-    call("com.cutefish.Osd", "/Osd", method);
+    call("org.cutefish.Osd", "/Osd", method);
 }
 
 } // namespace
@@ -37,7 +37,7 @@ void DBusAcceleratorDelegate::toggleAppList()
         launcherToggle();
         return;
     }
-    call("com.cutefish.Launcher", "/Launcher", "toggle");
+    call("org.cutefish.Launcher", "/Launcher", "toggle");
 }
 
 void DBusAcceleratorDelegate::takeScreenshot(bool toClipboard)
@@ -62,7 +62,7 @@ void DBusAcceleratorDelegate::stopScreenRecording()
 
 void DBusAcceleratorDelegate::toggleClipboardHistory()
 {
-    call("com.cutefish.ClipboardHistory", "/ClipboardHistory", "toggle");
+    call("org.cutefish.ClipboardHistory", "/ClipboardHistory", "toggle");
 }
 
 void DBusAcceleratorDelegate::volumeDown()

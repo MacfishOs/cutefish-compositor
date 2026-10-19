@@ -121,8 +121,8 @@ void callAppRuntime(const std::string &method, int64_t pid)
     base::dbus::Connection *bus = base::dbus::Connection::session(mainLoop());
     if (!bus)
         return;
-    base::dbus::Message message = bus->newMethodCall("com.cutefish.AppRuntime", "/AppRuntime",
-                                                     "com.cutefish.AppRuntime", method);
+    base::dbus::Message message = bus->newMethodCall("org.cutefish.AppRuntime", "/AppRuntime",
+                                                     "org.cutefish.AppRuntime", method);
     message.append(uint32_t(pid));
     bus->send(message);
 }

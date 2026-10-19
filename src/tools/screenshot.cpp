@@ -96,7 +96,7 @@ int main(int argc, char **argv)
     std::unique_ptr<dbus::Connection> bus = dbus::Connection::open(dbus::Connection::Bus::Session, &loop);
     if (!bus)
         return fail("Cannot connect to the session bus");
-    dbus::Proxy shell(bus.get(), "com.cutefish.Screenshot", "/Screenshot", "com.cutefish.Screenshot");
+    dbus::Proxy shell(bus.get(), "org.cutefish.Screenshot", "/Screenshot", "org.cutefish.Screenshot");
     shell.setTimeout(std::chrono::seconds(30));
     const dbus::Reply reply = shell.call("captureOutput", parser.value("output"), parser.isSet("cursor"));
     if (reply.isError())

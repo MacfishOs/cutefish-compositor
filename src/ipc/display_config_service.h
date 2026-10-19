@@ -24,7 +24,7 @@
 
 namespace cutefish::display::ipc {
 
-// com.cutefish.DisplayConfig1 at /com/cutefish/DisplayConfig1.
+// org.cutefish.DisplayConfig1 at /org/cutefish/DisplayConfig1.
 class DisplayConfigService
 {
 public:

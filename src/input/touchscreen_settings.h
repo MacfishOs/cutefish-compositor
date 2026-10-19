@@ -17,7 +17,7 @@ namespace cutefish::input {
 class DBusExport;
 
 // Lists the connected touchscreens by name and keeps which of them the user
-// turned off. Exported as com.cutefish.Touchscreen1 for Settings.
+// turned off. Exported as org.cutefish.Touchscreen1 for Settings.
 class TouchscreenSettings
 {
 public:

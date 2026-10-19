@@ -15,7 +15,7 @@ class QuitAll;
 
 namespace cutefish::session {
 
-// com.cutefish.Applications1, which the session asks to quit every application
+// org.cutefish.Applications1, which the session asks to quit every application
 // before it logs out, restarts or shuts down.
 class ApplicationsService
 {

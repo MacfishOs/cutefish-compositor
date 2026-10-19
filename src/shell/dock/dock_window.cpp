@@ -38,12 +38,12 @@ namespace cutefish::shell {
 
 namespace {
 
-// The launcher's own D-Bus service, com.cutefish.Launcher.
+// The launcher's own D-Bus service, org.cutefish.Launcher.
 void callLauncher(base::dbus::Connection *bus, const char *method)
 {
     if (!bus)
         return;
-    bus->send(bus->newMethodCall("com.cutefish.Launcher", "/Launcher", "com.cutefish.Launcher",
+    bus->send(bus->newMethodCall("org.cutefish.Launcher", "/Launcher", "org.cutefish.Launcher",
                                  method));
 }
 

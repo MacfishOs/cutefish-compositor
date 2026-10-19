@@ -527,7 +527,7 @@ TEST(WirelessPasswordTest, ValidKeysAndWhatCanBeTyped)
 TEST_F(SecretPromptsTest, RegistersAsTheSessionsAgent)
 {
     start();
-    EXPECT_EQ("com.cutefish.network", networkManager->agentIdentifier);
+    EXPECT_EQ("org.cutefish.network", networkManager->agentIdentifier);
     EXPECT_EQ(1u, networkManager->last("RegisterWithCapabilities")->argument<uint32_t>(1).value_or(0));
 
     // A NetworkManager that starts again is registered with again.
@@ -540,7 +540,7 @@ TEST_F(SecretPromptsTest, RegistersAsTheSessionsAgent)
     const std::string xml = other.introspect(systemBus->uniqueName(), kAgentPath);
     EXPECT_NE(std::string::npos, xml.find("<method name=\"GetSecrets\">")) << xml;
     EXPECT_NE(std::string::npos, xml.find("name=\"settingName\"")) << xml;
-    const std::string prompt = other.introspect("com.cutefish.SecretAgent", "/SecretAgent");
+    const std::string prompt = other.introspect("org.cutefish.SecretAgent", "/SecretAgent");
     EXPECT_NE(std::string::npos, prompt.find("<method name=\"ConnectWireless\">")) << prompt;
     EXPECT_NE(std::string::npos, prompt.find("name=\"accessPointPath\"")) << prompt;
 }
@@ -707,7 +707,7 @@ TEST_F(SecretPromptsTest, AsksBeforeANetworkIsAddedAndAnotherNetworkTakesOver)
     start();
     test::DBusTestClient controlCentre;
     EXPECT_FALSE(controlCentre
-                         .call("com.cutefish.SecretAgent", "/SecretAgent", "com.cutefish.SecretAgent", "ConnectWireless",
+                         .call("org.cutefish.SecretAgent", "/SecretAgent", "org.cutefish.SecretAgent", "ConnectWireless",
                                kDevice, kAccessPoint, std::string("Old router"), true)
                          .isError());
     ASSERT_TRUE(agent->pending());

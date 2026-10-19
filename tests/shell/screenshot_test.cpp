@@ -4,7 +4,7 @@
 
 // The screen capture interface as the compositor draws it: its overlays,
 // toolbar, selection, window picking, timer, what a capture becomes and
-// com.cutefish.Screenshot, headless on a fake renderer and a fake grabber.
+// org.cutefish.Screenshot, headless on a fake renderer and a fake grabber.
 
 #include <chrono>
 #include <cmath>
@@ -536,7 +536,7 @@ TEST_F(ScreenshotTest, TheToolbarIsDraggedAndRemembered)
     EXPECT_NEAR(saved.y(), toolbarRect().y(), 1e-9);
 }
 
-TEST_F(ScreenshotTest, ServesComCutefishScreenshot)
+TEST_F(ScreenshotTest, ServesOrgCutefishScreenshot)
 {
     base::dbus::Connection *bus = base::dbus::Connection::session(core::mainLoop());
     ASSERT_NE(nullptr, bus);
@@ -544,23 +544,23 @@ TEST_F(ScreenshotTest, ServesComCutefishScreenshot)
     ASSERT_TRUE(capture->registerService());
 
     test::DBusTestClient client;
-    const std::string xml = client.introspect("com.cutefish.Screenshot", "/Screenshot");
-    EXPECT_NE(std::string::npos, xml.find("<interface name=\"com.cutefish.Screenshot\">")) << xml;
+    const std::string xml = client.introspect("org.cutefish.Screenshot", "/Screenshot");
+    EXPECT_NE(std::string::npos, xml.find("<interface name=\"org.cutefish.Screenshot\">")) << xml;
     EXPECT_NE(std::string::npos, xml.find("name=\"toClipboard\"")) << xml;
     EXPECT_NE(std::string::npos, xml.find("name=\"recording\"")) << xml;
-    EXPECT_FALSE(client.getProperty("com.cutefish.Screenshot", "/Screenshot", "com.cutefish.Screenshot", "recording")
+    EXPECT_FALSE(client.getProperty("org.cutefish.Screenshot", "/Screenshot", "org.cutefish.Screenshot", "recording")
                          .value<base::dbus::Variant>()
                          ->value<bool>(true));
 
-    client.call("com.cutefish.Screenshot", "/Screenshot", "com.cutefish.Screenshot", "startCaptureMode");
+    client.call("org.cutefish.Screenshot", "/Screenshot", "org.cutefish.Screenshot", "startCaptureMode");
     EXPECT_TRUE(capture->isActive());
-    client.call("com.cutefish.Screenshot", "/Screenshot", "com.cutefish.Screenshot", "startCaptureMode");
+    client.call("org.cutefish.Screenshot", "/Screenshot", "org.cutefish.Screenshot", "startCaptureMode");
     EXPECT_FALSE(capture->isActive());
-    client.call("com.cutefish.Screenshot", "/Screenshot", "com.cutefish.Screenshot", "takePartialScreenshot", true);
+    client.call("org.cutefish.Screenshot", "/Screenshot", "org.cutefish.Screenshot", "takePartialScreenshot", true);
     EXPECT_TRUE(capture->isActive());
     EXPECT_FALSE(capture->isToolbarStyle());
     // Every screen at once, the interface gone.
-    client.call("com.cutefish.Screenshot", "/Screenshot", "com.cutefish.Screenshot", "takeScreenshot", true);
+    client.call("org.cutefish.Screenshot", "/Screenshot", "org.cutefish.Screenshot", "takeScreenshot", true);
     EXPECT_FALSE(capture->isActive());
     ASSERT_TRUE(test::runUntil([this] { return seat.selection()->source() != nullptr; }));
     EXPECT_EQ("outputs 1", grabber->calls.back());

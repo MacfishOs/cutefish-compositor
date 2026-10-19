@@ -21,8 +21,8 @@
 
 namespace cutefish::input {
 
-static constexpr auto service = "com.cutefish.InputMethod1";
-static constexpr auto path = "/com/cutefish/InputMethod1";
+static constexpr auto service = "org.cutefish.InputMethod1";
+static constexpr auto path = "/org/cutefish/InputMethod1";
 static constexpr auto selectionKey = "InputMethod/inputMethod";
 
 static bool isSpace(char c)

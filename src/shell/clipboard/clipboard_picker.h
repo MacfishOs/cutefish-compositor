@@ -19,7 +19,7 @@ class ClipboardPickerView;
 class ShellWindow;
 
 // The clipboard history's picker: a 720 x 440 glass card centred in the primary
-// output's work area, opened by com.cutefish.ClipboardHistory.toggle on the
+// output's work area, opened by org.cutefish.ClipboardHistory.toggle on the
 // compositor's shortcut. As a Picker window it only borrows the keyboard:
 // the application in front stays active, gets the keyboard back when the
 // card goes, and receives the paste. Losing the keyboard while shown (a

@@ -14,9 +14,9 @@ namespace cutefish::computer_control {
 
 namespace {
 
-const std::string serviceName = "com.cutefish.Services";
-const std::string permissionsPath = "/com/cutefish/Services/Permissions";
-const std::string permissionsInterface = "com.cutefish.Services.Permissions";
+const std::string serviceName = "org.cutefish.Services";
+const std::string permissionsPath = "/org/cutefish/Services/Permissions";
+const std::string permissionsInterface = "org.cutefish.Services.Permissions";
 
 } // namespace
 

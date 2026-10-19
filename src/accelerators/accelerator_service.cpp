@@ -24,8 +24,8 @@ namespace cutefish::accelerators {
 
 namespace {
 
-constexpr auto kService = "com.cutefish.Shortcuts1";
-constexpr auto kPath = "/com/cutefish/Shortcuts1";
+constexpr auto kService = "org.cutefish.Shortcuts1";
+constexpr auto kPath = "/org/cutefish/Shortcuts1";
 
 constexpr size_t kMaxAcceleratorsAllowed = 5;
 

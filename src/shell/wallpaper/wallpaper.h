@@ -40,7 +40,7 @@ namespace cutefish::shell {
 
 // The desktop background of every output, under the desktop surfaces: the
 // picture or the plain colour
-// com.cutefish.Services.Appearance names, one WallpaperNode per output at the
+// org.cutefish.Services.Appearance names, one WallpaperNode per output at the
 // bottom of the desktop layer, and on the primary output the gradient under
 // the status bar. A new picture replaces the old one only once it is decoded
 // and, on the primary output, judged for the bar; the picture, the gradient
@@ -65,7 +65,7 @@ public:
     explicit Wallpaper(Shell *shell, std::string cacheDirectory = {}, std::string servicesSettings = {});
     ~Wallpaper() override;
 
-    // Follows com.cutefish.Services.Appearance. Until it answers, services.conf
+    // Follows org.cutefish.Services.Appearance. Until it answers, services.conf
     // names the background, as the service will.
     void followAppearance(appearance::Appearance *appearance);
     void setBackground(const Background &background);

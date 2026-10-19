@@ -61,7 +61,7 @@ private:
 
 // The clipboard history component without its picker view: what is copied
 // is recorded, an entry goes back on the clipboard and is pasted, and
-// com.cutefish.ClipboardHistory at /ClipboardHistory toggles the picker on
+// org.cutefish.ClipboardHistory at /ClipboardHistory toggles the picker on
 // the compositor's shortcut.
 class ClipboardHistory
 {

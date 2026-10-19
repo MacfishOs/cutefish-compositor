@@ -16,7 +16,7 @@ class DBusExport;
 
 // The touchpad half of Chromium's TouchpadSettingsEvdev, plus libinput's
 // disable-while-typing and disable-with-an-external-mouse modes. Exported as
-// com.cutefish.Touchpad1 for Settings.
+// org.cutefish.Touchpad1 for Settings.
 class TouchpadSettings
 {
 public:

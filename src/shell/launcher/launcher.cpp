@@ -41,7 +41,7 @@ Launcher::Launcher(base::dbus::Connection *bus, TaskManager &tasks, ApplicationL
 Launcher::~Launcher()
 {
     if (m_object && m_bus)
-        m_bus->releaseName("com.cutefish.Launcher");
+        m_bus->releaseName("org.cutefish.Launcher");
 }
 
 bool Launcher::registerService()
@@ -50,13 +50,13 @@ bool Launcher::registerService()
         return true;
     if (!m_bus)
         return false;
-    auto object = std::make_unique<base::dbus::Object>(m_bus, "/Launcher", "com.cutefish.Launcher");
+    auto object = std::make_unique<base::dbus::Object>(m_bus, "/Launcher", "org.cutefish.Launcher");
     object->addMethod("show", [this] { show(); });
     object->addMethod("hide", [this] { hide(); });
     object->addMethod("toggle", [this] { toggle(); });
     if (!object->publish()
-        || !m_bus->requestName("com.cutefish.Launcher", base::dbus::Connection::DoNotQueue)) {
-        CF_WARNING(cfLauncher) << "Cannot own com.cutefish.Launcher";
+        || !m_bus->requestName("org.cutefish.Launcher", base::dbus::Connection::DoNotQueue)) {
+        CF_WARNING(cfLauncher) << "Cannot own org.cutefish.Launcher";
         return false;
     }
     m_object = std::move(object);

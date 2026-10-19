@@ -29,7 +29,7 @@ class TaskManager;
 
 // The status bar without its views: the tray and its watcher, the AppMenu
 // registrar, the media player, battery, brightness and power profiles, the
-// power actions, the clock's format, and com.cutefish.Statusbar at
+// power actions, the clock's format, and org.cutefish.Statusbar at
 // /Statusbar.
 class StatusBar
 {
@@ -42,7 +42,7 @@ public:
     StatusBar(const StatusBar &) = delete;
     StatusBar &operator=(const StatusBar &) = delete;
 
-    // com.cutefish.Statusbar, org.kde.StatusNotifierWatcher and
+    // org.cutefish.Statusbar, org.kde.StatusNotifierWatcher and
     // com.canonical.AppMenu.Registrar; false when one is taken.
     bool registerServices();
 

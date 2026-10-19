@@ -15,7 +15,7 @@
 namespace cutefish::shell {
 
 // The display backlight as cutefish-services keeps it
-// (com.cutefish.Services.Brightness): its percent, whether there is one, and
+// (org.cutefish.Services.Brightness): its percent, whether there is one, and
 // the sliders' and keys' changes. Everything is asynchronous; the setter does
 // not report back, brightnessChanged does.
 class Brightness

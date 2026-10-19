@@ -23,7 +23,7 @@ namespace dbus = cutefish::base::dbus;
 
 namespace {
 
-constexpr const char *kService = "com.cutefish.DisplayConfig.ServiceTest";
+constexpr const char *kService = "org.cutefish.DisplayConfig.ServiceTest";
 
 struct NightLightCall {
     double strength;
@@ -57,8 +57,8 @@ protected:
     template<typename... Args>
     dbus::Reply call(const char *method, const Args &...arguments)
     {
-        dbus::Proxy proxy(client.get(), kService, "/com/cutefish/DisplayConfig1",
-                          "com.cutefish.DisplayConfig1");
+        dbus::Proxy proxy(client.get(), kService, "/org/cutefish/DisplayConfig1",
+                          "org.cutefish.DisplayConfig1");
         std::optional<dbus::Reply> reply;
         auto pending = proxy.callAsync(
                 method, [&reply](const dbus::Reply &result) { reply = result; }, arguments...);
@@ -117,7 +117,7 @@ TEST_F(DisplayConfigServiceTest, OtherWritesStillNeedTheSessionOnScreen)
 
     const auto reply = call("RevertConfiguration", std::string());
     EXPECT_TRUE(reply.isError());
-    EXPECT_EQ(reply.error().name, "com.cutefish.DisplayConfig1.Error.Unauthorized");
+    EXPECT_EQ(reply.error().name, "org.cutefish.DisplayConfig1.Error.Unauthorized");
 }
 
 // The signature clients expect: the XML once listed one string too few after
@@ -139,7 +139,7 @@ TEST_F(DisplayConfigServiceTest, IntrospectionNamesTheArguments)
     Service service;
     ASSERT_TRUE(service.service.registerService(kService));
 
-    dbus::Proxy introspectable(client.get(), kService, "/com/cutefish/DisplayConfig1",
+    dbus::Proxy introspectable(client.get(), kService, "/org/cutefish/DisplayConfig1",
                                "org.freedesktop.DBus.Introspectable");
     std::optional<dbus::Reply> reply;
     auto pending = introspectable.callAsync(

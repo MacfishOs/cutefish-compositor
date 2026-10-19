@@ -27,7 +27,7 @@ public:
     NotificationUi(Shell *shell, std::unique_ptr<Notifications> notifications);
     ~NotificationUi() override;
 
-    // org.freedesktop.Notifications and com.cutefish.Notification.
+    // org.freedesktop.Notifications and org.cutefish.Notification.
     bool registerServices();
 
     Notifications &notifications() const { return *m_notifications; }

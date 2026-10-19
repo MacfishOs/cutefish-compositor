@@ -285,23 +285,23 @@ TEST(AppMenuRegistrarTest, TheDesktopsMenuIsNotItsProcesssOtherWindows)
     const char *path = "/com/canonical/AppMenu/Registrar";
     const uint32_t pid = uint32_t(getpid());
     application->call(service, path, service, "RegisterWindow", uint32_t(0),
-                      dbus::ObjectPath{"/com/cutefish/DesktopMenu"});
+                      dbus::ObjectPath{"/org/cutefish/DesktopMenu"});
     ASSERT_TRUE(test::runUntil([&] { return registered.size() == 1; }));
     const std::string exporter = application->connection->uniqueName();
     EXPECT_EQ(registrar.serviceForPid(pid), "");
     EXPECT_EQ(registrar.pathForPid(pid), "");
     EXPECT_EQ(registrar.desktopServiceForPid(pid), exporter);
-    EXPECT_EQ(registrar.desktopPathForPid(pid), "/com/cutefish/DesktopMenu");
+    EXPECT_EQ(registrar.desktopPathForPid(pid), "/org/cutefish/DesktopMenu");
 
     // A window of its own that does export a menu shows that one, and the
     // desktop keeps its menu, newer registration or not.
     application->call(service, path, service, "RegisterWindow", uint32_t(3), dbus::ObjectPath{"/menu/3"});
     ASSERT_TRUE(test::runUntil([&] { return registered.size() == 2; }));
     application->call(service, path, service, "RegisterWindow", uint32_t(0),
-                      dbus::ObjectPath{"/com/cutefish/DesktopMenu"});
+                      dbus::ObjectPath{"/org/cutefish/DesktopMenu"});
     ASSERT_TRUE(test::runUntil([&] { return registered.size() == 3; }));
     EXPECT_EQ(registrar.pathForPid(pid), "/menu/3");
-    EXPECT_EQ(registrar.desktopPathForPid(pid), "/com/cutefish/DesktopMenu");
+    EXPECT_EQ(registrar.desktopPathForPid(pid), "/org/cutefish/DesktopMenu");
 }
 
 namespace {
@@ -481,20 +481,20 @@ TEST(BatteryTest, ShowsOnceTheServiceComesUp)
     EXPECT_FALSE(battery.isAvailable());
 
     test::DBusTestClient services;
-    dbus::Object object(services.connection.get(), "/com/cutefish/Services/Battery",
-                        "com.cutefish.Services.Battery");
+    dbus::Object object(services.connection.get(), "/org/cutefish/Services/Battery",
+                        "org.cutefish.Services.Battery");
     object.addProperty("chargePercent", [] { return int32_t(70); });
     object.addProperty("chargeState", [] { return int32_t(1); });
     ASSERT_TRUE(object.publish());
     int changes = 0;
     auto subscription = battery.changed.connect([&] { ++changes; });
-    ASSERT_TRUE(services.connection->requestName("com.cutefish.Services"));
+    ASSERT_TRUE(services.connection->requestName("org.cutefish.Services"));
     EXPECT_TRUE(test::runUntil([&] { return battery.isAvailable(); }));
     EXPECT_EQ(70, battery.chargePercent());
     EXPECT_GT(changes, 0);
 }
 
-TEST(StatusBarTest, ServesComCutefishStatusbar)
+TEST(StatusBarTest, ServesOrgCutefishStatusbar)
 {
     test::TemporaryDirectory directory;
     directory.write("shell.conf", "[Statusbar]\nTwentyFourTime=true\n");
@@ -505,15 +505,15 @@ TEST(StatusBarTest, ServesComCutefishStatusbar)
     EXPECT_NE(statusBar.timeFormat().find('H'), std::string::npos);
 
     test::DBusTestClient settings;
-    settings.call("com.cutefish.Statusbar", "/Statusbar", "com.cutefish.Statusbar", "setTwentyFourTime", false);
-    settings.call("com.cutefish.Statusbar", "/Statusbar", "com.cutefish.Statusbar", "setBatteryPercentage", true);
+    settings.call("org.cutefish.Statusbar", "/Statusbar", "org.cutefish.Statusbar", "setTwentyFourTime", false);
+    settings.call("org.cutefish.Statusbar", "/Statusbar", "org.cutefish.Statusbar", "setBatteryPercentage", true);
     EXPECT_FALSE(statusBar.twentyFourTime());
     EXPECT_TRUE(statusBar.battery().showPercentage());
     EXPECT_EQ(statusBar.timeFormat().find('H'), std::string::npos);
 
     bool requested = false;
     auto subscription = statusBar.powerActions().requested.connect([&] { requested = true; });
-    settings.call("com.cutefish.Statusbar", "/Statusbar", "com.cutefish.Statusbar", "requestReboot");
+    settings.call("org.cutefish.Statusbar", "/Statusbar", "org.cutefish.Statusbar", "requestReboot");
     EXPECT_TRUE(requested);
     EXPECT_EQ(statusBar.powerActions().pending(), shell::PowerActions::Reboot);
     statusBar.powerActions().cancel();
@@ -525,7 +525,7 @@ TEST(StatusBarTest, ServesComCutefishStatusbar)
     EXPECT_FALSE(saved.boolValue("Statusbar/TwentyFourTime", true));
     EXPECT_TRUE(saved.boolValue("Statusbar/BatteryPercentage", false));
 
-    const std::string xml = settings.introspect("com.cutefish.Statusbar", "/Statusbar");
+    const std::string xml = settings.introspect("org.cutefish.Statusbar", "/Statusbar");
     EXPECT_NE(xml.find("name=\"batteryPercentage\""), std::string::npos);
 }
 

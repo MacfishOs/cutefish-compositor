@@ -39,7 +39,7 @@ Notifications::Notifications(dbus::Connection *bus, Applications &applications, 
 Notifications::~Notifications()
 {
     if (m_object && m_bus)
-        m_bus->releaseName("com.cutefish.Notification");
+        m_bus->releaseName("org.cutefish.Notification");
     // The last history and settings writes reach the disk.
     waitForFileThread();
 }
@@ -51,7 +51,7 @@ bool Notifications::registerServices()
     if (m_object)
         return true;
 
-    auto object = std::make_unique<dbus::Object>(m_bus, "/Notification", "com.cutefish.Notification");
+    auto object = std::make_unique<dbus::Object>(m_bus, "/Notification", "org.cutefish.Notification");
     object->addMethod("setDoNotDisturb", [this](bool enabled) { m_settings.setDoNotDisturb(enabled); },
                       dbus::ArgumentNames{{"enabled"}, {}});
     object->addMethod("applications", [this] {
@@ -74,8 +74,8 @@ bool Notifications::registerServices()
         CF_WARNING(cfNotificationService) << "Cannot export /Notification";
         return false;
     }
-    if (!m_bus->requestName("com.cutefish.Notification", dbus::Connection::DoNotQueue)) {
-        CF_WARNING(cfNotificationService) << "Cannot own com.cutefish.Notification";
+    if (!m_bus->requestName("org.cutefish.Notification", dbus::Connection::DoNotQueue)) {
+        CF_WARNING(cfNotificationService) << "Cannot own org.cutefish.Notification";
         return false;
     }
     m_object = std::move(object);

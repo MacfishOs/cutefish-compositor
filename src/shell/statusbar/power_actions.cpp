@@ -15,7 +15,7 @@ namespace dbus = base::dbus;
 static const base::LogCategory cfPower("cutefish.shell.power");
 
 PowerActions::PowerActions(dbus::Connection *bus)
-    : m_session(bus, "com.cutefish.Session", "/Session", "com.cutefish.Session")
+    : m_session(bus, "org.cutefish.Session", "/Session", "org.cutefish.Session")
     , m_screenSaver(bus, "org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver")
 {
     m_clear.setSingleShot(true);

@@ -80,7 +80,7 @@ struct ScreenCaptureServices {
 
 // The screen capture interface: the toolbar with its modes, the selection,
 // window picking, the timer, pictures to a file or the clipboard, and
-// recordings through cutefish-screenrecorder; com.cutefish.Screenshot at
+// recordings through cutefish-screenrecorder; org.cutefish.Screenshot at
 // /Screenshot, which the compositor's shortcuts call. One Capture window per
 // output, never in what is captured.
 class ScreenCapture : public Component
@@ -118,7 +118,7 @@ public:
 
     bool registerService();
 
-    // --- com.cutefish.Screenshot ---
+    // --- org.cutefish.Screenshot ---
 
     void takeScreenshot(bool toClipboard);
     void takePartialScreenshot(bool toClipboard);

@@ -68,8 +68,8 @@ protected:
     dbus::Reply call(const std::string &method, const Args &...args)
     {
         std::optional<dbus::Reply> reply;
-        dbus::Proxy proxy(client.get(), "com.cutefish.WindowDebug1", "/com/cutefish/WindowDebug1",
-                          "com.cutefish.WindowDebug1");
+        dbus::Proxy proxy(client.get(), "org.cutefish.WindowDebug1", "/org/cutefish/WindowDebug1",
+                          "org.cutefish.WindowDebug1");
         auto pending = proxy.callAsync(
                 method, [&reply](const dbus::Reply &answer) { reply = answer; }, args...);
         EXPECT_TRUE(test::runUntil([&] { return reply.has_value(); }));
@@ -225,7 +225,7 @@ TEST_F(WindowDebugServiceTest, IntrospectionNamesTheArguments)
     ASSERT_TRUE(service.registerService());
 
     std::optional<dbus::Reply> reply;
-    dbus::Proxy proxy(client.get(), "com.cutefish.WindowDebug1", "/com/cutefish/WindowDebug1",
+    dbus::Proxy proxy(client.get(), "org.cutefish.WindowDebug1", "/org/cutefish/WindowDebug1",
                       "org.freedesktop.DBus.Introspectable");
     auto pending = proxy.callAsync("Introspect", [&reply](const dbus::Reply &answer) { reply = answer; });
     ASSERT_TRUE(test::runUntil([&] { return reply.has_value(); }));

@@ -1884,8 +1884,8 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     base::EventLoop loop;
     AcceleratorService service(configuration.get(), controller.get(), seat.xkbTracker());
     ASSERT_TRUE(service.registerService());
-    input_test::RemoteObject proxy(loop, "com.cutefish.Shortcuts1", "/com/cutefish/Shortcuts1",
-                                   "com.cutefish.Shortcuts1");
+    input_test::RemoteObject proxy(loop, "org.cutefish.Shortcuts1", "/org/cutefish/Shortcuts1",
+                                   "org.cutefish.Shortcuts1");
     ASSERT_TRUE(proxy.isValid());
     int changes = 0;
     auto counted = service.acceleratorsChanged.connect([&changes] { ++changes; });
@@ -1949,8 +1949,8 @@ TEST_F(AcceleratorTest, ARecorderThatLeavesTheBusLiftsTheAcceleratorBlock)
 
     // A second connection stands in for Settings, which dies while recording.
     {
-        input_test::RemoteObject recorder(loop, "com.cutefish.Shortcuts1",
-                                          "/com/cutefish/Shortcuts1", "com.cutefish.Shortcuts1");
+        input_test::RemoteObject recorder(loop, "org.cutefish.Shortcuts1",
+                                          "/org/cutefish/Shortcuts1", "org.cutefish.Shortcuts1");
         ASSERT_TRUE(recorder.isValid());
         EXPECT_FALSE(recorder.call("preventProcessingAccelerators", true).isError());
         EXPECT_TRUE(controller->shouldPreventProcessingAccelerators());
