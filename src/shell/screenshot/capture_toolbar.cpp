@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include "cutefish/audio/audio_model.h"
 #include "cutefish/audio/audio_object.h"
@@ -18,6 +19,7 @@
 #include "shell/shell_data.h"
 #include "shell/shell_host.h"
 #include "shell/shell_window.h"
+#include "ui/application.h"
 #include "ui/bubble_shape.h"
 #include "ui/embedded_window.h"
 #include "ui/icon.h"
@@ -26,6 +28,11 @@
 #include "ui/painter.h"
 #include "ui/theme.h"
 #include "ui/window.h"
+
+using cutefish::i18n::tr;
+using cutefish::i18n::trc;
+using cutefish::i18n::trn;
+using cutefish::i18n::trNoop;
 
 namespace cutefish::shell {
 
@@ -50,6 +57,20 @@ static double centred(double outer, double inner)
 {
     return std::round((outer - inner) / 2);
 }
+
+static const struct {
+    const char *icon;
+    const char *tip;
+    int type;
+    int source;
+} kModes[] = {
+        {"capture-screen.svg", trNoop("Capture Entire Screen"), ScreenCapture::Image, ScreenCapture::Screen},
+        {"capture-window.svg", trNoop("Capture Selected Window"), ScreenCapture::Image, ScreenCapture::Window},
+        {"capture-selection.svg", trNoop("Capture Selected Portion"), ScreenCapture::Image, ScreenCapture::Region},
+        {"record-screen.svg", trNoop("Record Entire Screen"), ScreenCapture::Video, ScreenCapture::Screen},
+        {"record-window.svg", trNoop("Record Selected Window"), ScreenCapture::Video, ScreenCapture::Window},
+        {"record-selection.svg", trNoop("Record Selected Portion"), ScreenCapture::Video, ScreenCapture::Region},
+};
 
 // --- ToolbarButton ---
 
@@ -85,6 +106,11 @@ void ToolbarButton::setText(const std::string &text)
     m_text = text;
     m_label->setText(text);
     requestLayout();
+}
+
+void ToolbarButton::setTip(std::string tip)
+{
+    m_tip = std::move(tip);
 }
 
 void ToolbarButton::setChevron(bool chevron)
@@ -235,28 +261,15 @@ CaptureToolbar::CaptureToolbar(CaptureOverlay *overlay, ScreenCapture *capture, 
         added->onStateChanged = [this, added] { buttonStateChanged(added); };
         return added;
     };
-    add(std::make_unique<ToolbarButton>("capture-close.svg", 16, "Close"))->onClicked = [this](uint32_t) {
+    add(std::make_unique<ToolbarButton>("capture-close.svg", 16, tr("Close")))->onClicked = [this](uint32_t) {
         m_capture->cancel();
     };
-    static const struct {
-        const char *icon;
-        const char *tip;
-        int type;
-        int source;
-    } kModes[] = {
-            {"capture-screen.svg", "Capture Entire Screen", ScreenCapture::Image, ScreenCapture::Screen},
-            {"capture-window.svg", "Capture Selected Window", ScreenCapture::Image, ScreenCapture::Window},
-            {"capture-selection.svg", "Capture Selected Portion", ScreenCapture::Image, ScreenCapture::Region},
-            {"record-screen.svg", "Record Entire Screen", ScreenCapture::Video, ScreenCapture::Screen},
-            {"record-window.svg", "Record Selected Window", ScreenCapture::Video, ScreenCapture::Window},
-            {"record-selection.svg", "Record Selected Portion", ScreenCapture::Video, ScreenCapture::Region},
-    };
     for (const auto &mode : kModes) {
-        add(std::make_unique<ToolbarButton>(mode.icon, 24, mode.tip))->onClicked = [this, mode](uint32_t) {
+        add(std::make_unique<ToolbarButton>(mode.icon, 24, tr(mode.tip)))->onClicked = [this, mode](uint32_t) {
             m_capture->setMode(mode.type, mode.source);
         };
     }
-    m_options = add(std::make_unique<ToolbarButton>("Options"));
+    m_options = add(std::make_unique<ToolbarButton>(tr("Options")));
     m_options->setChevron(true);
     m_options->onClicked = [this](uint32_t) {
         if (std::exchange(m_closesOptions, false))
@@ -264,8 +277,20 @@ CaptureToolbar::CaptureToolbar(CaptureOverlay *overlay, ScreenCapture *capture, 
         openOptions();
     };
     // Picking a window is itself the capture; there is nothing to press.
-    m_action = add(std::make_unique<ToolbarButton>("Capture", true));
+    m_action = add(std::make_unique<ToolbarButton>(tr("Capture"), true));
     m_action->onClicked = [this](uint32_t modifiers) { m_capture->perform(modifiers & ui::ControlModifier); };
+    m_languageChanged = ui::Application::instance()->languageChanged.connect([this] { retranslate(); });
+    update();
+}
+
+// The Options menu is made when it opens: an open one closes.
+void CaptureToolbar::retranslate()
+{
+    closeOptions();
+    closeButton()->setTip(tr("Close"));
+    for (const auto &mode : kModes)
+        modeButton(mode.type, mode.source)->setTip(tr(mode.tip));
+    m_options->setText(tr("Options"));
     update();
 }
 
@@ -296,7 +321,7 @@ void CaptureToolbar::update()
         }
     }
     m_options->setChecked(m_menuOpen);
-    m_action->setText(video ? "Record" : "Capture");
+    m_action->setText(video ? tr("Record") : tr("Capture"));
     const bool action = m_capture->source() != ScreenCapture::Window;
     if (action != m_action->isVisible())
         m_action->setVisible(action);
@@ -510,34 +535,34 @@ void CaptureToolbar::buildMenu()
         return index;
     };
 
-    header("Save to");
-    choice(video ? "Videos" : "Screenshots", destination == CaptureSettings::kDefault,
+    header(tr("Save to"));
+    choice(video ? tr("Videos") : tr("Screenshots"), destination == CaptureSettings::kDefault,
            [setDestination] { setDestination(CaptureSettings::kDefault); });
-    choice("Desktop", destination == CaptureSettings::kDesktop,
+    choice(tr("Desktop"), destination == CaptureSettings::kDesktop,
            [setDestination] { setDestination(CaptureSettings::kDesktop); });
-    choice("Documents", destination == CaptureSettings::kDocuments,
+    choice(tr("Documents"), destination == CaptureSettings::kDocuments,
            [setDestination] { setDestination(CaptureSettings::kDocuments); });
     if (!video)
-        choice("Clipboard", destination == CaptureSettings::kClipboard,
+        choice(tr("Clipboard"), destination == CaptureSettings::kClipboard,
                [setDestination] { setDestination(CaptureSettings::kClipboard); });
     if (!custom.empty())
         choice(custom.substr(custom.rfind('/') + 1), destination == CaptureSettings::kCustom,
                [setDestination] { setDestination(CaptureSettings::kCustom); });
-    menu.addItem("Other Location…", [capture = m_capture] {
+    menu.addItem(tr("Other Location…"), [capture = m_capture] {
         core::mainLoop()->post([capture] { capture->chooseFolder(); });
     });
     menu.addSeparator();
 
-    header("Timer");
+    header(tr("Timer"));
     for (const int seconds : {0, 5, 10}) {
-        choice(seconds == 0 ? "None" : seconds == 5 ? "5 Seconds" : "10 Seconds", settings.timer() == seconds,
-               [&settings, seconds] { settings.setTimer(seconds); });
+        choice(seconds == 0 ? std::string(trc("timer", "None")) : trn("{n} Second", "{n} Seconds", seconds),
+               settings.timer() == seconds, [&settings, seconds] { settings.setTimer(seconds); });
     }
 
     if (video) {
         menu.addSeparator();
-        header("Microphone");
-        choice("None", settings.microphone().empty(), [&settings] { settings.setMicrophone({}); });
+        header(tr("Microphone"));
+        choice(trc("microphone", "None"), settings.microphone().empty(), [&settings] { settings.setMicrophone({}); });
         if (!m_sources)
             m_sources = std::make_unique<audio::AudioModel>(audio::AudioObject::Source, audio::Backend::shared());
         for (const auto &source : m_sources->objects()) {
@@ -553,14 +578,14 @@ void CaptureToolbar::buildMenu()
     }
 
     menu.addSeparator();
-    header("Options");
-    choice("Show Mouse Pointer", video ? settings.recordPointer() : settings.showPointer(), [&settings, video] {
+    header(tr("Options"));
+    choice(tr("Show Mouse Pointer"), video ? settings.recordPointer() : settings.showPointer(), [&settings, video] {
         if (video)
             settings.setRecordPointer(!settings.recordPointer());
         else
             settings.setShowPointer(!settings.showPointer());
     });
-    choice("Remember Last Selection", settings.rememberSelection(),
+    choice(tr("Remember Last Selection"), settings.rememberSelection(),
            [&settings] { settings.setRememberSelection(!settings.rememberSelection()); });
 }
 

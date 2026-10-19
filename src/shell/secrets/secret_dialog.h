@@ -46,6 +46,9 @@ public:
     bool isOpen() const;
     // update(), then lays out again and fits the window to the content.
     void refresh();
+    // Takes its text again after the session language changed; what was
+    // typed and the request stay.
+    void retranslate();
     ShellWindow *window() const { return m_window.get(); }
     ui::DialogButton *cancelButton() const;
     ui::DialogButton *primaryButton() const;
@@ -81,6 +84,8 @@ protected:
     // The title, the text, the rows' state and the buttons from the request
     // shown now; called by refresh().
     virtual void update() = 0;
+    // The rows' own text that update() does not set.
+    virtual void retranslateRows() {}
 
     void setTitle(const std::string &title);
     void setText(const std::string &text);

@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "base/signal.h"
 #include "ui/geometry.h"
 #include "ui/view.h"
 
@@ -89,6 +90,7 @@ private:
     bool m_pressed = false;
     ui::Label *m_label = nullptr;
     std::unique_ptr<Tween> m_progress;
+    base::Subscription m_languageChanged;
 };
 
 // A 26 px pill around a small medium-weight label.
@@ -97,6 +99,7 @@ class PillButton : public ui::View
 public:
     explicit PillButton(std::string text);
 
+    void setText(std::string text);
     double preferredWidth() const;
 
     std::function<void()> onClicked;

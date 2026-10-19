@@ -12,9 +12,12 @@
 #include <unistd.h>
 
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "base/process.h"
 #include "base/strings.h"
 #include "core/main_loop.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -81,7 +84,7 @@ bool ScreenRecording::start(const Target &target, const std::string &path)
         connection = m_connect();
         if (connection < 0) {
             m_process.reset();
-            finished(false, "The screen recorder could not be started.");
+            finished(false, tr("The screen recorder could not be started."));
             return true;
         }
         std::vector<std::string> environment = m_environment;
@@ -110,7 +113,7 @@ bool ScreenRecording::start(const Target &target, const std::string &path)
         close(connection);
     if (!started) {
         m_process.reset();
-        finished(false, "The screen recorder could not be started.");
+        finished(false, tr("The screen recorder could not be started."));
         return true;
     }
     m_pid = m_process->pid();
@@ -148,7 +151,7 @@ void ScreenRecording::onFinished(int exitCode, bool crashed)
     const bool ok = !crashed && exitCode == 0;
     std::string error(base::strings::trimmed(m_process->standardError()));
     if (error.empty() && !ok)
-        error = crashed ? "The screen recorder crashed." : "The screen recorder failed.";
+        error = crashed ? tr("The screen recorder crashed.") : tr("The screen recorder failed.");
     // Its last line says why.
     if (const size_t newline = error.rfind('\n'); newline != std::string::npos)
         error = error.substr(newline + 1);

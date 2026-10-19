@@ -54,6 +54,8 @@ public:
 
     // Whether the desktop has the focus, which has no application to quit.
     void setDesktop(bool desktop);
+    // Names the desktop again after the session language changed.
+    void retranslate();
 
     // Quit, Hide and Hide Others of the application the bar names.
     void quitApplication();

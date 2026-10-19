@@ -12,11 +12,15 @@
 #include <sys/stat.h>
 
 #include "base/file.h"
+#include "base/i18n.h"
 #include "base/locale.h"
 #include "core/preferences.h"
 #include "shell/common/file_thread.h"
 #include "shell/notification/notification_images.h"
 #include "shell/notification/notification_settings.h"
+
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 namespace cutefish::shell {
 
@@ -35,23 +39,17 @@ std::string friendlyTime(std::optional<int64_t> created, int64_t nowMs)
     const int64_t seconds = (nowMs - *created) / 1000;
     const int64_t minutes = round64(float(seconds) / 60.0f);
     if (minutes < 1)
-        return "Now";
-    if (minutes == 1)
-        return "1 minute ago";
+        return tr("Now");
     if (minutes < 60)
-        return std::to_string(minutes) + " minutes ago";
+        return trn("{n} minute ago", "{n} minutes ago", minutes);
 
     const int64_t hours = round64(float(minutes) / 60.0f);
-    if (hours == 1)
-        return "1 hour ago";
     if (hours < 24)
-        return std::to_string(hours) + " hours ago";
+        return trn("{n} hour ago", "{n} hours ago", hours);
 
     const int64_t days = round64(float(hours) / 24.0f);
-    if (days == 1)
-        return "1 day ago";
     if (days <= 10)
-        return std::to_string(days) + " days ago";
+        return trn("{n} day ago", "{n} days ago", days);
 
     // Stored in UTC; the date shown is the local one.
     const int64_t createdSeconds = *created >= 0 ? *created / 1000 : (*created - 999) / 1000;

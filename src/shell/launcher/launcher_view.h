@@ -148,6 +148,7 @@ private:
     void applyMove();
     void updateDragTarget(ui::PointF position);
     void updateBackdrop();
+    void retranslate();
     void retire(std::unique_ptr<ui::View> view);
 
     // Pages: the background's press, flick and click.

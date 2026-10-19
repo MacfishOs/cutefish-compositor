@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/i18n.h"
 #include "shell/common/task_windows.h"
 #include "shell/shell.h"
 #include "shell/statusbar/app_menu_registrar.h"
@@ -13,9 +14,13 @@
 #include "shell/statusbar/dbus_menu.h"
 #include "shell/statusbar/dbus_menu_popup.h"
 #include "shell/statusbar/power_actions.h"
+#include "ui/application.h"
 #include "ui/menu.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -70,6 +75,8 @@ MenuBarModel::MenuBarModel(Shell *shell, AppMenuRegistrar *registrar, PowerActio
                 m_registrar->windowUnregistered.connect([this](uint32_t) { updateDesktopImport(); }));
     }
 
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
+
     updateDesktop();
     updateDesktopImport();
     updateShown();
@@ -87,36 +94,46 @@ MenuBarModel::~MenuBarModel()
     m_applicationRowMenu->close();
 }
 
-// The strings keep the UserMenu translation context.
 void MenuBarModel::buildUserMenu()
 {
     ui::Menu &menu = *m_userMenu;
     Shell *shell = m_shell;
-    menu.addItem("About", [shell] { shell->openSettings({"-m", "about"}); });
-    menu.addItem("Settings", [shell] { shell->openSettings(); });
+    menu.addItem(tr("About"), [shell] { shell->openSettings({"-m", "about"}); });
+    menu.addItem(tr("Settings"), [shell] { shell->openSettings(); });
     menu.addSeparator();
     PowerActions *power = m_power;
-    menu.addItem("Suspend", [power] {
+    menu.addItem(tr("Suspend"), [power] {
         if (power)
             power->suspend();
     });
-    menu.addItem("Restart", [power] {
+    menu.addItem(tr("Restart"), [power] {
         if (power)
             power->request(PowerActions::Reboot);
     });
-    menu.addItem("Shutdown", [power] {
+    menu.addItem(tr("Shutdown"), [power] {
         if (power)
             power->request(PowerActions::Shutdown);
     });
     menu.addSeparator();
-    menu.addItem("Lock screen", [power] {
+    menu.addItem(tr("Lock screen"), [power] {
         if (power)
             power->lockScreen();
     });
-    menu.addItem("Log out", [power] {
+    menu.addItem(tr("Log out"), [power] {
         if (power)
             power->request(PowerActions::Logout);
     });
+}
+
+// The user's menu is made again, closed if it was open; the application
+// entry's menu is made as it opens. The applications' own menus are theirs.
+void MenuBarModel::retranslate()
+{
+    m_userMenu->close();
+    m_userMenu->clear();
+    buildUserMenu();
+    m_applicationRowMenu->close();
+    m_applicationMenu->retranslate();
 }
 
 void MenuBarModel::fillApplicationMenu()
@@ -126,10 +143,11 @@ void MenuBarModel::fillApplicationMenu()
     ApplicationMenu *application = m_applicationMenu.get();
     // Quit, Hide and Hide Others are the compositor's; on the desktop there
     // is nothing to quit or hide.
-    const size_t hide = menu.addItem("Hide " + application->title(), [application] { application->hideApplication(); });
-    menu.addItem("Hide Others", [application] { application->hideOtherApplications(); });
+    const size_t hide = menu.addItem(format(tr("Hide {name}"), {{"name", application->title()}}),
+                                     [application] { application->hideApplication(); });
+    menu.addItem(tr("Hide Others"), [application] { application->hideOtherApplications(); });
     menu.addSeparator();
-    const size_t quit = menu.addItem("Quit", [application] { application->quitApplication(); });
+    const size_t quit = menu.addItem(tr("Quit"), [application] { application->quitApplication(); });
     menu.setItemEnabled(hide, !m_desktop);
     menu.setItemEnabled(quit, !m_desktop);
 }

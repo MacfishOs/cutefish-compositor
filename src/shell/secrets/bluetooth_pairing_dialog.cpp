@@ -4,19 +4,19 @@
 
 #include "shell/secrets/bluetooth_pairing_dialog.h"
 
+#include "base/i18n.h"
 #include "ui/dialog_window.h"
 #include "ui/label.h"
 #include "ui/text_field.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 namespace cutefish::shell {
 
 static constexpr int kDemiBold = 600;
 static constexpr int kNormal = 400;
-
-static std::string quoted(const std::string &name)
-{
-    return "“" + name + "”";
-}
 
 BluetoothPairingDialog::BluetoothPairingDialog(Shell *shell, PairingAgent *agent)
     : SecretDialog(shell)
@@ -26,18 +26,17 @@ BluetoothPairingDialog::BluetoothPairingDialog(Shell *shell, PairingAgent *agent
 
 std::string BluetoothPairingDialog::text(const std::string &kind, const std::string &device)
 {
-    const std::string name = quoted(device);
     if (kind == "RequestConfirmation")
-        return "Confirm that " + name + " shows this code.";
+        return format(tr("Confirm that “{name}” shows this code."), {{"name", device}});
     if (kind == "RequestPinCode")
-        return "Enter the PIN for " + name + ".";
+        return format(tr("Enter the PIN for “{name}”."), {{"name", device}});
     if (kind == "RequestPasskey")
-        return "Enter the passkey shown on " + name + ".";
+        return format(tr("Enter the passkey shown on “{name}”."), {{"name", device}});
     if (kind == "DisplayPinCode" || kind == "DisplayPasskey")
-        return "Type this code on " + name + ", then press Enter on it.";
+        return format(tr("Type this code on “{name}”, then press Enter on it."), {{"name", device}});
     if (kind == "AuthorizeService")
-        return "Allow " + name + " to use this Bluetooth service?";
-    return "Allow " + name + " to pair with this computer?";
+        return format(tr("Allow “{name}” to use this Bluetooth service?"), {{"name", device}});
+    return format(tr("Allow “{name}” to pair with this computer?"), {{"name", device}});
 }
 
 bool BluetoothPairingDialog::inputRequired() const
@@ -90,7 +89,7 @@ void BluetoothPairingDialog::accept()
 void BluetoothPairingDialog::update()
 {
     const std::string kind = m_agent->pairingKind();
-    setTitle("Bluetooth Pairing Request");
+    setTitle(tr("Bluetooth Pairing Request"));
     setText(text(kind, m_agent->pairingDevice()));
 
     const bool service = kind == "AuthorizeService";
@@ -101,12 +100,12 @@ void BluetoothPairingDialog::update()
     m_code->setVisible(!m_agent->pairingCode().empty());
 
     const int count = m_agent->pairingEntered();
-    m_entered->setText(std::to_string(count) + (count == 1 ? " digit entered" : " digits entered"));
+    m_entered->setText(trn("{n} digit entered", "{n} digits entered", count));
     m_entered->setColor(ui::ColorId::DisabledText);
     m_entered->setVisible(kind == "DisplayPasskey" && count > 0);
 
     m_field->setVisible(inputRequired());
-    m_field->setPlaceholder(kind == "RequestPasskey" ? "Passkey" : "PIN");
+    m_field->setPlaceholder(kind == "RequestPasskey" ? tr("Passkey") : tr("PIN"));
     m_field->setMaximumLength(kind == "RequestPasskey" ? 6 : 16);
     m_field->setInputPurpose(kind == "RequestPasskey" ? ui::TextPurpose::Digits : ui::TextPurpose::Normal);
 
@@ -115,9 +114,9 @@ void BluetoothPairingDialog::update()
     m_error->setVisible(!m_agent->errorText().empty());
 
     const bool decline = kind == "RequestConfirmation" || kind == "RequestAuthorization" || service;
-    cancelButton()->setText(decline ? "Decline" : "Cancel");
+    cancelButton()->setText(decline ? tr("Decline") : tr("Cancel"));
     primaryButton()->setVisible(!displayOnly());
-    primaryButton()->setText(kind == "RequestConfirmation" ? "Confirm" : inputRequired() ? "Pair" : "Allow");
+    primaryButton()->setText(kind == "RequestConfirmation" ? tr("Confirm") : inputRequired() ? tr("Pair") : tr("Allow"));
     primaryButton()->setEnabled(!inputRequired() || !m_field->text().empty());
 }
 

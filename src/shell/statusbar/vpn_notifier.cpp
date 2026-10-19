@@ -4,6 +4,11 @@
 
 #include "shell/statusbar/vpn_notifier.h"
 
+#include "base/i18n.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
+
 namespace cutefish::shell {
 
 namespace dbus = base::dbus;
@@ -48,7 +53,8 @@ void VpnNotifier::vpnFailed(const std::string &name, const std::string &message)
     dbus::VariantMap hints;
     hints["urgency"] = dbus::Variant(uint8_t(1));
     hints["desktop-entry"] = dbus::Variant(std::string("cutefish-settings"));
-    const std::string body = "“" + name + "” could not connect. " + message;
+    // TRANSLATORS: {reason} is a sentence of its own, such as "The VPN service stopped."
+    const std::string body = format(tr("“{name}” could not connect. {reason}"), {{"name", name}, {"reason", message}});
     m_calls.track([&](std::function<void()> finished) {
         return m_server.callAsync(
                 "Notify",
@@ -58,7 +64,7 @@ void VpnNotifier::vpnFailed(const std::string &name, const std::string &message)
                         m_shown.insert(id);
                     finished();
                 },
-                std::string(), uint32_t(0), std::string("network-vpn"), std::string("VPN connection failed"), body,
+                std::string(), uint32_t(0), std::string("network-vpn"), std::string(tr("VPN connection failed")), body,
                 std::vector<std::string> {"default", ""}, hints, int32_t(-1));
     });
 }

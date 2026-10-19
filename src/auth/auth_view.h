@@ -65,6 +65,7 @@ protected:
 
 private:
     void tick();
+    void retranslate();
     void closeMenus(ui::PointF position);
     bool canSwitchUser() const;
     void updateSwappable();

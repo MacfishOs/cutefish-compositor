@@ -9,6 +9,7 @@
 #include <set>
 
 #include "base/dbus.h"
+#include "base/i18n.h"
 #include "base/strings.h"
 #include "base/url.h"
 #include "core/main_loop.h"
@@ -23,6 +24,7 @@
 #include "shell/dock/dock_tooltip.h"
 #include "shell/shell_data.h"
 #include "shell/shell_window.h"
+#include "ui/application.h"
 #include "ui/bubble_shape.h"
 #include "ui/drag.h"
 #include "ui/embedded_window.h"
@@ -33,6 +35,8 @@
 #include "wm/window.h"
 #include "wm/window_manager.h"
 #include "toolkit/compositor_colors.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -214,7 +218,7 @@ DockWindow::DockWindow(Shell *shell, std::unique_ptr<Dock> dock)
 
     m_tooltip = std::make_unique<DockTooltip>(this, shell);
     m_trash = m_panel->addChild<DockIcon>(this, DockIcon::Kind::Trash);
-    m_trash->setToolTip("Trash");
+    m_trash->setToolTip(tr("Trash"));
 
     m_tooltipHide.setSingleShot(true);
     m_tooltipHide.setInterval(std::chrono::milliseconds(150));
@@ -307,6 +311,7 @@ DockWindow::DockWindow(Shell *shell, std::unique_ptr<Dock> dock)
         updateMinimizeTargets();
     }));
     m_subscriptions.push_back(m_dock->trash().emptyChanged.connect([this] { rebuild(); }));
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
     m_subscriptions.push_back(m_shell->outputsChanged.connect([this] { resize(false); }));
 
     TaskWindows &windows = m_shell->taskWindows();
@@ -1006,6 +1011,16 @@ void DockWindow::showTooltip(DockIcon *icon)
                                                       slot.y + rect.y + rect.height / 2));
 }
 
+// Menus are made when they open: an open one closes.
+void DockWindow::retranslate()
+{
+    if (m_menu)
+        m_menu->close();
+    hideTooltip();
+    m_trash->setToolTip(tr("Trash"));
+    m_dock->applications().retranslate();
+}
+
 void DockWindow::hideTooltip()
 {
     m_tooltipHide.stop();
@@ -1062,30 +1077,30 @@ void DockWindow::iconMenuRequested(DockIcon *icon)
         if (!windows.empty())
             menu->addSeparator();
         if (windows.empty())
-            menu->addItem("Open", [&model, id] { model.openNewInstance(id); });
+            menu->addItem(tr("Open"), [&model, id] { model.openNewInstance(id); });
         if (item.pinnable()) {
             const bool pinned = item.isPinned;
-            menu->addItem(pinned ? "Unpin" : "Pin", [&model, id, pinned] {
+            menu->addItem(pinned ? tr("Unpin") : tr("Pin"), [&model, id, pinned] {
                 pinned ? model.unPin(id) : model.pin(id);
             });
         }
         if (!windows.empty())
-            menu->addItem("Quit", [&model, id] { model.quit(id); });
+            menu->addItem(tr("Quit"), [&model, id] { model.quit(id); });
         break;
     }
     case DockIcon::Kind::Minimized: {
         const uint64_t window = icon->windowId();
         MinimizedWindows &minimized = m_dock->minimizedWindows();
-        menu->addItem("Restore", [&minimized, window] { minimized.restore(window); });
-        menu->addItem("Close", [&minimized, window] { minimized.close(window); });
+        menu->addItem(tr("Restore"), [&minimized, window] { minimized.restore(window); });
+        menu->addItem(tr("Close"), [&minimized, window] { minimized.close(window); });
         break;
     }
     case DockIcon::Kind::Trash: {
-        menu->addItem("Open", [bus] {
+        menu->addItem(tr("Open"), [bus] {
             callLauncher(bus, "hide");
             TrashMonitor::openTrash(bus);
         });
-        const size_t empty = menu->addItem("Empty Trash", [bus] { TrashMonitor::emptyTrash(bus); });
+        const size_t empty = menu->addItem(tr("Empty Trash"), [bus] { TrashMonitor::emptyTrash(bus); });
         menu->setItemVisible(empty, !m_dock->trash().isEmpty());
         break;
     }

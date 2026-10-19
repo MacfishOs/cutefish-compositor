@@ -60,6 +60,7 @@ public:
 private:
     void networkRequestChanged();
     void pairingChanged();
+    void retranslate();
 
     Shell *m_shell;
     networkmanager::Client *m_network;
@@ -73,6 +74,7 @@ private:
     base::Subscription m_requestSubscription;
     base::Subscription m_pairingSubscription;
     base::Subscription m_errorSubscription;
+    base::Subscription m_languageChanged;
     // create()'s: the session's NetworkManager and BlueZ, taken by start().
     bool m_systemServices = false;
 };

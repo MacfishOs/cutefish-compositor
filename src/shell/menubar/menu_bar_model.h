@@ -96,6 +96,7 @@ public:
 
 private:
     void buildUserMenu();
+    void retranslate();
     void fillApplicationMenu();
     void updateDesktop();
     void updateDesktopImport();

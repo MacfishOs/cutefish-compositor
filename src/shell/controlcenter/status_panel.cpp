@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "base/i18n.h"
 #include "shell/controlcenter/level_slider.h"
 #include "shell/controlcenter/panel_style.h"
 #include "shell/controlcenter/tiles.h"
@@ -19,6 +20,9 @@
 #include "ui/switch.h"
 #include "ui/theme.h"
 #include "ui/window.h"
+
+using cutefish::i18n::tr;
+using cutefish::i18n::trNoop;
 
 namespace cutefish::shell {
 
@@ -275,6 +279,12 @@ public:
         setTracksHover(true);
     }
 
+    void setText(std::string text)
+    {
+        m_label->setText(std::move(text));
+        requestLayout();
+    }
+
     // The text's own height, at least 20.
     double textHeight() const { return std::max(20.0, m_label->sizeHint().height); }
 
@@ -348,6 +358,13 @@ StatusPanelView::~StatusPanelView() = default;
 ui::View *StatusPanelView::settingsLink() const
 {
     return m_link;
+}
+
+void StatusPanelView::setTitles(std::string title, std::string settingsText)
+{
+    m_title->setText(std::move(title));
+    m_link->setText(std::move(settingsText));
+    requestLayout();
 }
 
 void StatusPanelView::setTitleDetail(std::string detail)
@@ -572,7 +589,7 @@ protected:
 };
 
 NetworkPanel::NetworkPanel(ControlCenterServices &services)
-    : StatusPanelView("Wi-Fi", "Wi-Fi Settings", "wlan", services)
+    : StatusPanelView(tr("Wi-Fi"), tr("Wi-Fi Settings"), "wlan", services)
 {
     m_switch = header()->addChild<ui::Switch>();
     m_switch->setPadding({0, 0, 0, 0});
@@ -591,7 +608,7 @@ NetworkPanel::NetworkPanel(ControlCenterServices &services)
     m_hotspot->setGlyph("network-wireless-hotspot");
     m_hotspot->setActive(true);
     m_hotspot->setBold(true);
-    m_hotspot->setDetail("Hotspot");
+    m_hotspot->setDetail(tr("Hotspot"));
     m_hotspot->onClicked = [this] { this->services().stopHotspot(); };
 
     m_scanTimer.setInterval(kScanInterval);
@@ -606,6 +623,13 @@ void NetworkPanel::opened()
     setShownForScans(true);
     if (services().wirelessEnabled())
         services().requestScan();
+}
+
+void NetworkPanel::retranslate()
+{
+    setTitles(tr("Wi-Fi"), tr("Wi-Fi Settings"));
+    m_hotspot->setDetail(tr("Hotspot"));
+    refresh();
 }
 
 void NetworkPanel::setShownForScans(bool shown)
@@ -687,9 +711,9 @@ void NetworkPanel::layoutBody(double top)
 }
 
 VolumePanel::VolumePanel(ControlCenterServices &services)
-    : StatusPanelView("Sound", "Sound Settings", "sound", services)
+    : StatusPanelView(tr("Sound"), tr("Sound Settings"), "sound", services)
 {
-    m_noOutput = body()->addChild<ui::Label>("No output device");
+    m_noOutput = body()->addChild<ui::Label>(tr("No output device"));
     m_slider = body()->addChild<LevelSlider>();
     m_slider->setRange(0, 1, 0.01);
     m_slider->onMoved = [this](double value) {
@@ -698,12 +722,22 @@ VolumePanel::VolumePanel(ControlCenterServices &services)
         this->services().setVolume(value);
         this->services().setMuted(value == 0);
     };
-    m_heading = body()->addChild<ui::Label>("Output");
+    // TRANSLATORS: the heading above the list of sound output devices.
+    m_heading = body()->addChild<ui::Label>(tr("Output"));
     m_heading->setWeight(kDemiBold);
     refresh();
 }
 
 VolumePanel::~VolumePanel() = default;
+
+void VolumePanel::retranslate()
+{
+    setTitles(tr("Sound"), tr("Sound Settings"));
+    m_noOutput->setText(tr("No output device"));
+    // TRANSLATORS: the heading above the list of sound output devices.
+    m_heading->setText(tr("Output"));
+    refresh();
+}
 
 void VolumePanel::refresh()
 {
@@ -789,22 +823,22 @@ void VolumePanel::layoutBody(double top)
 }
 
 static const char *const kProfiles[] = {"power-saver", "balanced", "performance"};
-static const char *const kProfileNames[] = {"Power save", "Balanced", "Performance"};
+static const char *const kProfileNames[] = {trNoop("Power save"), trNoop("Balanced"), trNoop("Performance")};
 
 BatteryPanel::BatteryPanel(ControlCenterServices &services)
-    : StatusPanelView("Battery", "Battery Settings", "battery", services)
+    : StatusPanelView(tr("Battery"), tr("Battery Settings"), "battery", services)
 {
     m_source = body()->addChild<ui::Label>();
     m_source->setWrap(true);
     m_state = body()->addChild<ui::Label>();
     m_state->setWrap(true);
     m_separator = body()->addChild<Separator>();
-    m_heading = body()->addChild<ui::Label>("Power Mode");
+    m_heading = body()->addChild<ui::Label>(tr("Power Mode"));
     m_heading->setWeight(kDemiBold);
     for (size_t i = 0; i < std::size(kProfiles); ++i) {
         PanelRow *row = body()->addChild<PanelRow>();
         row->setArtwork(panel::artwork(std::string("power-profile-") + kProfiles[i]));
-        row->setText(kProfileNames[i]);
+        row->setText(tr(kProfileNames[i]));
         row->onClicked = [this, i] { this->services().setPowerProfile(kProfiles[i]); };
         m_rows.push_back(row);
     }
@@ -813,11 +847,20 @@ BatteryPanel::BatteryPanel(ControlCenterServices &services)
 
 BatteryPanel::~BatteryPanel() = default;
 
+void BatteryPanel::retranslate()
+{
+    setTitles(tr("Battery"), tr("Battery Settings"));
+    m_heading->setText(tr("Power Mode"));
+    for (size_t i = 0; i < m_rows.size(); ++i)
+        m_rows[i]->setText(tr(kProfileNames[i]));
+    refresh();
+}
+
 void BatteryPanel::refresh()
 {
     ControlCenterServices &services = this->services();
     setTitleDetail(std::to_string(services.chargePercent()) + "%");
-    m_source->setText(std::string("Power Source: ") + (services.onBattery() ? "Battery" : "Power Adapter"));
+    m_source->setText(services.onBattery() ? tr("Power Source: Battery") : tr("Power Source: Power Adapter"));
     const std::string state = services.batteryStatus();
     m_state->setText(state);
     m_state->setVisible(!state.empty());

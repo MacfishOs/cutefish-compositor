@@ -15,8 +15,10 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "auth/auth_controller.h"
+#include "base/i18n.h"
 #include "base/locale.h"
 #include "ui/animation.h"
+#include "ui/application.h"
 #include "ui/image_view.h"
 #include "ui/label.h"
 #include "ui/painter.h"
@@ -25,6 +27,8 @@
 #include "ui/styled_label.h"
 #include "ui/text_field.h"
 #include "ui/window.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::auth {
 
@@ -913,7 +917,7 @@ public:
     UserNameField()
     {
         m_placeholder = addChild<ui::Label>();
-        m_placeholder->setText("User name");
+        m_placeholder->setText(tr("User name"));
         m_placeholder->setFontSize(12);
         m_placeholder->setColor(ui::Color::fromArgb(0xaaffffff));
         m_placeholder->setElide(ui::Label::Elide::None);
@@ -922,6 +926,12 @@ public:
     }
 
     NameInput *input() const { return m_input; }
+
+    void retranslate()
+    {
+        m_placeholder->setText(tr("User name"));
+        requestLayout();
+    }
 
     ui::SizeF sizeHint() const override { return {0, 40}; }
 
@@ -1229,7 +1239,7 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
     m_password = m_pod->addChild<PasswordField>(window);
     m_password->setName("password-field");
     m_password->setLayoutHints(centred(true));
-    m_password->setPlaceholder("Enter Password");
+    m_password->setPlaceholder(tr("Enter Password"));
     m_error = m_pod->addChild<ErrorLabel>(window);
     m_error->setName("error");
     m_error->setLayoutHints(centred(true));
@@ -1318,6 +1328,7 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
         m_password->shake();
         focusPassword();
     }));
+    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
     usersChanged();
     userChanged();
     sessionsChanged();
@@ -1331,6 +1342,14 @@ AuthScreen::AuthScreen(ui::Window *window, AuthController *controller)
 AuthScreen::~AuthScreen()
 {
     m_window->onPointerPressed = nullptr;
+}
+
+// The typed name and password, the account and the session stay.
+void AuthScreen::retranslate()
+{
+    m_userName->retranslate();
+    m_password->setPlaceholder(tr("Enter Password"));
+    tick();
 }
 
 void AuthScreen::setBlocked(bool blocked)

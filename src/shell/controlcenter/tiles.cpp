@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "base/i18n.h"
 #include "base/url.h"
 #include "shell/controlcenter/panel_style.h"
 #include "ui/icon.h"
@@ -15,6 +16,8 @@
 #include "ui/label.h"
 #include "ui/painter.h"
 #include "ui/theme.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -320,7 +323,7 @@ void MediaTile::setState(const MediaState &state)
     m_next->setEnabled(control && state.canGoNext);
     for (IconButton *button : {m_previous, m_play, m_next})
         button->setOpacity(button->isEnabled() ? 1 : 0.35);
-    std::string title = "Not Playing";
+    std::string title = tr("Not Playing");
     if (state.hasPlayer)
         title = !state.title.empty() ? state.title : state.identity;
     m_title->setText(std::move(title));
@@ -405,18 +408,19 @@ std::string deviceUsageText(const DeviceUser &user)
 {
     // Whole phrases rather than joined parts, so each translates as one.
     if (user.camera && user.microphone && user.systemAudio)
-        return "is using the camera and microphone and recording system audio";
+        // TRANSLATORS: follows an application's name shown before it, as do the other "is using" phrases.
+        return tr("is using the camera and microphone and recording system audio");
     if (user.camera && user.microphone)
-        return "is using the camera and microphone";
+        return tr("is using the camera and microphone");
     if (user.camera && user.systemAudio)
-        return "is using the camera and recording system audio";
+        return tr("is using the camera and recording system audio");
     if (user.microphone && user.systemAudio)
-        return "is using the microphone and recording system audio";
+        return tr("is using the microphone and recording system audio");
     if (user.camera)
-        return "is using the camera";
+        return tr("is using the camera");
     if (user.microphone)
-        return "is using the microphone";
-    return "is recording system audio";
+        return tr("is using the microphone");
+    return tr("is recording system audio");
 }
 
 DeviceUsersTile::DeviceUsersTile() = default;
@@ -442,6 +446,13 @@ void DeviceUsersTile::setUsers(const std::vector<DeviceUser> &users)
         row.dot = user.camera ? ui::accent::green : user.microphone ? ui::accent::orange : ui::accent::purple;
         m_rows.push_back(row);
     }
+    requestLayout();
+}
+
+void DeviceUsersTile::retranslate()
+{
+    for (size_t i = 0; i < m_rows.size(); ++i)
+        m_rows[i].usage->setText(" " + deviceUsageText(m_users[i]));
     requestLayout();
 }
 

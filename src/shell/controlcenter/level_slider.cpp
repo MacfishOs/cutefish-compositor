@@ -169,6 +169,12 @@ TileSlider::TileSlider(std::string title)
     m_slider = addChild<LevelSlider>();
 }
 
+void TileSlider::setTitle(std::string title)
+{
+    m_title->setText(std::move(title));
+    requestLayout();
+}
+
 // The capitals' top, not the line box, keeps the padding from the tile's edge.
 double TileSlider::heightForWidth(double) const
 {

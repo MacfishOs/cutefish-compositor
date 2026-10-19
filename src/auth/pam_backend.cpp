@@ -3,9 +3,12 @@
 // found in the LICENSE file.
 
 #include "auth/pam_backend.h"
+#include "base/i18n.h"
 #include "core/main_loop.h"
 #include <pwd.h>
 #include <unistd.h>
+
+using cutefish::i18n::tr;
 
 namespace cutefish::auth {
 PamBackend::PamBackend()
@@ -14,7 +17,7 @@ PamBackend::PamBackend()
     m_timeout.setSingleShot(true);
     m_timeout.onTimeout = [this] {
         reset();
-        failed("Authentication timed out");
+        failed(tr("Authentication timed out"));
     };
 }
 
@@ -34,7 +37,7 @@ void PamBackend::authenticate(const std::string &userName, Secret secret)
     if (m_pending || (m_process && m_process->isRunning()))
         return;
     if (userName != defaultUserName() || secret.size() > 4096 || secret.isEmpty()) {
-        failed("Authentication failed");
+        failed(tr("Authentication failed"));
         return;
     }
     m_pending = true;
@@ -46,11 +49,11 @@ void PamBackend::authenticate(const std::string &userName, Secret secret)
         m_pending = false;
         m_timeout.stop();
         if (crashed)
-            failed("Authentication service unavailable");
+            failed(tr("Authentication service unavailable"));
         else if (code == 0)
             succeeded();
         else
-            failed("Authentication failed");
+            failed(tr("Authentication failed"));
     };
     // The helper reads only this inherited pipe, never argv or a public socket.
     m_process->setStandardInput(std::string(secret.constData(), secret.size()));
@@ -58,7 +61,7 @@ void PamBackend::authenticate(const std::string &userName, Secret secret)
     if (!m_process->start(CUTEFISH_AUTH_HELPER)) {
         m_pending = false;
         m_process.reset();
-        failed("Authentication service unavailable");
+        failed(tr("Authentication service unavailable"));
         return;
     }
     m_timeout.start(std::chrono::milliseconds(30000));

@@ -7,12 +7,15 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "base/i18n.h"
 #include "base/settings.h"
 #include "shell/common/app_launcher.h"
 #include "shell/common/file_thread.h"
 #include "shell/common/task_manager.h"
 #include "shell/common/task_windows.h"
 #include "shell/common/text_match.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -513,12 +516,20 @@ void DockModel::load()
     loaded();
 }
 
+void DockModel::retranslate()
+{
+    if (DockItem *launcher = findById(kLauncherId)) {
+        launcher->visibleName = tr("Launcher");
+        changed(launcher);
+    }
+}
+
 void DockModel::loadPins(const std::optional<std::vector<std::string>> &saved)
 {
     auto launcher = std::make_unique<DockItem>();
     launcher->id = kLauncherId;
     launcher->iconName = kLauncherId;
-    launcher->visibleName = "Launcher";
+    launcher->visibleName = tr("Launcher");
     launcher->fixed = true;
 
     std::vector<std::unique_ptr<DockItem>> items;

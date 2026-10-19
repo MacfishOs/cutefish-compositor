@@ -11,6 +11,7 @@
 #include <map>
 #include <utility>
 
+#include "base/i18n.h"
 #include "input/cursor_shape.h"
 #include "input/seat.h"
 #include "scene/window_animation.h"
@@ -24,6 +25,9 @@
 #include "wm/window.h"
 #include "wm/window_manager.h"
 #include "wm/window_state.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
 
 namespace cutefish::wm {
 
@@ -118,7 +122,8 @@ std::string OverviewController::deskName(int index) const
     const Desk *desk = m_manager->desks()->deskAt(index);
     if (desk && !desk->name().empty())
         return desk->name();
-    return "Desk " + std::to_string(index + 1);
+    // TRANSLATORS: the name of a desk that has none of its own, such as "Desk 2".
+    return format(tr("Desk {number}"), {{"number", std::to_string(index + 1)}});
 }
 
 bool OverviewController::canCloseDesks() const
@@ -1222,6 +1227,11 @@ void OverviewController::onDeskNameChanged(const Desk *)
         return;
     buildBars();
     updateChrome();
+}
+
+void OverviewController::retranslate()
+{
+    onDeskNameChanged(nullptr);
 }
 
 void OverviewController::onChosenDeskChanged()

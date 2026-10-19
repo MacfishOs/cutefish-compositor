@@ -39,6 +39,8 @@ public:
     void setText(std::string text);
     bool hasFieldFocus() const;
     void focusField();
+    // Takes the placeholder's text again after the session language changed.
+    void retranslate();
 
     // The text changed, from the user, an input method or setText().
     std::function<void()> onTextChanged;

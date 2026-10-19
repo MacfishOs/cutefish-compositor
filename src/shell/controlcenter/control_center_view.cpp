@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 
+#include "base/i18n.h"
 #include "shell/controlcenter/control_center_services.h"
 #include "shell/controlcenter/level_slider.h"
 #include "shell/controlcenter/panel_style.h"
@@ -14,6 +15,8 @@
 #include "ui/label.h"
 #include "ui/theme.h"
 #include "ui/window.h"
+
+using cutefish::i18n::tr;
 
 namespace cutefish::shell {
 
@@ -31,14 +34,14 @@ static double windowScale(const ui::View *view)
 ControlCenterView::ControlCenterView(ControlCenterServices &services)
     : m_services(services)
 {
-    m_title = addChild<ui::Label>("Control Center");
+    m_title = addChild<ui::Label>(tr("Control Center"));
     m_title->setFontSize(kTitleFontSize);
     m_title->setElide(ui::Label::Elide::Right);
     m_users = addChild<DeviceUsersTile>();
 
     m_wireless = addChild<CardItem>();
     m_wireless->setGlyph("network-wireless-connected-100");
-    m_wireless->setTitle("Wi-Fi");
+    m_wireless->setTitle(tr("Wi-Fi"));
     m_wireless->onClicked = [this] { m_services.enableWireless(!m_wireless->isChecked()); };
     m_wireless->onPressAndHold = [this] {
         if (onHideRequested)
@@ -48,7 +51,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_bluetooth = addChild<CardItem>();
     m_bluetooth->setArtwork("bluetooth-symbolic");
-    m_bluetooth->setTitle("Bluetooth");
+    m_bluetooth->setTitle(tr("Bluetooth"));
     m_bluetooth->onClicked = [this] { m_services.setBluetoothEnabled(!m_services.bluetoothEnabled()); };
     m_bluetooth->onPressAndHold = [this] {
         if (onHideRequested)
@@ -58,22 +61,22 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
     m_darkMode = addChild<CardItem>();
     m_darkMode->setArtwork("dark-mode");
-    m_darkMode->setTitle("Dark Mode");
+    m_darkMode->setTitle(tr("Dark Mode"));
     m_darkMode->onClicked = [this] { m_services.setDarkMode(!ui::Theme::current().darkMode); };
 
     m_doNotDisturb = addChild<CardItem>();
     m_doNotDisturb->setArtwork("do-not-disturb");
-    m_doNotDisturb->setTitle("Do Not Disturb");
+    m_doNotDisturb->setTitle(tr("Do Not Disturb"));
     m_doNotDisturb->onClicked = [this] { m_services.setDoNotDisturb(!m_services.doNotDisturb()); };
 
     m_camera = addChild<CardItem>();
     m_camera->setArtwork("camera");
-    m_camera->setTitle("Camera");
+    m_camera->setTitle(tr("Camera"));
     m_camera->onClicked = [this] { m_services.setCameraEnabled(!m_camera->isChecked()); };
 
     m_microphone = addChild<CardItem>();
     m_microphone->setArtwork("microphone");
-    m_microphone->setTitle("Microphone");
+    m_microphone->setTitle(tr("Microphone"));
     m_microphone->onClicked = [this] { m_services.setMicrophoneEnabled(!m_microphone->isChecked()); };
 
     m_media = addChild<MediaTile>();
@@ -82,7 +85,8 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_media->onPause = [this] { m_services.mediaPause(); };
     m_media->onNext = [this] { m_services.mediaNext(); };
 
-    m_brightness = addChild<TileSlider>("Display");
+    // TRANSLATORS: the title of the screen brightness slider.
+    m_brightness = addChild<TileSlider>(tr("Display"));
     m_brightness->slider()->setRange(1, 100, 1);
     m_brightness->slider()->setIcon(panel::artwork("brightness", false));
     m_brightnessTimer.setSingleShot(true);
@@ -92,7 +96,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     };
     m_brightness->slider()->onMoved = [this](double) { m_brightnessTimer.start(); };
 
-    m_sound = addChild<TileSlider>("Sound");
+    m_sound = addChild<TileSlider>(tr("Sound"));
     m_sound->slider()->setRange(0, 1, 0.01);
     m_sound->slider()->onMoved = [this](double value) {
         if (!m_services.hasSink())
@@ -106,6 +110,22 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
 
 ControlCenterView::~ControlCenterView() = default;
 
+void ControlCenterView::retranslate()
+{
+    m_title->setText(tr("Control Center"));
+    m_wireless->setTitle(tr("Wi-Fi"));
+    m_bluetooth->setTitle(tr("Bluetooth"));
+    m_darkMode->setTitle(tr("Dark Mode"));
+    m_doNotDisturb->setTitle(tr("Do Not Disturb"));
+    m_camera->setTitle(tr("Camera"));
+    m_microphone->setTitle(tr("Microphone"));
+    // TRANSLATORS: the title of the screen brightness slider.
+    m_brightness->setTitle(tr("Display"));
+    m_sound->setTitle(tr("Sound"));
+    m_users->retranslate();
+    refresh();
+}
+
 void ControlCenterView::refresh()
 {
     const double before = layoutHeight();
@@ -116,20 +136,20 @@ void ControlCenterView::refresh()
     m_wireless->setVisible(m_services.wirelessHardwareEnabled());
     m_wireless->setChecked(m_services.wirelessEnabled());
     const std::string network = m_services.wirelessName();
-    m_wireless->setStatus(!m_wireless->isChecked() ? "Off" : !network.empty() ? network : "On");
+    m_wireless->setStatus(!m_wireless->isChecked() ? tr("Off") : !network.empty() ? network : tr("On"));
 
     m_bluetooth->setVisible(m_services.bluetoothAvailable());
     m_bluetooth->setChecked(m_services.bluetoothEnabled());
-    m_bluetooth->setStatus(m_bluetooth->isChecked() ? "On" : "Off");
+    m_bluetooth->setStatus(m_bluetooth->isChecked() ? tr("On") : tr("Off"));
 
     m_darkMode->setChecked(ui::Theme::current().darkMode);
-    m_darkMode->setStatus(m_darkMode->isChecked() ? "On" : "Off");
+    m_darkMode->setStatus(m_darkMode->isChecked() ? tr("On") : tr("Off"));
     m_doNotDisturb->setChecked(m_services.doNotDisturb());
-    m_doNotDisturb->setStatus(m_doNotDisturb->isChecked() ? "On" : "Off");
+    m_doNotDisturb->setStatus(m_doNotDisturb->isChecked() ? tr("On") : tr("Off"));
     m_camera->setChecked(m_services.cameraEnabled());
-    m_camera->setStatus(m_camera->isChecked() ? "On" : "Off");
+    m_camera->setStatus(m_camera->isChecked() ? tr("On") : tr("Off"));
     m_microphone->setChecked(m_services.microphoneEnabled());
-    m_microphone->setStatus(m_microphone->isChecked() ? "On" : "Off");
+    m_microphone->setStatus(m_microphone->isChecked() ? tr("On") : tr("Off"));
 
     m_media->setState(m_services.media());
 
@@ -192,7 +212,7 @@ void ControlCenterView::layout()
     if (m_darkModeShown != ui::Theme::current().darkMode) {
         m_darkModeShown = ui::Theme::current().darkMode;
         m_darkMode->setChecked(m_darkModeShown);
-        m_darkMode->setStatus(m_darkModeShown ? "On" : "Off");
+        m_darkMode->setStatus(m_darkModeShown ? tr("On") : tr("Off"));
         m_media->setState(m_services.media());
     }
 

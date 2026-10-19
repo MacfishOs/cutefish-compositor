@@ -8,12 +8,17 @@
 #include <filesystem>
 #include <memory>
 
+#include "base/i18n.h"
 #include "base/locale.h"
 #include "base/logging.h"
 #include "base/strings.h"
 #include "shell/common/file_thread.h"
 #include "shell/common/mime_icons.h"
 #include "shell/common/text_match.h"
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 namespace cutefish::shell {
 
@@ -149,12 +154,13 @@ std::string ClipboardHistoryModel::title(int row) const
             time = base::Locale::system().toString(base::ClockTime{local.tm_hour, local.tm_min, local.tm_sec, 0},
                                                    base::Locale::FormatType::Short);
         }
-        return "Image, " + time;
+        // TRANSLATORS: an image in the clipboard history and the time it was copied, such as "Image, 10:42:07".
+        return format(tr("Image, {time}"), {{"time", time}});
     }
     case ClipboardEntry::Kind::Files:
         if (item.files.size() == 1)
             return fileName(item.files.front());
-        return std::to_string(item.files.size()) + " Files";
+        return trn("{n} File", "{n} Files", item.files.size());
     }
     return {};
 }

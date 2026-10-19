@@ -248,6 +248,14 @@ std::vector<NetworkSecretAgent::Field> NetworkSecretAgent::fields() const
     return fields;
 }
 
+void NetworkSecretAgent::retranslate()
+{
+    for (Request &request : m_requests) {
+        if (request.kind == Kind::VpnSecrets)
+            request.fields = vpnSecretFields(request.vpnServiceType, request.vpnData, request.hints);
+    }
+}
+
 std::string NetworkSecretAgent::message() const
 {
     return m_requests.empty() ? std::string() : m_requests.front().serverMessage;
@@ -285,8 +293,9 @@ void NetworkSecretAgent::getSecrets(base::dbus::MethodCall &call)
     if (settingName == "vpn") {
         request.kind = Kind::VpnSecrets;
         request.vpnData = variants::toStringMap(variants::value(setting, "data"));
-        request.fields = vpnSecretFields(variants::toString(variants::value(setting, "service-type")),
-                                         request.vpnData, hints);
+        request.vpnServiceType = variants::toString(variants::value(setting, "service-type"));
+        request.hints = hints;
+        request.fields = vpnSecretFields(request.vpnServiceType, request.vpnData, hints);
         request.serverMessage = vpnHintMessage(hints);
         request.values = variants::toStringMap(variants::value(setting, "secrets"));
     } else if (settingName == kWirelessSecurity) {
