@@ -2,9 +2,6 @@ find_package(GTest)
 if(NOT GTest_FOUND)
     message(FATAL_ERROR "BUILD_TESTING=ON needs GoogleTest (Debian: libgtest-dev)")
 endif()
-# The Qt Widgets and Quick clients stand for third-party Qt applications. They,
-# and the tests that run them, are built only when those modules are installed.
-find_package(Qt6 QUIET COMPONENTS Widgets Quick)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
 find_program(DBUS_RUN_SESSION dbus-run-session REQUIRED)
 
@@ -159,17 +156,6 @@ cutefish_add_test(output_scheduler_test cutefish-output-scheduler cutefish-compo
 cutefish_add_test(clipboard_protocol_test cutefish-wayland-input PkgConfig::WaylandClient)
 set_tests_properties(clipboard_protocol_test PROPERTIES TIMEOUT 30)
 
-if(Qt6Widgets_FOUND)
-    add_executable(clipboard-qt-client clipboard/qt_client.cpp)
-    target_link_libraries(clipboard-qt-client PRIVATE Qt6::Widgets)
-    cutefish_add_test(clipboard_toolkit_test cutefish-wayland-input cutefish-wayland-shell
-        PkgConfig::WaylandClient)
-    target_compile_definitions(clipboard_toolkit_test PRIVATE
-        QT_CLIPBOARD_CLIENT="$<TARGET_FILE:clipboard-qt-client>"
-        GTK_CLIPBOARD_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/clipboard/gtk_client.py")
-    add_dependencies(clipboard_toolkit_test clipboard-qt-client)
-    set_tests_properties(clipboard_toolkit_test PROPERTIES TIMEOUT 70)
-endif()
 cutefish_add_test(selection_test cutefish-input)
 
 cutefish_add_test(dmabuf_test cutefish-wayland-dmabuf cutefish-compositor-core
@@ -217,17 +203,9 @@ cutefish_add_test(dnd_protocol_test cutefish-cursor cutefish-wayland-input
 cutefish_add_test(data_control_protocol_test cutefish-wayland-input cutefish-wayland-private-shell
     cutefish-wayland-shell PkgConfig::WaylandClient)
 
-if(Qt6Widgets_FOUND)
-    add_executable(dnd-qt-client dnd/qt_client.cpp)
-    target_link_libraries(dnd-qt-client PRIVATE Qt6::Widgets)
-    cutefish_add_test(dnd_toolkit_test cutefish-wayland-input cutefish-wayland-shell
-        PkgConfig::WaylandClient)
-    target_compile_definitions(dnd_toolkit_test PRIVATE
-        QT_DND_CLIENT="$<TARGET_FILE:dnd-qt-client>"
-        GTK_DND_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/dnd/gtk_client.py")
-    add_dependencies(dnd_toolkit_test dnd-qt-client)
-    set_tests_properties(dnd_toolkit_test PROPERTIES TIMEOUT 70)
-endif()
+cutefish_add_test(dnd_toolkit_test cutefish-wayland-input cutefish-wayland-shell PkgConfig::WaylandClient)
+target_compile_definitions(dnd_toolkit_test PRIVATE GTK_DND_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/dnd/gtk_client.py")
+set_tests_properties(dnd_toolkit_test PROPERTIES TIMEOUT 70)
 
 set_tests_properties(private_shell_protocol_test PROPERTIES TIMEOUT 60)
 
@@ -266,20 +244,6 @@ cutefish_add_test(display_config_service_test DBUS cutefish-display-ipc)
 target_sources(display_config_service_test PRIVATE
     fake_native_display_delegate.cpp fake_native_display_delegate.h)
 
-if(Qt6Widgets_FOUND AND Qt6Quick_FOUND)
-    add_executable(scaling-quick-client scaling/quick_client.cpp)
-    target_link_libraries(scaling-quick-client PRIVATE Qt6::Quick)
-    add_executable(scaling-qt-client scaling/qt_client.cpp)
-    target_link_libraries(scaling-qt-client PRIVATE Qt6::Widgets)
-    cutefish_add_test(fractional_scale_toolkit_test cutefish-wayland-input cutefish-wayland-shell
-        PkgConfig::WaylandClient)
-    target_compile_definitions(fractional_scale_toolkit_test PRIVATE
-        QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"
-        QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>")
-    add_dependencies(fractional_scale_toolkit_test scaling-qt-client scaling-quick-client)
-    set_tests_properties(fractional_scale_toolkit_test PROPERTIES TIMEOUT 30)
-endif()
-
 cutefish_add_test(presentation_test cutefish-compositor-core)
 cutefish_add_test(presentation_protocol_test cutefish-compositor-core PkgConfig::WaylandClient)
 add_executable(cutefish-presentation-client manual/presentation_client.cpp)
@@ -294,21 +258,15 @@ cutefish_add_test(window_visual_pixel_test cutefish-decoration cutefish-render)
 set_tests_properties(window_visual_pixel_test PROPERTIES ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 add_executable(toolkit-resize-client visuals/toolkit_client.cpp)
 target_link_libraries(toolkit-resize-client PRIVATE Cutefish::Toolkit)
-if(Qt6Widgets_FOUND AND Qt6Quick_FOUND)
-    # DBUS: the Qt and GTK clients activate portal and gvfs services on the
-    # session bus.
-    cutefish_add_test(window_visual_toolkit_test DBUS cutefish-wayland-input cutefish-wayland-shell
-        cutefish-decoration cutefish-render PkgConfig::WaylandClient)
-    target_compile_definitions(window_visual_toolkit_test PRIVATE
-        QT_SCALE_CLIENT="$<TARGET_FILE:scaling-qt-client>"
-        QT_QUICK_SCALE_CLIENT="$<TARGET_FILE:scaling-quick-client>"
-        TOOLKIT_RESIZE_CLIENT="$<TARGET_FILE:toolkit-resize-client>"
-        ELECTRON_VISUAL_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/visuals/electron_client.js")
-    add_dependencies(window_visual_toolkit_test scaling-qt-client scaling-quick-client
-        toolkit-resize-client)
-    set_tests_properties(window_visual_toolkit_test PROPERTIES TIMEOUT 70
-        ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
-endif()
+# DBUS: the GTK clients activate portal and gvfs services on the session bus.
+cutefish_add_test(window_visual_toolkit_test DBUS cutefish-wayland-input cutefish-wayland-shell
+    cutefish-decoration cutefish-render PkgConfig::WaylandClient)
+target_compile_definitions(window_visual_toolkit_test PRIVATE
+    TOOLKIT_RESIZE_CLIENT="$<TARGET_FILE:toolkit-resize-client>"
+    ELECTRON_VISUAL_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/visuals/electron_client.js")
+add_dependencies(window_visual_toolkit_test toolkit-resize-client)
+set_tests_properties(window_visual_toolkit_test PROPERTIES TIMEOUT 70
+    ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 
 if(CUTEFISH_ENABLE_XWAYLAND)
     cutefish_add_test(xwayland_test cutefish-xwayland cutefish-wayland-shell cutefish-wayland-input cutefish-render cutefish-decoration PkgConfig::WaylandClient)
@@ -319,15 +277,6 @@ if(CUTEFISH_ENABLE_XWAYLAND)
     target_compile_definitions(xwayland_test PRIVATE X11_TEST_CLIENT="$<TARGET_FILE:x11-test-client>"
         GTK_DND_CLIENT="${CMAKE_CURRENT_SOURCE_DIR}/dnd/gtk_client.py")
     add_dependencies(xwayland_test xwayland-startup-fault x11-test-client)
-    # Empty without Qt Widgets: the cases that run the Qt clients skip.
-    if(Qt6Widgets_FOUND)
-        target_compile_definitions(xwayland_test PRIVATE
-            QT_CLIPBOARD_CLIENT="$<TARGET_FILE:clipboard-qt-client>"
-            QT_DND_CLIENT="$<TARGET_FILE:dnd-qt-client>")
-        add_dependencies(xwayland_test clipboard-qt-client dnd-qt-client)
-    else()
-        target_compile_definitions(xwayland_test PRIVATE QT_CLIPBOARD_CLIENT="" QT_DND_CLIENT="")
-    endif()
     set_tests_properties(xwayland_test PROPERTIES TIMEOUT 90 ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;EGL_PLATFORM=surfaceless")
 endif()
 

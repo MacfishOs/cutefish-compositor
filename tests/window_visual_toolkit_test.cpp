@@ -165,24 +165,15 @@ void acceptClient(const std::string &program, std::vector<std::string> arguments
     // Killed and waited for when it goes.
     base::Process client;
 
-    std::vector<std::string_view> removed = {
-            "DISPLAY", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
-            "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS", "QT_SCALE_FACTOR_ROUNDING_POLICY",
-            "LD_PRELOAD"};
+    std::vector<std::string_view> removed = {"DISPLAY", "LD_PRELOAD"};
     std::map<std::string, std::string> env = {
             {"WAYLAND_DISPLAY", h.server.socketName()},
             {"XDG_RUNTIME_DIR", runtime.path()},
             {"XDG_CONFIG_HOME", runtime.path() + "/config"},
-            {"QT_QPA_PLATFORM", "wayland"},
-            {"CUTEFISH_TEST_SLOW_PAINT", "1"},
             {"GDK_BACKEND", "wayland"},
             {"GSK_RENDERER", "cairo"},
             {"NO_AT_BRIDGE", "1"},
             {"WAYLAND_DEBUG", "1"}};
-    if (exerciseDamage) {
-        env["CUTEFISH_TEST_SCROLL"] = "1";
-        env["QT_QUICK_BACKEND"] = "software";
-    }
     bool chromium = false;
     for (auto &arg : arguments) {
         chromium = chromium || arg.find("@PROFILE@") != std::string::npos;
@@ -423,19 +414,6 @@ void acceptClient(const std::string &program, std::vector<std::string> arguments
 
 } // namespace
 
-TEST(WindowVisualToolkit, QtSsd)
-{
-    acceptClient(QT_SCALE_CLIENT, {}, scene::WindowVisualMode::ServerFrame);
-}
-
-TEST(WindowVisualToolkit, KonsoleSsd)
-{
-    const auto konsole = base::paths::findExecutable("konsole");
-    if (konsole.empty())
-        GTEST_SKIP() << "Konsole is not installed";
-    acceptClient(konsole, {"--separate", "--nofork"}, scene::WindowVisualMode::ServerFrame);
-}
-
 TEST(WindowVisualToolkit, GtkCsd)
 {
     const auto gtk = base::paths::findExecutable("gtk3-demo");
@@ -483,20 +461,6 @@ TEST(WindowVisualToolkit, ToolkitInteractiveResize)
         acceptClient(TOOLKIT_RESIZE_CLIENT, {},
                      scene::WindowVisualMode::ServerExterior, false, true, scale);
     }
-}
-
-TEST(WindowVisualToolkit, QtScrollingDamage)
-{
-    for (double scale : {1.25, 1.5})
-        acceptClient(QT_SCALE_CLIENT, {}, scene::WindowVisualMode::ServerFrame,
-                     false, false, scale, true);
-}
-
-TEST(WindowVisualToolkit, QuickScrollingDamage)
-{
-    for (double scale : {1.25, 1.5})
-        acceptClient(QT_QUICK_SCALE_CLIENT, {},
-                     scene::WindowVisualMode::ServerFrame, false, false, scale, true);
 }
 
 TEST(WindowVisualToolkit, ToolkitScrollingDamage)

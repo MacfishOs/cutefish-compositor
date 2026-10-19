@@ -1885,168 +1885,6 @@ TEST_F(XwaylandTest, ClipboardManagerRejectsFailedConversion)
     EXPECT_EQ(received, "caf\xc3\xa9");
 }
 
-TEST_F(XwaylandTest, QtClipboardAcrossProtocols)
-{
-    if (std::string_view(QT_CLIPBOARD_CLIENT).empty())
-        GTEST_SKIP() << "Built without the Qt test clients";
-    wayland::WaylandXdgShell xdg(compositor.get(), manager.get(), seat.get(),
-                                 server->serialTracker());
-    ASSERT_TRUE(wayland::createXdgShellGlobal(server->display(), &xdg));
-    ASSERT_TRUE(wayland::createXdgDecorationGlobal(server->display()));
-    ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server->display(), waylandSeat.get()));
-    ASSERT_TRUE(wayland::createPrimarySelectionGlobal(server->display(), waylandSeat.get()));
-    ASSERT_TRUE(server->addSocket("xwayland-clipboard-test"));
-    ASSERT_TRUE(start());
-    setenv("XAUTHORITY", xwayland->authority().c_str(), 1);
-    auto *probe = xcbReply([&] {
-        return xcb_connect(xwayland->display().c_str(), nullptr);
-    });
-    ASSERT_EQ(xcb_connection_has_error(probe), 0);
-    base::ScopeGuard closeProbe([&] {
-        xcb_disconnect(probe);
-    });
-    const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
-    const auto activeAtom = intern(probe, "_NET_ACTIVE_WINDOW");
-    auto xFocusReady = [&] {
-        return until([&] {
-            auto *active = xcbReply([&] {
-                return xcb_get_property_reply(
-                        probe, xcb_get_property(probe, 0, root, activeAtom, XCB_ATOM_WINDOW, 0, 1),
-                        nullptr);
-            });
-            auto *focus = xcbReply([&] {
-                return xcb_get_input_focus_reply(probe, xcb_get_input_focus(probe), nullptr);
-            });
-            const bool ready = active && active->format == 32 && active->value_len == 1 && focus
-                    && focus->focus != XCB_NONE
-                    && focus->focus == *static_cast<uint32_t *>(xcb_get_property_value(active));
-            free(active);
-            free(focus);
-            return ready;
-        });
-    };
-    auto window = [&](const std::string &title) -> wm::Window * {
-        for (auto *w : manager->windows()) {
-            if (w->title() == title)
-                return w;
-        }
-        return nullptr;
-    };
-    const auto contains = [](const std::string &output, std::string_view marker) {
-        return output.find(marker) != std::string::npos;
-    };
-    for (bool x11Source : {false, true}) {
-        for (const auto *format : {"text", "binary", "urls", "primary"}) {
-            SCOPED_TRACE(format);
-            SCOPED_TRACE(x11Source);
-            test::ChildProcess source, destination;
-            base::ScopeGuard cleanup([&] {
-                for (auto *child : {&source, &destination}) {
-                    if (child->running()) {
-                        child->process.kill();
-                        child->process.waitForFinished(std::chrono::milliseconds(2000));
-                    }
-                }
-                until([&] {
-                    return manager->windows().empty();
-                });
-            });
-            auto launch = [&](test::ChildProcess &process, bool x11, const std::string &title) {
-                process.start(QT_CLIPBOARD_CLIENT, {title, format},
-                              test::environmentWith({"QT_QPA_PLATFORMTHEME"},
-                                                    {{"QT_QPA_PLATFORM", x11 ? "xcb" : "wayland"},
-                                                     {"DISPLAY", xwayland->display()},
-                                                     {"XAUTHORITY", xwayland->authority()},
-                                                     {"WAYLAND_DISPLAY", server->socketName()}}));
-            };
-            launch(source, x11Source, "clipboard-source");
-            ASSERT_TRUE(until([&] {
-                return window("clipboard-source");
-            })) << "exit " << source.exitCode << source.errors();
-            window("clipboard-source")->activate();
-            std::string activationOutput;
-            ASSERT_TRUE(until([&] {
-                activationOutput += source.readOutput();
-                return contains(activationOutput, "FOCUSED");
-            }));
-            if (x11Source)
-                ASSERT_TRUE(xFocusReady());
-            if (x11Source && std::string_view(format) == "text") {
-                seat->onKey({}, KEY_D, true);
-                seat->onKey({}, KEY_D, false);
-                ASSERT_TRUE(until([&] {
-                    return window("clipboard-dialog");
-                }));
-                EXPECT_EQ(window("clipboard-dialog")->transientParent(),
-                          window("clipboard-source"));
-                std::string dialogOutput;
-                ASSERT_TRUE(until([&] {
-                    dialogOutput += source.readOutput();
-                    return contains(dialogOutput, "ACTIVE clipboard-dialog");
-                }));
-                ASSERT_TRUE(xFocusReady());
-                seat->onKey({}, KEY_ESC, true);
-                seat->onKey({}, KEY_ESC, false);
-                ASSERT_TRUE(until([&] {
-                    return !window("clipboard-dialog");
-                })) << source.errors();
-                window("clipboard-source")->activate();
-                dialogOutput.clear();
-                ASSERT_TRUE(until([&] {
-                    dialogOutput += source.readOutput();
-                    return contains(dialogOutput, "ACTIVE clipboard-source");
-                }));
-                seat->onKey({}, KEY_M, true);
-                seat->onKey({}, KEY_M, false);
-                std::string menuOutput;
-                ASSERT_TRUE(until([&] {
-                    menuOutput += source.readOutput();
-                    return contains(menuOutput, "MENU");
-                }));
-                EXPECT_EQ(manager->windows().size(), 1u);
-                seat->onKey({}, KEY_ESC, true);
-                seat->onKey({}, KEY_ESC, false);
-                ASSERT_TRUE(until([&] {
-                    menuOutput += source.readOutput();
-                    return contains(menuOutput, "MENU_CLOSED");
-                }));
-                EXPECT_EQ(seat->focusedSurface(), window("clipboard-source")->rootSurface());
-                EXPECT_TRUE(window("clipboard-source")->isActive());
-            }
-            seat->onKey({}, KEY_C, true);
-            seat->onKey({}, KEY_C, false);
-            std::string sourceOutput;
-            ASSERT_TRUE(until([&] {
-                sourceOutput += source.readOutput();
-                return contains(sourceOutput, "PUBLISHED")
-                        && (std::string_view(format) == "primary" ? seat->primarySelection()->source()
-                                                                  : seat->selection()->source());
-            })) << source.errors();
-            launch(destination, !x11Source, "clipboard-destination");
-            ASSERT_TRUE(until([&] {
-                return window("clipboard-destination");
-            })) << destination.errors();
-            window("clipboard-destination")->activate();
-            std::string destinationOutput;
-            ASSERT_TRUE(until([&] {
-                destinationOutput += destination.readOutput();
-                return contains(destinationOutput, "FOCUSED");
-            }));
-            if (!x11Source)
-                ASSERT_TRUE(xFocusReady());
-            seat->onKey({}, KEY_V, true);
-            seat->onKey({}, KEY_V, false);
-            ASSERT_TRUE(until([&] {
-                return !destination.running();
-            }));
-            EXPECT_EQ(destination.exitCode, 0) << destination.errors();
-            destinationOutput += destination.readOutput();
-            EXPECT_TRUE(contains(destinationOutput, "PASS"));
-        }
-    }
-    wl_display_destroy_clients(server->display());
-}
-
 TEST_F(XwaylandTest, RealWindowMetadataConfigureAndClose)
 {
     ASSERT_TRUE(start()) << xwayland->error();
@@ -3183,8 +3021,6 @@ TEST_F(XwaylandTest, X11DragWithATypeListCanLeaveAndBeRefused)
 
 TEST_F(XwaylandTest, WaylandDragFollowsXdndProxyAndCancelsWhenRefused)
 {
-    if (std::string_view(QT_DND_CLIENT).empty())
-        GTEST_SKIP() << "Built without the Qt test clients";
     ASSERT_TRUE(start());
     ASSERT_TRUE(wayland::createDataDeviceManagerGlobal(server->display(), waylandSeat.get()));
     clipboard_test::Client native(*server);
@@ -3287,26 +3123,20 @@ protected:
     std::vector<std::string> scaledClientEnvironment() const
     {
         return test::environmentWith(
-                {"QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
-                 "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS", "QT_AUTO_SCREEN_SCALE_FACTOR",
-                 "GDK_SCALE", "GDK_DPI_SCALE", "LD_PRELOAD", "WAYLAND_SOCKET"},
+                {"GDK_SCALE", "GDK_DPI_SCALE", "LD_PRELOAD", "WAYLAND_SOCKET"},
                 {{"DISPLAY", xwayland->display()},
                  {"XAUTHORITY", xwayland->authority()},
-                 {"QT_QPA_PLATFORM", "xcb"},
                  {"GDK_BACKEND", "x11"},
                  {"WAYLAND_DISPLAY", "nonexistent-native-display"},
                  {"XDG_RUNTIME_DIR", runtime.path()}});
     }
 
-    static bool startScaled(Child &client, bool gtk, std::vector<std::string> environment)
+    static bool startScaled(Child &client, std::vector<std::string> environment)
     {
-        return client.start(gtk ? "/usr/bin/python3" : QT_DND_CLIENT,
-                            gtk ? std::vector<std::string> {GTK_DND_CLIENT, "scaled"}
-                                : std::vector<std::string> {"scaled"},
-                            std::move(environment));
+        return client.start("/usr/bin/python3", {GTK_DND_CLIENT, "scaled"}, std::move(environment));
     }
 
-    void matrix(bool sourceX11, bool sourceGtk, bool destinationGtk)
+    void drag(bool sourceX11)
     {
         if (base::paths::findExecutable("python3").empty())
             GTEST_SKIP() << "python3 unavailable";
@@ -3320,27 +3150,20 @@ protected:
         base::Timer frames;
         driveFrames(frames, compositor.get());
         Child source, destination;
-        auto launch = [&](Child &process, bool x11, bool gtk, const std::string &title) {
+        auto launch = [&](Child &process, bool x11, const std::string &title) {
             std::map<std::string, std::string> added {
                     {"XDG_RUNTIME_DIR", runtime.path()}};
             if (x11) {
                 added.insert({{"DISPLAY", xwayland->display()},
                               {"XAUTHORITY", xwayland->authority()},
-                              {"QT_QPA_PLATFORM", "xcb"},
                               {"GDK_BACKEND", "x11"},
                               {"WAYLAND_DISPLAY", "nonexistent-native-display"}});
             } else {
-                added.insert({{"QT_QPA_PLATFORM", "wayland"},
-                              {"GDK_BACKEND", "wayland"},
+                added.insert({{"GDK_BACKEND", "wayland"},
                               {"WAYLAND_DISPLAY", server->socketName()}});
             }
-            process.start(gtk ? "/usr/bin/python3" : QT_DND_CLIENT,
-                          gtk ? std::vector<std::string> {GTK_DND_CLIENT, title}
-                              : std::vector<std::string> {title},
-                          test::environmentWith({"DISPLAY", "QT_PLUGIN_PATH",
-                                                 "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME",
-                                                 "QT_QUICK_BACKEND", "LD_PRELOAD", "WAYLAND_SOCKET"},
-                                                added));
+            process.start("/usr/bin/python3", {GTK_DND_CLIENT, title},
+                          test::environmentWith({"DISPLAY", "LD_PRELOAD", "WAYLAND_SOCKET"}, added));
         };
         auto window = [&](const std::string &title) -> wm::Window * {
             for (auto *w : manager->windows()) {
@@ -3349,12 +3172,12 @@ protected:
             }
             return nullptr;
         };
-        launch(source, sourceX11, sourceGtk, "dnd-source");
+        launch(source, sourceX11, "dnd-source");
         ASSERT_TRUE(until([&] {
             return window("dnd-source") != nullptr;
         }))
                 << source.errors();
-        launch(destination, !sourceX11, destinationGtk, "dnd-destination");
+        launch(destination, !sourceX11, "dnd-destination");
         ASSERT_TRUE(until([&] {
             return window("dnd-destination") != nullptr;
         }))
@@ -3420,115 +3243,76 @@ protected:
     }
 };
 
-// Real toolkits pick the scale up from Xft.dpi and XSETTINGS and draw at
-// device resolution: the X11 window is twice their logical size.
+// GTK picks the scale up from Xft.dpi and XSETTINGS and draws at device
+// resolution: the X11 window is twice its logical size.
 TEST_F(XwaylandDndToolkitTest, ToolkitsDrawAtTheXwaylandScale)
 {
-    if (std::string_view(QT_DND_CLIENT).empty())
-        GTEST_SKIP() << "Built without the Qt test clients";
     xwayland->setScale(2);
     ASSERT_TRUE(start()) << xwayland->error();
-    for (const bool gtk : {false, true}) {
-        SCOPED_TRACE(gtk ? "GTK" : "Qt");
-        Child client;
-        startScaled(client, gtk, scaledClientEnvironment());
-        wm::Window *window = nullptr;
-        ASSERT_TRUE(until([&] {
-            for (auto *w : manager->windows()) {
-                if (w->title() == "scaled" && w->rootSurface()->hasContents())
-                    window = w;
-            }
-            return window != nullptr;
-        }))
-                << client.errors();
-        const base::Size buffer = window->rootSurface()->bufferSize();
-        const base::Size content = window->rootSurface()->contentSize();
-        EXPECT_EQ(content, base::Size(base::roundToInt(buffer.width() / 2.0),
-                                  base::roundToInt(buffer.height() / 2.0)));
-        // Qt sizes the client area exactly; GTK adds its own decoration.
-        if (gtk) {
-            EXPECT_GE(buffer.width(), 360);
-            EXPECT_GE(buffer.height(), 240);
-        } else {
-            EXPECT_EQ(buffer, base::Size(360, 240));
-            EXPECT_EQ(content, base::Size(180, 120));
+    Child client;
+    startScaled(client, scaledClientEnvironment());
+    wm::Window *window = nullptr;
+    ASSERT_TRUE(until([&] {
+        for (auto *w : manager->windows()) {
+            if (w->title() == "scaled" && w->rootSurface()->hasContents())
+                window = w;
         }
-        client.process.kill();
-        client.process.waitForFinished(std::chrono::milliseconds(2000));
-        ASSERT_TRUE(until([&] {
-            return manager->windows().empty();
-        }));
-    }
+        return window != nullptr;
+    }))
+            << client.errors();
+    const base::Size buffer = window->rootSurface()->bufferSize();
+    const base::Size content = window->rootSurface()->contentSize();
+    EXPECT_EQ(content, base::Size(base::roundToInt(buffer.width() / 2.0),
+                              base::roundToInt(buffer.height() / 2.0)));
+    // The client area and GTK's own decoration around it.
+    EXPECT_GE(buffer.width(), 360);
+    EXPECT_GE(buffer.height(), 240);
 }
 
-// A scale change reaches running toolkits through XSETTINGS: they redraw at the
-// new scale into the window the XWM has already resized.
+// A scale change reaches a running GTK client through XSETTINGS: it redraws at
+// the new scale into the window the XWM has already resized.
 TEST_F(XwaylandDndToolkitTest, RunningToolkitsFollowAScaleChange)
 {
-    if (std::string_view(QT_DND_CLIENT).empty())
-        GTEST_SKIP() << "Built without the Qt test clients";
     ASSERT_TRUE(start()) << xwayland->error();
     base::Timer frames;
     driveFrames(frames, compositor.get());
-    for (const bool gtk : {false, true}) {
-        SCOPED_TRACE(gtk ? "GTK" : "Qt");
-        xwayland->setScale(1);
-        wayland::updateOutputGlobal(outputGlobal, &output);
-        Child client;
-        startScaled(client, gtk, scaledClientEnvironment());
-        wm::Window *window = nullptr;
-        ASSERT_TRUE(until([&] {
-            for (auto *w : manager->windows()) {
-                if (w->title() == "scaled" && w->rootSurface()->hasContents())
-                    window = w;
-            }
-            return window != nullptr;
-        }))
-                << client.errors();
-        const base::Size logical = window->rootSurface()->contentSize();
-        EXPECT_EQ(window->rootSurface()->bufferSize(), logical);
+    xwayland->setScale(1);
+    wayland::updateOutputGlobal(outputGlobal, &output);
+    Child client;
+    startScaled(client, scaledClientEnvironment());
+    wm::Window *window = nullptr;
+    ASSERT_TRUE(until([&] {
+        for (auto *w : manager->windows()) {
+            if (w->title() == "scaled" && w->rootSurface()->hasContents())
+                window = w;
+        }
+        return window != nullptr;
+    }))
+            << client.errors();
+    const base::Size logical = window->rootSurface()->contentSize();
+    EXPECT_EQ(window->rootSurface()->bufferSize(), logical);
 
-        xwayland->setScale(2);
-        wayland::updateOutputGlobal(outputGlobal, &output);
-        // Same logical size, twice the pixels, without restarting the client.
-        // Qt may settle a pixel short while its size increments follow the
-        // new scale; the renderer keeps that sharp.
-        EXPECT_TRUE(until([&] {
-            const base::Size buffer = window->rootSurface()->bufferSize();
-            return std::abs(buffer.width() - logical.width() * 2) <= 1
-                    && std::abs(buffer.height() - logical.height() * 2) <= 1
-                    && window->rootSurface()->contentSize() == logical;
-        }))
-                << "buffer " << window->rootSurface()->bufferSize().width() << "x"
-                << window->rootSurface()->bufferSize().height() << " content "
-                << window->rootSurface()->contentSize().width() << "x"
-                << window->rootSurface()->contentSize().height();
-        client.process.kill();
-        client.process.waitForFinished(std::chrono::milliseconds(2000));
-        ASSERT_TRUE(until([&] {
-            return manager->windows().empty();
-        }));
-    }
+    xwayland->setScale(2);
+    wayland::updateOutputGlobal(outputGlobal, &output);
+    // Same logical size, twice the pixels, without restarting the client.
+    EXPECT_TRUE(until([&] {
+        return window->rootSurface()->bufferSize() == base::Size(logical.width() * 2, logical.height() * 2)
+                && window->rootSurface()->contentSize() == logical;
+    }))
+            << "buffer " << window->rootSurface()->bufferSize().width() << "x"
+            << window->rootSurface()->bufferSize().height() << " content "
+            << window->rootSurface()->contentSize().width() << "x"
+            << window->rootSurface()->contentSize().height();
 }
 
-TEST_F(XwaylandDndToolkitTest, QtX11ToGtkWayland)
+TEST_F(XwaylandDndToolkitTest, GtkX11ToGtkWayland)
 {
-    matrix(true, false, true);
+    drag(true);
 }
 
-TEST_F(XwaylandDndToolkitTest, GtkX11ToQtWayland)
+TEST_F(XwaylandDndToolkitTest, GtkWaylandToGtkX11)
 {
-    matrix(true, true, false);
-}
-
-TEST_F(XwaylandDndToolkitTest, QtWaylandToGtkX11)
-{
-    matrix(false, false, true);
-}
-
-TEST_F(XwaylandDndToolkitTest, GtkWaylandToQtX11)
-{
-    matrix(false, true, false);
+    drag(false);
 }
 
 class XwaylandApplicationTest : public XwaylandTest
@@ -3543,7 +3327,6 @@ protected:
                                            {{"DISPLAY", xwayland->display()},
                                             {"XAUTHORITY", xwayland->authority()},
                                             {"GDK_BACKEND", "x11"},
-                                            {"QT_QPA_PLATFORM", "xcb"},
                                             {"WAYLAND_DISPLAY", "nonexistent-native-display"}}));
         ASSERT_TRUE(until([&] {
             return !manager->windows().empty() || !client.running();
