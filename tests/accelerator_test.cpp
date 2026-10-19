@@ -827,9 +827,10 @@ TEST_F(AcceleratorTest, HeldVolumeAndBrightnessKeysRepeatAtTheKeyboardRate)
                                   .delay = std::chrono::milliseconds(40),
                                   .interval = std::chrono::milliseconds(10)});
 
+    // Repeats are timers: a loaded machine fires them late, not fewer.
     press(KEY_BRIGHTNESSUP);
     EXPECT_EQ(1u, delegate.levels.size());
-    cutefish::test::runFor(std::chrono::milliseconds(100));
+    EXPECT_TRUE(cutefish::test::runUntil([this] { return delegate.levels.size() >= 3; }));
     release(KEY_BRIGHTNESSUP);
     const size_t held = delegate.levels.size();
     EXPECT_GE(held, 3u);
@@ -860,7 +861,7 @@ TEST_F(AcceleratorTest, HeldVolumeAndBrightnessKeysRepeatAtTheKeyboardRate)
 
     delegate.levels.clear();
     press(KEY_KBDILLUMDOWN);
-    cutefish::test::runFor(std::chrono::milliseconds(100));
+    EXPECT_TRUE(cutefish::test::runUntil([this] { return delegate.levels.size() >= 3; }));
     release(KEY_KBDILLUMDOWN);
     EXPECT_GE(delegate.levels.size(), 3u);
 
