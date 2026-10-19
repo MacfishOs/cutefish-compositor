@@ -18,7 +18,7 @@ namespace {
 // click that wobbles does not unmaximize it.
 // Upstream: ash/wm/workspace/workspace_window_resizer.cc
 // kResizeRestoreDragThresholdDp.
-constexpr int kRestoreDragThreshold = 5;
+constexpr int kRestoreDragThreshold = 2;
 
 } // namespace
 

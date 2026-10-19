@@ -23,7 +23,7 @@ add_library(cutefish-shell-osd STATIC
     src/shell/osd/osd.h
     src/shell/osd/osd_levels.cpp
 )
-target_link_libraries(cutefish-shell-osd PUBLIC cutefish-shell cutefish-shell-statusbar
+target_link_libraries(cutefish-shell-osd PUBLIC cutefish-shell cutefish-shell-statusbar cutefish-shell-controlcenter
     Cutefish::AudioClient)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-osd)
 

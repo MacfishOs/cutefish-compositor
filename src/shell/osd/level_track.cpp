@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "shell/controlcenter/panel_style.h"
 #include "ui/animation.h"
 #include "ui/painter.h"
 #include "ui/theme.h"
@@ -40,7 +41,6 @@ void LevelTrack::setPosition(double position)
             requestPaint();
         };
     }
-    // A retarget restarts from what is drawn.
     m_animation->stop();
     m_from = m_drawn;
     m_animation->start();
@@ -59,6 +59,37 @@ void LevelTrack::paint(ui::Painter &painter)
     const bool dark = ui::Theme::current().darkMode;
     const ui::RectF rect = localRect();
     const double height = rect.height;
+
+    if (height >= 28.0) {
+        const double radius = height / 2.0;
+
+        // Background pill track
+        const ui::Color trackBg = dark ? panel::rgba(0.18, 0.20, 0.26, 0.80) : panel::rgba(0, 0, 0, 0.10);
+        painter.fillRoundedRect(rect, radius, trackBg, ui::Corners::Continuous);
+
+        // Filled track
+        const double fillWidth = rect.width * m_drawn;
+        if (fillWidth > 0) {
+            ui::RectF fillRect{0, 0, std::clamp(fillWidth, radius * 2.0, rect.width), height};
+            const ui::Color trackFill = dark ? panel::rgba(1.0, 1.0, 1.0, 0.92) : ui::Color::rgb(0xFFFFFF);
+            painter.fillRoundedRect(fillRect, radius, trackFill, ui::Corners::Continuous);
+        }
+
+        if (!m_icon.empty()) {
+            painter.save();
+            const double iconSize = 18.0;
+            const double iconX = 12.0;
+            const double iconY = (height - iconSize) / 2.0;
+            const ui::RectF iconRect{iconX, iconY, iconSize, iconSize};
+            const bool covered = (fillWidth > iconX + iconSize);
+            const ui::Color iconTint = covered ? (dark ? ui::Color::rgb(0x1C1C1E) : ui::Color::rgb(0x383838))
+                                               : (dark ? ui::Color::rgb(0xFFFFFF) : ui::Color::rgb(0x383838));
+            painter.drawSvg(m_icon, iconRect, iconTint);
+            painter.restore();
+        }
+        return;
+    }
+
     const double travel = rect.width - height;
     const double hairline = 1 / painter.scale();
     const ui::Color outline = ui::color(toolkit::CompositorColor::LevelTrackOutline);
@@ -71,8 +102,6 @@ void LevelTrack::paint(ui::Painter &painter)
     const ui::RectF fillRect {0, 0, height + travel * m_drawn, height};
     painter.drawRoundedRect(fillRect, pill, fill, hairline, outline);
 
-    // The knob, lifted by a shadow: FishUI's DropShadow of radius 3 works in
-    // device pixels, a deviation of (3 dpr + 1) / 3.3333 of them.
     const ui::RectF knob {fillRect.width - height, 0, height, height};
     const double sigma = (3 * painter.scale() + 1) / 3.3333 / painter.scale();
     painter.drawShadow(knob, height / 2, sigma, ui::color(toolkit::CompositorColor::LevelTrackKnobShadow),

@@ -27,7 +27,7 @@ class LevelTrack;
 class LevelSlider : public ui::View
 {
 public:
-    static constexpr double kHeight = 22;
+    static constexpr double kHeight = 30;
 
     LevelSlider();
 

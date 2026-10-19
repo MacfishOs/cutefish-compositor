@@ -10,8 +10,10 @@
 
 #include "base/dbus.h"
 #include "base/logging.h"
+#include "base/settings.h"
 #include "base/thread_pool.h"
 #include "base/timer.h"
+#include "core/preferences.h"
 #include "cutefish/audio/audio_model.h"
 #include "cutefish/audio/backend.h"
 #include "cutefish/bluez/manager.h"
@@ -21,6 +23,7 @@
 #include "cutefish/networkmanager/network_model.h"
 #include "cutefish/powerprofiles/power_profiles.h"
 #include "cutefish/upower/battery_status.h"
+#include "shell/common/file_thread.h"
 #include "shell/common/pending_calls.h"
 #include "shell/notification/notification_settings.h"
 #include "shell/shell.h"
@@ -241,7 +244,13 @@ public:
 
     // --- Switches ---
 
-    void setDarkMode(bool dark) override { m_appearance.send("setDarkMode", dark); }
+    void setDarkMode(bool dark) override
+    {
+        m_appearance.send("setDarkMode", dark);
+        writeSettings(preferencesFile("services"), [dark](base::Settings &settings) {
+            settings.setValue("Appearance/DarkMode", dark);
+        });
+    }
 
     bool doNotDisturb() const override { return m_notifications && m_notifications->doNotDisturb(); }
 

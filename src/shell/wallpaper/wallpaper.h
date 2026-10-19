@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/geometry.h"
+#include "base/file_watcher.h"
 #include "base/signal.h"
 #include "base/thread_pool.h"
 #include "shell/shell.h"
@@ -124,6 +125,7 @@ private:
     bool m_judged = false;
     BarBackdrop::Style m_style;
     base::Subscription m_outputsChanged;
+    base::FileWatch m_servicesWatch;
 };
 
 } // namespace cutefish::shell

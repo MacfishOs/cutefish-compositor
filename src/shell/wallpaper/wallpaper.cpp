@@ -13,6 +13,7 @@
 #include "base/url.h"
 #include "compositor/capture_source.h"
 #include "compositor/compositor.h"
+#include "core/main_loop.h"
 #include "core/preferences.h"
 #include "cutefish/appearance/appearance.h"
 #include "scene/node.h"
@@ -125,6 +126,8 @@ Wallpaper::Wallpaper(Shell *shell, std::string cacheDirectory, std::string servi
 {
     m_outputsChanged = m_shell->outputsChanged.connect([this] { updateOutputs(); });
     updateOutputs();
+    m_servicesWatch = base::FileWatch::file(m_servicesSettings, [this] { readServicesSettings(); }, core::mainLoop());
+    readServicesSettings();
     if (m_shell->bus()) {
         m_ownAppearance = std::make_unique<appearance::Appearance>();
         followAppearance(m_ownAppearance.get());

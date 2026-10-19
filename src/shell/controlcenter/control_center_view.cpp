@@ -17,9 +17,6 @@
 
 namespace cutefish::shell {
 
-// The panels' titles: 13 pt.
-static constexpr double kTitleFontSize = 13.0 * 4 / 3;
-// The slider writes the backlight once the knob rests this long.
 static constexpr std::chrono::milliseconds kBrightnessDelay {100};
 
 static double windowScale(const ui::View *view)
@@ -31,57 +28,101 @@ static double windowScale(const ui::View *view)
 ControlCenterView::ControlCenterView(ControlCenterServices &services)
     : m_services(services)
 {
+    // Header
     m_title = addChild<ui::Label>("Control Center");
-    m_title->setFontSize(kTitleFontSize);
+    m_title->setFontSize(15.0);
     m_title->setElide(ui::Label::Elide::Right);
+
+    m_lockButton = addChild<HeaderButton>();
+    m_lockButton->setIcon(panel::artwork("system-lock-screen", panel::dark()));
+    m_lockButton->onClicked = [this] {
+        if (onLockRequested)
+            onLockRequested();
+    };
+
+    m_settingsButton = addChild<HeaderButton>();
+    m_settingsButton->setIcon(panel::artwork("settings", panel::dark()));
+    m_settingsButton->onClicked = [this] {
+        if (onSettingsRequested)
+            onSettingsRequested();
+        else if (onHideRequested)
+            onHideRequested();
+    };
+
+    m_backButton = addChild<HeaderButton>();
+    m_backButton->setIcon(panel::artwork("down", panel::dark()));
+    m_backButton->setVisible(false);
+    m_backButton->onClicked = [this] {
+        m_subPanel = SubPanel::Main;
+        requestLayout();
+        refresh();
+    };
+
     m_users = addChild<DeviceUsersTile>();
 
+    // 2x2 Top Cards
     m_wireless = addChild<CardItem>();
-    m_wireless->setGlyph("network-wireless-connected-100");
+    m_wireless->setMode(CardItem::Mode::TopCard);
+    m_wireless->setArtwork("wifi");
     m_wireless->setTitle("Wi-Fi");
+    m_wireless->setActiveColor(ui::Color::rgb(0x007AFF));
+    m_wireless->setShowChevron(true);
     m_wireless->onClicked = [this] { m_services.enableWireless(!m_wireless->isChecked()); };
     m_wireless->onPressAndHold = [this] {
         if (onHideRequested)
             onHideRequested();
         m_services.openSettings({"-m", "wlan"});
     };
+    m_wireless->onChevronClicked = [this] {
+        m_subPanel = SubPanel::Wifi;
+        requestLayout();
+        refresh();
+    };
 
     m_bluetooth = addChild<CardItem>();
+    m_bluetooth->setMode(CardItem::Mode::TopCard);
     m_bluetooth->setArtwork("bluetooth-symbolic");
     m_bluetooth->setTitle("Bluetooth");
+    m_bluetooth->setActiveColor(ui::Color::rgb(0x007AFF));
+    m_bluetooth->setShowChevron(true);
     m_bluetooth->onClicked = [this] { m_services.setBluetoothEnabled(!m_services.bluetoothEnabled()); };
     m_bluetooth->onPressAndHold = [this] {
         if (onHideRequested)
             onHideRequested();
         m_services.openSettings({"-m", "bluetooth"});
     };
+    m_bluetooth->onChevronClicked = [this] {
+        m_subPanel = SubPanel::Bluetooth;
+        requestLayout();
+        refresh();
+    };
 
-    m_darkMode = addChild<CardItem>();
-    m_darkMode->setArtwork("dark-mode");
-    m_darkMode->setTitle("Dark Mode");
-    m_darkMode->onClicked = [this] { m_services.setDarkMode(!ui::Theme::current().darkMode); };
+    m_wirelessShare = addChild<CardItem>();
+    m_wirelessShare->setMode(CardItem::Mode::TopCard);
+    m_wirelessShare->setArtwork("wireless-share");
+    m_wirelessShare->setTitle("Wireless Share");
+    m_wirelessShare->setActiveColor(ui::Color::rgb(0x007AFF));
+    m_wirelessShare->setShowChevron(false);
+    m_wirelessShare->onClicked = [this] {
+        m_wirelessShareEnabled = !m_wirelessShareEnabled;
+        refresh();
+    };
 
-    m_doNotDisturb = addChild<CardItem>();
-    m_doNotDisturb->setArtwork("do-not-disturb");
-    m_doNotDisturb->setTitle("Do Not Disturb");
-    m_doNotDisturb->onClicked = [this] { m_services.setDoNotDisturb(!m_services.doNotDisturb()); };
+    m_kdeConnect = addChild<CardItem>();
+    m_kdeConnect->setMode(CardItem::Mode::TopCard);
+    m_kdeConnect->setArtwork("phone");
+    m_kdeConnect->setTitle("KDE Connect");
+    m_kdeConnect->setActiveColor(ui::Color::rgb(0x34C759));
+    m_kdeConnect->setShowChevron(true);
 
-    m_camera = addChild<CardItem>();
-    m_camera->setArtwork("camera");
-    m_camera->setTitle("Camera");
-    m_camera->onClicked = [this] { m_services.setCameraEnabled(!m_camera->isChecked()); };
-
-    m_microphone = addChild<CardItem>();
-    m_microphone->setArtwork("microphone");
-    m_microphone->setTitle("Microphone");
-    m_microphone->onClicked = [this] { m_services.setMicrophoneEnabled(!m_microphone->isChecked()); };
-
+    // Media Tile
     m_media = addChild<MediaTile>();
     m_media->onPrevious = [this] { m_services.mediaPrevious(); };
     m_media->onPlay = [this] { m_services.mediaPlay(); };
     m_media->onPause = [this] { m_services.mediaPause(); };
     m_media->onNext = [this] { m_services.mediaNext(); };
 
+    // Sliders
     m_brightness = addChild<TileSlider>("Display");
     m_brightness->slider()->setRange(1, 100, 1);
     m_brightness->slider()->setIcon(panel::artwork("brightness", false));
@@ -101,6 +142,107 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
         m_services.setMuted(value == 0);
     };
 
+    // 2x5 Quick Toggles
+    m_powerModeToggle = addChild<CardItem>();
+    m_powerModeToggle->setMode(CardItem::Mode::QuickToggle);
+    m_powerModeToggle->onClicked = [this] {
+        const std::string profile = m_services.powerProfile();
+        std::string next = "balanced";
+        if (profile == "balanced")
+            next = "performance";
+        else if (profile == "performance")
+            next = "power-saver";
+        else
+            next = "balanced";
+        m_services.setPowerProfile(next);
+    };
+
+    m_nightShiftToggle = addChild<CardItem>();
+    m_nightShiftToggle->setMode(CardItem::Mode::QuickToggle);
+    m_nightShiftToggle->setTitle("Night");
+    m_nightShiftToggle->setActiveColor(ui::Color::rgb(0xFF9500));
+    m_nightShiftToggle->onClicked = [this] {
+        m_nightLightEnabled = !m_nightLightEnabled;
+        refresh();
+    };
+
+    m_captureToggle = addChild<CardItem>();
+    m_captureToggle->setMode(CardItem::Mode::QuickToggle);
+    m_captureToggle->setTitle("Capture");
+    m_captureToggle->setArtwork("screenshot");
+    m_captureToggle->onClicked = [this] {
+        if (onScreenshotRequested)
+            onScreenshotRequested();
+    };
+
+    m_doNotDisturbToggle = addChild<CardItem>();
+    m_doNotDisturbToggle->setMode(CardItem::Mode::QuickToggle);
+    m_doNotDisturbToggle->setTitle("Focus");
+    m_doNotDisturbToggle->setActiveColor(ui::Color::rgb(0x5856D6));
+    m_doNotDisturbToggle->onClicked = [this] {
+        m_services.setDoNotDisturb(!m_services.doNotDisturb());
+    };
+
+    m_darkModeToggle = addChild<CardItem>();
+    m_darkModeToggle->setMode(CardItem::Mode::QuickToggle);
+    m_darkModeToggle->setActiveColor(ui::Color::rgb(0x007AFF));
+    m_darkModeToggle->onClicked = [this] {
+        m_services.setDarkMode(!ui::Theme::current().darkMode);
+    };
+
+    m_keyLightToggle = addChild<CardItem>();
+    m_keyLightToggle->setMode(CardItem::Mode::QuickToggle);
+    m_keyLightToggle->setActiveColor(ui::Color::rgb(0x007AFF));
+    m_keyLightToggle->onClicked = [this] {
+        m_keyLightLevel = (m_keyLightLevel + 1) % 3;
+        refresh();
+    };
+
+    m_cameraToggle = addChild<CardItem>();
+    m_cameraToggle->setMode(CardItem::Mode::QuickToggle);
+    m_cameraToggle->setTitle("Camera");
+    m_cameraToggle->setArtwork("camera");
+    m_cameraToggle->setActiveColor(ui::Color::rgb(0x007AFF));
+    m_cameraToggle->onClicked = [this] {
+        m_services.setCameraEnabled(!m_services.cameraEnabled());
+    };
+
+    m_logoutToggle = addChild<CardItem>();
+    m_logoutToggle->setMode(CardItem::Mode::QuickToggle);
+    m_logoutToggle->setTitle("Logout");
+    m_logoutToggle->setArtwork("system-log-out");
+    m_logoutToggle->onClicked = [this] {
+        if (onPowerActionRequested)
+            onPowerActionRequested(1);
+    };
+
+    m_restartToggle = addChild<CardItem>();
+    m_restartToggle->setMode(CardItem::Mode::QuickToggle);
+    m_restartToggle->setTitle("Restart");
+    m_restartToggle->setArtwork("system-reboot");
+    m_restartToggle->onClicked = [this] {
+        if (onPowerActionRequested)
+            onPowerActionRequested(2);
+    };
+
+    m_powerOffToggle = addChild<CardItem>();
+    m_powerOffToggle->setMode(CardItem::Mode::QuickToggle);
+    m_powerOffToggle->setTitle("Power Off");
+    m_powerOffToggle->setArtwork("system-shutdown");
+    m_powerOffToggle->setActiveColor(ui::Color::rgb(0xFF3B30));
+    m_powerOffToggle->setChecked(true);
+    m_powerOffToggle->onClicked = [this] {
+        if (onPowerActionRequested)
+            onPowerActionRequested(3);
+    };
+
+    m_locationToggle = addChild<CardItem>();
+    m_locationToggle->setMode(CardItem::Mode::QuickToggle);
+    m_locationToggle->setTitle("Location");
+    m_locationToggle->setArtwork("location-mode");
+    m_locationToggle->setActiveColor(ui::Color::rgb(0x007AFF));
+    m_locationToggle->setVisible(false);
+
     refresh();
 }
 
@@ -109,78 +251,151 @@ ControlCenterView::~ControlCenterView() = default;
 void ControlCenterView::refresh()
 {
     const double before = layoutHeight();
+    const bool dark = ui::Theme::current().darkMode;
+    const bool isMain = m_subPanel == SubPanel::Main;
 
+    m_backButton->setVisible(!isMain);
+    m_backButton->setIcon(panel::artwork("down", dark));
+    m_lockButton->setVisible(isMain);
+    m_settingsButton->setVisible(isMain);
+
+    if (m_subPanel == SubPanel::Wifi)
+        m_title->setText("Wi-Fi Networks");
+    else if (m_subPanel == SubPanel::Bluetooth)
+        m_title->setText("Bluetooth Devices");
+    else
+        m_title->setText("Control Center");
+
+    m_lockButton->setIcon(panel::artwork("lock", dark));
+    m_settingsButton->setIcon(panel::artwork("settings", dark));
+
+    m_users->setVisible(isMain && !m_services.deviceUsers().empty());
     m_users->setUsers(m_services.deviceUsers());
-    m_users->setVisible(!m_users->users().empty());
 
-    m_wireless->setVisible(m_services.wirelessHardwareEnabled());
+    m_wireless->setVisible(isMain && m_services.wirelessHardwareEnabled());
     m_wireless->setChecked(m_services.wirelessEnabled());
+    m_wireless->setArtwork(m_services.wirelessEnabled() ? "wifi" : "wifi_disabled");
     const std::string network = m_services.wirelessName();
     m_wireless->setStatus(!m_wireless->isChecked() ? "Off" : !network.empty() ? network : "On");
 
-    m_bluetooth->setVisible(m_services.bluetoothAvailable());
+    m_bluetooth->setVisible(isMain && m_services.bluetoothAvailable());
     m_bluetooth->setChecked(m_services.bluetoothEnabled());
+    m_bluetooth->setArtwork(m_services.bluetoothEnabled() ? "bluetooth-symbolic" : "bluetooth-off");
     m_bluetooth->setStatus(m_bluetooth->isChecked() ? "On" : "Off");
 
-    m_darkMode->setChecked(ui::Theme::current().darkMode);
-    m_darkMode->setStatus(m_darkMode->isChecked() ? "On" : "Off");
-    m_doNotDisturb->setChecked(m_services.doNotDisturb());
-    m_doNotDisturb->setStatus(m_doNotDisturb->isChecked() ? "On" : "Off");
-    m_camera->setChecked(m_services.cameraEnabled());
-    m_camera->setStatus(m_camera->isChecked() ? "On" : "Off");
-    m_microphone->setChecked(m_services.microphoneEnabled());
-    m_microphone->setStatus(m_microphone->isChecked() ? "On" : "Off");
+    m_wirelessShare->setVisible(isMain);
+    m_wirelessShare->setChecked(m_wirelessShareEnabled);
+    m_wirelessShare->setStatus(m_wirelessShareEnabled ? "On" : "Off");
+    m_wirelessShare->setArtwork(m_wirelessShareEnabled ? "wireless-share" : "wireless-share-off");
 
+    m_kdeConnect->setVisible(isMain);
+    m_kdeConnect->setChecked(false);
+    m_kdeConnect->setStatus("Not Connected");
+
+    m_media->setVisible(isMain);
     m_media->setState(m_services.media());
 
-    m_brightness->setVisible(m_services.brightnessEnabled());
+    m_brightness->setVisible(isMain);
     m_brightness->slider()->setValue(m_services.brightness());
 
     const bool sink = m_services.hasSink();
-    m_sound->setVisible(sink);
+    m_sound->setVisible(isMain && sink);
     m_sound->slider()->setValue(sink ? m_services.volume() : 0);
     m_sound->slider()->setIcon(panel::artwork(volumeIconName(sink, m_services.volume()), false));
+
+    m_powerModeToggle->setVisible(isMain);
+    m_nightShiftToggle->setVisible(isMain);
+    m_captureToggle->setVisible(isMain);
+    m_doNotDisturbToggle->setVisible(isMain);
+    m_darkModeToggle->setVisible(isMain);
+    m_keyLightToggle->setVisible(isMain);
+    m_cameraToggle->setVisible(isMain);
+    m_logoutToggle->setVisible(isMain);
+    m_restartToggle->setVisible(isMain);
+    m_powerOffToggle->setVisible(isMain);
+
+    // Power Mode
+    const std::string profile = m_services.powerProfile();
+    if (profile == "performance") {
+        m_powerModeToggle->setTitle("Perf");
+        m_powerModeToggle->setArtwork("turbo");
+        m_powerModeToggle->setActiveColor(ui::Color::rgb(0xFF9500));
+        m_powerModeToggle->setChecked(true);
+    } else if (profile == "power-saver") {
+        m_powerModeToggle->setTitle("Saver");
+        m_powerModeToggle->setArtwork("power-saver");
+        m_powerModeToggle->setActiveColor(ui::Color::rgb(0x34C759));
+        m_powerModeToggle->setChecked(true);
+    } else {
+        m_powerModeToggle->setTitle("Balanced");
+        m_powerModeToggle->setArtwork("balanced");
+        m_powerModeToggle->setChecked(false);
+    }
+
+    // Night Shift
+    m_nightShiftToggle->setChecked(m_nightLightEnabled);
+    m_nightShiftToggle->setArtwork(m_nightLightEnabled ? "eye-protection" : "eye-protection-off");
+
+    // Focus / DND
+    const bool dnd = m_services.doNotDisturb();
+    m_doNotDisturbToggle->setChecked(dnd);
+    m_doNotDisturbToggle->setArtwork(dnd ? "do-not-disturb" : "do-not-disturb-off");
+
+    // Dark Mode
+    m_darkModeToggle->setChecked(dark);
+    m_darkModeToggle->setTitle(dark ? "Dark" : "Light");
+    m_darkModeToggle->setArtwork(dark ? "dark-mode" : "light-mode");
+
+    // Key Light
+    if (m_keyLightLevel == 2) {
+        m_keyLightToggle->setTitle("Key High");
+        m_keyLightToggle->setArtwork("keyboard-backlight-high");
+        m_keyLightToggle->setChecked(true);
+    } else if (m_keyLightLevel == 1) {
+        m_keyLightToggle->setTitle("Key Low");
+        m_keyLightToggle->setArtwork("keyboard-backlight-low");
+        m_keyLightToggle->setChecked(true);
+    } else {
+        m_keyLightToggle->setTitle("Backlight");
+        m_keyLightToggle->setArtwork("keyboard-backlight-off");
+        m_keyLightToggle->setChecked(false);
+    }
+
+    // Location
+    m_locationToggle->setChecked(m_locationEnabled);
+    m_locationToggle->setArtwork(m_locationEnabled ? "location-mode" : "location-mode-off");
+
+    m_cameraToggle->setChecked(m_services.cameraEnabled());
 
     requestLayout();
     if (layoutHeight() != before && onHeightChanged)
         onHeightChanged();
 }
 
-double ControlCenterView::headerHeight() const
-{
-    // The capitals' top as far from the edge as the text is from the side,
-    // and the tiles as far below the baseline.
-    const double textBaseline = kTitleInset - kGap + m_title->capHeight();
-    return textBaseline + kTitleInset - kGap;
-}
-
 double ControlCenterView::layoutHeight() const
 {
-    const double width = kWidth - 2 * kGap;
-    std::vector<double> heights {headerHeight()};
+    if (m_subPanel != SubPanel::Main) {
+        double h = 10.0 + 32.0 + 10.0; // Header
+        const auto items = m_subPanel == SubPanel::Wifi ? m_services.wirelessNetworks().size() : 1;
+        h += std::max(1UL, items) * 50.0 + 20.0;
+        return h;
+    }
+    double h = 10.0; // top gap
+    h += 32.0 + 10.0; // Header
+
     if (m_users->isVisible())
-        heights.push_back(m_users->heightForWidth(width));
-    int cards = 0;
-    for (const CardItem *card : {m_wireless, m_bluetooth, m_darkMode, m_doNotDisturb, m_camera, m_microphone})
-        cards += card->isVisible();
-    const int rows = (cards + 1) / 2;
-    if (rows > 0)
-        heights.push_back(rows * CardItem::kHeight + (rows - 1) * kGap);
-    heights.push_back(MediaTile::kHeight);
-    if (m_brightness->isVisible())
-        heights.push_back(m_brightness->heightForWidth(width));
-    if (m_sound->isVisible())
-        heights.push_back(m_sound->heightForWidth(width));
-    double height = 0;
-    for (double value : heights)
-        height += value;
-    return height + (heights.size() - 1) * kGap;
+        h += m_users->heightForWidth(kWidth - 20) + 10.0;
+
+    h += 2 * CardItem::kHeight + 10.0 + 10.0; // 2x2 Top Cards Grid
+    h += MediaTile::kHeight + 10.0; // Media Tile
+    h += 2 * 30.0 + 10.0 + 10.0; // Sliders
+    h += 2 * CardItem::kHeight + 10.0 + 10.0; // 2x5 Quick Toggles
+    return h;
 }
 
 double ControlCenterView::windowHeight(double scale) const
 {
-    // Whole device pixels: the tiles' edges stay on the pixel grid.
-    double size = std::ceil(layoutHeight() + kGap * 2);
+    double size = std::ceil(layoutHeight());
     for (int i = 0; i < 120 && std::abs(size * scale - std::round(size * scale)) > 0.001; ++i)
         ++size;
     return size;
@@ -188,54 +403,74 @@ double ControlCenterView::windowHeight(double scale) const
 
 void ControlCenterView::layout()
 {
-    // A theme change relays the view out: the dark mode card follows it.
     if (m_darkModeShown != ui::Theme::current().darkMode) {
         m_darkModeShown = ui::Theme::current().darkMode;
-        m_darkMode->setChecked(m_darkModeShown);
-        m_darkMode->setStatus(m_darkModeShown ? "On" : "Off");
         m_media->setState(m_services.media());
     }
 
-    const double scale = windowScale(this);
-    const double width = kWidth - 2 * kGap;
+    const double contentWidth = kWidth - 2 * kGap; // 340
     double y = kGap;
 
-    const double textBaseline = kTitleInset - kGap + m_title->capHeight();
-    const double titleTop = alignedLabelTop(m_title, textBaseline, scale);
-    m_title->setGeometry({kTitleInset, y + titleTop, width - 2 * (kTitleInset - kGap),
-                          m_title->sizeHint().height});
-    y += headerHeight() + kGap;
+    const bool isMain = m_subPanel == SubPanel::Main;
+    if (!isMain) {
+        m_backButton->setGeometry({16.0, y, 32.0, 32.0});
+        m_title->setGeometry({56.0, y + 4.0, 250.0, m_title->sizeHint().height});
+        return;
+    }
 
+    // Header
+    m_backButton->setVisible(false);
+    m_title->setGeometry({16.0, y + 4.0, 200.0, m_title->sizeHint().height});
+    m_lockButton->setGeometry({contentWidth - 64.0, y, 32.0, 32.0});
+    m_settingsButton->setGeometry({contentWidth - 22.0, y, 32.0, 32.0});
+    y += 32.0 + kGap;
+
+    // Device Users
     if (m_users->isVisible()) {
-        const double height = m_users->heightForWidth(width);
-        m_users->setGeometry({kGap, y, width, height});
-        y += height + kGap;
+        const double h = m_users->heightForWidth(contentWidth);
+        m_users->setGeometry({kGap, y, contentWidth, h});
+        y += h + kGap;
     }
 
-    const double cellWidth = (width - kGap) / 2;
-    int index = 0;
-    for (CardItem *card : {m_wireless, m_bluetooth, m_darkMode, m_doNotDisturb, m_camera, m_microphone}) {
-        if (!card->isVisible())
-            continue;
-        const int row = index / 2;
-        const int column = index % 2;
-        card->setGeometry({kGap + column * (cellWidth + kGap), y + row * (CardItem::kHeight + kGap), cellWidth,
-                           CardItem::kHeight});
-        ++index;
-    }
-    const int rows = (index + 1) / 2;
-    if (rows > 0)
-        y += rows * CardItem::kHeight + (rows - 1) * kGap + kGap;
+    // 2x2 Top Cards Grid
+    const double cardWidth = (contentWidth - kGap) / 2.0; // 165
+    m_wireless->setGeometry({kGap, y, cardWidth, CardItem::kHeight});
+    m_bluetooth->setGeometry({kGap + cardWidth + kGap, y, cardWidth, CardItem::kHeight});
+    y += CardItem::kHeight + kGap;
 
-    m_media->setGeometry({kGap, y, width, MediaTile::kHeight});
+    m_wirelessShare->setGeometry({kGap, y, cardWidth, CardItem::kHeight});
+    m_kdeConnect->setGeometry({kGap + cardWidth + kGap, y, cardWidth, CardItem::kHeight});
+    y += CardItem::kHeight + kGap;
+
+    // Media Tile
+    m_media->setGeometry({kGap, y, contentWidth, MediaTile::kHeight});
     y += MediaTile::kHeight + kGap;
 
-    for (TileSlider *slider : {m_brightness, m_sound}) {
-        if (!slider->isVisible())
-            continue;
-        const double height = slider->heightForWidth(width);
-        slider->setGeometry({kGap, y, width, height});
-        y += height + kGap;
+    // Sliders
+    if (m_brightness->isVisible()) {
+        m_brightness->setGeometry({kGap, y, contentWidth, 30.0});
+        y += 30.0 + kGap;
+    }
+    if (m_sound->isVisible()) {
+        m_sound->setGeometry({kGap, y, contentWidth, 30.0});
+        y += 30.0 + kGap;
+    }
+
+    // 2x5 Quick Toggles Grid
+    const double toggleWidth = (contentWidth - 4 * 7.5) / 5.0; // ~62
+    const double toggleGap = 7.5;
+
+    std::vector<CardItem *> row1 = {m_powerModeToggle, m_nightShiftToggle, m_captureToggle, m_doNotDisturbToggle,
+                                    m_darkModeToggle};
+    for (size_t i = 0; i < row1.size(); ++i) {
+        row1[i]->setGeometry({kGap + i * (toggleWidth + toggleGap), y, toggleWidth, CardItem::kHeight});
+    }
+    y += CardItem::kHeight + kGap;
+
+    std::vector<CardItem *> row2 = {m_keyLightToggle, m_cameraToggle, m_logoutToggle, m_restartToggle,
+                                    m_powerOffToggle};
+    for (size_t i = 0; i < row2.size(); ++i) {
+        row2[i]->setGeometry({kGap + i * (toggleWidth + toggleGap), y, toggleWidth, CardItem::kHeight});
     }
 }
 

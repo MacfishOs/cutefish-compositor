@@ -18,10 +18,7 @@
 
 namespace cutefish::shell {
 
-// How long a press is held before it counts as press-and-hold.
 static constexpr std::chrono::milliseconds kPressAndHold {800};
-
-// The light/ artwork's ink, for glyphs drawn in its place.
 static constexpr ui::Color kLightArtwork = ui::Color::rgb(0x383838);
 static constexpr ui::Color kWhite = ui::Color::rgb(0xFFFFFF);
 
@@ -43,7 +40,6 @@ void SvgIcon::paint(ui::Painter &painter)
 {
     if (m_file.empty())
         return;
-    // On whole device pixels, as FishUI's IconItem puts its pixmap.
     const ui::Rect device = painter.snappedRect(localRect());
     const double scale = painter.scale();
     const ui::PointF offset = painter.offset();
@@ -53,15 +49,66 @@ void SvgIcon::paint(ui::Painter &painter)
                     m_tint);
 }
 
+// HeaderButton (32x32 round button for top right header)
+HeaderButton::HeaderButton()
+{
+    m_icon = addChild<SvgIcon>();
+}
+
+void HeaderButton::setIcon(std::string file)
+{
+    m_icon->setFile(std::move(file));
+}
+
+void HeaderButton::layout()
+{
+    m_icon->setGeometry({8, 8, 16, 16});
+}
+
+void HeaderButton::paint(ui::Painter &painter)
+{
+    const ui::RectF rect = localRect();
+    const ui::Color bg = m_pressed ? panel::rgba(1, 1, 1, 0.25) : panel::inactiveCircleColor();
+    painter.fillRoundedRect(rect, rect.height / 2.0, bg);
+}
+
+void HeaderButton::pointerPress(const ui::PointerEvent &event)
+{
+    if (event.button != ui::MouseButton::Left)
+        return;
+    m_pressed = true;
+    requestPaint();
+}
+
+void HeaderButton::pointerRelease(const ui::PointerEvent &event)
+{
+    if (event.button != ui::MouseButton::Left || !m_pressed)
+        return;
+    m_pressed = false;
+    requestPaint();
+    const ui::RectF rect = localRect();
+    if (event.position.x >= 0 && event.position.y >= 0 && event.position.x < rect.width
+        && event.position.y < rect.height) {
+        if (onClicked)
+            onClicked();
+    }
+}
+
+// CardItem
 CardItem::CardItem()
 {
     m_svg = addChild<SvgIcon>();
-    m_glyph = addChild<ui::Icon>(std::string(), kIconSize);
+    m_glyph = addChild<ui::Icon>(std::string(), 16);
     m_glyph->setVisible(false);
+    m_chevronSvg = addChild<SvgIcon>();
+    m_chevronSvg->setVisible(false);
+
     m_title = addChild<ui::Label>();
     m_title->setElide(ui::Label::Elide::Right);
+
     m_status = addChild<ui::Label>();
     m_status->setElide(ui::Label::Elide::Right);
+
     m_holdTimer.setSingleShot(true);
     m_holdTimer.setInterval(kPressAndHold);
     m_holdTimer.onTimeout = [this] {
@@ -74,6 +121,15 @@ CardItem::CardItem()
 }
 
 CardItem::~CardItem() = default;
+
+void CardItem::setMode(Mode mode)
+{
+    if (m_mode == mode)
+        return;
+    m_mode = mode;
+    requestLayout();
+    requestPaint();
+}
 
 void CardItem::setArtwork(std::string name)
 {
@@ -99,6 +155,21 @@ void CardItem::setChecked(bool checked)
     m_checked = checked;
     updateIcon();
     requestPaint();
+}
+
+void CardItem::setActiveColor(ui::Color color)
+{
+    m_activeColor = color;
+    requestPaint();
+}
+
+void CardItem::setShowChevron(bool show)
+{
+    m_showChevron = show;
+    m_chevronSvg->setVisible(show);
+    if (show)
+        m_chevronSvg->setFile(panel::artwork("chevron-right", panel::dark()));
+    requestLayout();
 }
 
 void CardItem::setTitle(std::string title)
@@ -128,43 +199,82 @@ void CardItem::updateIcon()
 void CardItem::layout()
 {
     const ui::Theme &theme = ui::Theme::current();
-    // A theme change relays the card out; the artwork follows it here.
     updateIcon();
-    const double padding = theme.largeSpacing;
-    const double height = geometry().height;
-    const ui::RectF slot {padding, (height - kPlateSize) / 2, kPlateSize, kPlateSize};
-    const ui::RectF icon {slot.x + (kPlateSize - kIconSize) / 2, slot.y + (kPlateSize - kIconSize) / 2, kIconSize,
-                          kIconSize};
-    m_svg->setGeometry(icon);
-    m_glyph->setGeometry(icon);
 
-    m_status->setFontSize(theme.smallFontSize());
-    m_status->setColor(panel::secondaryTextColor());
-    m_status->setVisible(!m_status->text().empty());
-    const double x = slot.x + kPlateSize + theme.smallSpacing * 1.5;
-    const double width = std::max(0.0, geometry().width - x - padding);
-    const double titleHeight = m_title->sizeHint().height;
-    const double statusHeight = m_status->isVisible() ? m_status->sizeHint().height : 0;
-    const double top = (height - titleHeight - statusHeight) / 2;
-    m_title->setGeometry({x, top, width, titleHeight});
-    m_status->setGeometry({x, top + titleHeight, width, statusHeight});
+    if (m_mode == Mode::TopCard) {
+        // 2x2 Top Card Layout
+        const double plateSize = 40.0;
+        const double iconSize = 22.0;
+        const ui::RectF plateRect {10, (geometry().height - plateSize) / 2.0, plateSize, plateSize};
+        const ui::RectF iconRect {plateRect.x + (plateSize - iconSize) / 2.0,
+                                  plateRect.y + (plateSize - iconSize) / 2.0, iconSize, iconSize};
+
+        m_svg->setGeometry(iconRect);
+        m_glyph->setGeometry(iconRect);
+
+        m_status->setFontSize(11.0);
+        m_status->setColor(panel::secondaryTextColor());
+        m_status->setVisible(!m_status->text().empty());
+
+        m_title->setFontSize(12.0);
+        m_title->setColor(theme.text);
+
+        const double x = plateRect.x + plateSize + 10.0;
+        const double rightSpace = m_showChevron ? 34.0 : 10.0;
+        const double width = std::max(0.0, geometry().width - x - rightSpace);
+        const double titleHeight = m_title->sizeHint().height;
+        const double statusHeight = m_status->isVisible() ? m_status->sizeHint().height : 0.0;
+        const double top = (geometry().height - titleHeight - statusHeight) / 2.0;
+
+        m_title->setGeometry({x, top, width, titleHeight});
+        m_status->setGeometry({x, top + titleHeight, width, statusHeight});
+
+        if (m_showChevron) {
+            m_chevronSvg->setGeometry({geometry().width - 26, (geometry().height - 14) / 2.0, 7, 14});
+            m_chevronSvg->setFile(panel::artwork("chevron-right", panel::dark()));
+        }
+    } else {
+        // QuickToggle Layout
+        const double circleSize = 42.0;
+        const double iconSize = 22.0;
+        const double circleX = (geometry().width - circleSize) / 2.0;
+        const ui::RectF circleRect {circleX, 0, circleSize, circleSize};
+        const ui::RectF iconRect {circleX + (circleSize - iconSize) / 2.0, (circleSize - iconSize) / 2.0,
+                                  iconSize, iconSize};
+
+        m_svg->setGeometry(iconRect);
+        m_glyph->setGeometry(iconRect);
+
+        m_status->setVisible(false);
+        m_title->setFontSize(11.0);
+        m_title->setColor(theme.text);
+        m_title->setTextAlignment(ui::Label::TextAlignment::Center);
+        const double titleHeight = m_title->sizeHint().height;
+        m_title->setGeometry({-10.0, 44.0, geometry().width + 20.0, titleHeight});
+    }
 }
 
 void CardItem::paint(ui::Painter &painter)
 {
-    panel::paintTile(painter, localRect());
-    const ui::Color surface = panel::tileInkColor();
-    const bool darkSurface = panel::isDark(surface);
-    const ui::Color highlight = ui::Theme::current().highlight;
-    ui::Color plate;
-    if (m_checked)
-        plate = m_pressed ? panel::shade(highlight, 0.2) : highlight;
-    else
-        plate = panel::on(surface, m_pressed ? (darkSurface ? 0.25 : 0.2) : (darkSurface ? 0.15 : 0.1));
-    const double padding = ui::Theme::current().largeSpacing;
-    const ui::RectF slot {padding, (geometry().height - kPlateSize) / 2, kPlateSize, kPlateSize};
-    const ui::RectF rect = panel::parityPlate(slot, kIconSize, painter.scale());
-    painter.fillRoundedRect(rect, rect.width / 2, plate);
+    if (m_mode == Mode::TopCard) {
+        panel::paintTile(painter, localRect());
+
+        const double circleSize = 40.0;
+        const ui::RectF slot {10, (geometry().height - circleSize) / 2.0, circleSize, circleSize};
+        ui::Color circleBg = m_checked ? m_activeColor : panel::inactiveCircleColor();
+        if (m_pressed)
+            circleBg = panel::shade(circleBg, 0.15);
+        painter.fillRoundedRect(slot, circleSize / 2.0, circleBg);
+    } else {
+        // QuickToggle circle button
+        const double circleSize = 42.0;
+        const double circleX = (geometry().width - circleSize) / 2.0;
+        const ui::RectF circleRect {circleX, 0, circleSize, circleSize};
+        ui::Color circleBg = m_checked ? m_activeColor : panel::inactiveCircleColor();
+        if (m_pressed)
+            circleBg = panel::shade(circleBg, 0.15);
+        painter.fillRoundedRect(circleRect, circleSize / 2.0, circleBg);
+    }
 }
 
 void CardItem::pointerPress(const ui::PointerEvent &event)
@@ -184,12 +294,22 @@ void CardItem::pointerRelease(const ui::PointerEvent &event)
     m_pressed = false;
     m_holdTimer.stop();
     requestPaint();
+
     const ui::RectF rect = localRect();
     const bool inside = event.position.x >= 0 && event.position.y >= 0 && event.position.x < rect.width
             && event.position.y < rect.height;
-    // A press that was held has had its action.
-    if (inside && !m_held && onClicked)
-        onClicked();
+
+    if (inside && !m_held) {
+        if (m_mode == Mode::TopCard && m_showChevron && event.position.x > rect.width - 36) {
+            if (onChevronClicked)
+                onChevronClicked();
+            else if (onPressAndHold)
+                onPressAndHold();
+        } else {
+            if (onClicked)
+                onClicked();
+        }
+    }
 }
 
 IconButton::IconButton()
@@ -272,15 +392,13 @@ void IconButton::pointerRelease(const ui::PointerEvent &event)
         onClicked();
 }
 
-// MprisItem's buttons: 28 px each, 6 apart.
-static constexpr double kButtonSize = 28;
-
+// MediaTile (76px height)
 MediaTile::MediaTile()
 {
     m_cover = addChild<SvgIcon>();
     m_art = addChild<ui::ImageView>();
     m_art->setFillMode(ui::ImageView::FillMode::PreserveAspectFit);
-    m_art->setCornerRadius(ui::Theme::current().smallRadius, ui::Corners::Continuous);
+    m_art->setCornerRadius(12, ui::Corners::Continuous);
     m_art->setVisible(false);
     m_art->onStatusChanged = [this](ui::ImageView::Status status) {
         m_artReady = status == ui::ImageView::Status::Ready;
@@ -341,12 +459,20 @@ void MediaTile::updateArtwork()
     for (IconButton *button : {m_previous, m_play, m_next})
         button->setSurfaceColor(panel::tileInkColor());
 
-    // Album art from a file; anything else keeps the default cover.
     std::string path;
-    if (m_state.hasPlayer && base::url::isLocalFile(m_state.artUrl))
-        path = base::url::toLocalFile(m_state.artUrl).value_or(std::string());
-    else if (m_state.hasPlayer && m_state.artUrl.starts_with("/"))
-        path = m_state.artUrl;
+    if (m_state.hasPlayer && !m_state.artUrl.empty()) {
+        if (auto local = base::url::toLocalFile(m_state.artUrl))
+            path = *local;
+        else if (m_state.artUrl.starts_with("/"))
+            path = m_state.artUrl;
+        else if (m_state.artUrl.starts_with("file://")) {
+            std::string url = m_state.artUrl.substr(7);
+            if (url.starts_with("localhost/"))
+                url = url.substr(10);
+            path = base::url::percentDecoded(url);
+        } else
+            path = m_state.artUrl;
+    }
     if (path != m_art->source()) {
         m_artReady = false;
         m_art->setVisible(false);
@@ -357,36 +483,37 @@ void MediaTile::updateArtwork()
 
 void MediaTile::layout()
 {
-    const ui::Theme &theme = ui::Theme::current();
     updateArtwork();
-    const double padding = theme.largeSpacing;
-    const double content = geometry().height - 2 * padding;
-    const ui::RectF art {padding, padding, content, content};
+    const double height = geometry().height;
+    const double padding = 10.0;
+    const double artSize = 56.0;
+    const ui::RectF art {padding, (height - artSize) / 2.0, artSize, artSize};
     m_cover->setGeometry(art);
     m_art->setGeometry(art);
-    m_art->setSourceSize({content, content});
+    m_art->setSourceSize({artSize, artSize});
 
-    // The last glyph lines up with the sliders' tracks: the artwork keeps 3.125
-    // of its 16 units clear, and 2px more make up for the tracks' rounded ends.
-    const double iconInset = (kButtonSize - kButtonSize * 0.75) / 2;
-    const double rightMargin = -iconInset - (kButtonSize - iconInset * 2) * 3.125 / 16 + 2;
-    const double spacing = theme.smallSpacing;
-    const double buttonsWidth = 3 * kButtonSize + 2 * spacing;
-    const double buttonsX = geometry().width - padding - rightMargin - buttonsWidth;
-    const double buttonY = padding + (content - kButtonSize) / 2;
-    m_previous->setGeometry({buttonsX, buttonY, kButtonSize, kButtonSize});
-    m_play->setGeometry({buttonsX + kButtonSize + spacing, buttonY, kButtonSize, kButtonSize});
-    m_next->setGeometry({buttonsX + 2 * (kButtonSize + spacing), buttonY, kButtonSize, kButtonSize});
+    const double buttonSize = 28.0;
+    const double spacing = 6.0;
+    const double buttonsWidth = 3 * buttonSize + 2 * spacing;
+    const double buttonsX = geometry().width - padding - buttonsWidth;
+    const double buttonY = (height - buttonSize) / 2.0;
 
-    m_artist->setFontSize(theme.smallFontSize());
+    m_previous->setGeometry({buttonsX, buttonY, buttonSize, buttonSize});
+    m_play->setGeometry({buttonsX + buttonSize + spacing, buttonY, buttonSize, buttonSize});
+    m_next->setGeometry({buttonsX + 2 * (buttonSize + spacing), buttonY, buttonSize, buttonSize});
+
+    m_artist->setFontSize(11.0);
     m_artist->setVisible(!m_artist->text().empty());
-    const double x = art.x + art.width + padding;
-    const double width = std::max(0.0, buttonsX - padding - x);
+    m_title->setFontSize(13.0);
+
+    const double textX = art.x + art.width + 12.0;
+    const double textWidth = std::max(0.0, buttonsX - 8.0 - textX);
     const double titleHeight = m_title->sizeHint().height;
-    const double artistHeight = m_artist->isVisible() ? m_artist->sizeHint().height : 0;
-    const double top = padding + (content - titleHeight - artistHeight) / 2;
-    m_title->setGeometry({x, top, width, titleHeight});
-    m_artist->setGeometry({x, top + titleHeight, width, artistHeight});
+    const double artistHeight = m_artist->isVisible() ? m_artist->sizeHint().height : 0.0;
+    const double textTop = (height - titleHeight - artistHeight) / 2.0;
+
+    m_title->setGeometry({textX, textTop, textWidth, titleHeight});
+    m_artist->setGeometry({textX, textTop + titleHeight, textWidth, artistHeight});
 }
 
 void MediaTile::paint(ui::Painter &painter)
@@ -394,16 +521,14 @@ void MediaTile::paint(ui::Painter &painter)
     panel::paintTile(painter, localRect());
     if (m_artReady)
         return;
-    // The cards' plate colour under the default cover, inside its mask.
     const ui::Color surface = panel::tileInkColor();
     const ui::RectF art = m_cover->geometry();
-    painter.fillRoundedRect(art, ui::Theme::current().smallRadius,
-                            panel::on(surface, panel::isDark(surface) ? 0.15 : 0.1), ui::Corners::Continuous);
+    painter.fillRoundedRect(art, 12, panel::on(surface, panel::isDark(surface) ? 0.15 : 0.1),
+                            ui::Corners::Continuous);
 }
 
 std::string deviceUsageText(const DeviceUser &user)
 {
-    // Whole phrases rather than joined parts, so each translates as one.
     if (user.camera && user.microphone && user.systemAudio)
         return "is using the camera and microphone and recording system audio";
     if (user.camera && user.microphone)
@@ -447,9 +572,7 @@ void DeviceUsersTile::setUsers(const std::vector<DeviceUser> &users)
 
 double DeviceUsersTile::inset() const
 {
-    // The icon centred where the cards' plates are, its gap to the tile's
-    // edges the same on every side.
-    return ui::Theme::current().largeSpacing + (CardItem::kPlateSize - kIconSize) / 2;
+    return 6.0 + (40.0 - kIconSize) / 2;
 }
 
 double DeviceUsersTile::rowHeight() const
@@ -477,10 +600,8 @@ void DeviceUsersTile::layout()
     const double height = rowHeight();
     double y = inset();
     for (const Row &row : m_rows) {
-        row.icon->setGeometry({left + (CardItem::kPlateSize - kIconSize) / 2, y + (height - kIconSize) / 2,
-                               kIconSize, kIconSize});
-        const double sentenceX = left + CardItem::kPlateSize + spacing;
-        // The dot keeps the row's end; only the name gives way to a narrow panel.
+        row.icon->setGeometry({left + (40.0 - kIconSize) / 2, y + (height - kIconSize) / 2, kIconSize, kIconSize});
+        const double sentenceX = left + 40.0 + spacing;
         const double sentenceWidth = std::max(0.0, right - 6 - spacing - sentenceX);
         const double usageWidth = row.usage->sizeHint().width;
         const double nameWidth = std::min(row.name->sizeHint().width, std::max(0.0, sentenceWidth - usageWidth));

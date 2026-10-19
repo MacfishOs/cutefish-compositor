@@ -199,6 +199,31 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
         open.controlCenter = view.get();
         view->onHideRequested = [this] { close(Panel::ControlCenter); };
         view->onHeightChanged = [this] { resizeControlCenter(); };
+        view->onLockRequested = [this] {
+            if (m_powerActions)
+                m_powerActions->lockScreen();
+            close(Panel::ControlCenter);
+        };
+        view->onSettingsRequested = [this] {
+            m_services->openSettings({});
+            close(Panel::ControlCenter);
+        };
+        view->onScreenshotRequested = [this] {
+            close(Panel::ControlCenter);
+            if (base::dbus::Connection *bus = base::dbus::Connection::session())
+                base::dbus::Proxy(bus, "org.cutefish.Screenshot", "/Screenshot", "org.cutefish.Screenshot").send("startCaptureMode");
+        };
+        view->onPowerActionRequested = [this](int action) {
+            close(Panel::ControlCenter);
+            if (!m_powerActions)
+                return;
+            if (action == 1)
+                m_powerActions->request(PowerActions::Logout);
+            else if (action == 2)
+                m_powerActions->request(PowerActions::Reboot);
+            else if (action == 3)
+                m_powerActions->request(PowerActions::Shutdown);
+        };
         content = std::move(view);
         break;
     }

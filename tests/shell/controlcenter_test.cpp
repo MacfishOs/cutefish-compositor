@@ -270,10 +270,10 @@ TEST_F(ControlCenterTest, TheControlCentreHangsBelowTheBarWithThePanelGlass)
     EXPECT_TRUE(window->wmWindow()->isPopup());
     // Right of the screen it does not fit: 6 from the edge, 6 below the bar.
     const base::Rect bounds = window->drawnBounds();
-    EXPECT_EQ(base::Rect(1440 - 360 - 6, 38, 360, bounds.height()), bounds);
+    EXPECT_EQ(base::Rect(1440 - 390 - 6, 38, 390, bounds.height()), bounds);
     EXPECT_GT(bounds.height(), 400);
     EXPECT_TRUE(window->surface()->glass().enabled);
-    EXPECT_EQ(base::Rect(0, 0, 360, bounds.height()), window->surface()->backgroundBlurRect());
+    EXPECT_EQ(base::Rect(0, 0, 390, bounds.height()), window->surface()->backgroundBlurRect());
     EXPECT_EQ(16, window->surface()->backgroundBlurRadius());
 
     // Escape closes it; the bar lends it the keyboard.

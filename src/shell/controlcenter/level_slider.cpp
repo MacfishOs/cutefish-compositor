@@ -165,39 +165,27 @@ bool LevelSlider::scroll(const ui::ScrollEvent &event)
 TileSlider::TileSlider(std::string title)
 {
     m_title = addChild<ui::Label>(std::move(title));
-    m_title->setElide(ui::Label::Elide::Right);
+    m_title->setVisible(false);
     m_slider = addChild<LevelSlider>();
 }
 
-// The capitals' top, not the line box, keeps the padding from the tile's edge.
 double TileSlider::heightForWidth(double) const
 {
-    const double padding = ui::Theme::current().largeSpacing;
-    const double spacing = ui::Theme::current().smallSpacing;
-    return padding + alignedLabelHeight(m_title, m_title->capHeight(), windowScale(this)) + spacing
-            + LevelSlider::kHeight + padding;
+    return 30.0;
 }
 
 ui::SizeF TileSlider::sizeHint() const
 {
-    return {0, heightForWidth(0)};
+    return {0, 30.0};
 }
 
 void TileSlider::layout()
 {
-    const double padding = ui::Theme::current().largeSpacing;
-    const double spacing = ui::Theme::current().smallSpacing;
-    const double scale = windowScale(this);
-    const double width = geometry().width - 2 * padding;
-    const double labelTop = alignedLabelTop(m_title, m_title->capHeight(), scale);
-    const double labelHeight = m_title->sizeHint().height;
-    m_title->setGeometry({padding + 3, padding + labelTop, width - 3, labelHeight});
-    m_slider->setGeometry({padding, padding + labelTop + labelHeight + spacing, width, LevelSlider::kHeight});
+    m_slider->setGeometry({0, 0, geometry().width, 30.0});
 }
 
-void TileSlider::paint(ui::Painter &painter)
+void TileSlider::paint(ui::Painter &)
 {
-    panel::paintTile(painter, localRect());
 }
 
 bool TileSlider::scroll(const ui::ScrollEvent &event)

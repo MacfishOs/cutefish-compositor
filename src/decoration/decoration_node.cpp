@@ -167,40 +167,43 @@ void DecorationNode::paintButtons(render::Renderer& renderer, const base::Rect& 
 {
     const int rasterDensity = int(std::ceil(renderer.rasterScale()));
     const Metrics& metrics = m_theme->metrics();
-    const Palette& palette = m_theme->palette();
-    const render::Color iconColor = palette.buttonIcon;
-
     for (const CaptionButton& button : m_decoration->buttons()) {
         const base::Rect geometry = button.geometry().translated(bounds.origin());
         if (!bounds.contains(innerCenter(geometry)))
             continue;
 
+        render::Color dotColor;
+        if (button.type() == CaptionButtonType::Close)
+            dotColor = render::Color(1.0f, 0.37f, 0.33f, 1.0f);
+        else if (button.type() == CaptionButtonType::Minimize)
+            dotColor = render::Color(1.0f, 0.74f, 0.18f, 1.0f);
+        else
+            dotColor = render::Color(0.15f, 0.79f, 0.25f, 1.0f);
+
+        const std::string circleKey = std::format("{}macdot:{}:{}", rasterDensity, 16, colorKey(dotColor));
+        render::Texture* circleTex = m_theme->texture(renderer, circleKey, [&] {
+            return renderButtonHighlight(16 * rasterDensity, dotColor);
+        });
+        if (circleTex) {
+            const base::Size size = (base::SizeF(circleTex->size()) / rasterDensity).toSize();
+            renderer.drawTexture(circleTex, centeredAt(size, innerCenter(geometry)));
+        }
+
         if (button.isHovered() || button.isPressed()) {
-            const render::Color wash =
-                button.isPressed() ? palette.buttonPressed : palette.buttonHover;
-            const std::string key = std::format("{}wash:{}:{}", rasterDensity,
-                                                metrics.buttonSize, colorKey(wash));
+            const bool restore = m_decoration->isRestoreButton();
+            const render::Color iconColor(0.2f, 0.2f, 0.2f, 1.0f);
+            const std::string key =
+                std::format("{}icon:{}:{}:{}", rasterDensity, iconName(button.type(), restore),
+                            10, colorKey(iconColor));
             render::Texture* texture = m_theme->texture(renderer, key, [&] {
-                return renderButtonHighlight(metrics.buttonSize * rasterDensity, wash);
+                return renderCaptionIcon(button.type(), restore, 10 * rasterDensity,
+                                         iconColor);
             });
             if (texture) {
                 const base::Size size = (base::SizeF(texture->size()) / rasterDensity).toSize();
                 renderer.drawTexture(texture, centeredAt(size, innerCenter(geometry)));
             }
         }
-
-        const bool restore = m_decoration->isRestoreButton();
-        const std::string key =
-            std::format("{}icon:{}:{}:{}", rasterDensity, iconName(button.type(), restore),
-                        metrics.iconSize, colorKey(iconColor));
-        render::Texture* texture = m_theme->texture(renderer, key, [&] {
-            return renderCaptionIcon(button.type(), restore, metrics.iconSize * rasterDensity,
-                                     iconColor);
-        });
-        if (!texture)
-            continue;
-        const base::Size size = (base::SizeF(texture->size()) / rasterDensity).toSize();
-        renderer.drawTexture(texture, centeredAt(size, innerCenter(geometry)));
     }
 }
 

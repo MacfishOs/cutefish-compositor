@@ -48,9 +48,9 @@ Decoration::Decoration(wm::Window *window, Theme *theme)
     : m_window(window)
     , m_theme(theme)
 {
+    m_buttons.emplace_back(CaptionButtonType::Close);
     m_buttons.emplace_back(CaptionButtonType::Minimize);
     m_buttons.emplace_back(CaptionButtonType::Maximize);
-    m_buttons.emplace_back(CaptionButtonType::Close);
 
     if (scene::Node *windowNode = m_window->visualNode()) {
         auto node = std::make_unique<DecorationNode>(this, m_theme);
@@ -156,9 +156,9 @@ base::Rect Decoration::captionArea() const
     if (!m_buttons.empty()) {
         buttonsWidth = static_cast<int>(m_buttons.size()) * metrics.buttonSize
                 + (static_cast<int>(m_buttons.size()) - 1) * metrics.buttonSpacing
-                + metrics.buttonsRightMargin;
+                + 12;
     }
-    return area.adjusted(metrics.captionMargin, 0, -(buttonsWidth + metrics.captionMargin), 0);
+    return area.adjusted(buttonsWidth + metrics.captionMargin, 0, -metrics.captionMargin, 0);
 }
 
 void Decoration::layout()
@@ -166,14 +166,11 @@ void Decoration::layout()
     const Metrics &metrics = m_theme->metrics();
     const base::Rect titleBar = titleBarRect();
 
-    // The group is right-aligned, in the order the Cutefish KWin configuration
-    // lists it: minimize, maximize, close.
-    int right = titleBar.right() - metrics.buttonsRightMargin;
+    int left = titleBar.left() + 12;
     const int top = titleBar.top() + std::max(0, (titleBar.height() - metrics.buttonSize) / 2);
-    for (auto button = m_buttons.rbegin(); button != m_buttons.rend(); ++button) {
-        const int left = right - metrics.buttonSize;
-        button->setGeometry(base::Rect(left, top, metrics.buttonSize, metrics.buttonSize));
-        right = left - metrics.buttonSpacing;
+    for (CaptionButton &button : m_buttons) {
+        button.setGeometry(base::Rect(left, top, metrics.buttonSize, metrics.buttonSize));
+        left += metrics.buttonSize + 8;
     }
 }
 

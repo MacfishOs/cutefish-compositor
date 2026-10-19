@@ -27,6 +27,10 @@ inline constexpr double kPopupMargin = 6;
 inline constexpr double kTileRadius = 16;
 
 bool dark();
+ui::Color rgba(double red, double green, double blue, double alpha = 1.0);
+ui::Color inactiveCircleColor();
+ui::Color cardBgColor();
+ui::Color cardBorderColor();
 // PanelStyle.tileColor: a lift of the panel rather than a card on it.
 ui::Color tileColor();
 // PanelStyle.tileInkColor: what a tile reads as, opaque, for the ink of

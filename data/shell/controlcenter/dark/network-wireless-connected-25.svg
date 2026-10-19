@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Base Signal Dot -->
+  <circle cx="12" cy="19" r="2.2" fill="#FFFFFF" opacity="1.0"/>
+  <!-- Arc 1 (Inner Wave) -->
+  <path d="M 8.11 15.11 A 5.5 5.5 0 0 1 15.89 15.11" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" opacity="1.0"/>
+  <!-- Arc 2 (Middle Wave) -->
+  <path d="M 5.28 12.28 A 9.5 9.5 0 0 1 18.72 12.28" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" opacity="0.28"/>
+  <!-- Arc 3 (Outer Wave) -->
+  <path d="M 2.45 9.45 A 13.5 13.5 0 0 1 21.55 9.45" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" opacity="0.28"/>
+</svg>

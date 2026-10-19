@@ -22,8 +22,7 @@ class Label;
 
 namespace cutefish::shell {
 
-// An SVG file drawn at its rect's device size on whole device pixels, as
-// FishUI's IconItem draws a file; tinted when given a colour.
+// An SVG file drawn at its rect's device size on whole device pixels.
 class SvgIcon : public ui::View
 {
 public:
@@ -38,30 +37,61 @@ private:
     std::optional<ui::Color> m_tint;
 };
 
-// A toggle tile: a round plate with the glyph, a
-// title and a status line. The whole card clicks; holding it 800 ms does the
-// press-and-hold action instead. No hover state, no animation.
+// Header circular button (Lock Screen, Settings)
+class HeaderButton : public ui::View
+{
+public:
+    static constexpr double kSize = 32;
+
+    HeaderButton();
+
+    void setIcon(std::string file);
+
+    std::function<void()> onClicked;
+
+    ui::SizeF sizeHint() const override { return {kSize, kSize}; }
+    bool acceptsPointer() const override { return true; }
+
+protected:
+    void layout() override;
+    void paint(ui::Painter &painter) override;
+    void pointerPress(const ui::PointerEvent &event) override;
+    void pointerRelease(const ui::PointerEvent &event) override;
+
+private:
+    SvgIcon *m_icon;
+    bool m_pressed = false;
+};
+
+// CardItem: represents either a 2x2 Top Card or a Round Quick Toggle.
 class CardItem : public ui::View
 {
 public:
-    static constexpr double kPlateSize = 28;
-    static constexpr double kIconSize = 16;
-    static constexpr double kHeight = kPlateSize + 12 * 2 + 4;
+    enum class Mode {
+        TopCard,
+        QuickToggle,
+    };
+
+    static constexpr double kHeight = 60;
 
     CardItem();
     ~CardItem() override;
 
-    // `name`'s light/ artwork, dark/ when dark or checked.
+    void setMode(Mode mode);
+    Mode mode() const { return m_mode; }
+
     void setArtwork(std::string name);
-    // A FishUI.Icon glyph in place of artwork.
     void setGlyph(std::string name);
     void setChecked(bool checked);
     bool isChecked() const { return m_checked; }
+    void setActiveColor(ui::Color color);
+    void setShowChevron(bool show);
     void setTitle(std::string title);
     void setStatus(std::string status);
 
     std::function<void()> onClicked;
     std::function<void()> onPressAndHold;
+    std::function<void()> onChevronClicked;
 
     ui::SizeF sizeHint() const override { return {0, kHeight}; }
     bool acceptsPointer() const override { return true; }
@@ -75,26 +105,28 @@ protected:
 private:
     void updateIcon();
 
+    Mode m_mode = Mode::TopCard;
     std::string m_artwork;
     bool m_checked = false;
     bool m_pressed = false;
     bool m_held = false;
+    bool m_showChevron = false;
+    ui::Color m_activeColor = ui::Color::rgb(0x007AFF);
     SvgIcon *m_svg;
+    SvgIcon *m_chevronSvg;
     ui::Icon *m_glyph;
     ui::Label *m_title;
     ui::Label *m_status;
     base::Timer m_holdTimer;
 };
 
-// An icon at three quarters of the button, a
-// round ink plate under it while hovered and enabled.
+// An icon button for media playback.
 class IconButton : public ui::View
 {
 public:
     IconButton();
 
     void setFile(std::string file);
-    // What the button sits on, for the ink of its plate.
     void setSurfaceColor(ui::Color color);
 
     std::function<void()> onClicked;
@@ -117,13 +149,11 @@ private:
     bool m_inside = false;
 };
 
-// The media card, 60 tall. Always shown; without a
-// playing player it reads "Not Playing" with the default cover and three
-// dimmed, disabled buttons.
+// MPRIS Media Card (76px height)
 class MediaTile : public ui::View
 {
 public:
-    static constexpr double kHeight = 60;
+    static constexpr double kHeight = 76;
 
     MediaTile();
 
@@ -157,8 +187,7 @@ private:
     bool m_artReady = false;
 };
 
-// The applications behind the bar's privacy dot, one sentence each, in a
-// tile above the cards.
+// DeviceUsersTile (privacy dot applications)
 class DeviceUsersTile : public ui::View
 {
 public:
@@ -191,7 +220,6 @@ private:
     std::vector<Row> m_rows;
 };
 
-// DeviceUsers' sentence for what an application uses, after its name.
 std::string deviceUsageText(const DeviceUser &user);
 
 } // namespace cutefish::shell

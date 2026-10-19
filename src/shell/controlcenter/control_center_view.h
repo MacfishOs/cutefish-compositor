@@ -19,40 +19,50 @@ namespace cutefish::shell {
 class CardItem;
 class ControlCenterServices;
 class DeviceUsersTile;
+class HeaderButton;
 class MediaTile;
 class TileSlider;
 
-// The control centre's content without its window: the title, the
-// device-users tile, the cards, the media card and the two sliders, 360 wide.
+// The control centre's view matching reference QML design.
 class ControlCenterView : public ui::View
 {
 public:
-    static constexpr double kWidth = 360;
-    // Between the tiles and round them.
+    static constexpr double kWidth = 390;
     static constexpr double kGap = 10;
-    // The status panels' text inset, from the side and from the top.
-    static constexpr double kTitleInset = 16;
+
+    enum class SubPanel { Main, Wifi, Bluetooth };
 
     explicit ControlCenterView(ControlCenterServices &services);
     ~ControlCenterView() override;
 
-    // Reads the services again.
     void refresh();
-    // The window height at `scale`: the layout's, on whole device pixels.
     double windowHeight(double scale) const;
 
+    SubPanel subPanel() const { return m_subPanel; }
+    void setSubPanel(SubPanel panel) { m_subPanel = panel; requestLayout(); refresh(); }
+
+    // Top 2x2 Cards
     CardItem *wirelessCard() const { return m_wireless; }
     CardItem *bluetoothCard() const { return m_bluetooth; }
-    CardItem *darkModeCard() const { return m_darkMode; }
-    CardItem *doNotDisturbCard() const { return m_doNotDisturb; }
-    CardItem *cameraCard() const { return m_camera; }
+    CardItem *wirelessShareCard() const { return m_wirelessShare; }
+    CardItem *kdeConnectCard() const { return m_kdeConnect; }
+
+    // Quick Toggles (returning CardItem* for test compatibility)
+    CardItem *darkModeCard() const { return m_darkModeToggle; }
+    CardItem *doNotDisturbCard() const { return m_doNotDisturbToggle; }
+    CardItem *cameraCard() const { return m_cameraToggle; }
+
     MediaTile *media() const { return m_media; }
     TileSlider *brightnessSlider() const { return m_brightness; }
     TileSlider *soundSlider() const { return m_sound; }
 
-    // Press-and-hold on a card hides the control centre for Settings.
+    // Actions
+    std::function<void()> onLockRequested;
+    std::function<void()> onSettingsRequested;
+    std::function<void()> onScreenshotRequested;
+    std::function<void(int action)> onPowerActionRequested; // 1: logout, 2: reboot, 3: shutdown
+
     std::function<void()> onHideRequested;
-    // The layout's height may have changed.
     std::function<void()> onHeightChanged;
 
 protected:
@@ -60,22 +70,55 @@ protected:
 
 private:
     double layoutHeight() const;
-    double headerHeight() const;
 
     ControlCenterServices &m_services;
+
+    // Header
     ui::Label *m_title;
+    HeaderButton *m_lockButton;
+    HeaderButton *m_settingsButton;
+    HeaderButton *m_backButton;
+
+    // Privacy Dot Users
     DeviceUsersTile *m_users;
+
+    // 2x2 Top Cards
     CardItem *m_wireless;
     CardItem *m_bluetooth;
-    CardItem *m_darkMode;
-    CardItem *m_doNotDisturb;
-    CardItem *m_camera;
-    CardItem *m_microphone;
+    CardItem *m_wirelessShare;
+    CardItem *m_kdeConnect;
+
+    // Media
     MediaTile *m_media;
+
+    // Sliders
     TileSlider *m_brightness;
     TileSlider *m_sound;
+
+    // 2x5 Quick Toggles
+    CardItem *m_powerModeToggle;
+    CardItem *m_nightShiftToggle;
+    CardItem *m_captureToggle;
+    CardItem *m_doNotDisturbToggle;
+    CardItem *m_darkModeToggle;
+    CardItem *m_keyLightToggle;
+    CardItem *m_locationToggle;
+    CardItem *m_logoutToggle;
+    CardItem *m_restartToggle;
+    CardItem *m_powerOffToggle;
+
+    // Additional fallback card for camera test accessor if needed
+    CardItem *m_cameraToggle;
+
     base::Timer m_brightnessTimer;
     bool m_darkModeShown = false;
+
+    // Quick toggle states
+    bool m_wirelessShareEnabled = false;
+    bool m_nightLightEnabled = false;
+    int m_keyLightLevel = 0; // 0: Off, 1: Low, 2: High
+    bool m_locationEnabled = false;
+    SubPanel m_subPanel = SubPanel::Main;
 };
 
 } // namespace cutefish::shell

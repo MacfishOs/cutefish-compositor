@@ -94,7 +94,7 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
     m_vpnNotifier->openSettings = [shell] { shell->openSettings({"-m", "vpn"}); };
     m_window = std::make_unique<ShellWindow>(shell, wm::WindowRole::Panel);
     m_window->setFocusPolicy(wm::FocusPolicy::NoFocus);
-    m_window->window()->setBackgroundColor(ui::Color {0, 0, 0, 0});
+    m_window->window()->setBackgroundColor(ui::Color {25, 25, 25, 120});
     auto root = std::make_unique<Root>(this);
     m_root = root.get();
 
@@ -150,7 +150,7 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
     m_volume = statusIcon("volume", Panel::Volume);
     m_network = statusIcon("network", Panel::Network);
     m_battery = statusIcon("battery", Panel::Battery);
-    m_battery->setIconWidth(BarContext::kIconSize + 6);
+    m_battery->setIconWidth(BarContext::kIconSize + 24);
     m_control = statusIcon("control", Panel::ControlCenter);
     m_control->setIconName("control");
     m_clock = m_root->addChild<ClockItem>(this);

@@ -12,7 +12,7 @@
 
 namespace cutefish::shell::panel {
 
-static ui::Color rgba(double red, double green, double blue, double alpha)
+ui::Color rgba(double red, double green, double blue, double alpha)
 {
     return {uint8_t(std::lround(red * 255)), uint8_t(std::lround(green * 255)),
             uint8_t(std::lround(blue * 255)), uint8_t(std::lround(alpha * 255))};
@@ -23,9 +23,24 @@ bool dark()
     return ui::Theme::current().darkMode;
 }
 
+ui::Color inactiveCircleColor()
+{
+    return dark() ? rgba(1, 1, 1, 0.12) : rgba(0, 0, 0, 0.06);
+}
+
+ui::Color cardBgColor()
+{
+    return dark() ? rgba(0.18, 0.20, 0.26, 0.60) : rgba(1.0, 1.0, 1.0, 0.70);
+}
+
+ui::Color cardBorderColor()
+{
+    return dark() ? rgba(1, 1, 1, 0.12) : rgba(1, 1, 1, 0.80);
+}
+
 ui::Color tileColor()
 {
-    return dark() ? rgba(1, 1, 1, 0.1) : rgba(1, 1, 1, 0.8);
+    return cardBgColor();
 }
 
 ui::Color tileInkColor()
@@ -105,7 +120,10 @@ ui::RectF parityPlate(const ui::RectF &slot, double glyph, double scale)
 
 void paintTile(ui::Painter &painter, const ui::RectF &rect)
 {
-    painter.fillRoundedRect(rect, kTileRadius, tileColor(), ui::Corners::Continuous);
+    painter.fillRoundedRect(rect, kTileRadius, cardBgColor(), ui::Corners::Continuous);
+    const double hairline = 1.0 / painter.scale();
+    ui::RoundedShape shape{kTileRadius, 0, ui::Corners::Continuous};
+    painter.drawRoundedRect(rect, shape, ui::Color(0, 0, 0, 0), hairline, cardBorderColor());
 }
 
 std::string artwork(std::string_view name, bool white)
