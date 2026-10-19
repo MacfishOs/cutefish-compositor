@@ -6,7 +6,6 @@
 #define CUTEFISH_SHELL_STATUSBAR_MPRIS_H_
 
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -84,10 +83,10 @@ private:
     bool m_playerReady = false;
 };
 
-// The media players on the bus and the one the control centre shows: the
-// one that last started playing. A player that appears while the shown one
-// is not playing is shown; when the shown one stops, the next that is still
-// playing takes its place; when it goes, the next one on the list does.
+// The media players on the bus and the one the control centre shows. A
+// playing player stays shown; when it stops, the one that most recently
+// started playing takes over. With none playing, a player that appears is
+// shown, and when the shown one leaves, the most recently active one is.
 class MprisManager
 {
 public:
@@ -99,7 +98,7 @@ public:
 
     MprisPlayer *current() const { return m_current.get(); }
     std::string currentService() const;
-    // The shown player first.
+    // The shown player first, then the most recently active.
     std::vector<std::string> availableServices() const;
 
     base::Signal<> currentChanged;
@@ -107,19 +106,26 @@ public:
     base::Signal<> currentPlayerChanged;
 
 private:
-    void appeared(const std::string &service);
-    void vanished(const std::string &service);
-    void playbackStatusChanged(const std::string &service);
-    std::shared_ptr<MprisPlayer> available(const std::string &service) const;
-    void setCurrent(std::shared_ptr<MprisPlayer> player);
-    void track(const std::shared_ptr<MprisPlayer> &player);
+    struct Entry
+    {
+        std::shared_ptr<MprisPlayer> player;
+        // Raised when the player appears or starts playing.
+        uint64_t active = 0;
+        base::Subscription statusChanged;
+    };
+
+    void add(const std::string &service);
+    void remove(const std::string &service);
+    void statusChanged(const std::string &service);
+    Entry *entry(const std::string &service);
+    bool present(const std::shared_ptr<MprisPlayer> &player) const;
+    std::shared_ptr<MprisPlayer> choose() const;
+    void show(std::shared_ptr<MprisPlayer> player);
 
     base::dbus::Connection *m_bus;
+    std::vector<Entry> m_entries;
     std::shared_ptr<MprisPlayer> m_current;
-    std::vector<std::shared_ptr<MprisPlayer>> m_available;
-    // Playing, but not shown: the first takes over when the shown one stops.
-    std::deque<std::shared_ptr<MprisPlayer>> m_otherPlaying;
-    std::vector<std::pair<MprisPlayer *, base::Subscription>> m_subscriptions;
+    uint64_t m_clock = 0;
     base::Subscription m_currentSubscription;
     base::dbus::Match m_nameOwnerChanged;
     PendingCalls m_calls;

@@ -188,6 +188,11 @@ void MprisPlayer::previous()
     callPlayer("Previous");
 }
 
+static bool playing(const MprisPlayer &player)
+{
+    return player.playbackStatus() == MprisPlayer::PlaybackStatus::Playing;
+}
+
 MprisManager::MprisManager(dbus::Connection *bus)
     : m_bus(bus)
 {
@@ -204,9 +209,9 @@ MprisManager::MprisManager(dbus::Connection *bus)
         if (!message.read(name, oldOwner, newOwner) || !name.starts_with(kPrefix))
             return;
         if (oldOwner.empty())
-            appeared(name);
+            add(name);
         else if (newOwner.empty())
-            vanished(name);
+            remove(name);
     });
 
     const dbus::Proxy daemon(m_bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus");
@@ -214,7 +219,7 @@ MprisManager::MprisManager(dbus::Connection *bus)
         return daemon.callAsync("ListNames", [this, finished](const dbus::Reply &reply) {
             for (const std::string &name : reply.value<std::vector<std::string>>().value_or(std::vector<std::string>())) {
                 if (name.starts_with(kPrefix))
-                    appeared(name);
+                    add(name);
             }
             finished();
         });
@@ -230,118 +235,100 @@ std::string MprisManager::currentService() const
 
 std::vector<std::string> MprisManager::availableServices() const
 {
+    std::vector<const Entry *> others;
+    for (const Entry &entry : m_entries) {
+        if (entry.player != m_current)
+            others.push_back(&entry);
+    }
+    std::sort(others.begin(), others.end(), [](const Entry *a, const Entry *b) { return a->active > b->active; });
+
     std::vector<std::string> services;
-    for (const auto &player : m_available)
-        services.push_back(player->service());
+    if (present(m_current))
+        services.push_back(m_current->service());
+    for (const Entry *entry : others)
+        services.push_back(entry->player->service());
     return services;
 }
 
-std::shared_ptr<MprisPlayer> MprisManager::available(const std::string &service) const
+MprisManager::Entry *MprisManager::entry(const std::string &service)
 {
-    for (const auto &player : m_available) {
-        if (player->service() == service)
-            return player;
-    }
-    return nullptr;
+    const auto found = std::find_if(m_entries.begin(), m_entries.end(),
+                                    [&service](const Entry &entry) { return entry.player->service() == service; });
+    return found == m_entries.end() ? nullptr : &*found;
 }
 
-void MprisManager::track(const std::shared_ptr<MprisPlayer> &player)
+bool MprisManager::present(const std::shared_ptr<MprisPlayer> &player) const
 {
-    MprisPlayer *raw = player.get();
-    for (const auto &[tracked, subscription] : m_subscriptions) {
-        if (tracked == raw)
-            return;
-    }
-    const std::string service = player->service();
-    m_subscriptions.emplace_back(raw, player->playbackStatusChanged.connect([this, service] {
-        playbackStatusChanged(service);
-    }));
+    return player && std::any_of(m_entries.begin(), m_entries.end(),
+                                 [&player](const Entry &entry) { return entry.player == player; });
 }
 
-void MprisManager::setCurrent(std::shared_ptr<MprisPlayer> player)
+void MprisManager::add(const std::string &service)
+{
+    if (Entry *known = entry(service)) {
+        known->active = ++m_clock;
+        return;
+    }
+
+    Entry added;
+    added.player = std::make_shared<MprisPlayer>(m_bus, service);
+    added.active = ++m_clock;
+    added.statusChanged = added.player->playbackStatusChanged.connect([this, service] { statusChanged(service); });
+    m_entries.push_back(std::move(added));
+
+    // Nothing playing is interrupted by showing the newcomer.
+    if (!m_current || !playing(*m_current))
+        show(m_entries.back().player);
+}
+
+void MprisManager::remove(const std::string &service)
+{
+    std::erase_if(m_entries, [&service](const Entry &entry) { return entry.player->service() == service; });
+    if (m_current && m_current->service() == service)
+        show(choose());
+}
+
+void MprisManager::statusChanged(const std::string &service)
+{
+    Entry *changed = entry(service);
+    if (!changed)
+        return;
+
+    if (playing(*changed->player))
+        changed->active = ++m_clock;
+    show(choose());
+}
+
+std::shared_ptr<MprisPlayer> MprisManager::choose() const
+{
+    if (present(m_current) && playing(*m_current))
+        return m_current;
+
+    const Entry *latestPlaying = nullptr;
+    const Entry *latest = nullptr;
+    for (const Entry &entry : m_entries) {
+        if (playing(*entry.player) && (!latestPlaying || entry.active > latestPlaying->active))
+            latestPlaying = &entry;
+        if (!latest || entry.active > latest->active)
+            latest = &entry;
+    }
+
+    if (latestPlaying)
+        return latestPlaying->player;
+    if (present(m_current))
+        return m_current;
+    return latest ? latest->player : nullptr;
+}
+
+void MprisManager::show(std::shared_ptr<MprisPlayer> player)
 {
     if (player == m_current)
         return;
+
     m_current = std::move(player);
     m_currentSubscription = m_current ? m_current->changed.connect([this] { currentPlayerChanged(); })
                                       : base::Subscription();
     currentChanged();
-}
-
-void MprisManager::appeared(const std::string &service)
-{
-    std::shared_ptr<MprisPlayer> player = available(service);
-    if (player) {
-        std::erase(m_available, player);
-        std::erase(m_otherPlaying, player);
-    } else {
-        player = m_current && m_current->service() == service ? m_current
-                                                               : std::make_shared<MprisPlayer>(m_bus, service);
-        track(player);
-    }
-
-    if (!m_current)
-        setCurrent(player);
-
-    if (player == m_current) {
-        m_available.insert(m_available.begin(), player);
-        return;
-    }
-
-    if (m_current->playbackStatus() != MprisPlayer::PlaybackStatus::Playing) {
-        m_available.insert(m_available.begin(), player);
-        setCurrent(player);
-    } else {
-        m_available.insert(m_available.begin() + std::min<ptrdiff_t>(1, ptrdiff_t(m_available.size())), player);
-        if (player->playbackStatus() == MprisPlayer::PlaybackStatus::Playing)
-            m_otherPlaying.push_front(player);
-    }
-}
-
-void MprisManager::vanished(const std::string &service)
-{
-    if (std::shared_ptr<MprisPlayer> player = available(service)) {
-        std::erase(m_available, player);
-        std::erase(m_otherPlaying, player);
-        std::erase_if(m_subscriptions, [&player](const auto &entry) { return entry.first == player.get(); });
-    }
-
-    if (m_current && m_current->service() == service)
-        setCurrent(m_available.empty() ? nullptr : m_available.front());
-}
-
-void MprisManager::playbackStatusChanged(const std::string &service)
-{
-    std::shared_ptr<MprisPlayer> player = available(service);
-    if (!player)
-        return;
-
-    if (player == m_current) {
-        if (m_current->playbackStatus() == MprisPlayer::PlaybackStatus::Playing || m_otherPlaying.empty())
-            return;
-        std::shared_ptr<MprisPlayer> next = m_otherPlaying.front();
-        m_otherPlaying.pop_front();
-        if (const auto it = std::find(m_available.begin(), m_available.end(), next); it != m_available.end()) {
-            m_available.erase(it);
-            m_available.insert(m_available.begin(), next);
-        }
-        setCurrent(next);
-        return;
-    }
-
-    if (player->playbackStatus() != MprisPlayer::PlaybackStatus::Playing) {
-        std::erase(m_otherPlaying, player);
-        return;
-    }
-
-    if (!m_current || m_current->playbackStatus() != MprisPlayer::PlaybackStatus::Playing) {
-        setCurrent(player);
-    } else {
-        std::erase(m_available, player);
-        m_available.insert(m_available.begin() + std::min<ptrdiff_t>(1, ptrdiff_t(m_available.size())), player);
-        std::erase(m_otherPlaying, player);
-        m_otherPlaying.push_front(player);
-    }
 }
 
 } // namespace cutefish::shell
