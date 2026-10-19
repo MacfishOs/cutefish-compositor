@@ -16,7 +16,7 @@ std::optional<CompositorOptions> CompositorOptions::parse(int argc, char **argv)
 {
     base::CommandLineParser parser;
     parser.setApplicationDescription("Cutefish Wayland compositor");
-    parser.setApplicationVersion("0.1.0");
+    parser.setApplicationVersion("1.0");
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addOption({"socket", "Wayland socket name to listen on.", "name"});
