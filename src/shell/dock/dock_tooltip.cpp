@@ -55,9 +55,9 @@ void DockTooltip::show(const std::string &text, const base::PointF &target)
     ui::BubbleShape bubble;
     bubble.radius = theme.mediumRadius;
     bubble.continuousCorners = true;
-    bubble.arrowEdge = direction == DockSettings::Left ? ui::BubbleShape::Edge::Left
-            : direction == DockSettings::Right        ? ui::BubbleShape::Edge::Right
-                                                      : ui::BubbleShape::Edge::Bottom;
+    // Beside a side dock the text's height leaves no room for an arrow
+    // between the corners, so the bubble goes without one.
+    bubble.arrowEdge = across ? ui::BubbleShape::Edge::None : ui::BubbleShape::Edge::Bottom;
 
     // The label's size decides the bubble's, before any window is made.
     if (!m_measure) {
@@ -67,21 +67,18 @@ void DockTooltip::show(const std::string &text, const base::PointF &target)
     }
     m_measure->setText(text);
     const ui::SizeF textSize = m_measure->sizeHint();
-    const double width = std::ceil(std::max(textSize.width + theme.largeSpacing * 1.5
-                                                    + (across ? bubble.arrowLength : 0),
+    const double width = std::ceil(std::max(textSize.width + theme.largeSpacing * 1.5,
                                             across ? 0 : bubble.minimumEdgeLength()));
-    const double height = std::ceil(std::max(textSize.height + theme.largeSpacing
-                                                      + (across ? 0 : bubble.arrowLength),
-                                              across ? bubble.minimumEdgeLength() : 0));
+    const double height = std::ceil(textSize.height + theme.largeSpacing + (across ? 0 : bubble.arrowLength));
 
-    // The bubble, in the dock window's coordinates: beside the dock, its
-    // arrow on the icon, kept inside the work area.
+    // The bubble, in the dock window's coordinates: beside the dock, centred
+    // on the icon, kept inside the work area.
     const base::Rect dock = m_dock->panelRect();
     const base::Rect window = m_dock->window()->geometry();
     const Shell::Output *output = m_shell->output({});
     base::Rect available = output ? m_shell->workArea(*output) : base::Rect();
     available.translate(-window.x(), -window.y());
-    const double gap = theme.smallSpacing;
+    const double gap = theme.smallSpacing + (across ? bubble.arrowLength : 0);
     const auto within = [](double position, double size, double start, double length) {
         return std::round(std::max(start, std::min(position - size / 2, start + length - size)));
     };
