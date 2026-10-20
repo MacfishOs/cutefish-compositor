@@ -59,6 +59,7 @@ class LibseatSession;
 namespace computer_control {
 class Controller;
 class PermissionConsent;
+class RememberedApps;
 } // namespace computer_control
 
 namespace display {
@@ -316,6 +317,7 @@ private:
     std::unique_ptr<session::WindowDebugService> m_windowDebugService;
     // An agent driving the seat. The consent outlives the controller that asks
     // it; the controller goes before the input manager it injects into.
+    std::unique_ptr<computer_control::RememberedApps> m_computerControlApps;
     std::unique_ptr<computer_control::PermissionConsent> m_computerControlConsent;
     std::unique_ptr<computer_control::Controller> m_computerControl;
 

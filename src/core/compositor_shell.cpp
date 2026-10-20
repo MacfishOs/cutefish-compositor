@@ -27,6 +27,7 @@
 #include "compositor/surface.h"
 #include "computer_control/controller.h"
 #include "computer_control/permission_consent.h"
+#include "computer_control/remembered_apps.h"
 #include "base/uuid.h"
 #include "core/computer_control_environment.h"
 #include "core/logging.h"
@@ -50,6 +51,7 @@
 #include "session/session_state.h"
 #include "shell/clipboard/clipboard_history.h"
 #include "shell/clipboard/clipboard_picker.h"
+#include "shell/common/task_manager.h"
 #include "shell/controlcenter/control_center.h"
 #include "shell/dock/dock.h"
 #include "shell/dock/dock_window.h"
@@ -322,8 +324,11 @@ void CompositorShell::initComputerControl()
     const auto showsSystemDialogs = [this](int64_t pid) {
         return m_security && m_security->showsSystemDialogs(pid);
     };
-    m_computerControlConsent =
-            std::make_unique<computer_control::PermissionConsent>(showsSystemDialogs);
+    m_computerControlApps =
+            std::make_unique<computer_control::RememberedApps>(preferencesFile("compositor"));
+    m_computerControlApps->registerService();
+    m_computerControlConsent = std::make_unique<computer_control::PermissionConsent>(
+            showsSystemDialogs, m_computerControlApps.get());
 
     ComputerControlHosts hosts;
     hosts.windowManager = &m_windowManager;
@@ -334,6 +339,10 @@ void CompositorShell::initComputerControl()
         return m_globals ? m_globals->inputMethod() : nullptr;
     };
     hosts.showsSystemDialogs = showsSystemDialogs;
+    hosts.windowApplication = [this](uint64_t id) {
+        const shell::DesktopEntryPtr entry = m_shell ? m_shell->tasks().entryForWindow(id) : nullptr;
+        return entry ? entry->id : std::string();
+    };
     m_computerControl = std::make_unique<computer_control::Controller>(
             &m_inputManager, computerControlEnvironment(std::move(hosts)));
     m_computerControlPolicy.setController(m_computerControl.get());

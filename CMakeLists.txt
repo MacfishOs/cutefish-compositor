@@ -625,9 +625,11 @@ add_library(cutefish-computer-control STATIC
     src/computer_control/controller.h
     src/computer_control/permission_consent.cpp
     src/computer_control/permission_consent.h
+    src/computer_control/remembered_apps.cpp
+    src/computer_control/remembered_apps.h
 )
 target_include_directories(cutefish-computer-control PUBLIC src)
-target_link_libraries(cutefish-computer-control PUBLIC cutefish-input Cutefish::ToolkitBase)
+target_link_libraries(cutefish-computer-control PUBLIC cutefish-input cutefish-input-dbus Cutefish::ToolkitBase)
 set_target_properties(cutefish-computer-control PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keyboard shortcuts: the Ash accelerator controller and its configuration,

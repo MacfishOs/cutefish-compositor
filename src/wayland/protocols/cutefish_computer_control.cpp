@@ -208,8 +208,11 @@ void requestControl(wl_client *client, wl_resource *manager, uint32_t id, const 
                                    [](wl_resource *resource) {
                                        delete getUserDataAs<ControlResource>(resource);
                                    });
+    pid_t pid = 0;
+    wl_client_get_credentials(client, &pid, nullptr, nullptr);
     control->control = controller->request(control, client,
-                                           base::strings::sanitizedUtf8(agentName ? agentName : ""));
+                                           base::strings::sanitizedUtf8(agentName ? agentName : ""),
+                                           pid);
 }
 
 const struct cutefish_computer_control_manager_v1_interface managerImplementation = {

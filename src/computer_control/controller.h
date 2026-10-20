@@ -88,9 +88,10 @@ public:
 
 // What the controller asks of the rest of the compositor.
 struct Environment {
-    // Asks the user whether `agentName` may take control. `answer` runs once,
-    // later; the returned function withdraws the question before then.
-    std::function<std::function<void()>(const std::string &agentName,
+    // Asks the user whether `agentName`, whose server is process `pid` (0 when
+    // unknown), may take control. `answer` runs once, at once or later; the
+    // returned function withdraws the question before then.
+    std::function<std::function<void()>(const std::string &agentName, int64_t pid,
                                         std::function<void(ConsentResult)> answer)>
             askConsent;
     // A window the user answers in person (a system dialog or a shell prompt,
@@ -142,7 +143,7 @@ public:
     // one control is pending or granted at a time; a second one is revoked at
     // once with Busy. The control ends when the returned handle is destroyed.
     std::unique_ptr<Control> request(ControlClient *client, const void *owner,
-                                     const std::string &agentName);
+                                     const std::string &agentName, int64_t pid = 0);
 
     // A control is granted.
     bool isActive() const;

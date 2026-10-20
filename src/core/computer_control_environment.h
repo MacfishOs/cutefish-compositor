@@ -44,6 +44,8 @@ struct ComputerControlHosts {
     std::function<wayland::InputMethodManager *()> inputMethod;
     // Whether the process `pid` shows system dialogs the agent must leave alone.
     std::function<bool(int64_t pid)> showsSystemDialogs;
+    // The desktop entry of the application window `id`; empty for none.
+    std::function<std::string(uint64_t id)> windowApplication;
 };
 
 computer_control::Environment computerControlEnvironment(ComputerControlHosts hosts);

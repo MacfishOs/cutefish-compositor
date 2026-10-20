@@ -22,6 +22,9 @@ const std::string permissionsInterface = "org.cutefish.Services.Permissions";
 
 struct PermissionConsent::Request {
     std::string agentName;
+    std::string appId;
+    // What the user may allow from now on, when it can be told apart.
+    std::optional<AgentApplication> application;
     // Prompt tokens are shared by every caller of the service; a guessable
     // one could be taken first.
     std::string token = base::Uuid::generate().toString();
@@ -41,20 +44,29 @@ struct PermissionConsent::Request {
 };
 
 PermissionConsent::PermissionConsent(std::function<bool(int64_t pid)> showsSystemDialogs,
-                                     base::dbus::Connection *bus)
+                                     RememberedApps *remembered, base::dbus::Connection *bus)
     : m_showsSystemDialogs(std::move(showsSystemDialogs))
+    , m_remembered(remembered)
     , m_bus(bus ? bus : base::dbus::Connection::session(core::mainLoop()))
 {
 }
 
 PermissionConsent::~PermissionConsent() = default;
 
-std::function<void()> PermissionConsent::ask(const std::string &agentName,
+std::function<void()> PermissionConsent::ask(const std::string &agentName, int64_t pid,
+                                             const std::string &appId,
                                              std::function<void(ConsentResult)> answer)
 {
     auto request = std::make_shared<Request>();
     request->agentName = agentName;
+    request->appId = appId;
     request->answer = std::move(answer);
+    if (m_remembered)
+        request->application = RememberedApps::applicationOf(pid);
+    if (request->application && m_remembered->allows(*request->application)) {
+        request->finish(ConsentResult::Allowed);
+        return [] {};
+    }
     if (!m_bus) {
         request->finish(ConsentResult::Unavailable);
         return [] {};
@@ -114,14 +126,22 @@ void PermissionConsent::prompt(const std::shared_ptr<Request> &request, const st
                 permissions.setTimeout(std::chrono::milliseconds(INT_MAX));
                 request->promptCall = permissions.callAsync(
                         "Prompt",
-                        [weak](const base::dbus::Reply &reply) {
+                        [this, weak](const base::dbus::Reply &reply) {
                             const std::shared_ptr<Request> request = weak.lock();
                             if (!request)
                                 return;
                             switch (reply.value<uint32_t>(0).value_or(2)) {
-                            case 0:
+                            case 0: {
+                                const auto results = reply.value<base::dbus::VariantMap>(1).value_or(
+                                        base::dbus::VariantMap {});
+                                const auto remember = results.find("remember");
+                                if (request->application && remember != results.end()
+                                    && remember->second.value<bool>())
+                                    m_remembered->remember(*request->application, request->agentName,
+                                                           request->appId);
                                 request->finish(ConsentResult::Allowed);
                                 break;
+                            }
                             case 1:
                                 request->finish(ConsentResult::Denied);
                                 break;
@@ -130,10 +150,12 @@ void PermissionConsent::prompt(const std::shared_ptr<Request> &request, const st
                                 break;
                             }
                         },
-                        request->token, std::string("computer-control"), std::string(),
+                        request->token, std::string("computer-control"), request->appId,
                         std::string(),
                         base::dbus::VariantMap {
-                                {"agent_name", base::dbus::Variant(request->agentName)}});
+                                {"agent_name", base::dbus::Variant(request->agentName)},
+                                {"rememberable",
+                                 base::dbus::Variant(request->application.has_value())}});
             },
             owner);
 }
