@@ -40,6 +40,15 @@ void DBusAcceleratorDelegate::toggleAppList()
     call("org.cutefish.Launcher", "/Launcher", "toggle");
 }
 
+void DBusAcceleratorDelegate::toggleSpotlight()
+{
+    if (spotlightToggle) {
+        spotlightToggle();
+        return;
+    }
+    call("org.cutefish.Spotlight", "/Spotlight", "toggle");
+}
+
 void DBusAcceleratorDelegate::takeScreenshot(bool toClipboard)
 {
     callScreenshot("takeScreenshot", toClipboard);

@@ -29,6 +29,31 @@ void SvgIcon::setFile(std::string file)
 {
     if (file == m_file)
         return;
+
+    if (!m_file.empty() && window()) {
+        m_oldFile = m_file;
+        m_transition = 0.0;
+        if (!m_anim) {
+            m_anim = std::make_unique<ui::Animation>(window());
+            m_anim->setDuration(std::chrono::milliseconds(180));
+            m_anim->setEasing(ui::Animation::Easing::OutCubic);
+            m_anim->onUpdate = [this](double val) {
+                m_transition = val;
+                requestPaint();
+            };
+            m_anim->onFinished = [this] {
+                m_transition = 1.0;
+                m_oldFile.clear();
+                requestPaint();
+            };
+        }
+        m_anim->stop();
+        m_anim->start();
+    } else {
+        m_oldFile.clear();
+        m_transition = 1.0;
+    }
+
     m_file = std::move(file);
     requestPaint();
 }
@@ -41,15 +66,29 @@ void SvgIcon::setTint(std::optional<ui::Color> tint)
 
 void SvgIcon::paint(ui::Painter &painter)
 {
-    if (m_file.empty())
+    if (m_file.empty() && m_oldFile.empty())
         return;
     const ui::Rect device = painter.snappedRect(localRect());
     const double scale = painter.scale();
     const ui::PointF offset = painter.offset();
-    painter.drawSvg(m_file,
-                    {device.x / scale - offset.x, device.y / scale - offset.y, device.width / scale,
-                     device.height / scale},
-                    m_tint);
+    const ui::RectF rect {device.x / scale - offset.x, device.y / scale - offset.y,
+                          device.width / scale, device.height / scale};
+
+    if (m_transition < 1.0 && !m_oldFile.empty()) {
+        const double oldAlpha = (1.0 - m_transition);
+        const double newAlpha = m_transition;
+
+        ui::Color oldTint = m_tint.value_or(ui::Color::rgb(0xFFFFFF));
+        oldTint.a = uint8_t(std::clamp(int(oldTint.a * oldAlpha), 0, 255));
+
+        ui::Color newTint = m_tint.value_or(ui::Color::rgb(0xFFFFFF));
+        newTint.a = uint8_t(std::clamp(int(newTint.a * newAlpha), 0, 255));
+
+        painter.drawSvg(m_oldFile, rect, oldTint);
+        painter.drawSvg(m_file, rect, newTint);
+    } else {
+        painter.drawSvg(m_file, rect, m_tint);
+    }
 }
 
 // HeaderButton (32x32 round button for top right header)
@@ -400,11 +439,12 @@ MediaTile::MediaTile()
 {
     m_cover = addChild<SvgIcon>();
     m_art = addChild<ui::ImageView>();
-    m_art->setFillMode(ui::ImageView::FillMode::PreserveAspectFit);
+    m_art->setFillMode(ui::ImageView::FillMode::PreserveAspectCrop);
+    m_art->setRendering(ui::ImageView::Rendering::Direct);
     m_art->setCornerRadius(12, ui::Corners::Continuous);
     m_art->setVisible(false);
     m_art->onStatusChanged = [this](ui::ImageView::Status status) {
-        m_artReady = status == ui::ImageView::Status::Ready;
+        m_artReady = (status == ui::ImageView::Status::Ready);
         m_art->setVisible(m_artReady);
         m_cover->setVisible(!m_artReady);
         requestPaint();
@@ -464,29 +504,29 @@ void MediaTile::updateArtwork()
 
     std::string path;
     if (m_state.hasPlayer && !m_state.artUrl.empty()) {
-        if (auto local = base::url::toLocalFile(m_state.artUrl))
-            path = *local;
-        else if (m_state.artUrl.starts_with("/"))
-            path = m_state.artUrl;
-        else if (m_state.artUrl.starts_with("file://")) {
-            std::string url = m_state.artUrl.substr(7);
+        std::string url = m_state.artUrl;
+        if (url.starts_with("file://")) {
+            url = url.substr(7);
             if (url.starts_with("localhost/"))
                 url = url.substr(10);
             path = base::url::percentDecoded(url);
-        } else
-            path = m_state.artUrl;
+        } else if (auto local = base::url::toLocalFile(url)) {
+            path = *local;
+        } else {
+            path = url;
+        }
     }
     if (path != m_art->source()) {
         m_artReady = false;
-        m_art->setVisible(false);
-        m_cover->setVisible(true);
         m_art->setSource(path);
     }
+    const bool showArt = !path.empty() && (m_artReady || m_art->status() == ui::ImageView::Status::Ready);
+    m_art->setVisible(showArt);
+    m_cover->setVisible(!showArt);
 }
 
 void MediaTile::layout()
 {
-    updateArtwork();
     const double height = geometry().height;
     const double padding = 10.0;
     const double artSize = 56.0;
@@ -494,6 +534,7 @@ void MediaTile::layout()
     m_cover->setGeometry(art);
     m_art->setGeometry(art);
     m_art->setSourceSize({artSize, artSize});
+    updateArtwork();
 
     const double buttonSize = 28.0;
     const double spacing = 6.0;

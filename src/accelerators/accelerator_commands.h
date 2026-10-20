@@ -67,6 +67,7 @@ void windowSnap(const CommandContext &context, AcceleratorAction action);
 void closeWindow(const CommandContext &context);
 void moveActiveWindowBetweenDisplays(const CommandContext &context);
 void toggleOverview(const CommandContext &context);
+void toggleSpotlight(const CommandContext &context);
 // Slides the application windows aside to show the desktop, or back.
 void toggleShowDesktop(const CommandContext &context);
 // Desks.

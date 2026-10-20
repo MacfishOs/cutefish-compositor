@@ -138,6 +138,16 @@ DockItem *DockModel::findByDesktop(const std::string &desktopFile, DesktopEntryP
     return findById(desktopFile);
 }
 
+DesktopEntryPtr DockModel::desktopEntry(const std::string &id) const
+{
+    const DockItem *item = findById(id);
+    if (item && !item->desktopPath.empty()) {
+        if (auto entry = m_applications.byPath(item->desktopPath))
+            return entry;
+    }
+    return m_applications.byId(id);
+}
+
 void DockModel::updateFromEntry(DockItem *item, const base::DesktopEntry &entry) const
 {
     item->id = entry.id;

@@ -32,6 +32,7 @@ public:
     // A FishUI glyph in the bar's colour, in place of the artwork.
     void setGlyph(std::string name);
     void setIconWidth(double width);
+    void setIconSize(double width, double height);
     void setLabel(std::string label);
     // The dot after the icon; none when unset.
     void setIndicatorColor(std::optional<ui::Color> color);
@@ -65,6 +66,7 @@ private:
     std::string m_glyph;
     std::string m_label;
     double m_iconWidth = BarContext::kIconSize;
+    double m_iconHeight = BarContext::kIconSize;
     std::optional<ui::Color> m_indicatorColor;
     ui::RowLayout *m_content = nullptr;
     BarIcon *m_icon = nullptr;

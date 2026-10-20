@@ -97,14 +97,14 @@ ui::RectF BarItem::plateRect() const
     const ui::Window *w = window();
     const double scale = w ? w->scale() : 1;
     const double width = plateWidth(scale);
-    return {m_leftInset + (geometry().width - m_leftInset - m_rightInset - width) / 2, 4, width,
-            geometry().height - 8};
+    return {m_leftInset + (geometry().width - m_leftInset - m_rightInset - width) / 2, 3, width,
+            geometry().height - 6};
 }
 
 ui::Color BarItem::plateColor() const
 {
     // The verdict on what is behind the bar, as the contents' colour.
-    return m_bar->lightContents() ? ui::Color {255, 255, 255, 51} : ui::Color {0, 0, 0, 26};
+    return m_bar->lightContents() ? ui::Color {255, 255, 255, 64} : ui::Color {0, 0, 0, 45};
 }
 
 void BarItem::paint(ui::Painter &painter)
@@ -113,7 +113,7 @@ void BarItem::paint(ui::Painter &painter)
     const ui::RectF plate = plateRect();
     if (plate.width <= 0 || plate.height <= 0)
         return;
-    painter.drawRoundedRect(plate, {ui::Theme::current().smallRadius, 0, ui::Corners::Circular}, plateColor());
+    painter.drawRoundedRect(plate, {5.0, 0, ui::Corners::Circular}, plateColor());
 }
 
 void BarItem::pointerEnter()
@@ -323,6 +323,8 @@ BarLabel::BarLabel()
     m_label = addChild<ui::StyledLabel>();
     for (ui::Label *label : {m_shadowText, static_cast<ui::Label *>(m_label)}) {
         label->setFontSize(BarContext::kFontPointSize * 4 / 3);
+        label->setFontFamily("SF Pro Text, San Francisco, Inter, system-ui, sans-serif");
+        label->setFontFeatures({{"tnum", 1}});
         label->setElide(ui::Label::Elide::None);
     }
     m_label->setSubpixelAntialiasing(false);

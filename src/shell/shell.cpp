@@ -90,13 +90,11 @@ Shell::Shell(const ShellEnvironment &environment)
     ui::Application &application = toolkit::application();
     // The compositor's toolkit has no session bus of its own: the shell's
     // follows cutefish-services for it.
-    if (bus())
-        application.followSessionLanguage(bus());
+    // if (bus())
+    //     application.followSessionLanguage(bus());
     // The overview belongs to the window manager, which has no toolkit.
-    m_languageChanged = application.languageChanged.connect([this] {
-        if (wm::OverviewController *overview = windowManager()->overview())
-            overview->retranslate();
-    });
+    // m_languageChanged = application.languageChanged.connect([this] {\n    //     if (wm::OverviewController *overview = windowManager()->overview())\n    //         overview->retranslate();\n    // });
+
     m_renderer = std::make_unique<WindowRenderer>(m_environment.compositor);
     m_input = std::make_unique<ShellInput>(this);
     m_host = std::make_unique<ShellHost>(this, m_environment.inputMethod);

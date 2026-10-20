@@ -7,12 +7,14 @@
 #include "core/main_loop.h"
 #include "cutefish/accounts/user_account.h"
 #include "shell/shell.h"
+#include "shell/shell_data.h"
 #include "shell/statusbar/bar_item.h"
 #include "shell/statusbar/status_bar.h"
 #include "ui/icon.h"
 #include "ui/image_view.h"
 #include "ui/menu.h"
 #include "ui/window.h"
+
 
 namespace cutefish::shell {
 
@@ -22,21 +24,17 @@ namespace cutefish::shell {
 class MenuBarView::Entry final : public BarItem
 {
 public:
-    Entry(BarContext *bar, const MenuBarModel::Row &row)
-        : BarItem(bar)
+    Entry(BarContext *context, const MenuBarModel::Row &row)
+        : BarItem(context)
         , m_row(row)
     {
         if (row.kind == MenuBarModel::Kind::User) {
             setInsets(BarContext::kEdgeMargin - (BarContext::kItemGap - BarContext::kHighlightGap) / 2,
                       BarContext::kHighlightGap / 2);
             setGlyphWidth(BarContext::kIconSize);
-            // A circular avatar decoded at its device size, as the Image
-            // with sourceSize and an OpacityMask of a circle.
-            m_avatar = addChild<ui::ImageView>();
-            m_avatar->setFillMode(ui::ImageView::FillMode::Stretch);
-            m_avatar->setMipmap(true);
-            m_avatar->setCornerRadius(BarContext::kIconSize / 2);
-            m_avatar->setRendering(ui::ImageView::Rendering::MaskedLayer);
+            m_icon = addChild<BarIcon>();
+            const char *variant = bar()->lightContents() ? "statusbar/dark/" : "statusbar/light/";
+            m_icon->setSource(shellDataFile(std::string(variant) + "apple.svg"), true);
         } else {
             setInsets(BarContext::kHighlightGap / 2, BarContext::kHighlightGap / 2);
             m_label = addChild<BarLabel>();
@@ -49,25 +47,30 @@ public:
 
     double preferredWidth() const
     {
-        if (m_avatar)
+        if (m_icon)
             return BarContext::kItemGap / 2 + BarContext::kEdgeMargin + BarContext::kIconSize
                     + BarContext::kSmallSpacing * 2;
         return BarContext::kItemGap + m_label->sizeHint().width + BarContext::kSmallSpacing * 2;
     }
 
-    void setAvatar(const std::string &file)
+    void setAvatar(const std::string &)
     {
-        if (m_avatar)
-            m_avatar->setSource(file);
+        // Replaced by Apple icon
     }
 
     void updateLook()
     {
+        if (m_icon) {
+            const char *variant = bar()->lightContents() ? "statusbar/dark/" : "statusbar/light/";
+            m_icon->setSource(shellDataFile(std::string(variant) + "apple.svg"), true);
+            m_icon->setColor(bar()->textColor());
+            m_icon->setDropShadow(bar()->lightContents());
+        }
         if (m_label) {
-            // The application's name stands out from its menus, a step
-            // lighter in black, which carries more weight than white.
             if (m_row.kind == MenuBarModel::Kind::Application)
-                m_label->setWeight(bar()->lightContents() ? 600 : 500);
+                m_label->setWeight(600);
+            else
+                m_label->setWeight(500);
             m_label->setTextColor(bar()->menuTextColor());
             m_label->setDropShadow(bar()->lightContents());
         }
@@ -77,8 +80,8 @@ public:
 protected:
     void layout() override
     {
-        if (m_avatar)
-            m_avatar->setGeometry(centred({BarContext::kIconSize, BarContext::kIconSize}));
+        if (m_icon)
+            m_icon->setGeometry(centred({BarContext::kIconSize, BarContext::kIconSize}));
         if (m_label)
             m_label->setGeometry(centred(m_label->sizeHint()));
     }
@@ -86,7 +89,7 @@ protected:
 private:
     const MenuBarModel::Row m_row;
     BarLabel *m_label = nullptr;
-    ui::ImageView *m_avatar = nullptr;
+    BarIcon *m_icon = nullptr;
 };
 
 MenuBarView::MenuBarView(Shell *shell, StatusBarMenuBarHost host)

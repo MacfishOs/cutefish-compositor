@@ -202,6 +202,7 @@ bool AcceleratorController::canPerformAction(AcceleratorAction action,
     case AcceleratorAction::StartCaptureMode:
     case AcceleratorAction::StopScreenRecording:
     case AcceleratorAction::ToggleClipboardHistory:
+    case AcceleratorAction::ToggleSpotlight:
     case AcceleratorAction::VolumeMuteToggle:
     case AcceleratorAction::VolumeDown:
     case AcceleratorAction::VolumeUp:
@@ -238,6 +239,9 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
         break;
     case AcceleratorAction::ToggleAppList:
         commands::toggleAppList(m_context);
+        break;
+    case AcceleratorAction::ToggleSpotlight:
+        commands::toggleSpotlight(m_context);
         break;
     case AcceleratorAction::ToggleFullscreen:
         commands::toggleFullscreen(m_context);

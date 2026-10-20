@@ -182,6 +182,12 @@ void AcceleratorConfiguration::initialize()
     else
         initialize(kAcceleratorData);
     applyOverrides();
+    doAddAccelerator(toActionId(AcceleratorAction::ToggleSpotlight),
+                     Accelerator(XKB_KEY_space, 0, MetaDown, Accelerator::KeyState::Pressed),
+                     /*saveOverride=*/false);
+    doAddAccelerator(toActionId(AcceleratorAction::ToggleSpotlight),
+                     Accelerator(XKB_KEY_space, 0, ControlDown, Accelerator::KeyState::Pressed),
+                     /*saveOverride=*/false);
 }
 
 void AcceleratorConfiguration::setConvention(input::ShortcutConvention convention)

@@ -12,6 +12,7 @@
 
 #include "base/timer.h"
 #include "shell/controlcenter/control_center_services.h"
+#include "ui/animation.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -34,6 +35,9 @@ protected:
 
 private:
     std::string m_file;
+    std::string m_oldFile;
+    double m_transition = 1.0;
+    std::unique_ptr<ui::Animation> m_anim;
     std::optional<ui::Color> m_tint;
 };
 

@@ -180,9 +180,9 @@ void DecorationNode::paintButtons(render::Renderer& renderer, const base::Rect& 
         else
             dotColor = render::Color(0.15f, 0.79f, 0.25f, 1.0f);
 
-        const std::string circleKey = std::format("{}macdot:{}:{}", rasterDensity, 16, colorKey(dotColor));
+        const std::string circleKey = std::format("{}macdot:{}:{}", rasterDensity, 14, colorKey(dotColor));
         render::Texture* circleTex = m_theme->texture(renderer, circleKey, [&] {
-            return renderButtonHighlight(16 * rasterDensity, dotColor);
+            return renderButtonHighlight(14 * rasterDensity, dotColor);
         });
         if (circleTex) {
             const base::Size size = (base::SizeF(circleTex->size()) / rasterDensity).toSize();
@@ -194,9 +194,9 @@ void DecorationNode::paintButtons(render::Renderer& renderer, const base::Rect& 
             const render::Color iconColor(0.2f, 0.2f, 0.2f, 1.0f);
             const std::string key =
                 std::format("{}icon:{}:{}:{}", rasterDensity, iconName(button.type(), restore),
-                            10, colorKey(iconColor));
+                            14, colorKey(iconColor));
             render::Texture* texture = m_theme->texture(renderer, key, [&] {
-                return renderCaptionIcon(button.type(), restore, 10 * rasterDensity,
+                return renderCaptionIcon(button.type(), restore, 14 * rasterDensity,
                                          iconColor);
             });
             if (texture) {

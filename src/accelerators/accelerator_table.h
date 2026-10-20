@@ -48,6 +48,8 @@ struct AcceleratorData {
 // AcceleratorLauncherStateMachine keeps Meta+L from doing it as well.
 inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
         {false, XKB_KEY_Super_L, NoModifier, AcceleratorAction::ToggleAppList},
+        {true, XKB_KEY_space, MetaDown, AcceleratorAction::ToggleSpotlight},
+        {true, XKB_KEY_space, ControlDown, AcceleratorAction::ToggleSpotlight},
         {true, XKB_KEY_l, MetaDown, AcceleratorAction::LockScreen},
 
         // Window management.
@@ -119,6 +121,8 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
 // recording. Command+Shift+3, 4 and 5 capture as well, onto the clipboard with
 // Control. The launcher has no default.
 inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
+        {true, XKB_KEY_space, MetaDown, AcceleratorAction::ToggleSpotlight},
+        {true, XKB_KEY_space, ControlDown, AcceleratorAction::ToggleSpotlight},
         {true, XKB_KEY_q, ControlDown | MetaDown, AcceleratorAction::LockScreen},
 
         // Window management.
@@ -198,6 +202,7 @@ inline constexpr std::array kPreferredActions = {
 // Actions that are always handled.
 inline constexpr std::array kReservedActions = {
         AcceleratorAction::LockScreen,
+        AcceleratorAction::ToggleSpotlight,
 };
 
 // Actions allowed while the session is blocked: the lock screen and the login

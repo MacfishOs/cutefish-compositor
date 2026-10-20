@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include "base/dbus.h"
@@ -68,6 +69,10 @@ public:
         , m_appearance(shell->bus(), "org.cutefish.Services", "/org/cutefish/Services/Appearance",
                        "org.cutefish.Services.Appearance")
         , m_privacy(dbus::Connection::system(), kPrivacyService, kPrivacyPath, kPrivacyInterface)
+        , m_nightLight(shell->bus(), "org.cutefish.Services", "/org/cutefish/Services/NightLight",
+                       "org.cutefish.Services.NightLight")
+        , m_kbdBacklight(dbus::Connection::system(), "org.freedesktop.UPower",
+                        "/org/freedesktop/UPower/KbdBacklight", "org.freedesktop.UPower.KbdBacklight")
     {
         const auto notify = [this] { scheduleChanged(); };
         m_changedTimer.setSingleShot(true);
@@ -242,6 +247,51 @@ public:
             m_bluetooth->setEnabled(enabled);
     }
 
+    std::vector<BluetoothDevice> bluetoothDevices() const override
+    {
+        std::vector<BluetoothDevice> list;
+        if (!m_bluetooth)
+            return list;
+        for (const auto &dev : m_bluetooth->devices()) {
+            if (!dev || !dev->isDevice())
+                continue;
+            BluetoothDevice item;
+            item.name = dev->name();
+            item.icon = !dev->icon().empty() ? dev->icon() : "bluetooth-symbolic";
+            item.address = dev->address();
+            item.connected = dev->connected();
+            item.paired = dev->paired();
+            item.busy = dev->busy();
+            list.push_back(item);
+        }
+        return list;
+    }
+
+    void connectBluetoothDevice(const std::string &address) override
+    {
+        if (!m_bluetooth)
+            return;
+        m_bluetooth->setDiscoveryRequested(true);
+        for (const auto &dev : m_bluetooth->devices()) {
+            if (dev && dev->address() == address) {
+                m_bluetooth->operate(dev.get(), "Connect");
+                break;
+            }
+        }
+    }
+
+    void disconnectBluetoothDevice(const std::string &address) override
+    {
+        if (!m_bluetooth)
+            return;
+        for (const auto &dev : m_bluetooth->devices()) {
+            if (dev && dev->address() == address) {
+                m_bluetooth->operate(dev.get(), "Disconnect");
+                break;
+            }
+        }
+    }
+
     // --- Switches ---
 
     void setDarkMode(bool dark) override
@@ -258,6 +308,40 @@ public:
     {
         if (m_notifications)
             m_notifications->setDoNotDisturb(enabled);
+    }
+
+    bool nightLightEnabled() const override { return m_nightLightEnabled; }
+
+    void setNightLightEnabled(bool enabled) override
+    {
+        m_nightLightEnabled = enabled;
+        m_nightLight.send("setEnabled", enabled);
+        scheduleChanged();
+    }
+
+    int keyboardBacklightLevel() const override { return m_keyLightLevel; }
+
+    void setKeyboardBacklightLevel(int level) override
+    {
+        m_keyLightLevel = level % 3;
+        m_kbdBacklight.send("SetBrightness", int32_t(m_keyLightLevel));
+
+        try {
+            std::filesystem::path ledsPath("/sys/class/leds");
+            if (std::filesystem::exists(ledsPath)) {
+                for (const auto &entry : std::filesystem::directory_iterator(ledsPath)) {
+                    if (entry.path().filename().string().find("kbd_backlight") != std::string::npos) {
+                        std::filesystem::path brightFile = entry.path() / "brightness";
+                        std::ofstream ofs(brightFile);
+                        if (ofs.is_open()) {
+                            ofs << m_keyLightLevel << std::endl;
+                        }
+                    }
+                }
+            }
+        } catch (...) {
+        }
+        scheduleChanged();
     }
 
     bool cameraEnabled() const override { return m_cameraEnabled; }
@@ -452,10 +536,14 @@ private:
     std::unique_ptr<audio::AudioModel> m_audio;
     dbus::Proxy m_appearance;
     dbus::Proxy m_privacy;
+    dbus::Proxy m_nightLight;
+    dbus::Proxy m_kbdBacklight;
     PendingCalls m_calls;
     base::Job m_privacyState;
     bool m_cameraEnabled = true;
     bool m_microphoneEnabled = true;
+    bool m_nightLightEnabled = false;
+    int m_keyLightLevel = 0;
     std::vector<PendingJoin> m_pendingJoins;
     base::Timer m_changedTimer;
     std::vector<base::Subscription> m_subscriptions;

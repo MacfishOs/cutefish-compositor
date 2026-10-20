@@ -67,6 +67,8 @@
 #include "shell/shell_window.h"
 #include "shell/statusbar/device_usage.h"
 #include "shell/statusbar/status_bar.h"
+#include "shell/spotlight/spotlight.h"
+#include "shell/spotlight/spotlight_window.h"
 #include "shell/statusbar/status_bar_window.h"
 #include "shell/statusbar/vpn_notifier.h"
 #include "shell/wallpaper/wallpaper.h"
@@ -676,12 +678,24 @@ void CompositorShell::initShell()
     shell::Launcher *launcherService = launcher.get();
     m_shell->addComponent(std::make_unique<shell::LauncherWindow>(m_shell.get(), std::move(launcher),
                                                                   dockService, wallpaper));
+    auto spotlight = std::make_unique<shell::Spotlight>(environment.bus);
+    shell::Spotlight *spotlightService = spotlight.get();
+    m_shell->addComponent(std::make_unique<shell::SpotlightWindow>(m_shell.get(), std::move(spotlight)));
+
     // The dock and the accelerators reach the launcher directly.
-    dockService->applications().hideLauncher = [launcherService] { launcherService->hide(); };
+    dockService->applications().hideLauncher = [launcherService, spotlightService] {
+        launcherService->hide();
+        spotlightService->hide();
+    };
     dockService->applications().toggleLauncher = [launcherService] { launcherService->toggle(); };
-    dockService->minimizedWindows().hideLauncher = [launcherService] { launcherService->hide(); };
-    if (m_acceleratorDelegate)
+    dockService->minimizedWindows().hideLauncher = [launcherService, spotlightService] {
+        launcherService->hide();
+        spotlightService->hide();
+    };
+    if (m_acceleratorDelegate) {
         m_acceleratorDelegate->launcherToggle = [launcherService] { launcherService->toggle(); };
+        m_acceleratorDelegate->spotlightToggle = [spotlightService] { spotlightService->toggle(); };
+    }
     auto statusBar = std::make_unique<shell::StatusBar>(
             environment.bus, environment.bus ? base::dbus::Connection::system(mainLoop()) : nullptr,
             &m_shell->tasks(), preferencesFile("shell"));

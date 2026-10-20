@@ -154,8 +154,9 @@ base::Rect Decoration::captionArea() const
     const base::Rect area = titleBarRect();
     int buttonsWidth = 0;
     if (!m_buttons.empty()) {
-        buttonsWidth = static_cast<int>(m_buttons.size()) * metrics.buttonSize
-                + (static_cast<int>(m_buttons.size()) - 1) * metrics.buttonSpacing
+        // Mac style buttons: 14px size with 8px spacing, starting at 12px
+        buttonsWidth = static_cast<int>(m_buttons.size()) * 14
+                + (static_cast<int>(m_buttons.size()) - 1) * 8
                 + 12;
     }
     return area.adjusted(buttonsWidth + metrics.captionMargin, 0, -metrics.captionMargin, 0);
@@ -167,10 +168,11 @@ void Decoration::layout()
     const base::Rect titleBar = titleBarRect();
 
     int left = titleBar.left() + 12;
-    const int top = titleBar.top() + std::max(0, (titleBar.height() - metrics.buttonSize) / 2);
+    const int buttonSize = 18;
+    const int top = titleBar.top() + std::max(0, (titleBar.height() - buttonSize) / 2);
     for (CaptionButton &button : m_buttons) {
-        button.setGeometry(base::Rect(left, top, metrics.buttonSize, metrics.buttonSize));
-        left += metrics.buttonSize + 8;
+        button.setGeometry(base::Rect(left, top, buttonSize, buttonSize));
+        left += buttonSize + 8;
     }
 }
 

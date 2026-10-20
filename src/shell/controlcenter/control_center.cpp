@@ -83,7 +83,8 @@ ControlCenter::ControlCenter(Shell *shell, std::unique_ptr<ControlCenterServices
         for (Panel panel : {Panel::Network, Panel::Volume, Panel::Battery})
             fitToWorkArea(panel);
     }));
-    m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
+    // m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
+
     m_audio = audio();
     m_network = network();
 }

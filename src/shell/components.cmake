@@ -139,6 +139,19 @@ add_library(cutefish-shell-launcher-view STATIC
 target_link_libraries(cutefish-shell-launcher-view PUBLIC cutefish-shell cutefish-shell-launcher
     cutefish-shell-wallpaper)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-launcher-view)
+
+# Spotlight Search (macOS Spotlight floating search window)
+add_library(cutefish-shell-spotlight STATIC
+    src/shell/spotlight/spotlight.cpp
+    src/shell/spotlight/spotlight.h
+    src/shell/spotlight/spotlight_view.cpp
+    src/shell/spotlight/spotlight_view.h
+    src/shell/spotlight/spotlight_window.cpp
+    src/shell/spotlight/spotlight_window.h
+)
+target_link_libraries(cutefish-shell-spotlight PUBLIC cutefish-shell cutefish-shell-launcher cutefish-shell-common)
+target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-spotlight)
+target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-launcher-view)
 # The control centre, the status panels and the power dialog.
 find_package(CutefishClients REQUIRED COMPONENTS networkmanager bluez audio)
 add_library(cutefish-shell-controlcenter STATIC

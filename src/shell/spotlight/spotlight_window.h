@@ -9,15 +9,15 @@
 #include <vector>
 
 #include "base/signal.h"
+#include "shell/shell.h"
 #include "shell/spotlight/spotlight.h"
 #include "shell/spotlight/spotlight_view.h"
 
 namespace cutefish::shell {
 
-class Shell;
 class ShellWindow;
 
-class SpotlightWindow
+class SpotlightWindow : public Component
 {
 public:
     SpotlightWindow(Shell *shell, std::unique_ptr<Spotlight> spotlight);
@@ -36,6 +36,7 @@ private:
     std::unique_ptr<ShellWindow> m_window;
     SpotlightView *m_view = nullptr;
     std::vector<base::Subscription> m_subscriptions;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };
 
 } // namespace cutefish::shell

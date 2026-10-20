@@ -62,18 +62,22 @@ void LevelTrack::paint(ui::Painter &painter)
 
     if (height >= 28.0) {
         const double radius = height / 2.0;
+        const ui::Color trackBg = dark ? panel::rgba(0.20, 0.22, 0.28, 0.85) : panel::rgba(0, 0, 0, 0.12);
+
+        painter.save();
+        painter.clipRoundedRect(rect, radius, ui::Corners::Continuous);
 
         // Background pill track
-        const ui::Color trackBg = dark ? panel::rgba(0.18, 0.20, 0.26, 0.80) : panel::rgba(0, 0, 0, 0.10);
-        painter.fillRoundedRect(rect, radius, trackBg, ui::Corners::Continuous);
+        painter.fillRect(rect, trackBg);
 
         // Filled track
         const double fillWidth = rect.width * m_drawn;
         if (fillWidth > 0) {
-            ui::RectF fillRect{0, 0, std::clamp(fillWidth, radius * 2.0, rect.width), height};
-            const ui::Color trackFill = dark ? panel::rgba(1.0, 1.0, 1.0, 0.92) : ui::Color::rgb(0xFFFFFF);
-            painter.fillRoundedRect(fillRect, radius, trackFill, ui::Corners::Continuous);
+            ui::RectF fillRect{0, 0, fillWidth, height};
+            const ui::Color trackFill = dark ? panel::rgba(1.0, 1.0, 1.0, 0.95) : ui::Color::rgb(0xFFFFFF);
+            painter.fillRect(fillRect, trackFill);
         }
+        painter.restore();
 
         if (!m_icon.empty()) {
             painter.save();

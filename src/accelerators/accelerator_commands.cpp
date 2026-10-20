@@ -235,6 +235,11 @@ void toggleAppList(const CommandContext &context)
     context.delegate->toggleAppList();
 }
 
+void toggleSpotlight(const CommandContext &context)
+{
+    context.delegate->toggleSpotlight();
+}
+
 void takeScreenshot(const CommandContext &context, bool toClipboard)
 {
     context.delegate->takeScreenshot(toClipboard);

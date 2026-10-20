@@ -8,9 +8,11 @@
 #include <vector>
 
 #include "base/i18n.h"
+#include "shell/common/text_match.h"
 #include "shell/controlcenter/control_center_services.h"
 #include "shell/controlcenter/level_slider.h"
 #include "shell/controlcenter/panel_style.h"
+#include "shell/controlcenter/status_panel.h"
 #include "shell/controlcenter/tiles.h"
 #include "ui/label.h"
 #include "ui/theme.h"
@@ -19,6 +21,8 @@
 using cutefish::i18n::tr;
 
 namespace cutefish::shell {
+
+using BluetoothDevice = ControlCenterServices::BluetoothDevice;
 
 static constexpr std::chrono::milliseconds kBrightnessDelay {100};
 
@@ -77,6 +81,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     };
     m_wireless->onChevronClicked = [this] {
         m_subPanel = SubPanel::Wifi;
+        m_services.requestScan();
         requestLayout();
         refresh();
     };
@@ -165,8 +170,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_nightShiftToggle->setTitle(tr("Night"));
     m_nightShiftToggle->setActiveColor(ui::Color::rgb(0xFF9500));
     m_nightShiftToggle->onClicked = [this] {
-        m_nightLightEnabled = !m_nightLightEnabled;
-        refresh();
+        m_services.setNightLightEnabled(!m_services.nightLightEnabled());
     };
 
     m_captureToggle = addChild<CardItem>();
@@ -197,8 +201,8 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_keyLightToggle->setMode(CardItem::Mode::QuickToggle);
     m_keyLightToggle->setActiveColor(ui::Color::rgb(0x007AFF));
     m_keyLightToggle->onClicked = [this] {
-        m_keyLightLevel = (m_keyLightLevel + 1) % 3;
-        refresh();
+        const int nextLevel = (m_services.keyboardBacklightLevel() + 1) % 3;
+        m_services.setKeyboardBacklightLevel(nextLevel);
     };
 
     m_cameraToggle = addChild<CardItem>();
@@ -280,7 +284,7 @@ void ControlCenterView::refresh()
     const bool isMain = m_subPanel == SubPanel::Main;
 
     m_backButton->setVisible(!isMain);
-    m_backButton->setIcon(panel::artwork("down", dark));
+    m_backButton->setIcon(panel::artwork("chevron-left", dark));
     m_lockButton->setVisible(isMain);
     m_settingsButton->setVisible(isMain);
 
@@ -291,8 +295,82 @@ void ControlCenterView::refresh()
     else
         m_title->setText(tr("Control Center"));
 
-    m_lockButton->setIcon(panel::artwork("lock", dark));
+    m_lockButton->setIcon(panel::artwork("system-lock-screen", dark));
     m_settingsButton->setIcon(panel::artwork("settings", dark));
+
+    if (m_subPanel == SubPanel::Wifi) {
+        std::vector<WirelessNetwork> networks = m_services.wirelessNetworks();
+        while (m_subRows.size() > networks.size()) {
+            takeChild(m_subRows.back());
+            m_subRows.pop_back();
+        }
+        while (m_subRows.size() < networks.size()) {
+            PanelRow *row = addChild<PanelRow>();
+            m_subRows.push_back(row);
+        }
+        for (size_t i = 0; i < networks.size(); ++i) {
+            const WirelessNetwork &net = networks[i];
+            PanelRow *row = m_subRows[i];
+            row->setVisible(true);
+            bool isLocked = net.security != WirelessNetwork::Security::None && net.security != WirelessNetwork::Security::Unknown;
+            if (isLocked)
+                row->setArtwork(panel::artwork("network-wireless-locked", dark));
+            else
+                row->setArtwork(panel::artwork(!net.icon.empty() ? net.icon : "network-wireless-connected-100", dark));
+            row->setText(!net.name.empty() ? net.name : tr("Wi-Fi Network"));
+            bool connected = net.state == WirelessNetwork::State::Activated;
+            row->setActive(connected);
+            row->setBold(connected);
+            row->setBusy(net.state == WirelessNetwork::State::Activating);
+            row->setLocked(isLocked);
+            row->onClicked = [this, net] {
+                m_services.activateNetwork(net);
+            };
+        }
+    } else if (m_subPanel == SubPanel::Bluetooth) {
+        std::vector<BluetoothDevice> devices = m_services.bluetoothDevices();
+        while (m_subRows.size() > devices.size()) {
+            takeChild(m_subRows.back());
+            m_subRows.pop_back();
+        }
+        while (m_subRows.size() < devices.size()) {
+            PanelRow *row = addChild<PanelRow>();
+            m_subRows.push_back(row);
+        }
+        for (size_t i = 0; i < devices.size(); ++i) {
+            const BluetoothDevice &dev = devices[i];
+            PanelRow *row = m_subRows[i];
+            row->setVisible(true);
+            std::string iconName = dev.icon;
+            if (iconName.empty() || iconName == "bluetooth" || iconName == "bluetooth-symbolic") {
+                std::string lowerName = toLower(dev.name);
+                if (lowerName.find("airpod") != std::string::npos || lowerName.find("bud") != std::string::npos ||
+                    lowerName.find("headset") != std::string::npos || lowerName.find("headphone") != std::string::npos ||
+                    lowerName.find("earphone") != std::string::npos || lowerName.find("audio") != std::string::npos ||
+                    lowerName.find("sony") != std::string::npos || lowerName.find("jbl") != std::string::npos ||
+                    lowerName.find("bose") != std::string::npos || lowerName.find("beats") != std::string::npos) {
+                    iconName = "audio-headset";
+                } else {
+                    iconName = "bluetooth-symbolic";
+                }
+            }
+            row->setArtwork(panel::artwork(iconName, dark));
+            row->setText(!dev.name.empty() ? dev.name : dev.address);
+            row->setActive(dev.connected);
+            row->setBold(dev.connected);
+            row->setBusy(dev.busy);
+            row->setDetail(dev.connected ? tr("Connected") : dev.paired ? tr("Paired") : tr("Not Connected"));
+            row->onClicked = [this, dev] {
+                if (dev.connected)
+                    m_services.disconnectBluetoothDevice(dev.address);
+                else
+                    m_services.connectBluetoothDevice(dev.address);
+            };
+        }
+    } else {
+        for (PanelRow *row : m_subRows)
+            row->setVisible(false);
+    }
 
     m_users->setVisible(isMain && !m_services.deviceUsers().empty());
     m_users->setUsers(m_services.deviceUsers());
@@ -304,9 +382,21 @@ void ControlCenterView::refresh()
     m_wireless->setStatus(!m_wireless->isChecked() ? tr("Off") : !network.empty() ? network : tr("On"));
 
     m_bluetooth->setVisible(isMain && m_services.bluetoothAvailable());
-    m_bluetooth->setChecked(m_services.bluetoothEnabled());
-    m_bluetooth->setArtwork(m_services.bluetoothEnabled() ? "bluetooth-symbolic" : "bluetooth-off");
-    m_bluetooth->setStatus(m_bluetooth->isChecked() ? tr("On") : tr("Off"));
+    const bool btEnabled = m_services.bluetoothEnabled();
+    m_bluetooth->setChecked(btEnabled);
+    m_bluetooth->setArtwork(btEnabled ? "bluetooth-symbolic" : "bluetooth-off");
+    if (!btEnabled) {
+        m_bluetooth->setStatus(tr("Off"));
+    } else {
+        std::string connectedName;
+        for (const auto &dev : m_services.bluetoothDevices()) {
+            if (dev.connected) {
+                connectedName = !dev.name.empty() ? dev.name : dev.address;
+                break;
+            }
+        }
+        m_bluetooth->setStatus(!connectedName.empty() ? connectedName : tr("On"));
+    }
 
     m_wirelessShare->setVisible(isMain);
     m_wirelessShare->setChecked(m_wirelessShareEnabled);
@@ -358,8 +448,9 @@ void ControlCenterView::refresh()
     }
 
     // Night Shift
-    m_nightShiftToggle->setChecked(m_nightLightEnabled);
-    m_nightShiftToggle->setArtwork(m_nightLightEnabled ? "eye-protection" : "eye-protection-off");
+    const bool nightLight = m_services.nightLightEnabled();
+    m_nightShiftToggle->setChecked(nightLight);
+    m_nightShiftToggle->setArtwork(nightLight ? "eye-protection" : "eye-protection-off");
 
     // Focus / DND
     const bool dnd = m_services.doNotDisturb();
@@ -372,11 +463,12 @@ void ControlCenterView::refresh()
     m_darkModeToggle->setArtwork(dark ? "dark-mode" : "light-mode");
 
     // Key Light
-    if (m_keyLightLevel == 2) {
+    const int keyLevel = m_services.keyboardBacklightLevel();
+    if (keyLevel == 2) {
         m_keyLightToggle->setTitle(tr("Key High"));
         m_keyLightToggle->setArtwork("keyboard-backlight-high");
         m_keyLightToggle->setChecked(true);
-    } else if (m_keyLightLevel == 1) {
+    } else if (keyLevel == 1) {
         m_keyLightToggle->setTitle(tr("Key Low"));
         m_keyLightToggle->setArtwork("keyboard-backlight-low");
         m_keyLightToggle->setChecked(true);
@@ -399,12 +491,6 @@ void ControlCenterView::refresh()
 
 double ControlCenterView::layoutHeight() const
 {
-    if (m_subPanel != SubPanel::Main) {
-        double h = 10.0 + 32.0 + 10.0; // Header
-        const auto items = m_subPanel == SubPanel::Wifi ? m_services.wirelessNetworks().size() : 1;
-        h += std::max(1UL, items) * 50.0 + 20.0;
-        return h;
-    }
     double h = 10.0; // top gap
     h += 32.0 + 10.0; // Header
 
@@ -430,7 +516,12 @@ void ControlCenterView::layout()
 {
     if (m_darkModeShown != ui::Theme::current().darkMode) {
         m_darkModeShown = ui::Theme::current().darkMode;
+        const bool dark = m_darkModeShown;
+        m_darkModeToggle->setChecked(dark);
+        m_darkModeToggle->setTitle(dark ? tr("Dark") : tr("Light"));
+        m_darkModeToggle->setArtwork(dark ? "dark-mode" : "light-mode");
         m_media->setState(m_services.media());
+        requestPaint();
     }
 
     const double contentWidth = kWidth - 2 * kGap; // 350
@@ -440,6 +531,15 @@ void ControlCenterView::layout()
     if (!isMain) {
         m_backButton->setGeometry({16.0, y, 32.0, 32.0});
         m_title->setGeometry({56.0, y + 4.0, 250.0, m_title->sizeHint().height});
+        y += 32.0 + kGap + 10.0;
+
+        for (PanelRow *row : m_subRows) {
+            if (!row->isVisible())
+                continue;
+            const double rowH = row->heightForWidth(contentWidth);
+            row->setGeometry({kGap, y, contentWidth, rowH});
+            y += rowH + 4.0;
+        }
         return;
     }
 

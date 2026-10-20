@@ -142,6 +142,7 @@ private:
 
     Dock *dockFor(Window *window);
     const Dock *dockFor(const Window *window) const;
+    bool isObstructed(const Window *dock, const base::Rect &output) const;
     // A dock or panel just mapped starts past its screen edge and slides in,
     // without the reveal delay; one its state hides stays parked there.
     void enter(Window *dock, Dock &entry);

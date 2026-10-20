@@ -27,9 +27,9 @@ public:
     static constexpr double kIconSize = 16;
     static constexpr double kFontPointSize = 10;
     static constexpr double kEdgeMargin = 12;
-    static constexpr double kItemGap = 12;
-    static constexpr double kHighlightGap = 6;
-    static constexpr double kSmallSpacing = 6;
+    static constexpr double kItemGap = 10;
+    static constexpr double kHighlightGap = 4;
+    static constexpr double kSmallSpacing = 5;
 
     virtual ~BarContext() = default;
 

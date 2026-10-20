@@ -28,6 +28,7 @@ namespace cutefish::accelerators {
 enum class AcceleratorAction : uint32_t {
     // General.
     ToggleAppList,
+    ToggleSpotlight,
     LockScreen,
 
     // Windows.

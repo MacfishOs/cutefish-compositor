@@ -14,12 +14,13 @@
 #include "shell/controlcenter/tiles.h"
 #include "shell/shell.h"
 #include "shell/spotlight/spotlight.h"
-#include "ui/icon_loader.h"
-#include "ui/key_codes.h"
+#include "ui/icon.h"
+#include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/painter.h"
 #include "ui/text_field.h"
 #include "ui/theme.h"
+#include "ui/window.h"
 
 using cutefish::i18n::tr;
 
@@ -49,7 +50,7 @@ static const std::vector<SettingsSearchItem> kSettingsModules = {
 // SpotlightResultRow
 SpotlightResultRow::SpotlightResultRow()
 {
-    m_icon = addChild<SvgIcon>();
+    m_icon = addChild<ui::ThemeIcon>(std::string(), 32.0);
     m_title = addChild<ui::Label>();
     m_title->setFontSize(14.0);
     m_title->setWeight(500);
@@ -73,10 +74,7 @@ void SpotlightResultRow::setData(const SpotlightSearchResult &result, bool selec
     m_description->setColor(whiteText ? panel::rgba(1, 1, 1, 0.75) : panel::rgba(0, 0, 0, 0.65));
 
     if (!result.icon.empty()) {
-        if (result.icon.starts_with("/") || result.icon.ends_with(".svg"))
-            m_icon->setFile(result.icon);
-        else
-            m_icon->setFile(panel::artwork(result.icon, dark));
+        m_icon->setIconName(result.icon);
     }
     requestLayout();
     requestPaint();
@@ -231,7 +229,10 @@ void SpotlightView::performSearch()
     }
 
     m_selectedIndex = 0;
+    m_scrollAccumulator = 0.0;
     updateSelection();
+    if (onHeightChanged)
+        onHeightChanged();
     requestLayout();
     requestPaint();
 }
@@ -290,6 +291,30 @@ bool SpotlightView::keyPress(const ui::KeyEvent &event)
         return true;
     }
     return ui::View::keyPress(event);
+}
+
+bool SpotlightView::scroll(const ui::ScrollEvent &event)
+{
+    if (m_results.size() <= 1)
+        return false;
+
+    double delta = event.deltaY;
+    if (event.value120Y != 0)
+        delta = (event.value120Y / 120.0) * 20.0;
+
+    m_scrollAccumulator += delta;
+    const double kThreshold = 12.0;
+
+    if (std::abs(m_scrollAccumulator) >= kThreshold) {
+        int steps = static_cast<int>(m_scrollAccumulator / kThreshold);
+        m_scrollAccumulator -= steps * kThreshold;
+        int newIndex = std::clamp(m_selectedIndex + steps, 0, int(m_results.size()) - 1);
+        if (newIndex != m_selectedIndex) {
+            m_selectedIndex = newIndex;
+            updateSelection();
+        }
+    }
+    return true;
 }
 
 void SpotlightView::layout()

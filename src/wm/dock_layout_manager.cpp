@@ -251,6 +251,23 @@ bool DockLayoutManager::isLauncherShowing(const base::Rect &output) const
     });
 }
 
+bool DockLayoutManager::isObstructed(const Window *dock, const base::Rect &output) const
+{
+    const auto &windows = m_manager->windows();
+    const base::Rect dockBounds = dock->bounds();
+    for (const Window *window : windows) {
+        if (!isWorkspaceWindow(window) || !window->isVisible())
+            continue;
+        if (m_manager->outputBoundsFor(window) != output)
+            continue;
+        if (window->stateType() == WindowStateType::Maximized || window->stateType() == WindowStateType::Fullscreen)
+            return true;
+        if (dockBounds.intersects(window->bounds()))
+            return true;
+    }
+    return false;
+}
+
 // Upstream: ShelfLayoutManager::CalculateShelfVisibility. A fullscreen window
 // gets the dock out of its way whatever the setting; unlike upstream it still
 // comes back from the edge, so the dock is never out of reach. A panel has no
@@ -269,8 +286,8 @@ DockVisibilityState DockLayoutManager::computeVisibility(const Window *dock,
     case DockAutoHideBehavior::Always:
         return DockVisibilityState::AutoHide;
     case DockAutoHideBehavior::WhenObstructed:
-        return workspace == WorkspaceState::Maximized ? DockVisibilityState::AutoHide
-                                                      : DockVisibilityState::Visible;
+        return isObstructed(dock, output) ? DockVisibilityState::AutoHide
+                                           : DockVisibilityState::Visible;
     }
     return DockVisibilityState::Visible;
 }

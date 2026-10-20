@@ -108,15 +108,31 @@ public:
     // closes for a window that asks for more.
     virtual bool activateNetwork(const WirelessNetwork &network) = 0;
 
+struct BluetoothDevice {
+    std::string name;
+    std::string icon;
+    std::string address;
+    bool connected = false;
+    bool paired = false;
+    bool busy = false;
+};
+
     // --- Bluetooth (BlueZ) ---
     virtual bool bluetoothAvailable() const = 0;
     virtual bool bluetoothEnabled() const = 0;
     virtual void setBluetoothEnabled(bool enabled) = 0;
+    virtual std::vector<BluetoothDevice> bluetoothDevices() const = 0;
+    virtual void connectBluetoothDevice(const std::string &address) = 0;
+    virtual void disconnectBluetoothDevice(const std::string &address) = 0;
 
     // --- Switches ---
     virtual void setDarkMode(bool dark) = 0;
     virtual bool doNotDisturb() const = 0;
     virtual void setDoNotDisturb(bool enabled) = 0;
+    virtual bool nightLightEnabled() const = 0;
+    virtual void setNightLightEnabled(bool enabled) = 0;
+    virtual int keyboardBacklightLevel() const = 0;
+    virtual void setKeyboardBacklightLevel(int level) = 0;
     virtual bool cameraEnabled() const = 0;
     virtual void setCameraEnabled(bool enabled) = 0;
     virtual bool microphoneEnabled() const = 0;

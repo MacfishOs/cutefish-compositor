@@ -133,6 +133,7 @@ public:
     std::string iconNameForWindow(uint64_t window) const;
     // The id of the entry a window belongs to; empty if none has it yet.
     std::string appIdForWindow(uint64_t window) const;
+    DesktopEntryPtr desktopEntry(const std::string &id) const;
 
     // Takes the launcher button's name again after the session language
     // changed.

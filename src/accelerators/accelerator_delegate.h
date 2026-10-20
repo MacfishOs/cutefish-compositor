@@ -21,6 +21,7 @@ public:
 
     // org.cutefish.Launcher.toggle.
     virtual void toggleAppList() = 0;
+    virtual void toggleSpotlight() = 0;
 
     // org.cutefish.Screenshot: every screen at once, a part of one chosen
     // with the pointer, the capture tools, and the end of a recording.
@@ -49,8 +50,10 @@ class DBusAcceleratorDelegate : public AcceleratorDelegate
 public:
     // The launcher drawn in this process; unset, the call goes over D-Bus.
     std::function<void()> launcherToggle;
+    std::function<void()> spotlightToggle;
 
     void toggleAppList() override;
+    void toggleSpotlight() override;
     void takeScreenshot(bool toClipboard) override;
     void takePartialScreenshot(bool toClipboard) override;
     void startCaptureMode() override;

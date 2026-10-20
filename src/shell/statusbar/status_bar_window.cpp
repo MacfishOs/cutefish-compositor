@@ -16,6 +16,7 @@
 #include "base/dbus.h"
 #include "base/locale.h"
 #include "core/main_loop.h"
+#include "shell/shell_data.h"
 #include "shell/shell_window.h"
 #include "shell/statusbar/clock_format.h"
 #include "shell/statusbar/status_bar.h"
@@ -94,7 +95,7 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
     m_vpnNotifier->openSettings = [shell] { shell->openSettings({"-m", "vpn"}); };
     m_window = std::make_unique<ShellWindow>(shell, wm::WindowRole::Panel);
     m_window->setFocusPolicy(wm::FocusPolicy::NoFocus);
-    m_window->window()->setBackgroundColor(ui::Color {25, 25, 25, 120});
+    m_window->window()->setBackgroundColor(ui::Color {0, 0, 0, 0});
     auto root = std::make_unique<Root>(this);
     m_root = root.get();
 
@@ -150,7 +151,7 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
     m_volume = statusIcon("volume", Panel::Volume);
     m_network = statusIcon("network", Panel::Network);
     m_battery = statusIcon("battery", Panel::Battery);
-    m_battery->setIconWidth(BarContext::kIconSize + 24);
+    m_battery->setIconSize(32, 19);
     m_control = statusIcon("control", Panel::ControlCenter);
     m_control->setIconName("control");
     m_clock = m_root->addChild<ClockItem>(this);
@@ -251,6 +252,7 @@ void StatusBarWindow::updateLook()
     m_clock->updateLook();
     m_recording->updateLook();
     m_agentControl->updateLook();
+    updatePlateBlur();
 }
 
 void StatusBarWindow::platePainted()
@@ -275,8 +277,7 @@ void StatusBarWindow::updatePlateBlur()
 {
     if (!m_window || !m_root)
         return;
-    // A surface has one blur, and one plate shows at a time: opening a panel
-    // or a menu closes the others.
+
     const BarItem *item = findPlate(m_root);
     ui::RectF plate = item ? item->plateRect() : ui::RectF();
     if (plate.width > 0 && plate.height > 0) {
@@ -285,23 +286,27 @@ void StatusBarWindow::updatePlateBlur()
     } else {
         plate = {};
     }
-    if (plate == m_blurPlate)
-        return;
     m_blurPlate = plate;
-    if (plate.width <= 0) {
-        m_window->setBackgroundBlur(base::Rect(), 0);
-        return;
-    }
-    // The rectangle in whole logical pixels; the shape clips the blur to the
-    // plate as drawn, which sits on fractional ones at most scales.
-    const double radius = ui::Theme::current().smallRadius;
-    const int left = int(std::floor(plate.x));
-    const int top = int(std::floor(plate.y));
-    const base::Rect rect(left, top, int(std::ceil(plate.x + plate.width)) - left,
-                          int(std::ceil(plate.y + plate.height)) - top);
-    ui::Path shape;
-    shape.addRoundedRect(plate, radius, radius);
-    m_window->setBackgroundBlur(rect, int(std::lround(radius)), {}, shape);
+
+    // Maintain a full-width macOS-style status bar with vibrant, colorful frosted glass blur
+    const bool dark = ui::Theme::current().darkMode || m_lightContents;
+    render::GlassParams glass = fishuiGlass();
+    glass.displacement = glassFixed(15.0);
+    glass.bevel = glassFixed(10.0);
+    glass.depth = glassFixed(12.0);
+    glass.chroma = glassFixed(0.04f);
+    glass.ior = glassFixed(1.5f);
+    glass.rim = glassFixed(0.1f);
+    glass.blurSigma = glassFixed(30.0);
+    glass.plainSigma = glassFixed(30.0);
+    glass.saturation = glassFixed(2.0);
+    glass.tintRed = glassFixed(dark ? 0.12 : 0.95);
+    glass.tintGreen = glassFixed(dark ? 0.12 : 0.95);
+    glass.tintBlue = glassFixed(dark ? 0.15 : 0.97);
+    glass.tintAlpha = glassFixed(dark ? 0.50 : 0.45);
+
+    const base::Rect fullRect(0, 0, m_window->geometry().width(), m_window->geometry().height());
+    m_window->setBackgroundBlur(fullRect, 0, glass);
 }
 
 void StatusBarWindow::updateBattery()

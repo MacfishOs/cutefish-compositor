@@ -21,6 +21,7 @@ class ControlCenterServices;
 class DeviceUsersTile;
 class HeaderButton;
 class MediaTile;
+class PanelRow;
 class TileSlider;
 
 // The control centre's view matching reference QML design.
@@ -122,6 +123,7 @@ private:
     int m_keyLightLevel = 0; // 0: Off, 1: Low, 2: High
     bool m_locationEnabled = false;
     SubPanel m_subPanel = SubPanel::Main;
+    std::vector<PanelRow*> m_subRows;
 };
 
 } // namespace cutefish::shell

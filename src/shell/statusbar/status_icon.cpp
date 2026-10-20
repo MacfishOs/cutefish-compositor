@@ -92,6 +92,14 @@ void StatusIcon::setIconWidth(double width)
     updateContent();
 }
 
+void StatusIcon::setIconSize(double width, double height)
+{
+    m_iconWidth = width;
+    m_iconHeight = height;
+    updateContent();
+}
+
+
 void StatusIcon::setLabel(std::string label)
 {
     if (label == m_label)
@@ -120,6 +128,7 @@ void StatusIcon::showBattery(const Battery &battery, bool percentage)
     if (icon.ends_with(".svg"))
         icon.resize(icon.size() - 4);
     setIconName(icon);
+    setIconSize(32, 19);
     setLabel(percentage ? std::to_string(battery.chargePercent()) + "%" : std::string());
 }
 
@@ -139,7 +148,7 @@ void StatusIcon::updateContent()
     setGlyphWidth(!m_label.empty() || m_indicatorColor ? 0 : m_iconWidth);
     ui::LayoutHints icon;
     icon.preferredWidth = m_iconWidth;
-    icon.preferredHeight = BarContext::kIconSize;
+    icon.preferredHeight = m_iconHeight;
     m_icon->setLayoutHints(icon);
     ui::LayoutHints dot;
     dot.preferredWidth = m_indicator->size();
@@ -156,9 +165,13 @@ void StatusIcon::updateIcon()
         m_icon->setGlyph(m_glyph);
     } else {
         const char *variant = bar()->lightContents() ? "statusbar/dark/" : "statusbar/light/";
-        m_icon->setSource(m_iconName.empty() ? std::string() : shellDataFile(variant + m_iconName + ".svg"));
+        // Battery icons embed their own fill colors (green when charging, red when low battery),
+        // so monochrome tinting should be false for battery icons.
+        const bool monochrome = !m_iconName.starts_with("battery-level-");
+        m_icon->setSource(m_iconName.empty() ? std::string() : shellDataFile(variant + m_iconName + ".svg"), monochrome);
     }
 }
+
 
 void StatusIcon::updateLook()
 {
@@ -167,6 +180,7 @@ void StatusIcon::updateLook()
     m_icon->setDropShadow(light);
     m_text->setTextColor(bar()->textColor());
     m_text->setDropShadow(light);
+    m_text->setWeight(600);
     updateIcon();
     barChanged();
 }
@@ -195,6 +209,7 @@ ClockItem::ClockItem(BarContext *bar)
     setInsets(BarContext::kHighlightGap / 2,
               BarContext::kEdgeMargin - (BarContext::kItemGap - BarContext::kHighlightGap) / 2);
     m_label = addChild<BarLabel>();
+    m_label->setWeight(600);
     updateLook();
 }
 
@@ -219,6 +234,7 @@ void ClockItem::updateLook()
 {
     m_label->setTextColor(bar()->textColor());
     m_label->setDropShadow(bar()->lightContents());
+    m_label->setWeight(600);
     barChanged();
 }
 

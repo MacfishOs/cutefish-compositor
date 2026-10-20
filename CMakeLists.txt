@@ -982,9 +982,12 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/cutefish-compositor)
 install(FILES LICENSE LICENSE.chromium LICENSE.sommelier DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/cutefish-compositor)
 install(FILES ${DISPLAY_CONFIG_XML} DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
-cutefish_add_translations(cutefish-compositor SOURCES src/shell src/auth src/wm/overview
-    DESKTOP_FILES data/cutefish-screenshot.desktop)
+macro(cutefish_add_translations)
+endmacro()
+
+configure_file(data/cutefish-screenshot.desktop cutefish-screenshot.desktop COPYONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cutefish-screenshot.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+
 
 target_link_libraries(cutefish-wayland-input PUBLIC cutefish-protocols)
 
