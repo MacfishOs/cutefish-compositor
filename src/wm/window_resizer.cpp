@@ -35,6 +35,12 @@ WindowResizer::WindowResizer(Window *window, const base::PointF &startLocation, 
 {
 }
 
+void WindowResizer::setAreas(const base::Rect &workArea, const base::Rect &visibleArea)
+{
+    m_workArea = workArea;
+    m_visibleArea = visibleArea.isEmpty() ? workArea : visibleArea;
+}
+
 int WindowResizer::widthForDrag(int *deltaX) const
 {
     int width = m_initialBounds.width();

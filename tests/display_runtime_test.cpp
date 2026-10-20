@@ -538,6 +538,43 @@ TEST_F(DisplayRuntimeTest, HotplugRestoresSavedMirrorAfterPrimaryRemovalAndZeroO
     EXPECT_EQ(base::file::read(savedPath), bytes);
 }
 
+TEST_F(DisplayRuntimeTest, UnpluggingADisplayMovesItsWindowsWholeToThePrimary)
+{
+    ASSERT_TRUE(manager.applied());
+    const auto original = *manager.hardware();
+    const auto *unplugged = manager.display(original.displays.back().sessionId);
+    ASSERT_NE(unplugged, nullptr);
+    ASSERT_FALSE(unplugged->primary);
+    const base::Rect primary = manager.primaryDisplay()->bounds;
+    auto *client = window(base::Rect(unplugged->bounds.topLeft() + base::Point(600, 285),
+                                     base::Size(760, 450)));
+    ASSERT_EQ(manager.displayForRect(client->bounds())->id, unplugged->id);
+
+    std::vector<display::DisplaySnapshot> source = original.displays;
+    display::DisplayTopologyCoordinator coordinator(
+            &manager, delegate.get(), controller.get(),
+            [&] {
+                std::vector<compositor::Output *> models;
+                for (const auto &physical : source) {
+                    auto *model = physical.connectorName == first.name ? &first : &second;
+                    model->displayId = physical.sessionId.value();
+                    models.push_back(model);
+                }
+                runtime->replaceOutputs(models);
+                return std::optional(display::HardwareSnapshot {
+                        original.compositorInstanceId, original.seatId,
+                        manager.hardware()->topologyGeneration + 1, source});
+            },
+            display::DisplayPreferences(filePath("display.json")));
+    Spy done(coordinator.reconciled);
+    source.pop_back();
+    coordinator.invalidate();
+    ASSERT_TRUE(done.wait(2000));
+    ASSERT_EQ(manager.applied()->logicalDisplays.size(), 1);
+    EXPECT_EQ(client->bounds(),
+              base::Rect(primary.topLeft() + base::Point(600, 285), base::Size(760, 450)));
+}
+
 // The seat activation at startup reprobes, and SDL2 cannot survive its only
 // output being withdrawn and re-announced while it recreates its window.
 TEST_F(DisplayRuntimeTest, AReprobeKeepsTheOutputGlobalOfAConnectorThatStays)

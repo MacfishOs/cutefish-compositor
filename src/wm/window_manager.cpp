@@ -55,6 +55,67 @@ std::string placementKey(const std::string &applicationId, const std::string &re
     return applicationId + '\0' + restoreId;
 }
 
+// The display holding most of the rect, else the one nearest its centre.
+const display::LogicalDisplay *displayAround(const std::vector<display::LogicalDisplay> &displays,
+                                             const base::Rect &rect)
+{
+    const display::LogicalDisplay *selected = nullptr;
+    int64_t best = 0;
+    for (const auto &logical : displays) {
+        const int64_t area = logical.bounds.intersected(rect).area();
+        if (area > best || (area == best && selected && logical.primary && !selected->primary)) {
+            selected = &logical;
+            best = area;
+        }
+    }
+    if (selected)
+        return selected;
+
+    const base::Point center = centerPixel(rect);
+    int64_t nearest = 0;
+    for (const auto &logical : displays) {
+        const int64_t dx = std::clamp(center.x(), logical.bounds.left(), logical.bounds.right() - 1)
+                - center.x();
+        const int64_t dy = std::clamp(center.y(), logical.bounds.top(), logical.bounds.bottom() - 1)
+                - center.y();
+        if (!selected || dx * dx + dy * dy < nearest) {
+            selected = &logical;
+            nearest = dx * dx + dy * dy;
+        }
+    }
+    return selected;
+}
+
+// The same display in a new layout: the same logical display, or the one now
+// showing it as a mirror.
+const display::LogicalDisplay *successorOf(const std::vector<display::LogicalDisplay> &displays,
+                                           const display::LogicalDisplay &previous)
+{
+    for (const auto &logical : displays) {
+        if (logical.id == previous.id)
+            return &logical;
+    }
+    for (const auto &logical : displays) {
+        for (const auto &destination : previous.destinations) {
+            if (logical.hasDestination(destination))
+                return &logical;
+        }
+    }
+    return nullptr;
+}
+
+// Shrinks the rect to the area where it is larger, then moves it inside.
+base::Rect fitInside(const base::Rect &rect, const base::Rect &area)
+{
+    const int width = std::min(rect.width(), area.width());
+    const int height = std::min(rect.height(), area.height());
+    const int x = rect.x() < area.x() ? area.x()
+                                      : std::min(area.right(), rect.x() + width) - width;
+    const int y = rect.y() < area.y() ? area.y()
+                                      : std::min(area.bottom(), rect.y() + height) - height;
+    return {x, y, width, height};
+}
+
 } // namespace
 
 void WindowManager::setVisualStyle(const decoration::WindowVisualStyle &style)
@@ -98,6 +159,7 @@ void WindowManager::setOutputBounds(const base::Rect &bounds)
     if (bounds == m_outputBounds)
         return;
     m_outputBounds = bounds;
+    followDisplays();
     // The reservations are edge thicknesses, so they survive a resolution
     // change and simply apply to the new output.
     setWorkArea(m_exclusiveZones.apply(m_outputBounds));
@@ -113,14 +175,18 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
         return;
     m_displaysChanged.reset();
     m_displayManager = manager;
+    m_previousDisplays.clear();
     notifyOutputsChanged();
     if (!m_displayManager)
         return;
+    if (m_displayManager->applied())
+        m_previousDisplays = m_displayManager->applied()->logicalDisplays;
     m_displaysChanged = m_displayManager->displaysChanged.connect(
             [this](uint64_t, uint64_t) {
                 if (!m_displayManager->applied()
                     || m_displayManager->applied()->logicalDisplays.empty())
                     return;
+                followDisplays();
                 const WMEvent event(WMEventType::WorkAreaChanged);
                 for (Window *window : std::vector<Window *>(m_stackingOrder)) {
                     if (!hasWindow(window))
@@ -154,6 +220,52 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
                 }
                 notifyOutputsChanged();
             });
+}
+
+void WindowManager::followDisplays()
+{
+    if (!m_displayManager || !m_displayManager->applied()
+        || m_displayManager->applied()->logicalDisplays.empty())
+        return;
+    const auto &displays = m_displayManager->applied()->logicalDisplays;
+    const std::vector<display::LogicalDisplay> previous =
+            std::exchange(m_previousDisplays, displays);
+    if (previous.empty())
+        return;
+    const auto primary = std::find_if(displays.begin(), displays.end(),
+                                      [](const auto &logical) { return logical.primary; });
+    const display::LogicalDisplay &fallback =
+            primary != displays.end() ? *primary : displays.front();
+    const auto follow = [&](const base::Rect &rect) {
+        const display::LogicalDisplay *from = displayAround(previous, rect);
+        if (!from || from->bounds.isEmpty())
+            return rect;
+        if (const display::LogicalDisplay *to = successorOf(displays, *from)) {
+            return rect.translated(to->bounds.x() - from->bounds.x(),
+                                   to->bounds.y() - from->bounds.y());
+        }
+        // A removed display's windows go to the primary, at the same place in
+        // proportion, fitted to its work area.
+        const base::Rect &to = fallback.bounds;
+        base::Rect moved = rect;
+        moved.moveTo(to.x()
+                             + int(float(rect.x() - from->bounds.x()) / from->bounds.width()
+                                   * to.width()),
+                     to.y()
+                             + int(float(rect.y() - from->bounds.y()) / from->bounds.height()
+                                   * to.height()));
+        return fitInside(moved,
+                         m_exclusiveZones.apply(fallback.workArea, fallback.waylandName,
+                                                fallback.primary));
+    };
+    for (Window *window : std::vector<Window *>(m_stackingOrder)) {
+        if (!hasWindow(window) || window->isShellWindow() || window->isPopup()
+            || !window->state())
+            continue;
+        window->setBounds(follow(window->bounds()));
+        if (window->state()->hasRestoreBounds())
+            window->state()->setRestoreBounds(follow(window->state()->restoreBounds()));
+    }
 }
 
 void WindowManager::notifyOutputsChanged()

@@ -6,6 +6,7 @@
 
 #include <linux/input-event-codes.h>
 
+#include <cmath>
 #include <utility>
 
 #include "compositor/compositor.h"
@@ -210,6 +211,14 @@ void ToplevelEventHandler::applyMotion(const base::PointF &location)
     const bool hadMoved = m_resizer->hasMovedOrResized();
     Window *window = m_resizer->window();
     const base::Rect previousBounds = window->bounds();
+    if (!m_resizer->isResize()) {
+        // A move is bounded by the display under the pointer, so a window can
+        // be dragged onto another display.
+        const base::Rect pointer(int(std::floor(location.x())), int(std::floor(location.y())),
+                                 1, 1);
+        m_resizer->setAreas(m_manager->workAreaFor(window, pointer),
+                            m_manager->visibleAreaFor(window, pointer));
+    }
     m_resizer->drag(location);
     // New bounds reach the client, and a client-facing callback can end the
     // drag or destroy the window from inside that call.
