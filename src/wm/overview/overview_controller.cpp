@@ -632,6 +632,7 @@ bool OverviewController::enter()
     // then go on without a button held once it leaves.
     if (m_manager->eventHandler()->draggedWindow())
         return false;
+    m_manager->dismissPopupGrabs();
     landDeskSwitch();
     if (m_state == State::Hidden)
         begin();
@@ -675,6 +676,7 @@ bool OverviewController::startSwipe(bool upward)
         return false;
     if (m_state == State::Hidden && !upward)
         return false;
+    m_manager->dismissPopupGrabs();
     landDeskSwitch();
     if (m_state == State::Hidden)
         begin();
