@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <vector>
 
 #include "base/dbus.h"
@@ -87,7 +88,10 @@ public:
             m_subscriptions.push_back(m_client->readyChanged.connect(notify));
         }
         m_subscriptions.push_back(m_networks->changed.connect(notify));
-        m_subscriptions.push_back(m_wireless->changed.connect(notify));
+        m_subscriptions.push_back(m_wireless->changed.connect([this] {
+            settleWireless();
+            scheduleChanged();
+        }));
         m_subscriptions.push_back(m_handler->vpnFailed.connect(
                 [this](const std::string &name, const std::string &message) { vpnFailed.emit(name, message); }));
         if (m_bluetooth) {
@@ -146,7 +150,10 @@ public:
 
     bool wirelessHardwareEnabled() const override { return m_wireless->network().wirelessHwEnabled; }
 
-    bool wirelessEnabled() const override { return m_wireless->network().wirelessEnabled; }
+    bool wirelessEnabled() const override
+    {
+        return m_requestedWireless.value_or(m_wireless->network().wirelessEnabled);
+    }
 
     bool hotspotActive() const override { return m_wireless->network().hotspotActive; }
 
@@ -213,7 +220,22 @@ public:
         return networks;
     }
 
-    void enableWireless(bool enable) override { m_handler->enableWireless(enable); }
+    // The switches show the requested state until NetworkManager reports it,
+    // so that an unrelated refresh in between does not flip them back.
+    void enableWireless(bool enable) override
+    {
+        m_requestedWireless = enable;
+        ++m_wirelessRequests;
+        scheduleChanged();
+        m_handler->enableWireless(enable, [this](const dbus::Reply &reply) {
+            --m_wirelessRequests;
+            if (reply.isError())
+                m_requestedWireless.reset();
+            settleWireless();
+            scheduleChanged();
+        });
+    }
+
     void requestScan() override { m_handler->requestScan(); }
     void stopHotspot() override { m_handler->stopHotspot(); }
 
@@ -511,6 +533,12 @@ private:
         m_pendingJoins.push_back(std::move(join));
     }
 
+    void settleWireless()
+    {
+        if (m_wirelessRequests == 0 && m_requestedWireless == m_wireless->network().wirelessEnabled)
+            m_requestedWireless.reset();
+    }
+
     void joinScanned()
     {
         for (auto it = m_pendingJoins.begin(); it != m_pendingJoins.end();) {
@@ -545,6 +573,8 @@ private:
     bool m_nightLightEnabled = false;
     int m_keyLightLevel = 0;
     std::vector<PendingJoin> m_pendingJoins;
+    std::optional<bool> m_requestedWireless;
+    int m_wirelessRequests = 0;
     base::Timer m_changedTimer;
     std::vector<base::Subscription> m_subscriptions;
     std::vector<dbus::Match> m_matches;

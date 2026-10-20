@@ -315,6 +315,13 @@ DockWindow::DockWindow(Shell *shell, std::unique_ptr<Dock> dock)
     m_subscriptions.push_back(m_dock->trash().emptyChanged.connect([this] { rebuild(); }));
     m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
     m_subscriptions.push_back(m_shell->outputsChanged.connect([this] { resize(false); }));
+    // A side dock is centred in the work area, which other panels' zones and
+    // its own former bottom zone change after it was placed.
+    m_subscriptions.push_back(m_shell->windowManager()->exclusiveZonesChanged.connect([this] {
+        const int thickness = DockMetrics::forIconSize(m_dock->settings().iconSize()).thickness();
+        if (windowRect(thickness) != m_windowRect)
+            resize(false);
+    }));
 
     TaskWindows &windows = m_shell->taskWindows();
     m_subscriptions.push_back(windows.windowAdded.connect([this](uint64_t) {

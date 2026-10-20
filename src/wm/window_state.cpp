@@ -119,9 +119,9 @@ void WindowState::onEvent(const WMEvent &event)
         const auto &setBounds = static_cast<const SetBoundsWMEvent &>(event);
         if (isNormal()) {
             base::Rect bounds = setBounds.requestedBounds();
-            adjustBoundsToEnsureMinimumVisibility(m_window->manager()->visibleAreaFor(m_window),
-                                                  &bounds,
-                                                  m_window->manager()->workAreaFor(m_window));
+            adjustBoundsToEnsureMinimumVisibility(
+                    m_window->manager()->visibleAreaFor(m_window, bounds), &bounds,
+                    m_window->manager()->workAreaFor(m_window, bounds));
             setBoundsDirect(bounds);
         } else if (isMinimized()) {
             // Nothing to show, but the window still needs somewhere to come

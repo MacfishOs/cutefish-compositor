@@ -59,7 +59,7 @@ Controller::~Controller()
 }
 
 std::unique_ptr<Control> Controller::request(ControlClient *client, const void *owner,
-                                             const std::string &agentName)
+                                             const std::string &agentName, int64_t pid)
 {
     std::unique_ptr<Control> control(new Control(this, client, owner));
     m_controls.insert(control.get());
@@ -79,7 +79,7 @@ std::unique_ptr<Control> Controller::request(ControlClient *client, const void *
     m_current = control.get();
     control->m_serial = ++m_serial;
     auto withdraw = m_environment.askConsent(
-            agentName, [this, raw = control.get(), serial = control->m_serial](ConsentResult result) {
+            agentName, pid, [this, raw = control.get(), serial = control->m_serial](ConsentResult result) {
                 answer(raw, serial, result);
             });
     // The answer can come at once, when the user cannot be asked.

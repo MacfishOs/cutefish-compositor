@@ -1842,3 +1842,64 @@ TEST_F(MultiDisplayShellSurfaceTest, FullscreenWithoutAnOutputStaysOnTheWindowsO
     shell->setFullscreen(true);
     EXPECT_EQ(kPrimary, shell->window()->bounds());
 }
+
+TEST_F(MultiDisplayShellSurfaceTest, AMoveRequestPlacesAWindowOnAnotherDisplay)
+{
+    pointerAt(base::PointF(100, 100));
+    ShellSurface *shell = mapApp("files", base::Size(200, 100));
+    shell->window()->requestBounds(base::Rect(1400, 300, 200, 100));
+    EXPECT_EQ(base::Rect(1400, 300, 200, 100), shell->window()->bounds());
+}
+
+TEST_F(MultiDisplayShellSurfaceTest, AWindowCanBeDraggedOntoAnotherDisplay)
+{
+    pointerAt(base::PointF(100, 100));
+    ShellSurface *shell = mapApp("files", base::Size(200, 100));
+    Window *window = shell->window();
+    window->requestBounds(base::Rect(100, 100, 200, 100));
+    ASSERT_TRUE(manager.eventHandler()->beginMove(window, base::PointF(200, 110)));
+    manager.eventHandler()->onPointerMotion(base::PointF(900, 210));
+    manager.eventHandler()->onPointerMotion(base::PointF(1500, 310));
+    manager.eventHandler()->completeDrag(ToplevelEventHandler::DragResult::Success);
+    EXPECT_EQ(base::Rect(1400, 300, 200, 100), window->bounds());
+}
+
+TEST_F(MultiDisplayShellSurfaceTest, ARemovedDisplaysWindowsMoveToThePrimaryInProportion)
+{
+    pointerAt(base::PointF(100, 100));
+    ShellSurface *normal = mapApp("files", base::Size(400, 300));
+    normal->window()->setBounds(base::Rect(1400, 300, 400, 300));
+    ShellSurface *maximized = mapApp("terminal", base::Size(400, 300));
+    maximized->window()->setBounds(base::Rect(1700, 150, 400, 300));
+    maximized->window()->maximize();
+    ASSERT_EQ(kSecondaryWorkArea, maximized->window()->bounds());
+
+    ASSERT_TRUE(displays.installApplied(
+            {"instance", 1, 2, {}, {logicalDisplay("a", kPrimary, true)}, {}}));
+    EXPECT_EQ(base::Rect(500, 400, 400, 300), normal->window()->bounds());
+    EXPECT_EQ(kPrimaryWorkArea, maximized->window()->bounds());
+
+    // Past the right edge in proportion, so fitted back inside.
+    maximized->window()->restore();
+    EXPECT_EQ(base::Rect(600, 200, 400, 300), maximized->window()->bounds());
+}
+
+TEST_F(MultiDisplayShellSurfaceTest, WindowsStayOnTheirDisplayWhenThePrimaryChanges)
+{
+    pointerAt(base::PointF(100, 100));
+    ShellSurface *onPrimary = mapApp("files", base::Size(400, 300));
+    onPrimary->window()->setBounds(base::Rect(100, 100, 400, 300));
+    ShellSurface *onSecondary = mapApp("terminal", base::Size(200, 100));
+    onSecondary->window()->setBounds(base::Rect(1100, 200, 200, 100));
+
+    ASSERT_TRUE(displays.installApplied(
+            {"instance",
+             1,
+             2,
+             {},
+             {logicalDisplay("a", base::Rect(-1000, 0, 1000, 800), false),
+              logicalDisplay("b", base::Rect(0, 0, 800, 600), true)},
+             {{displayId("a"), displayId("b"), display::LayoutEdge::Left, 0}}}));
+    EXPECT_EQ(base::Rect(-900, 100, 400, 300), onPrimary->window()->bounds());
+    EXPECT_EQ(base::Rect(100, 200, 200, 100), onSecondary->window()->bounds());
+}

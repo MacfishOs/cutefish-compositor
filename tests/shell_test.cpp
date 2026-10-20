@@ -1085,7 +1085,7 @@ TEST_F(ShellTest, ComputerControlLeavesTheShellsSecretPromptsAlone)
     };
     computer_control::Environment environment = core::computerControlEnvironment(std::move(hosts));
     std::function<void(computer_control::ConsentResult)> answer;
-    environment.askConsent = [&answer](const std::string &,
+    environment.askConsent = [&answer](const std::string &, int64_t,
                                        std::function<void(computer_control::ConsentResult)> reply) {
         answer = std::move(reply);
         return std::function<void()>([] {});

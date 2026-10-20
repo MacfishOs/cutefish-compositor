@@ -10,11 +10,15 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "clipboard/stored_source.h"
 #include "compositor/surface.h"
 #include "computer_control/permission_consent.h"
+#include "computer_control/remembered_apps.h"
 #include "input/seat.h"
 #include "session/session_controller.h"
 #include "wayland/protocols/input_method.h"
@@ -35,10 +39,30 @@ computer_control::Environment computerControlEnvironment(ComputerControlHosts ho
     const auto showsSystemDialogs = hosts.showsSystemDialogs;
 
     computer_control::Environment environment;
-    environment.askConsent = [consent = hosts.consent](
-                                     const std::string &agentName,
+    // The agent's application is the nearest process above its server that
+    // has a window: the agent app itself, or the terminal it runs in.
+    const auto agentApplication = [wm, windowApplication = hosts.windowApplication](int64_t pid) {
+        if (!windowApplication)
+            return std::string();
+        const std::vector<wm::Window *> windows = wm->mruWindowTracker()->buildMruWindowList();
+        for (int depth = 0; depth < 16; ++depth) {
+            const std::optional<int64_t> parent = computer_control::parentProcess(pid);
+            if (!parent || *parent <= 1)
+                break;
+            pid = *parent;
+            for (wm::Window *window : windows) {
+                if (window->processId() != pid)
+                    continue;
+                if (std::string appId = windowApplication(window->id()); !appId.empty())
+                    return appId;
+            }
+        }
+        return std::string();
+    };
+    environment.askConsent = [consent = hosts.consent, agentApplication](
+                                     const std::string &agentName, int64_t pid,
                                      std::function<void(computer_control::ConsentResult)> answer) {
-        return consent->ask(agentName, std::move(answer));
+        return consent->ask(agentName, pid, agentApplication(pid), std::move(answer));
     };
     // The permission prompt, the authentication dialogs and the shell's secret
     // prompts are the user's to answer, so the agent neither clicks nor types

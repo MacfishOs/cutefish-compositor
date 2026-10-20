@@ -55,6 +55,10 @@ public:
     // window. Exposed so tests can check the math without a scene.
     base::Rect calculateBoundsForDrag(const base::PointF &location) const;
 
+    // Bounds the drag by other areas from now on, those of the display a move
+    // has reached.
+    void setAreas(const base::Rect &workArea, const base::Rect &visibleArea);
+
     void drag(const base::PointF &location);
     void completeDrag();
     // Puts the window back where the drag started.

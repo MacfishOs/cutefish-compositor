@@ -21,6 +21,7 @@
 #include "base/timer.h"
 #include "base/weak_ptr.h"
 #include "decoration/window_visual_style.h"
+#include "display/display_types.h"
 #include "input/event_sink.h"
 #include "wm/activation.h"
 #include "wm/placement.h"
@@ -472,6 +473,9 @@ private:
     void applyExclusiveZones();
     // Emits outputsChanged() when outputAreas() differs from the last time.
     void notifyOutputsChanged();
+    // Keeps windows where they were on their displays across a layout change.
+    // Runs before anything fits windows to the new layout.
+    void followDisplays();
     bool isInsidePopupGrabChain(compositor::Surface *surface) const;
     // The window the outermost grabbing popup hangs from.
     Window *popupGrabRoot() const;
@@ -542,6 +546,8 @@ private:
     WindowModalityController m_modality;
     display::DisplayManager *m_displayManager = nullptr;
     base::Subscription m_displaysChanged;
+    // The last layout with a display, which windows are placed relative to.
+    std::vector<display::LogicalDisplay> m_previousDisplays;
     base::Rect m_outputBounds;
     base::Rect m_workArea;
     std::vector<OutputArea> m_outputAreas;

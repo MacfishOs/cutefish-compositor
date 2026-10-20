@@ -135,7 +135,8 @@ protected:
         input.setEventSink(&sink);
 
         Environment environment;
-        environment.askConsent = [this](const std::string &, std::function<void(ConsentResult)> reply) {
+        environment.askConsent = [this](const std::string &, int64_t,
+                                        std::function<void(ConsentResult)> reply) {
             ++questions;
             answer = std::move(reply);
             return [this] {
