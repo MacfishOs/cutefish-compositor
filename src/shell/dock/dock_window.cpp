@@ -15,6 +15,8 @@
 #include "core/main_loop.h"
 #include "input/drag.h"
 #include "input/seat.h"
+#include "shell/common/app_launcher.h"
+#include "shell/common/applications.h"
 #include "shell/common/application_badges.h"
 #include "shell/common/task_manager.h"
 #include "shell/common/task_windows.h"
@@ -472,8 +474,10 @@ void DockWindow::rebuild()
             icon->setKey(item.id);
         }
         icon->setDraggable(!item.fixed);
-        if (item.id == DockModel::kLauncherId)
-            icon->setIcon(shellDataFile("launcher.svg"), true);
+        if (item.id == DockModel::kLauncherId) {
+            bool dark = ui::Theme::current().darkMode;
+            icon->setIcon(shellDataFile(dark ? "launcher-dark.svg" : "launcher-light.svg"), true);
+        }
         else
             icon->setIcon(item.iconName.empty() ? "application-x-desktop" : item.iconName);
         icon->setToolTip(item.visibleName);
@@ -853,6 +857,7 @@ void DockWindow::updateGlass()
                                    double(std::min(m_panelRect.width(), m_panelRect.height())) / 2);
     m_glassDark = ui::Theme::current().darkMode;
     m_window->setBackgroundBlur(m_panelRect, int(std::lround(radius)), glass());
+    rebuild();
 }
 
 void DockWindow::updateStrut()
@@ -1076,8 +1081,24 @@ void DockWindow::iconMenuRequested(DockIcon *icon)
         }
         if (!windows.empty())
             menu->addSeparator();
-        if (windows.empty())
+
+        const DesktopEntryPtr entry = model.desktopEntry(id);
+        if (entry && !entry->actions.empty()) {
+            for (const base::DesktopAction &action : entry->actions) {
+                if (action.name.empty() || action.exec.empty())
+                    continue;
+                menu->addItem(action.name, [this, entry, action] {
+                    const std::vector<std::string> command = base::DesktopEntry::parseExec(action.exec);
+                    if (!command.empty()) {
+                        m_shell->launcher().launchCommand(command, entry->workingDirectory, entry->id);
+                    }
+                });
+            }
+            menu->addSeparator();
+        } else if (windows.empty()) {
             menu->addItem(tr("Open"), [&model, id] { model.openNewInstance(id); });
+        }
+
         if (item.pinnable()) {
             const bool pinned = item.isPinned;
             menu->addItem(pinned ? tr("Unpin") : tr("Pin"), [&model, id, pinned] {
