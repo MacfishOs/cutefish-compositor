@@ -1,10 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
-  <g fill="none" stroke="#FFFFFF" stroke-width="1.2">
-    <!-- Top Slider (Knob Right) -->
-    <rect x="2.0" y="2.5" width="12.0" height="4.8" rx="2.4"/>
-    <circle cx="11.4" cy="4.9" r="1.5" fill="#FFFFFF" stroke="none"/>
-    <!-- Bottom Slider (Knob Left) -->
-    <rect x="2.0" y="8.7" width="12.0" height="4.8" rx="2.4"/>
-    <circle cx="4.6" cy="11.1" r="1.5" fill="#FFFFFF" stroke="none"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">
+  <!-- Top Switch (Off State: Outlined Track, Left Knob) -->
+  <path fill-rule="evenodd" d="
+    M 7 3.5
+    H 17
+    A 4.25 4.25 0 0 1 17 12
+    H 7
+    A 4.25 4.25 0 0 1 7 3.5 Z
+    M 7 5
+    A 2.75 2.75 0 0 0 7 10.5
+    H 17
+    A 2.75 2.75 0 0 0 17 5
+    H 7 Z" />
+  <circle cx="7" cy="7.75" r="2.1" />
+
+  <!-- Bottom Switch (On State: Filled Track, Cutout Right Knob) -->
+  <path fill-rule="evenodd" d="
+    M 7 12.5
+    H 17
+    A 4.25 4.25 0 0 1 17 21
+    H 7
+    A 4.25 4.25 0 0 1 7 12.5 Z
+    M 17 19.25
+    A 2.5 2.5 0 1 0 17 14.25
+    A 2.5 2.5 0 1 0 17 19.25 Z" />
 </svg>
