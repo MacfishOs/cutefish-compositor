@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <clocale>
 #include <csignal>
 #include <memory>
 #include <sys/epoll.h>
@@ -11,6 +10,7 @@
 
 #include "base/event_loop.h"
 #include "base/i18n.h"
+#include "base/locale.h"
 #include "core/compositor_options.h"
 #include "core/compositor_shell.h"
 #include "core/logging.h"
@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     // The user's locale from the start, not only once the embedded toolkit
     // sets it when the lock screen first appears.
-    setlocale(LC_ALL, "");
+    cutefish::base::Locale::setProcessLocale();
     cutefish::i18n::setDomain("cutefish-compositor");
     const cutefish::ScopedFd signalFdOwner(createSignalFd());
     const int signalFd = signalFdOwner.get();
