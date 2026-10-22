@@ -39,6 +39,7 @@
 #include "wm/shell_surface.h"
 #include "wm/show_desktop_controller.h"
 #include "wm/stacking.h"
+#include "wm/status_items.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/transient_manager.h"
 #include "wm/window.h"
@@ -141,11 +142,13 @@ WindowManager::WindowManager(compositor::Compositor *compositor, input::Seat *se
     m_desks = std::make_unique<DesksController>(this);
     m_overview = std::make_unique<OverviewController>(this);
     m_showDesktop = std::make_unique<ShowDesktopController>(this);
+    m_statusItems = std::make_unique<StatusItems>(this);
 }
 
 WindowManager::~WindowManager()
 {
     m_activation.removeObserver(this);
+    m_statusItems.reset();
     m_showDesktop.reset();
     m_overview.reset();
     // Tear down through destroyWindow so activation and drags unwind cleanly.
@@ -697,8 +700,10 @@ void WindowManager::destroyWindow(Window *window)
     m_eventHandler->onWindowRemoving(window);
     m_desks->onWindowRemoving(window);
     m_transientManager->windowDestroying(window);
-    if (m_popupKeyboardRoot == window)
+    if (m_popupKeyboardRoot == window) {
         m_popupKeyboardRoot = nullptr;
+        m_popupKeyboardSurface = nullptr;
+    }
     const bool grabbed = m_keyboardGrab == window;
     if (grabbed)
         m_keyboardGrab = nullptr;
@@ -1058,6 +1063,7 @@ void WindowManager::releaseKeyboardGrab()
 {
     m_keyboardGrab = nullptr;
     m_popupKeyboardRoot = nullptr;
+    m_popupKeyboardSurface = nullptr;
     Window *active = m_activation.activeWindow();
     if (m_seat)
         m_seat->setFocusedSurface(active ? active->rootSurface() : nullptr);
@@ -1249,13 +1255,17 @@ void WindowManager::pushPopupGrab(ShellSurface *popup)
     }
     m_popupGrabs.push_back(popup);
     updatePopupKeyboard();
+    popupGrabsChanged();
 }
 
 void WindowManager::removePopupGrab(ShellSurface *popup)
 {
-    m_popupGrabs.erase(std::remove(m_popupGrabs.begin(), m_popupGrabs.end(), popup),
-                       m_popupGrabs.end());
+    const auto it = std::remove(m_popupGrabs.begin(), m_popupGrabs.end(), popup);
+    if (it == m_popupGrabs.end())
+        return;
+    m_popupGrabs.erase(it, m_popupGrabs.end());
     updatePopupKeyboard();
+    popupGrabsChanged();
 }
 
 bool WindowManager::isInsidePopupGrabChain(compositor::Surface *surface) const
@@ -1284,7 +1294,25 @@ Window *WindowManager::popupGrabRoot() const
 
 bool WindowManager::isPopupGrabMenuBar(const Window *window) const
 {
-    return window && window->role() == WindowRole::Panel && popupGrabRoot() == window;
+    return window && window->role() == WindowRole::Panel && !m_popupGrabs.empty()
+            && !m_popupGrabs.front()->popupAnchorSurface() && popupGrabRoot() == window;
+}
+
+bool WindowManager::isPopupGrabAnchor(compositor::Surface *surface) const
+{
+    for (; surface; surface = surface->parentSurface()) {
+        for (ShellSurface *popup : m_popupGrabs) {
+            if (popup->popupAnchorSurface() == surface)
+                return true;
+        }
+    }
+    return false;
+}
+
+bool WindowManager::pressReachesPopupGrabRoot(const Window *target) const
+{
+    return target && target->role() == WindowRole::Panel && !m_popupGrabs.empty()
+            && m_popupGrabs.front()->popupAnchorSurface() && popupGrabRoot() == target;
 }
 
 void WindowManager::updatePopupKeyboard()
@@ -1292,18 +1320,26 @@ void WindowManager::updatePopupKeyboard()
     Window *root = popupGrabRoot();
     if (root && root->focusPolicy() != FocusPolicy::NoFocus)
         root = nullptr;
-    if (root == m_popupKeyboardRoot)
+    compositor::Surface *anchor = root ? m_popupGrabs.front()->popupAnchorSurface() : nullptr;
+    if (root == m_popupKeyboardRoot && anchor == m_popupKeyboardSurface)
         return;
 
     const bool lent = m_popupKeyboardRoot && m_keyboardGrab == m_popupKeyboardRoot;
     m_popupKeyboardRoot = nullptr;
+    m_popupKeyboardSurface = nullptr;
     // Lent from the grab request on, not from the map: a popup that replaces
     // another in the same request batch keeps the client focused throughout,
     // and Qt closes every popup of an application that loses the keyboard.
     if (root && (!m_keyboardGrab || lent)) {
         setKeyboardGrab(root);
-        if (m_keyboardGrab == root)
+        if (m_keyboardGrab == root) {
             m_popupKeyboardRoot = root;
+            // A client's status item hands the keys to its own popups.
+            if (anchor && m_seat) {
+                m_popupKeyboardSurface = anchor;
+                m_seat->setFocusedSurface(anchor, true);
+            }
+        }
     } else if (lent) {
         releaseKeyboardGrab();
     }
@@ -1329,6 +1365,7 @@ void WindowManager::dismissPopupGrabs()
         innermost->close();
     }
     updatePopupKeyboard();
+    popupGrabsChanged();
 }
 
 void WindowManager::cancelInteractions()
@@ -1627,11 +1664,14 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const base::
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
         Window *target = windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target) && !isPopupGrabAnchor(hit)
             && !isPopupGrabMenuBar(target)) {
-            // The press belongs to the grab, not to whatever is underneath.
+            // The press belongs to the grab, not to whatever is underneath,
+            // except on the bar a status item's popups hang from.
+            const bool reachesBar = pressReachesPopupGrabRoot(target);
             dismissPopupGrabs();
-            return true;
+            if (!reachesBar)
+                return true;
         }
     }
 
@@ -1699,10 +1739,12 @@ bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const ba
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
         Window *target = windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target) && !isPopupGrabAnchor(hit)
             && !isPopupGrabMenuBar(target)) {
+            const bool reachesBar = pressReachesPopupGrabRoot(target);
             dismissPopupGrabs();
-            return true;
+            if (!reachesBar)
+                return true;
         }
     }
 

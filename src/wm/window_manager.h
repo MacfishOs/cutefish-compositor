@@ -56,6 +56,7 @@ class MruWindowTracker;
 class OverviewController;
 class ShowDesktopController;
 class ShellSurface;
+class StatusItems;
 class ToplevelEventHandler;
 class TransientManager;
 class Window;
@@ -176,6 +177,9 @@ public:
     OverviewController *overview() const { return m_overview.get(); }
 
     ShowDesktopController *showDesktop() const { return m_showDesktop.get(); }
+
+    // The items applications draw in the status bar.
+    StatusItems *statusItems() const { return m_statusItems.get(); }
 
     ToplevelEventHandler *eventHandler() { return m_eventHandler.get(); }
 
@@ -461,6 +465,8 @@ public:
     base::Signal<> outputsChanged;
     // A reservation came, went or changed: the work areas may have.
     base::Signal<> exclusiveZonesChanged;
+    // A popup took a grab or let it go.
+    base::Signal<> popupGrabsChanged;
 
 private:
     bool hasApplicationWindow(int64_t process) const;
@@ -480,9 +486,16 @@ private:
     bool isInsidePopupGrabChain(compositor::Surface *surface) const;
     // The window the outermost grabbing popup hangs from.
     Window *popupGrabRoot() const;
-    // The status bar the grabbing popups hang from. It switches between its
-    // panels and menus, or closes them, itself, as a menu bar does.
+    // The status bar the grabbing popups hang from, unless they hang from a
+    // status item in it. It switches between its panels and menus, or closes
+    // them, itself, as a menu bar does.
     bool isPopupGrabMenuBar(const Window *window) const;
+    // `surface` is, or is inside, the surface a grabbing popup hangs from.
+    bool isPopupGrabAnchor(compositor::Surface *surface) const;
+    // Whether a press outside the grab chain at `target` dismisses the chain
+    // and is kept from the client, or dismisses it and reaches the window:
+    // the bar a client's status item popups hang from.
+    bool pressReachesPopupGrabRoot(const Window *target) const;
     // While grabbing popups hang from a window that never takes the keyboard,
     // the status bar or the dock, that window borrows it, as Ash reroutes keys
     // to a tray bubble: the client hands them to its popups, and the
@@ -531,8 +544,10 @@ private:
 
     Activation m_activation;
     Window *m_keyboardGrab = nullptr;
-    // The window updatePopupKeyboard() lent the keyboard to.
+    // The window updatePopupKeyboard() lent the keyboard to, and the surface
+    // inside it that has it when the chain hangs from one.
     Window *m_popupKeyboardRoot = nullptr;
+    compositor::Surface *m_popupKeyboardSurface = nullptr;
     std::unique_ptr<base::Timer> m_pasteTimer;
     std::chrono::steady_clock::time_point m_pasteDeadline;
     std::unique_ptr<TransientManager> m_transientManager;
@@ -540,6 +555,7 @@ private:
     std::unique_ptr<DesksController> m_desks;
     std::unique_ptr<OverviewController> m_overview;
     std::unique_ptr<ShowDesktopController> m_showDesktop;
+    std::unique_ptr<StatusItems> m_statusItems;
     std::vector<scene::Node *> m_deskOverlays;
     bool m_dockTransitionsAbovePanels = true;
     std::unique_ptr<ToplevelEventHandler> m_eventHandler;

@@ -187,6 +187,8 @@ add_library(cutefish-shell-statusbar-view STATIC
     src/shell/statusbar/status_bar_panels.h
     src/shell/statusbar/status_bar_window.cpp
     src/shell/statusbar/status_bar_window.h
+    src/shell/statusbar/status_items_view.cpp
+    src/shell/statusbar/status_items_view.h
     src/shell/statusbar/system_tray_view.cpp
     src/shell/statusbar/system_tray_view.h
 )

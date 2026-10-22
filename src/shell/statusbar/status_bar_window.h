@@ -30,15 +30,17 @@ class ShellWindow;
 class StatusBar;
 class StatusBarBackdrop;
 class StatusIcon;
+class StatusItemsView;
 class StopItem;
 class SystemTrayView;
 class Wallpaper;
 
 // The status bar: a 32 px strip along the top of the primary output, reserved
 // from the work area, with no background of its own. Left to right: the menu
-// bar, the stop buttons of a recording and of an agent's control, the tray, the
-// volume, Wi-Fi, battery and control centre icons, and the clock. Its contents
-// are light or dark by what the wallpaper shows behind it.
+// bar, the stop buttons of a recording and of an agent's control, the items
+// applications draw, the tray, the volume, Wi-Fi, battery and control centre
+// icons, and the clock. Its contents are light or dark by what the wallpaper
+// shows behind it.
 class StatusBarWindow : public Component, public BarContext
 {
 public:
@@ -88,6 +90,7 @@ public:
 
     // --- For tests and the reference render ---
     SystemTrayView *tray() const { return m_tray; }
+    StatusItemsView *statusItems() const { return m_statusItems; }
     StatusIcon *volumeIcon() const { return m_volume; }
     StatusIcon *networkIcon() const { return m_network; }
     StatusIcon *batteryIcon() const { return m_battery; }
@@ -114,6 +117,7 @@ private:
     BarItem *itemFor(StatusBarPanels::Panel panel) const;
     void updateChecked();
     void updatePlateBlur();
+    void updateStatusItemLimits();
     ui::RectF availableGeometry() const;
 
     Shell *m_shell;
@@ -129,6 +133,7 @@ private:
     StatusBarMenuBar *m_menuBar = nullptr;
     StopItem *m_recording = nullptr;
     StopItem *m_agentControl = nullptr;
+    StatusItemsView *m_statusItems = nullptr;
     SystemTrayView *m_tray = nullptr;
     StatusIcon *m_volume = nullptr;
     StatusIcon *m_network = nullptr;

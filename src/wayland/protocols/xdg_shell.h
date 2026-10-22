@@ -16,7 +16,10 @@
 #include <wayland-server-core.h>
 
 #include <cstdint>
+#include <functional>
 #include <vector>
+
+#include "base/geometry.h"
 
 namespace cutefish::compositor {
 class Compositor;
@@ -86,6 +89,23 @@ wm::ShellSurface* shellSurfaceForToplevel(wl_resource* toplevelResource);
 // The toplevel shell surface a wl_surface belongs to, or nullptr when it has no
 // xdg_toplevel role. xdg-foreign works in wl_surfaces, not role objects.
 wm::ShellSurface* toplevelShellSurfaceForSurface(wl_resource* surfaceResource);
+
+enum class ParentlessPopupResult {
+    Adopted,
+    // It has a parent already, or its xdg_surface is gone.
+    HasParent,
+    // There was nowhere to put it; popup_done went out.
+    Dismissed,
+};
+
+// Gives an xdg_popup made with a null parent its parent, for the protocol that
+// names it: the popup is solved against the work area of `parent`'s output
+// with its positioner's anchor rect moved by `anchorOffset`, `adopt` makes it
+// a popup of `parent` at those bounds, and the first configure goes out. A
+// null parent, or `adopt` refusing, dismisses the popup.
+ParentlessPopupResult adoptParentlessPopup(wl_resource* popupResource, wm::ShellSurface* parent,
+                                           const base::Point& anchorOffset,
+                                           const std::function<bool(wm::ShellSurface*, const base::Rect&)>& adopt);
 
 } // namespace cutefish::wayland
 

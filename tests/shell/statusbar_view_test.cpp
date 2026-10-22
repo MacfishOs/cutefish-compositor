@@ -37,13 +37,16 @@
 #include "shell/wallpaper/wallpaper.h"
 #include "shell/statusbar/status_bar_window.h"
 #include "shell/statusbar/status_icon.h"
+#include "shell/statusbar/status_items_view.h"
 #include "shell/statusbar/system_tray_view.h"
 #include "shell_test_util.h"
+#include "shm_test_util.h"
 #include "statusbar_fakes.h"
 #include "temporary_directory.h"
 #include "ui/bitmap.h"
 #include "ui/embedded_window.h"
 #include "ui/menu.h"
+#include "wm/status_items.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 #include "wm/window_visual_controller.h"
@@ -556,6 +559,100 @@ TEST_F(StatusBarViewTest, AnItemThatLeavesTakesItsOpenMenu)
     ASSERT_TRUE(test::runUntil([&] { return bar->tray()->count() == 0; }));
     frame();
     EXPECT_EQ(nullptr, bar->tray()->openMenu());
+}
+
+TEST_F(StatusBarViewTest, ApplicationItemsSitBeforeTheTrayOnWholePixels)
+{
+    std::shared_ptr<compositor::ShmPool> pool = testsupport::makePool(1 << 20);
+    struct Heard {
+        int height = 0;
+        int maxWidth = 0;
+        bool dark = true;
+        uint32_t foreground = 0;
+        bool highlighted = false;
+        base::Rect place;
+    };
+    const auto client = [](Heard *heard) {
+        wm::StatusItem::Client client;
+        client.configure = [heard](int height, int maxWidth) {
+            heard->height = height;
+            heard->maxWidth = maxWidth;
+            return 1u;
+        };
+        client.appearance = [heard](bool dark, uint32_t foreground) {
+            heard->dark = dark;
+            heard->foreground = foreground;
+        };
+        client.highlight = [heard](bool highlighted) { heard->highlighted = highlighted; };
+        client.placed = [heard](const base::Rect &rect) { heard->place = rect; };
+        return client;
+    };
+    const auto draw = [&](compositor::Surface *surface, int width) {
+        surface->attach(pool->createBuffer({width, 32}, 0, width * 4, render::PixelFormat::Bgra8888, nullptr), {});
+        surface->damage(base::Rect(0, 0, width, 32));
+        surface->commit();
+    };
+
+    std::unique_ptr<compositor::Surface> firstSurface = compositor.createSurface();
+    std::unique_ptr<compositor::Surface> secondSurface = compositor.createSurface();
+    Heard firstHeard;
+    Heard secondHeard;
+    auto first = std::make_unique<wm::StatusItem>(manager.statusItems(), firstSurface.get(), "app", client(&firstHeard));
+    auto second = std::make_unique<wm::StatusItem>(manager.statusItems(), secondSurface.get(), "app",
+                                                   client(&secondHeard));
+    // The bar's height, and a third of its width at most; its look.
+    EXPECT_EQ(32, firstHeard.height);
+    EXPECT_EQ(480, firstHeard.maxWidth);
+    EXPECT_EQ(bar->lightContents(), firstHeard.dark);
+    EXPECT_EQ(bar->textColor().argb(), firstHeard.foreground);
+    EXPECT_EQ(0, bar->statusItems()->count());
+
+    ASSERT_TRUE(first->acknowledgeConfigure(1));
+    ASSERT_TRUE(second->acknowledgeConfigure(1));
+    draw(firstSurface.get(), 37);
+    draw(secondSurface.get(), 52);
+    frame();
+    frame();
+    ASSERT_EQ(2, bar->statusItems()->count());
+
+    // The newest leftmost, each slot 6 wider than its item, the last one right
+    // before the tray's place; every item on whole logical pixels.
+    shell::StatusItemSlot *left = bar->statusItems()->slot(0);
+    shell::StatusItemSlot *right = bar->statusItems()->slot(1);
+    EXPECT_EQ(second.get(), left->item());
+    EXPECT_EQ(first.get(), right->item());
+    const ui::RectF leftSlot = onScreen(left);
+    const ui::RectF rightSlot = onScreen(right);
+    EXPECT_DOUBLE_EQ(58, leftSlot.width);
+    EXPECT_DOUBLE_EQ(43, rightSlot.width);
+    EXPECT_DOUBLE_EQ(leftSlot.x + leftSlot.width, rightSlot.x);
+    const ui::RectF next = onScreen(bar->batteryIcon()->isVisible() ? static_cast<ui::View *>(bar->batteryIcon())
+                                                                     : bar->controlIcon());
+    EXPECT_NEAR(next.x, rightSlot.x + rightSlot.width, 1);
+    EXPECT_EQ(base::Rect(int(leftSlot.x) + 3, 0, 52, 32), second->screenRect());
+    EXPECT_DOUBLE_EQ(std::round(rightSlot.x + 3), rightSlot.x + 3);
+    EXPECT_EQ(base::Rect(int(rightSlot.x) + 3, 0, 37, 32), first->screenRect());
+    EXPECT_EQ(first->screenRect(), firstHeard.place);
+    EXPECT_EQ(bar->window()->surface(), firstSurface->parentSurface());
+
+    // Asked for, the bar's plate lies exactly under the item.
+    first->setHighlightRequested(true);
+    frame();
+    EXPECT_TRUE(firstHeard.highlighted);
+    EXPECT_TRUE(right->isPlateShown());
+    const ui::RectF plate = right->plateRect();
+    EXPECT_DOUBLE_EQ(3, plate.x);
+    EXPECT_DOUBLE_EQ(37, plate.width);
+
+    // An item that goes leaves its slot to the others.
+    second.reset();
+    frame();
+    ASSERT_EQ(1, bar->statusItems()->count());
+    EXPECT_DOUBLE_EQ(rightSlot.x, onScreen(bar->statusItems()->slot(0)).x);
+    first.reset();
+    frame();
+    EXPECT_EQ(0, bar->statusItems()->count());
+    EXPECT_FALSE(bar->statusItems()->isVisible());
 }
 
 TEST(DBusMenuPopupTest, LabelsLoseTheirMnemonics)

@@ -24,6 +24,7 @@
 #include "wayland/protocols/image_capture.h"
 #include "wayland/protocols/input_method.h"
 #include "wayland/protocols/primary_selection.h"
+#include "wayland/protocols/status_item.h"
 #include "wayland/protocols/surface_blur.h"
 #include "wayland/protocols/window_hints.h"
 #include "wayland/protocols/wl_compositor.h"
@@ -103,7 +104,9 @@ bool ProtocolGlobals::registerCoreGlobals()
             && !createXdgToplevelDragGlobal(display, m_deps.windowManager))
         || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
         || !createWindowHintsGlobal(display) || !createAppMenuGlobal(display) || !createFractionalScaleGlobal(display)
-        || !createXdgOutputManagerGlobal(display) || !createViewporterGlobal(display)) {
+        || !createXdgOutputManagerGlobal(display) || !createViewporterGlobal(display)
+        || (m_deps.windowManager
+            && !createStatusItemGlobal(display, m_deps.windowManager->statusItems()))) {
         CF_CRITICAL(cfWayland) << "Failed to register the globals";
         return false;
     }
