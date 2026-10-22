@@ -87,9 +87,37 @@ void setRestoreSize(wl_client *, wl_resource *resource, wl_resource *surface, in
     getUserDataAs<compositor::Surface>(surface)->setRestoreSize(base::Size(width, height));
 }
 
+void setPlacementAnchor(wl_client *, wl_resource *resource, wl_resource *surface, int32_t x,
+                        int32_t y, int32_t width, int32_t height, uint32_t anchor, uint32_t gravity)
+{
+    if (width < 0 || height < 0) {
+        wl_resource_post_error(resource, CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE,
+                               "placement anchor size must not be negative");
+        return;
+    }
+    if (anchor > CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM_RIGHT
+        || gravity > CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM_RIGHT) {
+        wl_resource_post_error(resource, CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE,
+                               "unknown placement edge");
+        return;
+    }
+    static_assert(int(compositor::PlacementEdge::Top) == CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_TOP);
+    static_assert(int(compositor::PlacementEdge::BottomRight)
+                  == CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM_RIGHT);
+    getUserDataAs<compositor::Surface>(surface)->setPlacementAnchor(compositor::PlacementAnchor {
+            base::Rect(x, y, width, height), compositor::PlacementEdge(anchor),
+            compositor::PlacementEdge(gravity)});
+}
+
+void unsetPlacementAnchor(wl_client *, wl_resource *, wl_resource *surface)
+{
+    getUserDataAs<compositor::Surface>(surface)->setPlacementAnchor(std::nullopt);
+}
+
 const struct cutefish_window_hints_v1_interface implementation = {
         destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor,
-        setServerResize, setRestoreId, setRestoreSize};
+        setServerResize, setRestoreId, setRestoreSize, setPlacementAnchor,
+        unsetPlacementAnchor};
 
 void unbind(wl_resource *resource)
 {

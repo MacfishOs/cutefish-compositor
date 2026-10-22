@@ -413,8 +413,9 @@ public:
     // there is no such output any more.
     base::Rect workAreaForOutput(const base::Rect &outputBounds) const;
     // Where a new ordinary window at `bounds`, centered in its work area, goes
-    // when its position is managed: back where the last window with its
-    // restore id was left, or cascaded; see window_positioner.h.
+    // when its position is managed: next to its placement anchor, back where
+    // the last window with its restore id was left, or cascaded; see
+    // window_positioner.h.
     base::Rect boundsForNewWindow(const Window *window, base::Rect bounds) const;
 
     struct OutputArea {

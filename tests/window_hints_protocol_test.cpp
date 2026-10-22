@@ -224,6 +224,52 @@ TEST_F(WindowHintsProtocolTest, RestoreIdIsImmediateAndPersistsUntilTheSurfaceDi
     wl_surface_destroy(surface);
 }
 
+TEST_F(WindowHintsProtocolTest, PlacementAnchorIsImmediateAndCanBeUnset)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_FALSE(model->placementAnchor());
+    cutefish_window_hints_v1_set_placement_anchor(hints, surface, 700, 12, 0, 0,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM);
+    ASSERT_GE(roundtrip(), 0);
+    ASSERT_TRUE(model->placementAnchor());
+    EXPECT_EQ(*model->placementAnchor(),
+              (cutefish::compositor::PlacementAnchor {cutefish::base::Rect(700, 12, 0, 0),
+                                                      cutefish::compositor::PlacementEdge::Bottom,
+                                                      cutefish::compositor::PlacementEdge::Bottom}));
+    cutefish_window_hints_v1_unset_placement_anchor(hints, surface);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_FALSE(model->placementAnchor());
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, PlacementAnchorRejectsANegativeSize)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    cutefish_window_hints_v1_set_placement_anchor(hints, surface, 0, 0, -1, 0,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_NONE,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_NONE);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, PlacementAnchorRejectsAnUnknownEdge)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    cutefish_window_hints_v1_set_placement_anchor(hints, surface, 0, 0, 0, 0, 9,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_NONE);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
 TEST_F(WindowHintsProtocolTest, RestoreSizeIsImmediateAndRejectsNegativeValues)
 {
     auto *surface = wl_compositor_create_surface(clientCompositor);

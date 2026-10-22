@@ -436,6 +436,8 @@ add_library(cutefish-wm STATIC
     src/wm/types.h
     src/wm/wm_event.cpp
     src/wm/wm_event.h
+    src/wm/anchored_placement.cpp
+    src/wm/anchored_placement.h
     src/wm/placement.cpp
     src/wm/placement.h
     src/wm/stacking.cpp

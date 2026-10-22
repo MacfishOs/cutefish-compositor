@@ -28,6 +28,7 @@
 #include <vector>
 #include <wayland-client.h>
 #include <wayland-server-core.h>
+#include <cutefish-window-hints-v1-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-dialog-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
@@ -42,6 +43,7 @@
 #include "scene/scene.h"
 #include "scene/surface_node.h"
 #include "shm_test_util.h"
+#include "wayland/protocols/window_hints.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_seat.h"
 #include "wayland/protocols/wl_shm.h"
@@ -503,6 +505,7 @@ protected:
         ASSERT_TRUE(wayland::createSeatGlobal(server.display(), waylandSeat.get()));
         ASSERT_TRUE(wayland::createXdgShellGlobal(server.display(), xdgShell.get()));
         ASSERT_TRUE(wayland::createXdgDialogGlobal(server.display()));
+        ASSERT_TRUE(wayland::createWindowHintsGlobal(server.display()));
 
         int fds[2];
         ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds));
@@ -1247,6 +1250,29 @@ TEST_F(XdgShellProtocolTest, ToplevelsOfOneApplicationCascade)
             EXPECT_EQ(base::Rect(250, 200, 300, 200), first);
             EXPECT_EQ(first.translated(32, 32), windowManager.windows()[1]->bounds());
         });
+    });
+}
+
+TEST_F(XdgShellProtocolTest, AToplevelWithAPlacementAnchorMapsNextToIt)
+{
+    run([&](Client &c) {
+        auto *hints = static_cast<cutefish_window_hints_v1 *>(
+                wl_registry_bind(c.registry, c.globals.at("cutefish_window_hints_v1").first,
+                                 &cutefish_window_hints_v1_interface, 1));
+        XdgWindow *window = c.makeToplevel();
+        xdg_toplevel_set_app_id(window->toplevel, "org.cutefish.test");
+        cutefish_window_hints_v1_set_placement_anchor(
+                hints, window->surface, 700, 0, 0, 0, CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM,
+                CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM);
+        wl_surface_commit(window->surface);
+        c.sync();
+        c.ackAndAttach(window, base::Size(300, 200));
+        // Centred under the point, then slid back from the right edge.
+        check([&] {
+            ASSERT_EQ(1u, windowManager.windows().size());
+            EXPECT_EQ(base::Rect(500, 0, 300, 200), windowManager.windows()[0]->bounds());
+        });
+        cutefish_window_hints_v1_destroy(hints);
     });
 }
 

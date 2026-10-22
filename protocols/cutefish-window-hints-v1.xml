@@ -15,6 +15,20 @@
       <entry name="top_left" value="0" summary="the top-left corner stays put"/>
       <entry name="center" value="1" summary="the centre stays put"/>
     </enum>
+    <enum name="placement_edge">
+      <description summary="a side or corner of a rectangle">
+        The values and meanings of xdg_positioner's anchor and gravity.
+      </description>
+      <entry name="none" value="0" summary="the centre"/>
+      <entry name="top" value="1"/>
+      <entry name="bottom" value="2"/>
+      <entry name="left" value="3"/>
+      <entry name="right" value="4"/>
+      <entry name="top_left" value="5"/>
+      <entry name="bottom_left" value="6"/>
+      <entry name="top_right" value="7"/>
+      <entry name="bottom_right" value="8"/>
+    </enum>
     <request name="destroy" type="destructor"/>
     <request name="set_skip_taskbar">
       <description summary="exclude a surface from application presentation">
@@ -86,6 +100,36 @@
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="width" type="int"/>
       <arg name="height" type="int"/>
+    </request>
+    <request name="set_placement_anchor">
+      <description summary="open a window next to a point on the screen">
+        Places a normal window next to a rectangle given in the compositor's
+        global logical coordinates, such as the point a status notifier item
+        receives with Activate. Each time the window maps, its outer bounds
+        are placed as an xdg_positioner with this anchor rectangle, anchor
+        and gravity places a popup, inside the work area of the output that
+        holds the rectangle's centre: a window that does not fit flips to the
+        other side of the rectangle, then slides into the work area. A width
+        and height of 0 make the rectangle a point. This takes precedence
+        over set_restore_id and the compositor's own placement; windows with
+        a transient parent, maximized and fullscreen windows are unaffected,
+        and the user moves the window freely once it is shown. A negative
+        width or height or an unknown edge is an invalid_value error.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="anchor" type="uint" enum="placement_edge"/>
+      <arg name="gravity" type="uint" enum="placement_edge"/>
+    </request>
+    <request name="unset_placement_anchor">
+      <description summary="let the compositor place the window again">
+        The window maps where the compositor places it, as before any
+        set_placement_anchor. This is the default.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
     </request>
     <event name="interactive_resize">
       <description summary="an interactive resize started or ended">

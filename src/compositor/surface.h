@@ -66,6 +66,29 @@ enum class ResizeAnchor {
     Center,
 };
 
+// A side or corner of a rectangle, as xdg_positioner's anchor and gravity.
+enum class PlacementEdge {
+    None,
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    BottomLeft,
+    TopRight,
+    BottomRight,
+};
+
+// Where a window maps instead of where the compositor would place it: next
+// to `rect`, in global logical coordinates.
+struct PlacementAnchor {
+    base::Rect rect;
+    PlacementEdge anchor = PlacementEdge::None;
+    PlacementEdge gravity = PlacementEdge::None;
+
+    bool operator==(const PlacementAnchor &) const = default;
+};
+
 // Client pacing notification, independent of measured presentation feedback.
 // A missing time destroys the wl_callback silently.
 using FrameCallback = std::function<void(std::optional<uint32_t> presentationTimeMs)>;
@@ -107,6 +130,9 @@ public:
     // Read when the window maps maximized or fullscreen; see set_restore_size.
     const base::Size &restoreSize() const { return m_restoreSize; }
     void setRestoreSize(const base::Size &size) { m_restoreSize = size; }
+    // Read when the window maps; see set_placement_anchor.
+    const std::optional<PlacementAnchor> &placementAnchor() const { return m_placementAnchor; }
+    void setPlacementAnchor(const std::optional<PlacementAnchor> &anchor) { m_placementAnchor = anchor; }
 
     struct MenuAddress {
         std::string service;
@@ -490,6 +516,7 @@ private:
     std::string m_restoreId;
     // -1x-1 until the client sets one.
     base::Size m_restoreSize {-1, -1};
+    std::optional<PlacementAnchor> m_placementAnchor;
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 

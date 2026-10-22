@@ -30,6 +30,7 @@
 #include "scene/node.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "wm/anchored_placement.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/mru_window_tracker.h"
 #include "wm/overview/overview_controller.h"
@@ -606,6 +607,14 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
 
 base::Rect WindowManager::boundsForNewWindow(const Window *window, base::Rect bounds) const
 {
+    const compositor::Surface *surface = window->rootSurface();
+    if (surface && surface->placementAnchor()) {
+        const compositor::PlacementAnchor &anchor = *surface->placementAnchor();
+        const base::Rect workArea =
+                workAreaFor(window, base::Rect(anchor.rect.center(), base::Size(1, 1)));
+        if (!workArea.isEmpty())
+            return placeAtAnchor(bounds.size(), anchor, workArea);
+    }
     if (!restorePlacement(window, &bounds))
         bounds = window_positioner::boundsForNewWindow(window, bounds);
     return bounds;
