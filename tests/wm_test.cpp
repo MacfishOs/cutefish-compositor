@@ -2041,6 +2041,25 @@ TEST_F(WmTest, PopupsGetAFadeAnimationNode)
     }
 }
 
+TEST_F(WmTest, AnAnchoredWindowFadesInPlaceLikeAPopup)
+{
+    compositor::Surface *surface = makeSurface(base::Size(200, 100));
+    surface->setPlacementAnchor(compositor::PlacementAnchor {
+            base::Rect(600, 0, 0, 0), compositor::PlacementEdge::Bottom, compositor::PlacementEdge::Bottom});
+    Window *anchored = manager.createWindow(surface, {.requestedSize = base::Size(200, 100)});
+    auto *animation = dynamic_cast<scene::WindowAnimation *>(anchored->node());
+    ASSERT_NE(nullptr, animation);
+    EXPECT_EQ(scene::WindowAnimation::Style::Popup, animation->style());
+    anchored->setRole(WindowRole::Panel);
+    EXPECT_EQ(scene::WindowAnimation::Style::None, animation->style());
+    anchored->setRole(WindowRole::Normal);
+    EXPECT_EQ(scene::WindowAnimation::Style::Popup, animation->style());
+
+    Window *plain = makeWindow(base::Rect(0, 0, 200, 100));
+    EXPECT_EQ(scene::WindowAnimation::Style::Window,
+              static_cast<scene::WindowAnimation *>(plain->node())->style());
+}
+
 TEST_F(WmTest, DesktopPopupTreeStaysAboveApplicationsAndBelowDock)
 {
     Window *desktop = makeWindow(base::Rect(0, 0, 1000, 800));

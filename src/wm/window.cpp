@@ -120,7 +120,8 @@ Window::Window(WindowManager *manager, compositor::Surface *rootSurface, const s
     if (scene::Node *container = surfaceContainer(m_manager)) {
         if (m_rootSurface && m_rootSurface->node()) {
             auto animation = std::make_unique<scene::WindowAnimation>();
-            if (isPopup())
+            // A window placed against an anchor opens in place, like a popup.
+            if (isPopup() || m_rootSurface->placementAnchor())
                 animation->setStyle(scene::WindowAnimation::Style::Popup);
             m_node = container->addChild(std::move(animation));
         }
@@ -652,8 +653,11 @@ void Window::setRole(WindowRole role)
     if (role == m_role)
         return;
     m_role = role;
-    if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node); animation && !isPopup())
-        animation->setStyle(animationStyleFor(role));
+    if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node); animation && !isPopup()) {
+        const bool anchored = m_rootSurface && m_rootSurface->placementAnchor();
+        animation->setStyle(role == WindowRole::Normal && anchored ? scene::WindowAnimation::Style::Popup
+                                                                   : animationStyleFor(role));
+    }
     m_visual->update();
     // A shell window is placed where it asked to be, and a titlebar around it
     // would move it there plus an inset; it also never resizes interactively.
