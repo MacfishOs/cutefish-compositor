@@ -203,6 +203,7 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
     m_window->show();
     if (wm::StatusItems *items = m_shell->windowManager() ? m_shell->windowManager()->statusItems() : nullptr) {
         items->setBar(m_window->surface(), m_window->shellSurface());
+        m_subscriptions.push_back(items->committed.connect([this] { m_window->requestFrame(); }));
         updateStatusItemLimits();
         updateLook();
     }

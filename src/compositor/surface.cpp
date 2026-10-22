@@ -901,25 +901,35 @@ base::Size Surface::bufferSize() const
 
 base::Size Surface::contentSize() const
 {
-    const base::Size size = bufferSize();
+    return contentSizeOf(m_state);
+}
+
+base::Size Surface::cachedContentSize() const
+{
+    return contentSizeOf(m_cached);
+}
+
+base::Size Surface::contentSizeOf(const ExtendedState &state)
+{
+    const base::Size size = state.buffer ? state.buffer->size : kNoSize;
     if (size.isEmpty())
         return kNoSize;
 
-    if (m_state.basicState.viewport)
-        return *m_state.basicState.viewport;
+    if (state.basicState.viewport)
+        return *state.basicState.viewport;
     base::Size content;
-    if (m_state.basicState.crop) {
-        content = m_state.basicState.crop->size().toSize();
+    if (state.basicState.crop) {
+        content = state.basicState.crop->size().toSize();
     } else {
-        const int scale = std::max(1, m_state.basicState.bufferScale);
+        const int scale = std::max(1, state.basicState.bufferScale);
         const base::Size scaled(size.width() / scale, size.height() / scale);
-        content = transformSwapsAxes(m_state.basicState.bufferTransform)
+        content = transformSwapsAxes(state.basicState.bufferTransform)
                 ? base::Size(scaled.height(), scaled.width())
                 : scaled;
     }
     // Acts as an implicit viewport destination; a client viewport arrives in
     // logical units already.
-    const double clientScale = m_state.basicState.clientScale;
+    const double clientScale = state.basicState.clientScale;
     if (clientScale != 1)
         content = base::Size(std::max(1, base::roundToInt(content.width() / clientScale)),
                              std::max(1, base::roundToInt(content.height() / clientScale)));

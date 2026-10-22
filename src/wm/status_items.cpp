@@ -174,7 +174,9 @@ void StatusItem::place(const base::Point &position)
             m_surface->setHasRole(true);
             return;
         }
-        m_subSurface->setCommitBehavior(false);
+        // Synchronized: a new size shows in the bar's commit that makes room
+        // for it, and the items beside it move in the same frame.
+        m_subSurface->setCommitBehavior(true);
         m_position = {};
     }
     if (position != m_position) {
@@ -230,14 +232,17 @@ void StatusItem::onSurfaceCommit(compositor::Surface *surface)
 {
     if (surface != m_surface)
         return;
-    const base::Size size = m_surface->hasContents() ? m_surface->contentSize() : base::Size();
+    // Placed, the commit waits for the bar's; its size is the cached one.
+    const base::Size size = isPlaced() ? m_surface->cachedContentSize() : m_surface->contentSize();
     const int width = size.isEmpty() ? 0 : size.width();
-    if (width == m_width)
-        return;
-    m_width = width;
-    if (m_items)
-        m_items->itemChanged();
-    sendPlaced();
+    if (width != m_width) {
+        m_width = width;
+        if (m_items)
+            m_items->itemChanged();
+        sendPlaced();
+    }
+    if (isPlaced() && m_items)
+        m_items->contentCommitted();
 }
 
 StatusItems::StatusItems(WindowManager *manager)

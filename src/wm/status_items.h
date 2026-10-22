@@ -31,8 +31,9 @@ class WindowManager;
 // A surface an application draws in the status bar, as exo's notification
 // surfaces are client surfaces Ash's message centre embeds in its views. The
 // bar gives it a place in its row; while placed, the surface is a
-// desynchronized subsurface of the bar's own surface, so the seat targets it,
-// the scene draws it and its client hears its input as for any surface.
+// synchronized subsurface of the bar's own surface, so the seat targets it,
+// the scene draws it and its client hears its input as for any surface, and
+// each of its commits shows with the bar's next one.
 class StatusItem : public compositor::SurfaceObserver
 {
 public:
@@ -165,12 +166,15 @@ public:
     // An item came or went, or one changed its width, shown state or
     // highlight: the bar lays its row out again.
     base::Signal<> changed;
+    // A placed item committed: the bar commits too, which shows it.
+    base::Signal<> committed;
 
     // Called by StatusItem; not part of the public API.
     void add(StatusItem *item);
     void remove(StatusItem *item);
     void identifierSet(StatusItem *item);
     void itemChanged() { changed(); }
+    void contentCommitted() { committed(); }
 
 private:
     WindowManager *m_manager;

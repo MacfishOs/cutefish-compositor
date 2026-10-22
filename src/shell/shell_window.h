@@ -174,6 +174,11 @@ public:
     // The seat's keyboard came to the window or left it.
     std::function<void(bool focused)> onKeyboardFocusChanged;
 
+    // A frame at the next output frame, which commits the surface even when
+    // nothing in the window changed: the synchronized subsurfaces of other
+    // clients in it show what they committed.
+    void requestFrame() { scheduleRender(); }
+
     // Places the popup again from its toolkit window's placement and size.
     void place();
     // The popup's bounds relative to its parent's, as the positioner put it.

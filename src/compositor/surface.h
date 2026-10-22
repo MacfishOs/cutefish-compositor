@@ -320,6 +320,9 @@ public:
     // Buffer size mapped through the buffer scale and transform; -1x-1 without
     // a buffer.
     base::Size contentSize() const;
+    // The same for the cached state, which a synchronized subsurface shows
+    // once its parent commits.
+    base::Size cachedContentSize() const;
 
     bool hasContents() const { return !bufferSize().isEmpty(); }
 
@@ -465,6 +468,7 @@ private:
         std::shared_ptr<BufferRelease> release;
     };
 
+    static base::Size contentSizeOf(const ExtendedState &state);
     base::Rect bufferRectToSurface(const base::Rect &rect) const;
     base::Rect surfaceRectToBuffer(const base::Rect &rect) const;
 

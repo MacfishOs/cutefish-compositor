@@ -635,6 +635,21 @@ TEST_F(StatusBarViewTest, ApplicationItemsSitBeforeTheTrayOnWholePixels)
     EXPECT_EQ(first->screenRect(), firstHeard.place);
     EXPECT_EQ(bar->window()->surface(), firstSurface->parentSurface());
 
+    // A new width shows with the bar's next frame, which moves the items
+    // beside it in the same commit: no frame shows the item at its old place.
+    const int rightEdge = first->screenRect().right();
+    draw(firstSurface.get(), 60);
+    EXPECT_EQ(60, first->width());
+    EXPECT_EQ(37, firstSurface->contentSize().width());
+    frame();
+    EXPECT_EQ(60, firstSurface->contentSize().width());
+    EXPECT_EQ(rightEdge, first->screenRect().right());
+    EXPECT_EQ(base::Rect(rightEdge - 60, 0, 60, 32), first->screenRect());
+    EXPECT_EQ(first->screenRect().x() - 6 - 52, second->screenRect().x());
+    draw(firstSurface.get(), 37);
+    frame();
+    EXPECT_EQ(rightEdge, first->screenRect().right());
+
     // Asked for, the bar's plate lies exactly under the item.
     first->setHighlightRequested(true);
     frame();
