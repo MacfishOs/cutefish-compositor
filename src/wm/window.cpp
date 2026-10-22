@@ -191,9 +191,19 @@ void Window::onSurfaceCommit(compositor::Surface *surface)
 
 void Window::onSurfaceWindowHintsChanged(compositor::Surface *surface)
 {
+    if (surface != m_rootSurface)
+        return;
+    if (surface->bodyShape() != m_bodyShape) {
+        m_bodyShape = surface->bodyShape();
+        if (m_visual)
+            m_visual->update();
+        forEachObserver(this, m_observers, [this](WindowObserver *observer) {
+            observer->onWindowClientDecorationChanged(this);
+        });
+    }
     // Every hint lands here; restacking for the others would raise the window
     // within its layer.
-    if (surface != m_rootSurface || surface->alwaysOnTop() == m_surfaceAlwaysOnTop)
+    if (surface->alwaysOnTop() == m_surfaceAlwaysOnTop)
         return;
     const bool wasAlwaysOnTop = isAlwaysOnTop();
     m_surfaceAlwaysOnTop = surface->alwaysOnTop();

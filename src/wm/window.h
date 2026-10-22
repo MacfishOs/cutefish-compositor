@@ -15,6 +15,7 @@
 #include "base/geometry.h"
 #include "compositor/surface_observer.h"
 #include "ui/bitmap.h"
+#include "ui/path.h"
 #include "wm/types.h"
 #include "wm/window_frame.h"
 
@@ -490,6 +491,8 @@ private:
 
     scene::Node *m_node = nullptr;
     std::unique_ptr<WindowVisualController> m_visual;
+    // The root surface's body shape the visuals were last made for.
+    ui::Path m_bodyShape;
     std::unique_ptr<WindowFrame> m_frame;
     bool m_decorated = false;
 

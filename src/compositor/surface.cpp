@@ -1256,6 +1256,14 @@ void Surface::setAlwaysOnTop(bool alwaysOnTop)
     notifyWindowHintsChanged();
 }
 
+void Surface::setBodyShape(const ui::Path &shape)
+{
+    if (shape == m_bodyShape)
+        return;
+    m_bodyShape = shape;
+    notifyWindowHintsChanged();
+}
+
 void Surface::notifyWindowHintsChanged()
 {
     for (auto *observer : std::vector<SurfaceObserver *>(m_observers)) {

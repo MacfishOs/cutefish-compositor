@@ -131,6 +131,27 @@
       </description>
       <arg name="surface" type="object" interface="wl_surface"/>
     </request>
+    <request name="set_body_shape">
+      <description summary="the outline a window draws its body in">
+        For a normal window that draws a body of its own outline inside a
+        transparent surface, such as a bubble with an arrow: the compositor
+        neither clips the window to its rounded rectangle nor outlines it, and
+        the window's shadow is cast by this outline instead of its rectangle.
+        path is in surface-local logical pixels, encoded as
+        cutefish_surface_blur_v1.set_shape's path. Applies at once and
+        persists until replaced; an empty array is the same as
+        unset_body_shape. A malformed path is an invalid_value error.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="path" type="array"/>
+    </request>
+    <request name="unset_body_shape">
+      <description summary="the window's body is its rectangle again">
+        The compositor clips, outlines and shadows the window as its rounded
+        rectangle, the default.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
     <event name="interactive_resize">
       <description summary="an interactive resize started or ended">
         Sent with active 1 when the user starts resizing one of the client's

@@ -231,15 +231,24 @@ void setGlassTint(wl_client *, wl_resource *, wl_resource *surfaceResource, wl_f
 
 void setShape(wl_client *, wl_resource *resource, wl_resource *surfaceResource, wl_array *array)
 {
+    ui::Path path;
+    if (!pathFromArray(array, &path)) {
+        wl_resource_post_error(resource, CUTEFISH_SURFACE_BLUR_V1_ERROR_INVALID_GEOMETRY,
+                               "invalid blur shape");
+        return;
+    }
+    getUserDataAs<compositor::Surface>(surfaceResource)->setBackgroundBlurShape(path);
+}
+
+} // namespace
+
+bool pathFromArray(const wl_array *array, ui::Path *result)
+{
     constexpr size_t kMaxValues = 4096;
     const size_t count = array->size / sizeof(int32_t);
     const auto *values = static_cast<const int32_t *>(array->data);
-    const auto invalid = [resource] {
-        wl_resource_post_error(resource, CUTEFISH_SURFACE_BLUR_V1_ERROR_INVALID_GEOMETRY,
-                               "invalid blur shape");
-    };
     if (array->size % sizeof(int32_t) || count > kMaxValues)
-        return invalid();
+        return false;
 
     ShapeBuilder path;
     size_t i = 0;
@@ -255,7 +264,7 @@ void setShape(wl_client *, wl_resource *resource, wl_resource *surfaceResource, 
                                                                                         : 1;
         // A shape may start with a line or a curve, from the origin.
         if (command > CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CLOSE || count - i < points * 2)
-            return invalid();
+            return false;
         switch (command) {
         case CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO:
             path.moveTo(point());
@@ -274,8 +283,11 @@ void setShape(wl_client *, wl_resource *resource, wl_resource *surfaceResource, 
             break;
         }
     }
-    getUserDataAs<compositor::Surface>(surfaceResource)->setBackgroundBlurShape(path.path());
+    *result = path.path();
+    return true;
 }
+
+namespace {
 
 void unsetShape(wl_client *, wl_resource *, wl_resource *surfaceResource)
 {

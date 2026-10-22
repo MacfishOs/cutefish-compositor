@@ -11,6 +11,7 @@
 
 #include "base/strings.h"
 #include "compositor/surface.h"
+#include "wayland/protocols/surface_blur.h"
 #include "wayland/server_util.h"
 
 namespace cutefish::wayland {
@@ -114,10 +115,26 @@ void unsetPlacementAnchor(wl_client *, wl_resource *, wl_resource *surface)
     getUserDataAs<compositor::Surface>(surface)->setPlacementAnchor(std::nullopt);
 }
 
+void setBodyShape(wl_client *, wl_resource *resource, wl_resource *surface, wl_array *array)
+{
+    ui::Path shape;
+    if (!pathFromArray(array, &shape)) {
+        wl_resource_post_error(resource, CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE,
+                               "malformed body shape");
+        return;
+    }
+    getUserDataAs<compositor::Surface>(surface)->setBodyShape(shape);
+}
+
+void unsetBodyShape(wl_client *, wl_resource *, wl_resource *surface)
+{
+    getUserDataAs<compositor::Surface>(surface)->setBodyShape({});
+}
+
 const struct cutefish_window_hints_v1_interface implementation = {
         destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor,
         setServerResize, setRestoreId, setRestoreSize, setPlacementAnchor,
-        unsetPlacementAnchor};
+        unsetPlacementAnchor, setBodyShape, unsetBodyShape};
 
 void unbind(wl_resource *resource)
 {

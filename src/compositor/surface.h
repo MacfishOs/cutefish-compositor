@@ -133,6 +133,10 @@ public:
     // Read when the window maps; see set_placement_anchor.
     const std::optional<PlacementAnchor> &placementAnchor() const { return m_placementAnchor; }
     void setPlacementAnchor(const std::optional<PlacementAnchor> &anchor) { m_placementAnchor = anchor; }
+    // The outline a window draws its body in; empty for its rectangle. See
+    // set_body_shape.
+    const ui::Path &bodyShape() const { return m_bodyShape; }
+    void setBodyShape(const ui::Path &shape);
 
     struct MenuAddress {
         std::string service;
@@ -521,6 +525,7 @@ private:
     // -1x-1 until the client sets one.
     base::Size m_restoreSize {-1, -1};
     std::optional<PlacementAnchor> m_placementAnchor;
+    ui::Path m_bodyShape;
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 

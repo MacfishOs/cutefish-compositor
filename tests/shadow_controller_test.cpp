@@ -254,6 +254,37 @@ TEST_F(ShadowControllerTest, FramelessClientDecoratedWindowGetsShadow)
     EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
 }
 
+// A window that draws a shaped body in a transparent surface, a bubble with an
+// arrow, casts its shadow from that outline, and is neither clipped nor
+// outlined as a rounded rectangle.
+TEST_F(ShadowControllerTest, ABodyShapeCastsTheShadowAndKeepsTheWindowAsDrawn)
+{
+    Window *window = makeToplevel({200, 160}, false)->window();
+    ASSERT_TRUE(window);
+    ui::Path bubble;
+    bubble.moveTo(100, 0);
+    bubble.lineTo(112, 12);
+    bubble.lineTo(200, 12);
+    bubble.lineTo(200, 160);
+    bubble.lineTo(0, 160);
+    bubble.lineTo(0, 12);
+    bubble.lineTo(88, 12);
+    bubble.close();
+    window->rootSurface()->setBodyShape(bubble);
+    EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
+    decoration::ShadowNode *node = shadowOf(window)->node();
+    ASSERT_TRUE(node);
+    EXPECT_FALSE(node->silhouette().isEmpty());
+    const auto *visual = static_cast<scene::WindowVisualNode *>(window->visualNode());
+    EXPECT_EQ(scene::WindowVisualMode::PreserveClient, visual->state().mode);
+    EXPECT_FALSE(visual->state().clipContent);
+    EXPECT_FALSE(visual->state().drawOutline);
+
+    window->rootSurface()->setBodyShape({});
+    EXPECT_TRUE(node->silhouette().isEmpty());
+    EXPECT_TRUE(static_cast<scene::WindowVisualNode *>(window->visualNode())->state().drawOutline);
+}
+
 // A client that never sets a window geometry is the same case: its buffer is
 // its window.
 TEST_F(ShadowControllerTest, ClientWithoutWindowGeometryGetsShadow)
