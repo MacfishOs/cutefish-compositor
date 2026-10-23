@@ -152,6 +152,17 @@
       </description>
       <arg name="surface" type="object" interface="wl_surface"/>
     </request>
+    <request name="set_shadow">
+      <description summary="whether the compositor casts the window's shadow">
+        A value of 0 casts no shadow for the window, as for a client that
+        draws its own shadow inside a transparent surface; with a body shape,
+        such a window shows exactly as the client drew it. A value of 1
+        restores the compositor's policy and is the default. Applies at once
+        and persists until replaced.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="shadow" type="uint"/>
+    </request>
     <event name="interactive_resize">
       <description summary="an interactive resize started or ended">
         Sent with active 1 when the user starts resizing one of the client's

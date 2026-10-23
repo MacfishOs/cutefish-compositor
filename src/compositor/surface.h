@@ -137,6 +137,9 @@ public:
     // set_body_shape.
     const ui::Path &bodyShape() const { return m_bodyShape; }
     void setBodyShape(const ui::Path &shape);
+    // Whether the compositor casts the window's shadow; see set_shadow.
+    bool castsShadow() const { return m_castsShadow; }
+    void setCastsShadow(bool castsShadow);
 
     struct MenuAddress {
         std::string service;
@@ -519,6 +522,7 @@ private:
     MenuAddress m_menuAddress;
     bool m_skipTaskbar = false;
     bool m_alwaysOnTop = false;
+    bool m_castsShadow = true;
     ResizeAnchor m_resizeAnchor = ResizeAnchor::TopLeft;
     bool m_serverResize = false;
     std::string m_restoreId;

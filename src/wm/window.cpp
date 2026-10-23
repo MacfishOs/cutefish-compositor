@@ -194,8 +194,9 @@ void Window::onSurfaceWindowHintsChanged(compositor::Surface *surface)
 {
     if (surface != m_rootSurface)
         return;
-    if (surface->bodyShape() != m_bodyShape) {
+    if (surface->bodyShape() != m_bodyShape || surface->castsShadow() != m_castsShadow) {
         m_bodyShape = surface->bodyShape();
+        m_castsShadow = surface->castsShadow();
         if (m_visual)
             m_visual->update();
         forEachObserver(this, m_observers, [this](WindowObserver *observer) {

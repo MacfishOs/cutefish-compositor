@@ -285,6 +285,29 @@ TEST_F(ShadowControllerTest, ABodyShapeCastsTheShadowAndKeepsTheWindowAsDrawn)
     EXPECT_TRUE(static_cast<scene::WindowVisualNode *>(window->visualNode())->state().drawOutline);
 }
 
+// A client that draws its own shadow inside a transparent surface asks for
+// none: with its body shape the window shows exactly as drawn.
+TEST_F(ShadowControllerTest, AClientCanDeclineTheShadow)
+{
+    Window *window = makeToplevel({200, 160}, false)->window();
+    ASSERT_TRUE(window);
+    ui::Path body;
+    body.moveTo(40, 40);
+    body.lineTo(160, 40);
+    body.lineTo(160, 120);
+    body.lineTo(40, 120);
+    body.close();
+    window->rootSurface()->setBodyShape(body);
+    window->rootSurface()->setCastsShadow(false);
+    EXPECT_EQ(elevationOf(window), ShadowElevation::None);
+    const auto *visual = static_cast<scene::WindowVisualNode *>(window->visualNode());
+    EXPECT_FALSE(visual->state().clipContent);
+    EXPECT_FALSE(visual->state().drawOutline);
+
+    window->rootSurface()->setCastsShadow(true);
+    EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
+}
+
 // A client that never sets a window geometry is the same case: its buffer is
 // its window.
 TEST_F(ShadowControllerTest, ClientWithoutWindowGeometryGetsShadow)

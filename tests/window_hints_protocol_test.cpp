@@ -278,6 +278,25 @@ TEST_F(WindowHintsProtocolTest, BodyShapeIsImmediateAndCanBeUnset)
     wl_surface_destroy(surface);
 }
 
+TEST_F(WindowHintsProtocolTest, ShadowIsImmediateAndRejectsOtherValues)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_TRUE(model->castsShadow());
+    cutefish_window_hints_v1_set_shadow(hints, surface, 0);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_FALSE(model->castsShadow());
+    cutefish_window_hints_v1_set_shadow(hints, surface, 1);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->castsShadow());
+    cutefish_window_hints_v1_set_shadow(hints, surface, 2);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
 TEST_F(WindowHintsProtocolTest, PlacementAnchorRejectsANegativeSize)
 {
     auto *surface = wl_compositor_create_surface(clientCompositor);

@@ -131,10 +131,20 @@ void unsetBodyShape(wl_client *, wl_resource *, wl_resource *surface)
     getUserDataAs<compositor::Surface>(surface)->setBodyShape({});
 }
 
+void setShadow(wl_client *, wl_resource *resource, wl_resource *surface, uint32_t shadow)
+{
+    if (shadow > 1) {
+        wl_resource_post_error(resource, CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE,
+                               "shadow must be zero or one");
+        return;
+    }
+    getUserDataAs<compositor::Surface>(surface)->setCastsShadow(shadow != 0);
+}
+
 const struct cutefish_window_hints_v1_interface implementation = {
         destroy, setSkipTaskbar, setAlwaysOnTop, setResizeAnchor,
         setServerResize, setRestoreId, setRestoreSize, setPlacementAnchor,
-        unsetPlacementAnchor, setBodyShape, unsetBodyShape};
+        unsetPlacementAnchor, setBodyShape, unsetBodyShape, setShadow};
 
 void unbind(wl_resource *resource)
 {

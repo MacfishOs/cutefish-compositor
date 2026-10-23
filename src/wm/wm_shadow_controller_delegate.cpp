@@ -8,6 +8,7 @@
 
 #include "wm/wm_shadow_controller_delegate.h"
 
+#include "compositor/surface.h"
 #include "wm/window.h"
 
 namespace cutefish::wm {
@@ -15,6 +16,10 @@ namespace cutefish::wm {
 bool WmShadowControllerDelegate::shouldShowShadowForWindow(const Window *window)
 {
     if (!window || !window->isVisible() || window->bounds().isEmpty())
+        return false;
+
+    // The client draws its own shadow, or none.
+    if (const auto *surface = window->rootSurface(); surface && !surface->castsShadow())
         return false;
 
     // Popups and shell surfaces retain their client-owned exterior policy.

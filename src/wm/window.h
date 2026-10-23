@@ -493,6 +493,7 @@ private:
     std::unique_ptr<WindowVisualController> m_visual;
     // The root surface's body shape the visuals were last made for.
     ui::Path m_bodyShape;
+    bool m_castsShadow = true;
     std::unique_ptr<WindowFrame> m_frame;
     bool m_decorated = false;
 
