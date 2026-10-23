@@ -204,13 +204,13 @@ TEST_F(ShadowControllerTest, ServerSideDecoratedWindowGetsShadow)
     EXPECT_EQ(shadow->shadowBounds(), window->bounds().marginsAdded(margins));
 }
 
-TEST_F(ShadowControllerTest, DockShadowFollowsPanelInputBounds)
+TEST_F(ShadowControllerTest, DockShadowFollowsPanelGlass)
 {
     ShellSurface *shell = makeToplevel({800, 86}, false);
     Window *window = shell->window();
     window->setRole(WindowRole::Dock);
     const base::Rect panel(200, 0, 400, 86);
-    shell->rootSurface()->setInputRegion(base::Region(panel));
+    shell->rootSurface()->setBackgroundBlur(panel, 28);
     shell->rootSurface()->commit();
     controller->handlePossibleShadowVisibilityChange(window);
 
@@ -230,7 +230,7 @@ TEST_F(ShadowControllerTest, TallDockKeepsItsShadow)
     Window *window = shell->window();
     window->setRole(WindowRole::Dock);
     const base::Rect panel(200, 0, 800, 204);
-    shell->rootSurface()->setInputRegion(base::Region(panel));
+    shell->rootSurface()->setBackgroundBlur(panel, 66);
     shell->rootSurface()->commit();
     controller->handlePossibleShadowVisibilityChange(window);
 
