@@ -91,10 +91,10 @@ protected:
 
     void moveTo(const base::PointF &location) { manager.onPointerMotion(at(0), location); }
 
-    // Runs the event loop until the reveal delay has passed.
+    // Runs the event loop until the auto-hide delay has passed.
     void waitForReveal()
     {
-        test::runFor(std::chrono::milliseconds(DockLayoutManager::kRevealDelayMs + 200));
+        test::runFor(std::chrono::milliseconds(DockLayoutManager::kAutoHideDelayMs + 200));
     }
 
     // Plays the slide out to its end.
@@ -373,7 +373,7 @@ TEST_F(DockLayoutTest, PointerMovingOntoTheDockDuringTheDelayStillReveals)
     EXPECT_TRUE(isShown());
 }
 
-TEST_F(DockLayoutTest, LeavingTheDockHidesAtOnceAndTheGapCounts)
+TEST_F(DockLayoutTest, LeavingTheDockHidesAfterTheDelayAndTheGapCounts)
 {
     layout.setBehavior(DockAutoHideBehavior::Always);
     makeWindow(base::Rect(100, 100, 300, 200));
@@ -381,16 +381,82 @@ TEST_F(DockLayoutTest, LeavingTheDockHidesAtOnceAndTheGapCounts)
     moveTo(base::PointF(500, 799));
     waitForReveal();
     ASSERT_TRUE(isShown());
+    finishSlide();
 
     // Between the dock and the edge, and off the dock's span but on the edge.
     moveTo(base::PointF(500, 797));
+    waitForReveal();
     EXPECT_TRUE(isShown());
     moveTo(base::PointF(50, 798));
+    waitForReveal();
     EXPECT_TRUE(isShown());
 
     moveTo(base::PointF(500, 700));
+    EXPECT_TRUE(isShown());
+    waitForReveal();
     EXPECT_FALSE(isShown());
     EXPECT_TRUE(layout.isSliding(dock));
+}
+
+TEST_F(DockLayoutTest, ComingBackBeforeTheDelayKeepsTheDock)
+{
+    layout.setBehavior(DockAutoHideBehavior::Always);
+    makeWindow(base::Rect(100, 100, 300, 200));
+    finishSlide();
+    moveTo(base::PointF(500, 799));
+    waitForReveal();
+    finishSlide();
+    moveTo(base::PointF(500, 750));
+    ASSERT_TRUE(isShown());
+
+    moveTo(base::PointF(500, 650));
+    moveTo(base::PointF(500, 750));
+    waitForReveal();
+    EXPECT_TRUE(isShown());
+    EXPECT_FALSE(layout.isSliding(dock));
+}
+
+TEST_F(DockLayoutTest, TooltipGoingWithThePointerWaitsForTheDelay)
+{
+    layout.setBehavior(DockAutoHideBehavior::Always);
+    makeWindow(base::Rect(100, 100, 300, 200));
+    finishSlide();
+    moveTo(base::PointF(500, 799));
+    waitForReveal();
+    finishSlide();
+    moveTo(base::PointF(500, 750));
+    Window *tooltip = manager.createWindow(makeSurface(base::Size(100, 40)),
+                                           {.type = WindowType::Popup, .transientParent = dock});
+    ASSERT_TRUE(isShown());
+
+    moveTo(base::PointF(500, 650));
+    manager.destroyWindow(tooltip);
+    EXPECT_TRUE(isShown());
+    waitForReveal();
+    EXPECT_FALSE(isShown());
+}
+
+TEST_F(DockLayoutTest, AnythingButThePointerHidesAtOnce)
+{
+    layout.setBehavior(DockAutoHideBehavior::Always);
+    EXPECT_TRUE(isShown());
+    makeWindow(base::Rect(100, 100, 300, 200));
+    EXPECT_FALSE(isShown());
+}
+
+TEST_F(DockLayoutTest, HiddenDockTakesNoInputWhileItSlidesAway)
+{
+    layout.setBehavior(DockAutoHideBehavior::Always);
+    EXPECT_FALSE(dock->node()->isEventTargetingBlocked());
+    makeWindow(base::Rect(100, 100, 300, 200));
+    ASSERT_TRUE(layout.isSliding(dock));
+    EXPECT_TRUE(dock->node()->isEventTargetingBlocked());
+    finishSlide();
+
+    moveTo(base::PointF(500, 799));
+    waitForReveal();
+    ASSERT_TRUE(layout.isSliding(dock));
+    EXPECT_FALSE(dock->node()->isEventTargetingBlocked());
 }
 
 TEST_F(DockLayoutTest, OpenMenuAndLauncherKeepTheDockShown)
