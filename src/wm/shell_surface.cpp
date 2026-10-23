@@ -1182,7 +1182,7 @@ base::Size ShellSurface::configureBounds() const
         return base::Size(0, 0);
     const Insets insets = normalFrameInsets();
     base::Rect workArea = m_window ? m_manager->workAreaFor(m_window)
-                              : m_manager->restingWorkAreaForOutput(m_initialOutput);
+                              : m_manager->placementWorkAreaForOutput(m_initialOutput);
     if (workArea.isEmpty())
         workArea = m_manager->workAreaFor(nullptr);
     return insets.inset(workArea.size());

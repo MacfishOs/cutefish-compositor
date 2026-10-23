@@ -340,6 +340,7 @@ void DockLayoutManager::enter(Window *dock, Dock &entry)
     entry.edge = edgeFor(dock->bounds(), output);
     entry.visibility = computeVisibility(dock, output);
     entry.autoHide = computeAutoHideState(dock, entry, output, false);
+    m_manager->setDockHidden(dock, entry.autoHide == DockAutoHideState::Hidden);
     entry.offset = hiddenOffset(dock->bounds(), output, entry.edge);
     entry.parked = true;
     present(dock, entry);
@@ -409,6 +410,7 @@ void DockLayoutManager::updateDock(Window *dock, Dock &entry)
 void DockLayoutManager::applyAutoHideState(Window *dock, Dock &entry, DockAutoHideState state)
 {
     entry.autoHide = state;
+    m_manager->setDockHidden(dock, state == DockAutoHideState::Hidden);
     const base::Rect output = m_manager->outputBoundsFor(dock);
     slideTo(dock, entry,
             state == DockAutoHideState::Hidden ? hiddenOffset(dock->bounds(), output, entry.edge)
@@ -493,6 +495,7 @@ void DockLayoutManager::onWindowRemoved(Window *window)
     if (window->hasObserver(this))
         window->removeObserver(this);
     m_docks.erase(window);
+    m_manager->setDockHidden(window, false);
     update();
 }
 

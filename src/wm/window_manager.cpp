@@ -425,6 +425,34 @@ base::Rect WindowManager::restingWorkAreaForOutput(const base::Rect &outputBound
     return m_exclusiveZones.apply(m_outputBounds).intersected(m_outputBounds);
 }
 
+base::Rect WindowManager::placementWorkAreaForOutput(const base::Rect &outputBounds) const
+{
+    const bool dockHidden =
+            std::any_of(m_hiddenDocks.begin(), m_hiddenDocks.end(), [&](const Window *dock) {
+                return outputBoundsFor(dock) == outputBounds;
+            });
+    if (m_displayManager && m_displayManager->applied()) {
+        for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
+            if (logical.bounds == outputBounds) {
+                return m_exclusiveZones.apply(logical.workArea, logical.waylandName,
+                                              logical.primary, dockHidden);
+            }
+        }
+    }
+    if (outputBounds != m_outputBounds)
+        return base::Rect();
+    return m_exclusiveZones.apply(m_outputBounds, std::string(), true, dockHidden)
+            .intersected(m_outputBounds);
+}
+
+void WindowManager::setDockHidden(const Window *dock, bool hidden)
+{
+    if (hidden)
+        m_hiddenDocks.insert(dock);
+    else
+        m_hiddenDocks.erase(dock);
+}
+
 std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
 {
     std::vector<OutputArea> areas;
@@ -646,9 +674,9 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
                                                      parent->bounds(), parent->frameInsets().top,
                                                      workAreaFor(parent)));
     } else {
-        base::Rect workArea = restingWorkAreaForOutput(init.output);
+        base::Rect workArea = placementWorkAreaForOutput(init.output);
         if (workArea.isEmpty())
-            workArea = restingWorkAreaForOutput(outputForNewWindow());
+            workArea = placementWorkAreaForOutput(outputForNewWindow());
         if (workArea.isEmpty())
             workArea = workAreaFor(window);
         window->setBounds(m_placement.place(window->frameInsets().outset(size), workArea));
@@ -712,7 +740,7 @@ bool WindowManager::restorePlacement(const Window *window, base::Rect *bounds) c
             m_rememberedPlacements.find(placementKey(window->applicationId(), surface->restoreId()));
     if (!remembered)
         return false;
-    const base::Rect workArea = restingWorkAreaForOutput(remembered->output);
+    const base::Rect workArea = placementWorkAreaForOutput(remembered->output);
     if (workArea.isEmpty())
         return false;
     const base::Rect &previous = remembered->bounds;

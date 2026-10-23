@@ -317,6 +317,9 @@ public:
     void clearExclusiveZone(const void *token);
     // A visible application window on the output with `outputBounds` is maximized.
     bool hasMaximizedWindow(const base::Rect &outputBounds) const;
+    // Tells the work areas whether the dock `dock` is slid away: what a new
+    // window is placed in leaves its reservation out while it is.
+    void setDockHidden(const Window *dock, bool hidden);
     // Brings the work areas up to date after windows were maximized, restored,
     // shown, hidden or moved between outputs. Upstream: the shelf's
     // UpdateWorkAreaInsetsAndNotifyObservers, called by the dock layout.
@@ -428,6 +431,9 @@ public:
     // not: what the shell's own surfaces and the desktop lay themselves out
     // in, so they stay clear of the dock and keep still as windows maximize.
     base::Rect restingWorkAreaForOutput(const base::Rect &outputBounds) const;
+    // The work area an ordinary window opens in: the reservations that yield
+    // are left out while the dock on the output is hidden.
+    base::Rect placementWorkAreaForOutput(const base::Rect &outputBounds) const;
     // Where a new ordinary window at `bounds`, centered in its work area, goes
     // when its position is managed: next to its placement anchor, back where
     // the last window with its restore id was left, or cascaded; see
@@ -588,6 +594,7 @@ private:
     ExclusiveZones m_exclusiveZones;
     // The outputs whose yielding reservations the work areas last left out.
     std::vector<base::Rect> m_maximizedOutputs;
+    std::set<const Window *> m_hiddenDocks;
     std::map<compositor::Surface *, ShellWindowMetadata> m_shellMetadata;
     std::map<const Window *, std::string> m_windowOutputs;
     struct RememberedPlacement {
