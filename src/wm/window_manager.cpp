@@ -166,7 +166,7 @@ void WindowManager::setOutputBounds(const base::Rect &bounds)
     followDisplays();
     // The reservations are edge thicknesses, so they survive a resolution
     // change and simply apply to the new output.
-    setWorkArea(m_exclusiveZones.apply(m_outputBounds));
+    setWorkArea(zonedWorkArea(m_outputBounds, m_outputBounds, {}, true));
     // With a display manager its displaysChanged follows, once windows are
     // back on the new outputs.
     if (!m_displayManager)
@@ -208,8 +208,9 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
                                 m_displayManager->nearestDisplay(centerPixel(window->bounds()));
                         base::Rect target = window->bounds();
                         if (output) {
-                            const base::Rect area = m_exclusiveZones.apply(
-                                    output->workArea, output->waylandName, output->primary);
+                            const base::Rect area =
+                                    zonedWorkArea(output->workArea, output->bounds,
+                                                  output->waylandName, output->primary);
                             const int visibleWidth = std::min(64, target.width());
                             const int visibleHeight = std::min(32, target.height());
                             target.moveLeft(std::clamp(target.x(),
@@ -259,8 +260,8 @@ void WindowManager::followDisplays()
                              + int(float(rect.y() - from->bounds.y()) / from->bounds.height()
                                    * to.height()));
         return fitInside(moved,
-                         m_exclusiveZones.apply(fallback.workArea, fallback.waylandName,
-                                                fallback.primary));
+                         zonedWorkArea(fallback.workArea, fallback.bounds, fallback.waylandName,
+                                       fallback.primary));
     };
     for (Window *window : std::vector<Window *>(m_stackingOrder)) {
         if (!hasWindow(window) || window->isShellWindow() || window->isPopup()
@@ -348,8 +349,8 @@ base::Rect WindowManager::workAreaFor(const Window *window, const base::Rect &bo
         if (logical)
             return window && window->isShellWindow()
                     ? logical->bounds
-                    : m_exclusiveZones.apply(logical->workArea, logical->waylandName,
-                                             logical->primary);
+                    : zonedWorkArea(logical->workArea, logical->bounds, logical->waylandName,
+                                    logical->primary);
     }
     // A shell window places itself and is expected to cover the area it
     // reserved; confining it to the work area would move the dock off its own
@@ -401,12 +402,27 @@ base::Rect WindowManager::workAreaForOutput(const base::Rect &outputBounds) cons
     if (m_displayManager && m_displayManager->applied()) {
         for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
             if (logical.bounds == outputBounds) {
+                return zonedWorkArea(logical.workArea, logical.bounds, logical.waylandName,
+                                     logical.primary);
+            }
+        }
+    }
+    return outputBounds == m_outputBounds ? m_workArea : base::Rect();
+}
+
+base::Rect WindowManager::restingWorkAreaForOutput(const base::Rect &outputBounds) const
+{
+    if (m_displayManager && m_displayManager->applied()) {
+        for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
+            if (logical.bounds == outputBounds) {
                 return m_exclusiveZones.apply(logical.workArea, logical.waylandName,
                                               logical.primary);
             }
         }
     }
-    return outputBounds == m_outputBounds ? m_workArea : base::Rect();
+    if (outputBounds != m_outputBounds)
+        return base::Rect();
+    return m_exclusiveZones.apply(m_outputBounds).intersected(m_outputBounds);
 }
 
 std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
@@ -415,14 +431,14 @@ std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
     if (m_displayManager && m_displayManager->applied()) {
         for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
             if (!logical.bounds.isEmpty())
-                areas.push_back({logical.bounds, workAreaForOutput(logical.bounds),
+                areas.push_back({logical.bounds, restingWorkAreaForOutput(logical.bounds),
                                  logical.scale.value()});
         }
     }
     if (areas.empty() && !m_outputBounds.isEmpty()) {
         const double scale = m_compositor ? m_compositor->outputScale().value() : 1;
-        areas.push_back({m_outputBounds, m_workArea.isEmpty() ? m_outputBounds : m_workArea,
-                         scale});
+        const base::Rect workArea = restingWorkAreaForOutput(m_outputBounds);
+        areas.push_back({m_outputBounds, workArea.isEmpty() ? m_outputBounds : workArea, scale});
     }
     return areas;
 }
@@ -444,13 +460,57 @@ void WindowManager::setWorkArea(const base::Rect &bounds)
 
 void WindowManager::applyExclusiveZones()
 {
-    setWorkArea(m_exclusiveZones.apply(m_outputBounds));
+    setWorkArea(zonedWorkArea(m_outputBounds, m_outputBounds, {}, true));
+}
+
+base::Rect WindowManager::zonedWorkArea(const base::Rect &workArea, const base::Rect &outputBounds,
+                                        const std::string &outputName, bool primary) const
+{
+    const bool maximized =
+            m_exclusiveZones.hasYieldingZone() && hasMaximizedWindow(outputBounds);
+    return m_exclusiveZones.apply(workArea, outputName, primary, maximized);
+}
+
+bool WindowManager::hasMaximizedWindow(const base::Rect &outputBounds) const
+{
+    return std::any_of(m_stackingOrder.begin(), m_stackingOrder.end(), [&](const Window *window) {
+        return window->role() == WindowRole::Normal && !window->isPopup() && window->isVisible()
+                && window->stateType() == WindowStateType::Maximized
+                && outputBoundsFor(window) == outputBounds;
+    });
+}
+
+void WindowManager::updateWorkAreas()
+{
+    std::vector<base::Rect> maximized;
+    if (m_exclusiveZones.hasYieldingZone()) {
+        for (const OutputArea &area : outputAreas()) {
+            if (hasMaximizedWindow(area.bounds))
+                maximized.push_back(area.bounds);
+        }
+    }
+    if (maximized == m_maximizedOutputs)
+        return;
+    m_maximizedOutputs = std::move(maximized);
+    applyExclusiveZones();
+    if (m_displayManager)
+        notifyWorkAreaChanged();
+    exclusiveZonesChanged();
+}
+
+void WindowManager::notifyWorkAreaChanged()
+{
+    const WMEvent event(WMEventType::WorkAreaChanged);
+    for (Window *window : std::vector<Window *>(m_stackingOrder)) {
+        if (hasWindow(window))
+            window->state()->onEvent(event);
+    }
 }
 
 void WindowManager::setExclusiveZone(const void *token, ScreenEdge edge, int thickness,
-                                     const std::string &outputName)
+                                     const std::string &outputName, bool yieldsToMaximized)
 {
-    if (m_exclusiveZones.set(token, edge, thickness, outputName)) {
+    if (m_exclusiveZones.set(token, edge, thickness, outputName, yieldsToMaximized)) {
         applyExclusiveZones();
         if (!outputName.empty()) {
             const WMEvent event(WMEventType::WorkAreaChanged);
@@ -586,9 +646,9 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
                                                      parent->bounds(), parent->frameInsets().top,
                                                      workAreaFor(parent)));
     } else {
-        base::Rect workArea = workAreaForOutput(init.output);
+        base::Rect workArea = restingWorkAreaForOutput(init.output);
         if (workArea.isEmpty())
-            workArea = workAreaForOutput(outputForNewWindow());
+            workArea = restingWorkAreaForOutput(outputForNewWindow());
         if (workArea.isEmpty())
             workArea = workAreaFor(window);
         window->setBounds(m_placement.place(window->frameInsets().outset(size), workArea));
@@ -652,7 +712,7 @@ bool WindowManager::restorePlacement(const Window *window, base::Rect *bounds) c
             m_rememberedPlacements.find(placementKey(window->applicationId(), surface->restoreId()));
     if (!remembered)
         return false;
-    const base::Rect workArea = workAreaForOutput(remembered->output);
+    const base::Rect workArea = restingWorkAreaForOutput(remembered->output);
     if (workArea.isEmpty())
         return false;
     const base::Rect &previous = remembered->bounds;

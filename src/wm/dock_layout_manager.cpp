@@ -228,10 +228,8 @@ WorkspaceState DockLayoutManager::workspaceStateFor(const base::Rect &output) co
     if (topmost && isFullscreenOrOverFullscreen(topmost))
         return WorkspaceState::Fullscreen;
 
-    for (const Window *window : windows) {
-        if (onOutput(window) && window->stateType() == WindowStateType::Maximized)
-            return WorkspaceState::Maximized;
-    }
+    if (m_manager->hasMaximizedWindow(output))
+        return WorkspaceState::Maximized;
     return WorkspaceState::Default;
 }
 
@@ -314,6 +312,7 @@ DockAutoHideState DockLayoutManager::computeAutoHideState(const Window *dock, co
 
 void DockLayoutManager::update()
 {
+    m_manager->updateWorkAreas();
     for (Window *window : m_manager->windows()) {
         if (window->role() == WindowRole::Desktop)
             window->setPresentationHidden(m_sessionEnding);

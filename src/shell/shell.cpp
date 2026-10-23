@@ -212,7 +212,7 @@ void Shell::setTaskWindows(std::unique_ptr<TaskWindows> windows)
 
 base::Rect Shell::workArea(const Output &output) const
 {
-    return windowManager()->workAreaForOutput(output.bounds);
+    return windowManager()->restingWorkAreaForOutput(output.bounds);
 }
 
 void Shell::releaseFreedMemorySoon()

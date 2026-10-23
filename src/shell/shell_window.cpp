@@ -246,9 +246,10 @@ void ShellWindow::updateSizeLimits()
     m_shellSurface->setMaximumSize(limit);
 }
 
-void ShellWindow::setExclusiveZone(wm::ScreenEdge edge, int thickness)
+void ShellWindow::setExclusiveZone(wm::ScreenEdge edge, int thickness, bool yieldsToMaximized)
 {
-    m_shell->windowManager()->setExclusiveZone(this, edge, thickness, m_metadata.outputName);
+    m_shell->windowManager()->setExclusiveZone(this, edge, thickness, m_metadata.outputName,
+                                               yieldsToMaximized);
 }
 
 void ShellWindow::clearExclusiveZone()

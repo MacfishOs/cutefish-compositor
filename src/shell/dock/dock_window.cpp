@@ -904,10 +904,17 @@ void DockWindow::updateStrut()
         thickness = (screen.y() + screen.height() - 1) - dock.y() + kStrutExtraPixels;
         break;
     }
-    if (settings.visibility() == DockSettings::AlwaysShow)
+    switch (settings.visibility()) {
+    case DockSettings::AlwaysShow:
         m_window->setExclusiveZone(edge, thickness);
-    else
+        break;
+    case DockSettings::IntellHide:
+        m_window->setExclusiveZone(edge, thickness, true);
+        break;
+    case DockSettings::AlwaysHide:
         m_window->setExclusiveZone(edge, 0);
+        break;
+    }
 }
 
 base::Rect DockWindow::minimizedSlot(int index, int count) const

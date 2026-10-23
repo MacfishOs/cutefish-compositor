@@ -315,6 +315,44 @@ TEST_F(DockLayoutTest, WhenObstructedFollowsMaximizedWindows)
     EXPECT_TRUE(isShown());
 }
 
+TEST_F(DockLayoutTest, YieldingZoneLeavesTheWorkAreaToMaximizedWindows)
+{
+    layout.setBehavior(DockAutoHideBehavior::WhenObstructed);
+    manager.setExclusiveZone(dock, ScreenEdge::Bottom, 80, {}, true);
+    const base::Rect reserved(0, 0, 1000, 720);
+    EXPECT_EQ(reserved, manager.workAreaForOutput(kOutput));
+
+    const base::Rect underTheDock(100, 600, 300, 190);
+    Window *other = makeWindow(underTheDock);
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
+
+    window->maximize();
+    EXPECT_EQ(kOutput, manager.workAreaForOutput(kOutput));
+    EXPECT_EQ(kOutput, window->bounds());
+    EXPECT_EQ(reserved, manager.restingWorkAreaForOutput(kOutput));
+    EXPECT_EQ(reserved, manager.outputAreas().front().workArea);
+
+    window->restore();
+    EXPECT_EQ(reserved, manager.workAreaForOutput(kOutput));
+    EXPECT_EQ(base::Rect(100, 100, 300, 200), window->bounds());
+    // A window left under the dock is not pushed out or shrunk.
+    EXPECT_EQ(underTheDock, other->bounds());
+
+    window->maximize();
+    window->minimize();
+    EXPECT_EQ(reserved, manager.workAreaForOutput(kOutput));
+}
+
+TEST_F(DockLayoutTest, FixedZoneStaysUnderMaximizedWindows)
+{
+    manager.setExclusiveZone(dock, ScreenEdge::Bottom, 80);
+    Window *window = makeWindow(base::Rect(100, 100, 300, 200));
+
+    window->maximize();
+    EXPECT_EQ(base::Rect(0, 0, 1000, 720), manager.workAreaForOutput(kOutput));
+    EXPECT_EQ(base::Rect(0, 0, 1000, 720), window->bounds());
+}
+
 TEST_F(DockLayoutTest, AlwaysHideStaysShownWithNothingToMakeRoomFor)
 {
     layout.setBehavior(DockAutoHideBehavior::Always);

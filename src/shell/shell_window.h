@@ -106,7 +106,7 @@ public:
     // task list and the menu bar, and held at the size setSize() gives it, so
     // the user moves it but cannot resize, maximize or snap it.
     void setDialog(bool dialog);
-    void setExclusiveZone(wm::ScreenEdge edge, int thickness);
+    void setExclusiveZone(wm::ScreenEdge edge, int thickness, bool yieldsToMaximized = false);
     void clearExclusiveZone();
     // Takes the keyboard: activation, or for the Capture and Picker roles
     // the window manager's keyboard grab.
