@@ -924,6 +924,8 @@ void ShellSurface::mapToplevel()
             bounds = m_manager->boundsForNewWindow(m_window, bounds);
         m_window->state()->setRestoreBounds(bounds);
     }
+    // A position asked for places only the next map.
+    m_surface->setRequestedPosition(std::nullopt);
 
     // The capture interface and pickers are never activated; mapping them
     // takes the keyboard.

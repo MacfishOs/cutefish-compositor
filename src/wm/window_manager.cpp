@@ -19,6 +19,7 @@
 #include "base/event_loop.h"
 #include "base/strings.h"
 #include "compositor/compositor.h"
+#include "compositor/output.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
 #include "core/main_loop.h"
@@ -460,13 +461,14 @@ std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
         for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
             if (!logical.bounds.isEmpty())
                 areas.push_back({logical.bounds, restingWorkAreaForOutput(logical.bounds),
-                                 logical.scale.value()});
+                                 logical.scale.value(), logical.waylandName, logical.primary});
         }
     }
     if (areas.empty() && !m_outputBounds.isEmpty()) {
         const double scale = m_compositor ? m_compositor->outputScale().value() : 1;
         const base::Rect workArea = restingWorkAreaForOutput(m_outputBounds);
-        areas.push_back({m_outputBounds, workArea.isEmpty() ? m_outputBounds : workArea, scale});
+        areas.push_back({m_outputBounds, workArea.isEmpty() ? m_outputBounds : workArea, scale,
+                         compositor::Output().name, true});
     }
     return areas;
 }
@@ -670,9 +672,11 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     } else if (window->isShellWindow()) {
         window->setBounds(base::Rect(outputBoundsFor(window).topLeft(), size));
     } else if (Window *parent = window->transientParent()) {
-        window->setBounds(m_placement.placeTransient(window->frameInsets().outset(size),
-                                                     parent->bounds(), parent->frameInsets().top,
-                                                     workAreaFor(parent)));
+        base::Rect bounds = m_placement.placeTransient(window->frameInsets().outset(size),
+                                                       parent->bounds(), parent->frameInsets().top,
+                                                       workAreaFor(parent));
+        requestedPlacement(window, &bounds);
+        window->setBounds(bounds);
     } else {
         base::Rect workArea = placementWorkAreaForOutput(init.output);
         if (workArea.isEmpty())
@@ -706,9 +710,32 @@ base::Rect WindowManager::boundsForNewWindow(const Window *window, base::Rect bo
         if (!workArea.isEmpty())
             return placeAtAnchor(bounds.size(), anchor, workArea);
     }
-    if (!restorePlacement(window, &bounds))
+    if (!requestedPlacement(window, &bounds) && !restorePlacement(window, &bounds))
         bounds = window_positioner::boundsForNewWindow(window, bounds);
     return bounds;
+}
+
+bool WindowManager::requestedPlacement(const Window *window, base::Rect *bounds) const
+{
+    const compositor::Surface *surface = window->rootSurface();
+    if (!surface || !surface->requestedPosition())
+        return false;
+    const Insets insets = window->frameInsets();
+    bounds->moveTopLeft(*surface->requestedPosition() - base::Point(insets.left, insets.top));
+    adjustBoundsToEnsureMinimumVisibility(visibleAreaFor(window, *bounds), bounds,
+                                          workAreaFor(window, *bounds));
+    return true;
+}
+
+void WindowManager::moveWindowTo(Window *window, const base::Point &position)
+{
+    if (!hasWindow(window) || window->role() != WindowRole::Normal || window->isPopup()
+        || window->isDragged())
+        return;
+    const Insets insets = window->frameInsets();
+    base::Rect bounds = window->bounds();
+    bounds.moveTopLeft(position - base::Point(insets.left, insets.top));
+    window->requestBounds(bounds);
 }
 
 void WindowManager::rememberPlacement(const Window *window)
@@ -1053,6 +1080,8 @@ void WindowManager::onWindowVisibilityChanged(Window *window)
 void WindowManager::onWindowTargetBoundsChanged(Window *window, const base::Rect &oldBounds,
                                                 const base::Rect &newBounds)
 {
+    if (newBounds.topLeft() != oldBounds.topLeft())
+        windowMoved(window);
     const scene::Node *node = window->node();
     if (!m_seat || !hasWindow(window) || !node || !node->isEffectivelyVisible()
         || node->isEventTargetingBlocked())

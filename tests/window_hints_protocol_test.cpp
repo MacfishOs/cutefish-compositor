@@ -373,6 +373,23 @@ TEST_F(WindowHintsProtocolTest, InteractiveResizeReachesTheSurfacesClient)
     wl_surface_destroy(surface);
 }
 
+TEST_F(WindowHintsProtocolTest, OpacityIsImmediateAndBetweenZeroAndOne)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_EQ(model->opacity(), 1.0f);
+    cutefish_window_hints_v1_set_opacity(hints, surface, wl_fixed_from_double(0.5));
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(model->opacity(), 0.5f);
+    cutefish_window_hints_v1_set_opacity(hints, surface, wl_fixed_from_double(1.5));
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    EXPECT_EQ(model->opacity(), 0.5f);
+    wl_surface_destroy(surface);
+}
+
 TEST_F(WindowHintsProtocolTest, InvalidBooleanIsAProtocolError)
 {
     auto *surface = wl_compositor_create_surface(clientCompositor);

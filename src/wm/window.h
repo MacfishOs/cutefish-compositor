@@ -319,8 +319,9 @@ public:
 
     void setHidden(bool hidden);
 
-    // The client's own opacity for the whole window, frame included. At zero
-    // it is still shown for everything but the eye: frames, input, stacking.
+    // The window manager's opacity for the whole window, frame included,
+    // times the client's own (set_opacity). At zero it is still shown for
+    // everything but the eye: frames, input, stacking.
     void setOpacity(float opacity);
 
     // Drawn at `scale` of its size about `anchor`, a point in bounds()
@@ -521,6 +522,8 @@ private:
     bool m_protectedFromControl = false;
     bool m_alwaysOnTop = false;
     bool m_surfaceAlwaysOnTop = false;
+    float m_opacity = 1;
+    float m_surfaceOpacity = 1;
 
     Window *m_transientParent = nullptr;
     std::vector<Window *> m_transientChildren;

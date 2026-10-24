@@ -27,6 +27,7 @@
 #include "wayland/protocols/status_item.h"
 #include "wayland/protocols/surface_blur.h"
 #include "wayland/protocols/window_hints.h"
+#include "wayland/protocols/window_placement.h"
 #include "wayland/protocols/wl_compositor.h"
 #include "wayland/protocols/wl_data_device_manager.h"
 #include "wayland/protocols/wl_output.h"
@@ -72,7 +73,8 @@ ProtocolGlobals::~ProtocolGlobals()
 bool ProtocolGlobals::initialize()
 {
     return registerCoreGlobals() && registerInputMethod() && registerClipboard()
-            && registerCapture() && registerComputerControl() && registerPrivateShell();
+            && registerCapture() && registerComputerControl() && registerWindowPlacement()
+            && registerPrivateShell();
 }
 
 bool ProtocolGlobals::registerCoreGlobals()
@@ -103,7 +105,7 @@ bool ProtocolGlobals::registerCoreGlobals()
         || (m_deps.windowManager
             && !createXdgToplevelDragGlobal(display, m_deps.windowManager))
         || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
-        || !createWindowHintsGlobal(display) || !createAppMenuGlobal(display) || !createFractionalScaleGlobal(display)
+        || !createWindowHintsGlobal(display, m_deps.windowManager) || !createAppMenuGlobal(display) || !createFractionalScaleGlobal(display)
         || !createXdgOutputManagerGlobal(display) || !createViewporterGlobal(display)
         || (m_deps.windowManager
             && !createStatusItemGlobal(display, m_deps.windowManager->statusItems()))) {
@@ -232,6 +234,21 @@ bool ProtocolGlobals::registerComputerControl()
     return true;
 }
 
+bool ProtocolGlobals::registerWindowPlacement()
+{
+    if (!m_deps.windowManager)
+        return true;
+    const auto authorize = [security = m_deps.security](const wl_client *client) {
+        return security->canPlaceWindows(client);
+    };
+    m_windowPlacement = std::make_unique<WaylandWindowPlacement>(
+            m_deps.server->display(), m_deps.windowManager, authorize);
+    if (!m_windowPlacement->global())
+        return false;
+    m_privileged->addRestrictedGlobal(m_windowPlacement->global(), authorize);
+    return true;
+}
+
 bool ProtocolGlobals::registerPrivateShell()
 {
     // Registered with the privileged filter, so an ordinary client never sees
@@ -324,6 +341,9 @@ void ProtocolGlobals::shutdown()
     if (m_privileged && m_computerControl)
         m_privileged->removeRestrictedGlobal(m_computerControl->global());
     m_computerControl.reset();
+    if (m_privileged && m_windowPlacement)
+        m_privileged->removeRestrictedGlobal(m_windowPlacement->global());
+    m_windowPlacement.reset();
     if (m_imageCapture)
         m_imageCapture->shutdown();
     if (m_toplevelList)

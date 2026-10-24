@@ -111,6 +111,7 @@ Window::Window(WindowManager *manager, compositor::Surface *rootSurface, const s
         m_rootSurface->addSurfaceObserver(this);
         // Hints are usually set before the first commit, so before this window exists.
         m_surfaceAlwaysOnTop = m_rootSurface->alwaysOnTop();
+        m_surfaceOpacity = m_rootSurface->opacity();
         if (isPopup())
             m_rootSurface->setHidden(false);
     }
@@ -123,6 +124,7 @@ Window::Window(WindowManager *manager, compositor::Surface *rootSurface, const s
             // A window placed against an anchor opens in place, like a popup.
             if (isPopup() || m_rootSurface->placementAnchor())
                 animation->setStyle(scene::WindowAnimation::Style::Popup);
+            animation->setOpacity(m_rootSurface->opacity());
             m_node = container->addChild(std::move(animation));
         }
     }
@@ -202,6 +204,11 @@ void Window::onSurfaceWindowHintsChanged(compositor::Surface *surface)
         forEachObserver(this, m_observers, [this](WindowObserver *observer) {
             observer->onWindowClientDecorationChanged(this);
         });
+    }
+    if (surface->opacity() != m_surfaceOpacity) {
+        m_surfaceOpacity = surface->opacity();
+        if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node))
+            animation->setOpacity(m_opacity * m_surfaceOpacity);
     }
     // Every hint lands here; restacking for the others would raise the window
     // within its layer.
@@ -465,8 +472,9 @@ void Window::setHidden(bool hidden)
 
 void Window::setOpacity(float opacity)
 {
+    m_opacity = opacity;
     if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node))
-        animation->setOpacity(opacity);
+        animation->setOpacity(m_opacity * m_surfaceOpacity);
 }
 
 void Window::setPresentationScale(double scale, const base::PointF &anchor, bool animate)

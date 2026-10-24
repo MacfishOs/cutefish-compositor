@@ -1272,6 +1272,14 @@ void Surface::setCastsShadow(bool castsShadow)
     notifyWindowHintsChanged();
 }
 
+void Surface::setOpacity(float opacity)
+{
+    if (m_opacity == opacity)
+        return;
+    m_opacity = opacity;
+    notifyWindowHintsChanged();
+}
+
 void Surface::notifyWindowHintsChanged()
 {
     for (auto *observer : std::vector<SurfaceObserver *>(m_observers)) {

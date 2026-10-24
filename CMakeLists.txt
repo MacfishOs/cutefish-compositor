@@ -118,6 +118,8 @@ cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${CMAKE_CURRENT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
 cutefish_wayland_protocol(cutefish-status-item-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-status-item-v1.xml)
+cutefish_wayland_protocol(cutefish-window-placement-v1
+    ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-window-placement-v1.xml)
 cutefish_wayland_protocol(ext-data-control-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/ext-data-control/ext-data-control-v1.xml)
 cutefish_wayland_protocol(wlr-data-control-unstable-v1
@@ -162,6 +164,7 @@ add_library(cutefish-protocols STATIC
     ${ext-data-control-v1_SOURCES} ${wlr-data-control-unstable-v1_SOURCES}
     ${cutefish-window-hints-v1_SOURCES} ${cutefish-surface-blur-v1_SOURCES} ${xdg-shell_SOURCES} ${xdg-decoration_SOURCES}
     ${cutefish-status-item-v1_SOURCES}
+    ${cutefish-window-placement-v1_SOURCES}
     ${xdg-dialog-v1_SOURCES}
     ${xdg-foreign-unstable-v2_SOURCES}
     ${xdg-toplevel-drag-v1_SOURCES}
@@ -689,6 +692,8 @@ add_library(cutefish-wayland-shell STATIC
     src/wayland/protocols/status_item.h
     src/wayland/protocols/window_hints.cpp
     src/wayland/protocols/window_hints.h
+    src/wayland/protocols/window_placement.cpp
+    src/wayland/protocols/window_placement.h
     src/wayland/protocols/surface_blur.cpp
     src/wayland/protocols/surface_blur.h
     src/wayland/protocols/xdg_decoration.cpp

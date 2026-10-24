@@ -33,6 +33,7 @@ struct CompositorOptions {
     std::vector<std::string> clipboardClients;
     std::vector<std::string> captureClients;
     std::vector<std::string> computerControlClients;
+    std::vector<std::string> windowPlacementClients;
     // Development override; empty means use the saved selection.
     std::string inputMethodId;
     compositor::OutputScale scale;

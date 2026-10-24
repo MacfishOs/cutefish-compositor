@@ -31,6 +31,9 @@ public:
     // The computer-use service, which may ask the user to let an agent drive
     // the seat, and reads the screen while it does.
     virtual bool canControlComputer(const wl_client *) const { return false; }
+    // Clients that place their own windows and read where they are, as
+    // programs written for a desktop where windows do.
+    virtual bool canPlaceWindows(const wl_client *) const { return false; }
 };
 
 // Grants a privilege when the connecting process runs one of a fixed set of
@@ -45,18 +48,21 @@ public:
                                const std::vector<std::string> &captureClients,
                                const std::vector<std::string> &systemDialogClients,
                                bool captureEnabled,
-                               const std::vector<std::string> &computerControlClients = {});
+                               const std::vector<std::string> &computerControlClients = {},
+                               const std::vector<std::string> &windowPlacementClients = {});
 
     bool canManageClipboard(const wl_client *client) const override;
     bool canCaptureOutputs(const wl_client *client) const override;
     bool showsSystemDialogs(int64_t pid) const override;
     bool canControlComputer(const wl_client *client) const override;
+    bool canPlaceWindows(const wl_client *client) const override;
 
 private:
     const std::vector<std::string> m_clipboardClients;
     const std::vector<std::string> m_captureClients;
     const std::vector<std::string> m_systemDialogClients;
     const std::vector<std::string> m_computerControlClients;
+    const std::vector<std::string> m_windowPlacementClients;
     // Capture has nothing to read without a display, and computer control
     // nothing to show.
     const bool m_captureEnabled;

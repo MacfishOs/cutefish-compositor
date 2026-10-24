@@ -439,11 +439,19 @@ public:
     // the last window with its restore id was left, or cascaded; see
     // window_positioner.h.
     base::Rect boundsForNewWindow(const Window *window, base::Rect bounds) const;
+    // Moves a normal window's client area to `position`, in global
+    // coordinates, keeping it reachable; see
+    // cutefish_window_placement_v1.set_position. Maximized, fullscreen,
+    // snapped and dragged windows stay where they are.
+    void moveWindowTo(Window *window, const base::Point &position);
 
     struct OutputArea {
         base::Rect bounds;
         base::Rect workArea;
         double scale = 1;
+        // The wl_output name.
+        std::string name;
+        bool primary = false;
 
         bool operator==(const OutputArea &) const = default;
     };
@@ -482,6 +490,8 @@ public:
     // An output came, went or changed its bounds, work area or scale; windows
     // left on no output have been brought back by now.
     base::Signal<> outputsChanged;
+    // A window's bounds moved: their top left changed.
+    base::Signal<Window *> windowMoved;
     // A reservation came, went or changed: the work areas may have.
     base::Signal<> exclusiveZonesChanged;
     // A popup took a grab or let it go.
@@ -501,6 +511,9 @@ private:
     base::Rect zonedWorkArea(const base::Rect &workArea, const base::Rect &outputBounds,
                              const std::string &outputName, bool primary) const;
     void notifyWorkAreaChanged();
+    // Puts `bounds` where the window's surface asked to map, kept reachable;
+    // false when it did not ask.
+    bool requestedPlacement(const Window *window, base::Rect *bounds) const;
     // Emits outputsChanged() when outputAreas() differs from the last time.
     void notifyOutputsChanged();
     // Keeps windows where they were on their displays across a layout change.

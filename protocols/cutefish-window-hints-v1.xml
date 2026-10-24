@@ -163,6 +163,17 @@
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="shadow" type="uint"/>
     </request>
+    <request name="set_opacity">
+      <description summary="draw the whole window translucent">
+        The window, its frame and shadow included, is drawn at this opacity,
+        from 0 to 1. At 0 it is unseen but still stacked and still takes
+        input; a window that should be neither seen nor clicked is unmapped.
+        1 is the default. Applies at once and persists until replaced; a
+        value outside 0 to 1 is an invalid_value error.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="opacity" type="fixed"/>
+    </request>
     <event name="interactive_resize">
       <description summary="an interactive resize started or ended">
         Sent with active 1 when the user starts resizing one of the client's
@@ -172,6 +183,23 @@
       </description>
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="active" type="uint"/>
+    </event>
+    <event name="work_area">
+      <description summary="the part of an output windows are laid out in">
+        An output, by its wl_output name, less what the desktop's panels and
+        dock reserve, in the compositor's global logical coordinates, where
+        xdg_output places the output itself. primary is 1 for the primary
+        output, the one with the status bar, and 0 for the others. Sent for
+        every output when the manager is bound, and again for an output
+        whose work area or primary flag changes; an output going away is
+        announced by its wl_output global alone.
+      </description>
+      <arg name="output" type="string"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="primary" type="uint"/>
     </event>
   </interface>
 </protocol>
