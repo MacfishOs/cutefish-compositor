@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/thread_pool.h"
 #include "base/timer.h"
 #include "shell/controlcenter/control_center_services.h"
 #include "ui/animation.h"
@@ -189,6 +190,8 @@ private:
     IconButton *m_play;
     IconButton *m_next;
     bool m_artReady = false;
+    base::Job m_downloadJob;
+    std::string m_downloadingUrl;
 };
 
 // DeviceUsersTile (privacy dot applications)

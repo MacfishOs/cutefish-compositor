@@ -176,7 +176,7 @@ add_library(cutefish-shell-controlcenter STATIC
 )
 target_link_libraries(cutefish-shell-controlcenter PUBLIC cutefish-shell cutefish-shell-osd
     cutefish-shell-statusbar cutefish-shell-notification Cutefish::NetworkManagerClient
-    Cutefish::BluezClient Cutefish::AudioClient)
+    Cutefish::BluezClient Cutefish::AudioClient PkgConfig::Curl)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-controlcenter)
 # The status bar's items, which the lock screen shows too.
 add_library(cutefish-shell-bar-items STATIC

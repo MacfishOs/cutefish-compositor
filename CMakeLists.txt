@@ -22,6 +22,7 @@ include(CTest)
 
 find_package(PkgConfig REQUIRED)
 find_package(CutefishToolkit REQUIRED)
+pkg_check_modules(Curl REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(TitleText REQUIRED IMPORTED_TARGET harfbuzz freetype2 fontconfig icu-uc icu-i18n)
 pkg_check_modules(WaylandServer REQUIRED IMPORTED_TARGET wayland-server>=1.23)
 pkg_check_modules(Libseat REQUIRED IMPORTED_TARGET libseat)

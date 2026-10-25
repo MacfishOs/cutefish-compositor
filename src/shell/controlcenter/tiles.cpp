@@ -6,8 +6,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
+#include <sys/stat.h>
+#include <curl/curl.h>
 
+#include "base/file.h"
+#include "base/hash.h"
 #include "base/i18n.h"
+#include "base/paths.h"
+#include "base/thread_pool.h"
 #include "base/url.h"
 #include "shell/controlcenter/panel_style.h"
 #include "ui/icon.h"
@@ -490,6 +497,89 @@ void MediaTile::setState(const MediaState &state)
     requestLayout();
 }
 
+static std::string decodeBase64(std::string_view input)
+{
+    static const int kTable[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    };
+    std::string out;
+    out.reserve(input.size() * 3 / 4);
+    uint32_t val = 0;
+    int valb = -8;
+    for (char c : input) {
+        if (c == '=') break;
+        int d = kTable[static_cast<unsigned char>(c)];
+        if (d == -1) continue;
+        val = (val << 6) | d;
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return out;
+}
+
+static bool downloadUrlToFile(const std::string &url, const std::string &destPath)
+{
+    static std::once_flag initFlag;
+    std::call_once(initFlag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+
+    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
+    if (!curl)
+        return false;
+
+    std::string buffer;
+    auto writeCallback = [](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
+        auto *buf = static_cast<std::string *>(userdata);
+        const size_t bytes = size * nmemb;
+        if (buf->size() + bytes > 10 * 1024 * 1024)
+            return 0;
+        buf->append(ptr, bytes);
+        return bytes;
+    };
+
+    CURL *handle = curl.get();
+    curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(handle, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 5L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(handle, CURLOPT_USERAGENT, "cutefish-compositor/1.0");
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, static_cast<size_t(*)(char*,size_t,size_t,void*)>(writeCallback));
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &buffer);
+
+    CURLcode res = curl_easy_perform(handle);
+    if (res != CURLE_OK)
+        return false;
+
+    long httpCode = 0;
+    curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &httpCode);
+    if (httpCode < 200 || httpCode >= 300 || buffer.empty())
+        return false;
+
+    return base::file::writeAtomically(destPath, buffer);
+}
+
 void MediaTile::updateArtwork()
 {
     const bool white = panel::dark();
@@ -502,24 +592,82 @@ void MediaTile::updateArtwork()
     for (IconButton *button : {m_previous, m_play, m_next})
         button->setSurfaceColor(panel::tileInkColor());
 
+    if (!m_state.hasPlayer || m_state.artUrl.empty()) {
+        m_downloadJob = base::Job();
+        m_downloadingUrl.clear();
+        m_artReady = false;
+        m_art->setSource({});
+        m_art->setVisible(false);
+        m_cover->setVisible(true);
+        return;
+    }
+
+    const std::string &url = m_state.artUrl;
     std::string path;
-    if (m_state.hasPlayer && !m_state.artUrl.empty()) {
-        std::string url = m_state.artUrl;
-        if (url.starts_with("file://")) {
-            url = url.substr(7);
-            if (url.starts_with("localhost/"))
-                url = url.substr(10);
-            path = base::url::percentDecoded(url);
-        } else if (auto local = base::url::toLocalFile(url)) {
-            path = *local;
+
+    if (url.starts_with("file:")) {
+        path = base::url::toLocalFile(url).value_or(std::string());
+        if (path.empty() && url.starts_with("file://")) {
+            std::string sub = url.substr(7);
+            if (sub.starts_with("localhost/"))
+                sub = sub.substr(10);
+            path = base::url::percentDecoded(sub);
+        }
+    } else if (url.starts_with("/")) {
+        path = url;
+    } else if (url.starts_with("data:")) {
+        const std::string cacheDir = base::paths::cacheHome() + "/cutefish/media-art";
+        const std::string hash = base::CryptographicHash::hashHex(url, base::CryptographicHash::Algorithm::Sha256);
+        const std::string cachePath = cacheDir + "/" + hash;
+        struct stat st;
+        if (stat(cachePath.c_str(), &st) == 0 && st.st_size > 0) {
+            path = cachePath;
         } else {
-            path = url;
+            size_t comma = url.find(',');
+            if (comma != std::string::npos && url.substr(0, comma).find(";base64") != std::string::npos) {
+                std::string decoded = decodeBase64(std::string_view(url).substr(comma + 1));
+                if (!decoded.empty() && base::file::writeAtomically(cachePath, decoded))
+                    path = cachePath;
+            }
+        }
+    } else if (url.starts_with("http://") || url.starts_with("https://")) {
+        const std::string cacheDir = base::paths::cacheHome() + "/cutefish/media-art";
+        const std::string hash = base::CryptographicHash::hashHex(url, base::CryptographicHash::Algorithm::Sha256);
+        const std::string cachePath = cacheDir + "/" + hash;
+
+        struct stat st;
+        if (stat(cachePath.c_str(), &st) == 0 && st.st_size > 0) {
+            path = cachePath;
+        } else {
+            if (m_downloadingUrl != url) {
+                m_downloadingUrl = url;
+                m_downloadJob = base::ThreadPool::global().run(
+                    [url, cachePath]() -> bool {
+                        return downloadUrlToFile(url, cachePath);
+                    },
+                    [this, url, cachePath](bool success) {
+                        m_downloadingUrl.clear();
+                        if (success && m_state.hasPlayer && m_state.artUrl == url) {
+                            m_artReady = false;
+                            m_art->setSource(cachePath);
+                            requestLayout();
+                            requestPaint();
+                        }
+                    }
+                );
+            }
         }
     }
-    if (path != m_art->source()) {
-        m_artReady = false;
-        m_art->setSource(path);
+
+    if (!path.empty()) {
+        m_downloadJob = base::Job();
+        m_downloadingUrl.clear();
+        if (path != m_art->source()) {
+            m_artReady = false;
+            m_art->setSource(path);
+        }
     }
+
     const bool showArt = !path.empty() && (m_artReady || m_art->status() == ui::ImageView::Status::Ready);
     m_art->setVisible(showArt);
     m_cover->setVisible(!showArt);

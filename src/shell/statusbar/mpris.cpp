@@ -154,7 +154,10 @@ std::string MprisPlayer::artist() const
 
 std::string MprisPlayer::artUrl() const
 {
-    return stringOf(m_metadata, "mpris:artUrl");
+    std::string url = stringOf(m_metadata, "mpris:artUrl");
+    if (url.empty())
+        url = stringOf(m_metadata, "artUrl");
+    return url;
 }
 
 void MprisPlayer::callPlayer(const char *method)
