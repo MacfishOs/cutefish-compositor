@@ -337,6 +337,10 @@ void ShellWindow::setCursor(std::optional<Cursor> cursor)
             m_cursorSurface->setBufferScale(std::max(1, cursor->scale));
             m_cursorSurface->commit();
         }
+    } else if (m_cursorSurface) {
+        m_cursorBuffer.reset();
+        m_cursorSurface->attach(nullptr, {});
+        m_cursorSurface->commit();
     }
     m_cursor = std::move(cursor);
     m_shell->input()->cursorShapeChanged(this);

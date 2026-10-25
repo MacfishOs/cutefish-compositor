@@ -142,6 +142,7 @@ void Pointer::updatePointerSurface(compositor::Surface *surface)
         // Detached rather than returned to the surface container: a surface
         // that was once a cursor is never a window.
         m_cursorSurface = nullptr;
+        old->setHidden(true);
         old->reparentNode(nullptr);
         old->setHasRole(false);
         maybeRemoveSurfaceObserver(old);
