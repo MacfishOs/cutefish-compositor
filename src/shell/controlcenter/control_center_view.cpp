@@ -73,7 +73,9 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_wireless->setTitle(tr("Wi-Fi"));
     m_wireless->setActiveColor(ui::Color::rgb(0x007AFF));
     m_wireless->setShowChevron(true);
-    m_wireless->onClicked = [this] { m_services.enableWireless(!m_wireless->isChecked()); };
+    m_wireless->onClicked = [this] {
+        m_services.enableWireless(!m_services.wirelessEnabled());
+    };
     m_wireless->onPressAndHold = [this] {
         if (onHideRequested)
             onHideRequested();
@@ -375,7 +377,7 @@ void ControlCenterView::refresh()
     m_users->setVisible(isMain && !m_services.deviceUsers().empty());
     m_users->setUsers(m_services.deviceUsers());
 
-    m_wireless->setVisible(isMain && m_services.wirelessHardwareEnabled());
+    m_wireless->setVisible(isMain);
     m_wireless->setChecked(m_services.wirelessEnabled());
     m_wireless->setArtwork(m_services.wirelessEnabled() ? "wifi" : "wifi_disabled");
     const std::string network = m_services.wirelessName();
@@ -491,6 +493,15 @@ void ControlCenterView::refresh()
 
 double ControlCenterView::layoutHeight() const
 {
+    if (m_subPanel != SubPanel::Main) {
+        double h = kGap + 32.0 + kGap + 10.0;
+        for (PanelRow *row : m_subRows) {
+            if (row->isVisible())
+                h += row->heightForWidth(kWidth - 2 * kGap) + 4.0;
+        }
+        return std::max(h + kGap, 160.0);
+    }
+
     double h = 10.0; // top gap
     h += 32.0 + 10.0; // Header
 
@@ -545,6 +556,7 @@ void ControlCenterView::layout()
 
     // Header
     m_backButton->setVisible(false);
+    m_backButton->setGeometry({-100, -100, 0, 0});
     m_title->setGeometry({16.0, y + 4.0, 200.0, m_title->sizeHint().height});
     m_lockButton->setGeometry({contentWidth - 64.0, y, 32.0, 32.0});
     m_settingsButton->setGeometry({contentWidth - 22.0, y, 32.0, 32.0});
@@ -592,11 +604,14 @@ void ControlCenterView::layout()
     }
     y += CardItem::kHeight + kGap;
 
-    std::vector<CardItem *> row2 = {m_keyLightToggle, m_cameraToggle, m_logoutToggle, m_restartToggle,
-                                    m_powerOffToggle};
+    std::vector<CardItem *> row2 = {m_keyLightToggle, m_cameraToggle, m_logoutToggle, m_restartToggle, m_powerOffToggle};
     for (size_t i = 0; i < row2.size(); ++i) {
         row2[i]->setGeometry({kGap + i * (toggleWidth + toggleGap), y, toggleWidth, CardItem::kHeight});
     }
+
+    // Assign geometry to location toggle and hide it to prevent it from defaulting to 0,0
+    m_locationToggle->setGeometry({kGap, y + CardItem::kHeight + toggleGap, toggleWidth, CardItem::kHeight});
+    m_locationToggle->setVisible(false);
 }
 
 std::string volumeIconName(bool hasSink, double volume)
