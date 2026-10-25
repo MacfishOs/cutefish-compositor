@@ -10,5 +10,5 @@
 # helper, which is what makes a lock screen that is not itself setuid possible.
 
 auth     requisite  pam_nologin.so
-auth     include    common-auth
-account  include    common-account
+auth     include    system-auth
+account  include    system-auth

@@ -850,7 +850,7 @@ target_link_libraries(cutefish-toolkit-host PUBLIC Cutefish::Toolkit cutefish-re
 find_library(PAM_LIBRARY pam REQUIRED)
 add_executable(cutefish-auth-helper src/auth/auth_helper.cpp)
 target_link_libraries(cutefish-auth-helper PRIVATE ${PAM_LIBRARY})
-install(TARGETS cutefish-auth-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
+install(TARGETS cutefish-auth-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE SETUID)
 install(FILES data/cutefish-auth DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/pam.d)
 add_library(cutefish-auth STATIC
     src/auth/auth_status.cpp src/auth/auth_status.h
