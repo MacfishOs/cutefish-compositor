@@ -75,38 +75,41 @@
   </defs>
 
   <!-- Main macOS Squircle Base -->
-  <rect x="44" y="44" width="424" height="424" rx="96" ry="96" fill="url(#bg-dark)" stroke="url(#border-dark)" stroke-width="3" filter="url(#base-shadow-dark)" />
+  <rect x="16" y="16" width="480" height="480" rx="110" ry="110" fill="url(#bg-dark)" stroke="url(#border-dark)" stroke-width="3" filter="url(#base-shadow-dark)" />
 
-  <!-- 3x3 App Icon Grid -->
-  <g filter="url(#tile-shadow-dark)">
-    <!-- Row 1 -->
-    <rect x="114" y="114" width="76" height="76" rx="18" fill="url(#d-tile-1)" />
-    <rect x="114" y="114" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+  <!-- Inner Artwork Scaled & Centered to Fill Dock Slot -->
+  <g transform="translate(256, 256) scale(1.132075) translate(-256, -256)">
+    <!-- 3x3 App Icon Grid -->
+    <g filter="url(#tile-shadow-dark)">
+      <!-- Row 1 -->
+      <rect x="114" y="114" width="76" height="76" rx="18" fill="url(#d-tile-1)" />
+      <rect x="114" y="114" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <rect x="218" y="114" width="76" height="76" rx="18" fill="url(#d-tile-2)" />
-    <rect x="218" y="114" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <rect x="218" y="114" width="76" height="76" rx="18" fill="url(#d-tile-2)" />
+      <rect x="218" y="114" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <rect x="322" y="114" width="76" height="76" rx="18" fill="url(#d-tile-3)" />
-    <rect x="322" y="114" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <rect x="322" y="114" width="76" height="76" rx="18" fill="url(#d-tile-3)" />
+      <rect x="322" y="114" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <!-- Row 2 -->
-    <rect x="114" y="218" width="76" height="76" rx="18" fill="url(#d-tile-4)" />
-    <rect x="114" y="218" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <!-- Row 2 -->
+      <rect x="114" y="218" width="76" height="76" rx="18" fill="url(#d-tile-4)" />
+      <rect x="114" y="218" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <rect x="218" y="218" width="76" height="76" rx="18" fill="url(#d-tile-5)" />
-    <rect x="218" y="218" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <rect x="218" y="218" width="76" height="76" rx="18" fill="url(#d-tile-5)" />
+      <rect x="218" y="218" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <rect x="322" y="218" width="76" height="76" rx="18" fill="url(#d-tile-6)" />
-    <rect x="322" y="218" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <rect x="322" y="218" width="76" height="76" rx="18" fill="url(#d-tile-6)" />
+      <rect x="322" y="218" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <!-- Row 3 -->
-    <rect x="114" y="322" width="76" height="76" rx="18" fill="url(#d-tile-7)" />
-    <rect x="114" y="322" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <!-- Row 3 -->
+      <rect x="114" y="322" width="76" height="76" rx="18" fill="url(#d-tile-7)" />
+      <rect x="114" y="322" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <rect x="218" y="322" width="76" height="76" rx="18" fill="url(#d-tile-8)" />
-    <rect x="218" y="322" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <rect x="218" y="322" width="76" height="76" rx="18" fill="url(#d-tile-8)" />
+      <rect x="218" y="322" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
 
-    <rect x="322" y="322" width="76" height="76" rx="18" fill="url(#d-tile-9)" />
-    <rect x="322" y="322" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+      <rect x="322" y="322" width="76" height="76" rx="18" fill="url(#d-tile-9)" />
+      <rect x="322" y="322" width="76" height="76" rx="18" fill="url(#d-tile-gloss)" />
+    </g>
   </g>
 </svg>
