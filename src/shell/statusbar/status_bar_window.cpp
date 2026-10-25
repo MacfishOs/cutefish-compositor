@@ -240,9 +240,8 @@ bool StatusBarWindow::panelOpen() const
 
 void StatusBarWindow::updateLook()
 {
-    // What is behind the bar decides; the system's dark mode while nothing
-    // has been judged.
-    const bool light = m_backdrop->isValid() ? m_backdrop->useLightForeground() : ui::Theme::current().darkMode;
+    // The status bar light/dark mode is based on wallpaper regardless of OS system theme.
+    const bool light = m_backdrop->useLightForeground();
     m_lightContents = light;
     if (m_menuBar)
         m_menuBar->barChanged();
@@ -289,7 +288,7 @@ void StatusBarWindow::updatePlateBlur()
     m_blurPlate = plate;
 
     // Maintain a full-width macOS-style status bar with vibrant, colorful frosted glass blur
-    const bool dark = ui::Theme::current().darkMode || m_lightContents;
+    const bool dark = m_lightContents;
     render::GlassParams glass = fishuiGlass();
     glass.displacement = glassFixed(15.0);
     glass.bevel = glassFixed(10.0);
