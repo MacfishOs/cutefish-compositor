@@ -488,6 +488,8 @@ void DockWindow::rebuild()
         icon->setDraggable(!item.fixed);
         if (item.id == DockModel::kLauncherId)
             icon->setIcon(shellDataFile("launcher.svg"), true);
+        else if (item.missing)
+            icon->setIcon(shellDataFile("application-missing.svg"));
         else
             icon->setIcon(item.iconName.empty() ? "application-x-desktop" : item.iconName);
         icon->setToolTip(item.visibleName);
@@ -1112,7 +1114,8 @@ void DockWindow::iconMenuRequested(DockIcon *icon)
             menu->addSeparator();
         if (windows.empty())
             menu->addItem(tr("Open"), [&model, id] { model.openNewInstance(id); });
-        if (item.pinnable()) {
+        // A missing bundle keeps its place until it is unpinned.
+        if (item.pinnable() || (item.missing && item.isPinned)) {
             const bool pinned = item.isPinned;
             menu->addItem(pinned ? tr("Unpin") : tr("Pin"), [&model, id, pinned] {
                 pinned ? model.unPin(id) : model.pin(id);

@@ -129,6 +129,36 @@ TEST_F(DockTest, LoadsThePinsAndForgetsUninstalledOnes)
     EXPECT_TRUE(settings.boolValue("Dock/MinimizedArea"));
 }
 
+TEST_F(DockTest, KeepsAPinnedBundleWhileItIsGone)
+{
+    const std::string bundle = "/run/media/Image/Editor.app";
+    const std::string icon = bundle + "/Contents/Resources/AppIcon.icns";
+    start("[Dock]\nPinned=" + bundle + ", files\n");
+    EXPECT_EQ(ids(), (std::vector<std::string>{DockModel::kLauncherId, bundle, "files"}));
+    EXPECT_TRUE(model().at(1).missing);
+    EXPECT_EQ(model().at(1).visibleName, "Editor");
+    EXPECT_EQ(savedPins(), (std::vector<std::string>{bundle, "files"}));
+
+    applications.addBundle(bundle, "Editor", icon);
+    applications.scan();
+    ASSERT_TRUE(test::runUntil([this] { return !model().at(1).missing; }));
+    EXPECT_FALSE(model().at(1).uninstalled);
+    EXPECT_EQ(model().at(1).iconName, icon);
+
+    // Ejected: it stays pinned, and shows that it cannot be found.
+    applications.remove(bundle);
+    applications.scan();
+    ASSERT_TRUE(test::runUntil([this] { return model().at(1).missing; }));
+    EXPECT_TRUE(model().at(1).isPinned);
+    EXPECT_EQ(model().at(1).iconName, icon);
+    EXPECT_EQ(savedPins(), (std::vector<std::string>{bundle, "files"}));
+
+    // A click asks the runtime to look for it.
+    model().clicked(bundle);
+    ASSERT_TRUE(test::runUntil([&] { return !runtime.launched.empty(); }));
+    EXPECT_EQ(runtime.launched.front(), bundle);
+}
+
 TEST_F(DockTest, StartsFromTheDefaultPinsWithoutAList)
 {
     applications.addSimple("cutefish-terminal", "Terminal");

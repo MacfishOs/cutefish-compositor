@@ -54,6 +54,9 @@ struct DockItem {
     bool fixed = false;
     // The launcher stopped listing it; a running one can no longer be pinned.
     bool uninstalled = false;
+    // A pinned application bundle whose folder is gone, as when the disk
+    // image it is on was ejected: it keeps its place and shows it is missing.
+    bool missing = false;
 
     bool pinnable() const { return !fixed && !desktopPath.empty() && !uninstalled; }
 };
