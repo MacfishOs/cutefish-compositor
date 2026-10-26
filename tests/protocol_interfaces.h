@@ -11,7 +11,9 @@
 
 #include <appmenu-client-protocol.h>
 #include <cursor-shape-v1-client-protocol.h>
+#include <cutefish-main-menu-v1-client-protocol.h>
 #include <cutefish-shell-v1-client-protocol.h>
+#include <cutefish-status-item-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
 #include <ext-image-capture-source-v1-client-protocol.h>
@@ -73,6 +75,8 @@ inline const std::map<std::string, const wl_interface *> &knownInterfaces()
                      &xdg_toplevel_drag_manager_v1_interface,
                      &cutefish_surface_blur_v1_interface,
                      &cutefish_window_hints_v1_interface,
+                     &cutefish_status_item_manager_v1_interface,
+                     &cutefish_main_menu_manager_v1_interface,
                      &org_kde_kwin_appmenu_manager_interface,
                      &wp_fractional_scale_manager_v1_interface,
                      &zxdg_output_manager_v1_interface,

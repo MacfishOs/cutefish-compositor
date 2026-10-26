@@ -175,7 +175,7 @@ private:
         if (!m_resource || m_metadata.role != WindowRole::Desktop)
             return;
         const base::Rect output = outputBounds();
-        base::Rect area = output.isEmpty() ? base::Rect() : m_manager->workAreaForOutput(output);
+        base::Rect area = output.isEmpty() ? base::Rect() : m_manager->restingWorkAreaForOutput(output);
         if (area.isEmpty())
             return;
         area.translate(-output.x(), -output.y());

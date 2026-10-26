@@ -224,6 +224,104 @@ TEST_F(WindowHintsProtocolTest, RestoreIdIsImmediateAndPersistsUntilTheSurfaceDi
     wl_surface_destroy(surface);
 }
 
+TEST_F(WindowHintsProtocolTest, PlacementAnchorIsImmediateAndCanBeUnset)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_FALSE(model->placementAnchor());
+    cutefish_window_hints_v1_set_placement_anchor(hints, surface, 700, 12, 0, 0,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM);
+    ASSERT_GE(roundtrip(), 0);
+    ASSERT_TRUE(model->placementAnchor());
+    EXPECT_EQ(*model->placementAnchor(),
+              (cutefish::compositor::PlacementAnchor {cutefish::base::Rect(700, 12, 0, 0),
+                                                      cutefish::compositor::PlacementEdge::Bottom,
+                                                      cutefish::compositor::PlacementEdge::Bottom}));
+    cutefish_window_hints_v1_unset_placement_anchor(hints, surface);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_FALSE(model->placementAnchor());
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, BodyShapeIsImmediateAndCanBeUnset)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    // A triangle: move_to, line_to, line_to, close.
+    std::vector<int32_t> values = {0, wl_fixed_from_int(10), 0, 1, wl_fixed_from_int(20), wl_fixed_from_int(10),
+                                   1, 0, wl_fixed_from_int(10), 3};
+    wl_array array;
+    wl_array_init(&array);
+    auto *data = static_cast<int32_t *>(wl_array_add(&array, values.size() * sizeof(int32_t)));
+    std::copy(values.begin(), values.end(), data);
+    cutefish_window_hints_v1_set_body_shape(hints, surface, &array);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_FALSE(model->bodyShape().isEmpty());
+    EXPECT_EQ(model->bodyShape().boundingRect(), (cutefish::ui::RectF {0, 0, 20, 10}));
+    cutefish_window_hints_v1_unset_body_shape(hints, surface);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->bodyShape().isEmpty());
+
+    // An unknown command.
+    values = {7};
+    wl_array_release(&array);
+    wl_array_init(&array);
+    data = static_cast<int32_t *>(wl_array_add(&array, sizeof(int32_t)));
+    *data = 7;
+    cutefish_window_hints_v1_set_body_shape(hints, surface, &array);
+    wl_array_release(&array);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr), CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, ShadowIsImmediateAndRejectsOtherValues)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_TRUE(model->castsShadow());
+    cutefish_window_hints_v1_set_shadow(hints, surface, 0);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_FALSE(model->castsShadow());
+    cutefish_window_hints_v1_set_shadow(hints, surface, 1);
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_TRUE(model->castsShadow());
+    cutefish_window_hints_v1_set_shadow(hints, surface, 2);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, PlacementAnchorRejectsANegativeSize)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    cutefish_window_hints_v1_set_placement_anchor(hints, surface, 0, 0, -1, 0,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_NONE,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_NONE);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, PlacementAnchorRejectsAnUnknownEdge)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    cutefish_window_hints_v1_set_placement_anchor(hints, surface, 0, 0, 0, 0, 9,
+                                                  CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_NONE);
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    wl_surface_destroy(surface);
+}
+
 TEST_F(WindowHintsProtocolTest, RestoreSizeIsImmediateAndRejectsNegativeValues)
 {
     auto *surface = wl_compositor_create_surface(clientCompositor);
@@ -272,6 +370,23 @@ TEST_F(WindowHintsProtocolTest, InteractiveResizeReachesTheSurfacesClient)
     wayland::sendInteractiveResize(resource, true);
     ASSERT_GE(roundtrip(), 0);
     EXPECT_EQ(events.size(), 2u);
+    wl_surface_destroy(surface);
+}
+
+TEST_F(WindowHintsProtocolTest, OpacityIsImmediateAndBetweenZeroAndOne)
+{
+    auto *surface = wl_compositor_create_surface(clientCompositor);
+    ASSERT_GE(roundtrip(), 0);
+    auto *model = compositor.surfaces().front();
+    EXPECT_EQ(model->opacity(), 1.0f);
+    cutefish_window_hints_v1_set_opacity(hints, surface, wl_fixed_from_double(0.5));
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(model->opacity(), 0.5f);
+    cutefish_window_hints_v1_set_opacity(hints, surface, wl_fixed_from_double(1.5));
+    EXPECT_LT(roundtrip(), 0);
+    EXPECT_EQ(wl_display_get_protocol_error(client, nullptr, nullptr),
+              CUTEFISH_WINDOW_HINTS_V1_ERROR_INVALID_VALUE);
+    EXPECT_EQ(model->opacity(), 0.5f);
     wl_surface_destroy(surface);
 }
 

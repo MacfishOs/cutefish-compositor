@@ -13,44 +13,14 @@
 #include <vector>
 
 #include "base/dbus.h"
+#include "compositor/menu_model.h"
 #include "base/signal.h"
 #include "base/thread_pool.h"
 #include "base/timer.h"
 #include "shell/common/pending_calls.h"
 #include "shell/common/sender_filter.h"
-#include "ui/bitmap.h"
 
 namespace cutefish::shell {
-
-// One entry of a com.canonical.dbusmenu menu.
-struct DBusMenuItem {
-    enum class Toggle {
-        None,
-        Checkmark,
-        Radio,
-    };
-
-    int32_t id = 0;
-    int32_t parent = -1;
-    bool separator = false;
-    // With the application's "_" mnemonic markers, "__" for a literal one.
-    std::string label;
-    bool enabled = true;
-    bool visible = true;
-    std::string iconName;
-    // "icon-data", decoded on a worker; null while it is not or there is none.
-    std::shared_ptr<const ui::Bitmap> icon;
-    // Each combination a list of keys, as "Control", "Shift", "q".
-    std::vector<std::vector<std::string>> shortcut;
-    Toggle toggle = Toggle::None;
-    // 0 off, 1 on, anything else indeterminate.
-    int32_t toggleState = -1;
-    // children-display is "submenu": its entries come when it opens.
-    bool hasSubmenu = false;
-    std::vector<int32_t> children;
-    // A layout of its children arrived at least once.
-    bool childrenLoaded = false;
-};
 
 // A client of a com.canonical.dbusmenu exporter, written from the protocol:
 // the layout fetched one level at a time as menus open, kept current from
@@ -62,7 +32,7 @@ struct DBusMenuItem {
 // later layout), a submenu that opens is asked AboutToShow and refetched when
 // the application says so or it has no entries yet, and "opened", "closed"
 // and "clicked" events go along.
-class DBusMenu
+class DBusMenu : public compositor::MenuModel
 {
 public:
     // Past these, the rest of a layout is dropped.
@@ -80,36 +50,19 @@ public:
     const std::string &service() const { return m_service; }
     const std::string &path() const { return m_path; }
 
-    // The root is 0. Null for an id not (or no longer) in the menu.
-    const DBusMenuItem *item(int32_t id) const;
-    const DBusMenuItem &root() const { return m_items.at(0); }
-
-    // Fetches the entries of `id` again.
-    void refresh(int32_t id);
-    // The submenu `id` opens: prepare() and opened() at once.
-    void aboutToShow(int32_t id);
-    // The submenu `id` is about to open: AboutToShow; its entries are
-    // refetched when needed, and menuUpdated follows either way.
-    void prepare(int32_t id);
-    // The submenu `id` is on screen: the "opened" event.
-    void opened(int32_t id);
-    // The submenu `id` closed.
-    void closed(int32_t id);
-    // The entry was chosen.
-    void activate(int32_t id);
-
-    // The entries of `id` arrived, or a fetch failed; either way the menu
-    // shows what it has.
-    base::Signal<int32_t> menuUpdated;
-    // Properties of an entry changed in place.
-    base::Signal<int32_t> itemChanged;
-    // The application asks for the entry to be shown, e.g. for its shortcut.
-    base::Signal<int32_t> activationRequested;
+    const compositor::MenuItem *item(int32_t id) const override;
+    void refresh(int32_t id) override;
+    // AboutToShow; the entries are refetched when needed.
+    void prepare(int32_t id) override;
+    // The "opened" event.
+    void opened(int32_t id) override;
+    void closed(int32_t id) override;
+    void activate(int32_t id) override;
 
 private:
     void applyLayout(int32_t parentId, const base::dbus::Variant &layout);
-    void applyProperties(DBusMenuItem &item, const base::dbus::VariantMap &properties, bool created);
-    void resetProperty(DBusMenuItem &item, const std::string &key);
+    void applyProperties(compositor::MenuItem &item, const base::dbus::VariantMap &properties, bool created);
+    void resetProperty(compositor::MenuItem &item, const std::string &key);
     void removeItem(int32_t id);
     void decodeIcon(int32_t id, const std::string &bytes);
     void sendEvent(int32_t id, const std::string &event);
@@ -119,7 +72,7 @@ private:
     std::string m_path;
     base::dbus::Proxy m_proxy;
     SenderFilter m_sender;
-    std::unordered_map<int32_t, DBusMenuItem> m_items;
+    std::unordered_map<int32_t, compositor::MenuItem> m_items;
     std::vector<base::dbus::Match> m_matches;
     PendingCalls m_calls;
     // A LayoutUpdated for one of these is the refetch AboutToShow asked for.

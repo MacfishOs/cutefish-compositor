@@ -44,6 +44,8 @@ class SurfaceNode;
 
 namespace cutefish::compositor {
 
+class MenuModel;
+
 class Compositor;
 class SubSurface;
 class SurfaceObserver;
@@ -64,6 +66,29 @@ enum class Transform {
 enum class ResizeAnchor {
     TopLeft,
     Center,
+};
+
+// A side or corner of a rectangle, as xdg_positioner's anchor and gravity.
+enum class PlacementEdge {
+    None,
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    BottomLeft,
+    TopRight,
+    BottomRight,
+};
+
+// Where a window maps instead of where the compositor would place it: next
+// to `rect`, in global logical coordinates.
+struct PlacementAnchor {
+    base::Rect rect;
+    PlacementEdge anchor = PlacementEdge::None;
+    PlacementEdge gravity = PlacementEdge::None;
+
+    bool operator==(const PlacementAnchor &) const = default;
 };
 
 // Client pacing notification, independent of measured presentation feedback.
@@ -107,6 +132,23 @@ public:
     // Read when the window maps maximized or fullscreen; see set_restore_size.
     const base::Size &restoreSize() const { return m_restoreSize; }
     void setRestoreSize(const base::Size &size) { m_restoreSize = size; }
+    // Read when the window maps; see set_placement_anchor.
+    const std::optional<PlacementAnchor> &placementAnchor() const { return m_placementAnchor; }
+    void setPlacementAnchor(const std::optional<PlacementAnchor> &anchor) { m_placementAnchor = anchor; }
+    // Where the window geometry's top left goes the next time the window
+    // maps, in global coordinates; see cutefish_window_placement_v1.
+    const std::optional<base::Point> &requestedPosition() const { return m_requestedPosition; }
+    void setRequestedPosition(const std::optional<base::Point> &position) { m_requestedPosition = position; }
+    // The outline a window draws its body in; empty for its rectangle. See
+    // set_body_shape.
+    const ui::Path &bodyShape() const { return m_bodyShape; }
+    void setBodyShape(const ui::Path &shape);
+    // Whether the compositor casts the window's shadow; see set_shadow.
+    bool castsShadow() const { return m_castsShadow; }
+    void setCastsShadow(bool castsShadow);
+    // The client's opacity for the whole window, 0 to 1; see set_opacity.
+    float opacity() const { return m_opacity; }
+    void setOpacity(float opacity);
 
     struct MenuAddress {
         std::string service;
@@ -120,6 +162,11 @@ public:
     void removeMenuSource(uint64_t source);
 
     const MenuAddress &menuAddress() const { return m_menuAddress; }
+
+    // The main menu the window shows through cutefish_main_menu_v1; null for
+    // none. Takes precedence over the menu address.
+    const std::shared_ptr<MenuModel> &mainMenu() const { return m_mainMenu; }
+    void setMainMenu(std::shared_ptr<MenuModel> menu);
 
     // --- Requests. All of these are pending until commit(). ---
 
@@ -294,6 +341,9 @@ public:
     // Buffer size mapped through the buffer scale and transform; -1x-1 without
     // a buffer.
     base::Size contentSize() const;
+    // The same for the cached state, which a synchronized subsurface shows
+    // once its parent commits.
+    base::Size cachedContentSize() const;
 
     bool hasContents() const { return !bufferSize().isEmpty(); }
 
@@ -439,6 +489,7 @@ private:
         std::shared_ptr<BufferRelease> release;
     };
 
+    static base::Size contentSizeOf(const ExtendedState &state);
     base::Rect bufferRectToSurface(const base::Rect &rect) const;
     base::Rect surfaceRectToBuffer(const base::Rect &rect) const;
 
@@ -480,16 +531,23 @@ private:
 
     Placement m_placement;
     void updateMenuAddress();
+    void notifyMenuChanged();
     std::map<uint64_t, MenuAddress> m_menuSources;
     uint64_t m_nextMenuSource = 0;
     MenuAddress m_menuAddress;
+    std::shared_ptr<MenuModel> m_mainMenu;
     bool m_skipTaskbar = false;
     bool m_alwaysOnTop = false;
+    bool m_castsShadow = true;
+    float m_opacity = 1;
     ResizeAnchor m_resizeAnchor = ResizeAnchor::TopLeft;
     bool m_serverResize = false;
     std::string m_restoreId;
     // -1x-1 until the client sets one.
     base::Size m_restoreSize {-1, -1};
+    std::optional<PlacementAnchor> m_placementAnchor;
+    std::optional<base::Point> m_requestedPosition;
+    ui::Path m_bodyShape;
 
     std::shared_ptr<Surface *> m_lifetime = std::make_shared<Surface *>(this);
 

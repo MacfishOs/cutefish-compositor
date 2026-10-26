@@ -39,6 +39,23 @@ public:
                         + extra);
     }
 
+    // An application bundle outside ~/Applications, as the registry reads one.
+    void addBundle(const std::string &path, const std::string &name, const std::string &icon)
+    {
+        base::DesktopEntry entry;
+        entry.id = path;
+        entry.path = path;
+        entry.type = "Application";
+        entry.name = name;
+        entry.icon = icon;
+        entry.exec = "runner " + path;
+        entry.bundle = true;
+        entry.noDisplay = true;
+        std::erase_if(m_entries, [&path](const shell::DesktopEntryPtr &e) { return e->id == path; });
+        m_entries.push_back(std::make_shared<const base::DesktopEntry>(std::move(entry)));
+        rebuild();
+    }
+
     void remove(const std::string &id)
     {
         std::erase_if(m_entries, [&id](const shell::DesktopEntryPtr &e) { return e->id == id; });

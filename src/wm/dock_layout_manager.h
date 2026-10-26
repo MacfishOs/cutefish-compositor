@@ -65,8 +65,8 @@ enum class WorkspaceState {
 // from the windows on the dock's output; the auto-hide state, only meaningful
 // under AutoHide, from what would be interrupted by hiding - the pointer on the
 // dock or at its edge, a menu of the dock's, the launcher - and from whether
-// there is a window to make room for at all. A dock hides at once and comes
-// back after kRevealDelayMs, so brushing the screen edge does not pop it out.
+// there is a window to make room for at all. Showing, and hiding because the
+// pointer left, wait kAutoHideDelayMs; anything else hides at once.
 // A dock or panel that maps slides in from its edge, as the session starts.
 // The window overview pushes the panels off their edge as it comes in,
 // following its progress, and lets them back as it leaves.
@@ -78,7 +78,7 @@ public:
     // The strip along the dock's screen edge that brings a hidden dock back.
     static constexpr int kRevealStripPx = 5;
     // Upstream: kAutoHideDelayMS.
-    static constexpr int kRevealDelayMs = 200;
+    static constexpr int kAutoHideDelayMs = 200;
     static constexpr int kSlideDurationMs = 200;
 
     explicit DockLayoutManager(WindowManager *manager);
@@ -129,7 +129,9 @@ private:
         DockVisibilityState visibility = DockVisibilityState::Visible;
         DockAutoHideState autoHide = DockAutoHideState::Shown;
         ScreenEdge edge = ScreenEdge::Bottom;
-        base::Timer revealTimer {core::mainLoop()};
+        base::Timer autoHideTimer {core::mainLoop()};
+        // Upstream: last_seen_mouse_position_was_over_shelf_.
+        bool pointerOver = false;
         bool sliding = false;
         double slideStarted = -1;
         base::Point slideFrom;
@@ -147,8 +149,7 @@ private:
     // without the reveal delay; one its state hides stays parked there.
     void enter(Window *dock, Dock &entry);
     void updateDock(Window *dock, Dock &entry);
-    // The reveal delay passed: shows the dock if the pointer is still there.
-    void revealNow(Window *dock);
+    void updateAutoHideStateNow(Window *dock);
     DockVisibilityState computeVisibility(const Window *dock, const base::Rect &output) const;
     // `revealing`: the dock is shown or on its way, so the pointer anywhere on
     // it keeps it, not only at the edge strip.

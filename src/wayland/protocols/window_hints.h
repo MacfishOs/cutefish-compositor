@@ -7,9 +7,14 @@
 
 #include <wayland-server-core.h>
 
+namespace cutefish::wm {
+class WindowManager;
+}
+
 namespace cutefish::wayland {
 
-wl_global *createWindowHintsGlobal(wl_display *display);
+// With `windows`, managers hear the work areas of its outputs.
+wl_global *createWindowHintsGlobal(wl_display *display, wm::WindowManager *windows = nullptr);
 
 // cutefish_window_hints_v1.interactive_resize, to every manager the surface's
 // client has bound.

@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="cutefish_main_menu_v1">
+  <interface name="cutefish_main_menu_manager_v1" version="1">
+    <description summary="the menus an application shows in the status bar">
+      An application's main menu is a menu whose items are the entries the
+      status bar shows after the application's name while one of its windows
+      is active; each entry opens the item's submenu. The submenu with the
+      application role opens from the application's name instead of an entry
+      of its own.
+
+      Menus and items are objects the client builds and changes at any time;
+      every request applies at once. An item is in at most one menu, and a
+      menu is the submenu of at most one item.
+    </description>
+    <enum name="error">
+      <entry name="invalid_surface" value="0" summary="the surface is not a toplevel"/>
+    </enum>
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Menus, items and main menus set with it stay.
+      </description>
+    </request>
+    <request name="create_menu">
+      <description summary="make an empty menu"/>
+      <arg name="id" type="new_id" interface="cutefish_menu_v1"/>
+    </request>
+    <request name="create_item">
+      <description summary="make an item of a kind">
+        The kind stays for the item's life.
+      </description>
+      <arg name="id" type="new_id" interface="cutefish_menu_item_v1"/>
+      <arg name="kind" type="uint" enum="cutefish_menu_item_v1.kind"/>
+    </request>
+    <request name="set_main_menu">
+      <description summary="the main menu a window shows">
+        The menu the status bar shows while the window is active; null for
+        none. The surface has the xdg_toplevel role, else this is the
+        invalid_surface error. A window keeps the menu until it is set again
+        or the menu is destroyed.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="menu" type="object" interface="cutefish_menu_v1" allow-null="true"/>
+    </request>
+  </interface>
+
+  <interface name="cutefish_menu_v1" version="1">
+    <description summary="a list of items">
+      Before a menu shows, the compositor sends will_open; the client brings
+      the items up to date and answers with ready. The menu shows what it
+      has meanwhile, and shows the changes as they arrive.
+    </description>
+    <enum name="error">
+      <entry name="item_in_use" value="0" summary="the item is in a menu already"/>
+      <entry name="invalid_index" value="1" summary="the index is past the end of the menu"/>
+      <entry name="not_an_item" value="2" summary="the item is not in this menu"/>
+      <entry name="invalid_serial" value="3" summary="the serial was never sent or was already answered"/>
+      <entry name="invalid_value" value="4" summary="a value is out of range"/>
+    </enum>
+    <enum name="role">
+      <description summary="what a submenu of a main menu is for"/>
+      <entry name="none" value="0" summary="an ordinary menu"/>
+      <entry name="application" value="1" summary="the application's own menu, opened from its name"/>
+      <entry name="windows" value="2" summary="the menu listing the application's windows"/>
+      <entry name="help" value="3" summary="the help menu"/>
+      <entry name="services" value="4" summary="the services menu"/>
+    </enum>
+    <request name="destroy" type="destructor">
+      <description summary="destroy the menu">
+        Its items stay and are in no menu; the item it was the submenu of has
+        none, and windows showing it as their main menu show none.
+      </description>
+    </request>
+    <request name="insert_item">
+      <description summary="put an item in the menu">
+        The item takes the place at index, the items from there on moving
+        down; an index equal to the number of items appends it. An item in a
+        menu already is the item_in_use error.
+      </description>
+      <arg name="item" type="object" interface="cutefish_menu_item_v1"/>
+      <arg name="index" type="uint"/>
+    </request>
+    <request name="remove_item">
+      <description summary="take an item out of the menu"/>
+      <arg name="item" type="object" interface="cutefish_menu_item_v1"/>
+    </request>
+    <request name="set_role">
+      <description summary="what the menu is for">
+        None by default.
+      </description>
+      <arg name="role" type="uint" enum="role"/>
+    </request>
+    <request name="ready">
+      <description summary="the items are up to date">
+        Answers the will_open with this serial.
+      </description>
+      <arg name="serial" type="uint"/>
+    </request>
+    <event name="will_open">
+      <description summary="the menu is about to show"/>
+      <arg name="serial" type="uint"/>
+    </event>
+    <event name="closed">
+      <description summary="the menu is no longer shown"/>
+    </event>
+  </interface>
+
+  <interface name="cutefish_menu_item_v1" version="1">
+    <description summary="an entry of a menu">
+      Enabled and shown, off, without a title, an icon or a submenu by
+      default.
+    </description>
+    <enum name="error">
+      <entry name="submenu_in_use" value="0" summary="the menu is the submenu of another item already, or contains the item"/>
+      <entry name="invalid_value" value="1" summary="a value is out of range"/>
+    </enum>
+    <enum name="kind">
+      <entry name="normal" value="0" summary="an entry with a title"/>
+      <entry name="separator" value="1" summary="a line between entries"/>
+    </enum>
+    <enum name="state">
+      <entry name="off" value="0"/>
+      <entry name="on" value="1" summary="a check mark"/>
+      <entry name="mixed" value="2" summary="a dash, for a mix of on and off"/>
+    </enum>
+    <enum name="modifier" bitfield="true">
+      <entry name="shift" value="1"/>
+      <entry name="control" value="2"/>
+      <entry name="alt" value="4"/>
+      <entry name="super" value="8"/>
+    </enum>
+    <request name="destroy" type="destructor">
+      <description summary="destroy the item">
+        It leaves its menu. Its submenu stays and is the submenu of nothing.
+      </description>
+    </request>
+    <request name="set_title">
+      <description summary="the entry's text">
+        UTF-8, shown as given: an underscore is an underscore.
+      </description>
+      <arg name="title" type="string"/>
+    </request>
+    <request name="set_enabled">
+      <description summary="whether the entry can be chosen">
+        1 by default; any value other than 0 or 1 is the invalid_value error.
+      </description>
+      <arg name="enabled" type="uint"/>
+    </request>
+    <request name="set_hidden">
+      <description summary="whether the entry is left out">
+        0 by default; any value other than 0 or 1 is the invalid_value error.
+      </description>
+      <arg name="hidden" type="uint"/>
+    </request>
+    <request name="set_state">
+      <description summary="the entry's check mark"/>
+      <arg name="state" type="uint" enum="state"/>
+    </request>
+    <request name="set_icon_name">
+      <description summary="an icon from the icon theme before the text">
+        Empty for none.
+      </description>
+      <arg name="name" type="string"/>
+    </request>
+    <request name="set_key_equivalent">
+      <description summary="the key that chooses the entry, shown beside it">
+        The key is one character, or a key named as XKB keysym names spell
+        it, such as Return or F5; empty for none. The client handles the
+        key itself: the compositor only shows it. Modifiers outside the
+        enum are the invalid_value error.
+      </description>
+      <arg name="key" type="string"/>
+      <arg name="modifiers" type="uint" enum="modifier"/>
+    </request>
+    <request name="set_submenu">
+      <description summary="the menu the entry opens">
+        Null for none. A menu that is the submenu of another item already, or
+        one this item is in or under, is the submenu_in_use error.
+      </description>
+      <arg name="menu" type="object" interface="cutefish_menu_v1" allow-null="true"/>
+    </request>
+    <event name="activated">
+      <description summary="the entry was chosen"/>
+    </event>
+  </interface>
+</protocol>

@@ -56,6 +56,8 @@ public:
     base::Rect primaryGeometry() const;
     // The window's geometry for a dock of `thickness` (DockWindow::windowRect).
     base::Rect windowRect(int thickness) const;
+    // Between the panel and the screen edge, inside the window.
+    int edgeGap() const;
     // The glass the compositor draws behind the panel.
     render::GlassParams glass() const;
     double cornerRadius() const;

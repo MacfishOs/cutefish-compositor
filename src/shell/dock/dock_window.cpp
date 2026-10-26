@@ -400,21 +400,28 @@ base::Rect DockWindow::windowRect(int thickness) const
     const base::Rect screen = output->bounds;
     const base::Rect available = m_shell->workArea(*output);
     const DockSettings &settings = m_dock->settings();
-    const int margins = settings.edgeMargins() / 2;
+    const int margins = edgeGap();
     const bool bottom = settings.direction() == DockSettings::Bottom;
     const int length = (bottom ? screen.width() : available.height()) - 2 * margins;
+    // The window reaches the screen edge, so the gap under the panel is the dock's.
+    const int across = thickness + margins;
     switch (settings.direction()) {
     case DockSettings::Left:
-        return base::Rect(screen.x() + margins,
-                          available.y() + (available.height() - length) / 2, thickness, length);
+        return base::Rect(screen.x(), available.y() + (available.height() - length) / 2, across,
+                          length);
     case DockSettings::Right:
-        return base::Rect(screen.x() + screen.width() - thickness - margins,
-                          available.y() + (available.height() - length) / 2, thickness, length);
+        return base::Rect(screen.x() + screen.width() - across,
+                          available.y() + (available.height() - length) / 2, across, length);
     case DockSettings::Bottom:
         break;
     }
     return base::Rect(screen.x() + (screen.width() - length) / 2,
-                      screen.y() + screen.height() - thickness - margins, length, thickness);
+                      screen.y() + screen.height() - across, length, across);
+}
+
+int DockWindow::edgeGap() const
+{
+    return m_dock->settings().edgeMargins() / 2;
 }
 
 render::GlassParams DockWindow::glass() const
@@ -666,11 +673,12 @@ void DockWindow::layoutItems()
 
     const int panelStart = int(std::floor(m_start + 0.5));
     const int panelEnd = int(std::floor(m_start + m_length + 0.5));
-    const int windowThickness = bottom ? m_windowRect.height() : m_windowRect.width();
+    const int gap = edgeGap();
+    const int farSide = (bottom ? m_windowRect.height() : m_windowRect.width()) - gap;
     const base::Rect panel = bottom
-            ? base::Rect(panelStart, windowThickness - int(drawnThickness), panelEnd - panelStart,
+            ? base::Rect(panelStart, farSide - int(drawnThickness), panelEnd - panelStart,
                          int(drawnThickness))
-            : base::Rect(left ? 0 : windowThickness - int(drawnThickness), panelStart,
+            : base::Rect(left ? gap : farSide - int(drawnThickness), panelStart,
                          int(drawnThickness), panelEnd - panelStart);
 
     // The content's origin along the dock, and an item's across from the panel's far side.
@@ -681,16 +689,16 @@ void DockWindow::layoutItems()
     const auto along = [&](double position, double rest) {
         return place(layoutOrigin + position, settled + rest) - layoutOrigin;
     };
-    const double across = bottom ? farPadding : left ? dotArea : farPadding;
+    const double across = bottom ? farPadding : left ? gap + dotArea : farPadding;
 
     // An item's slot in panel coordinates from its position along the content.
     const auto slotRect = [&](double position) {
         const double start = origin + position;
         if (bottom)
             return ui::RectF {start - m_drawn.iconGap / 2, 0, itemSize + m_drawn.iconGap,
-                              drawnThickness};
-        return ui::RectF {0, start - m_drawn.iconGap / 2, drawnThickness,
-                          itemSize + m_drawn.iconGap};
+                              drawnThickness + gap};
+        return ui::RectF {left ? -double(gap) : 0, start - m_drawn.iconGap / 2,
+                          drawnThickness + gap, itemSize + m_drawn.iconGap};
     };
     const auto placeIcon = [&](DockIcon *icon, double position, double scale, double opacity) {
         const ui::RectF slot = slotRect(position);
@@ -856,7 +864,15 @@ void DockWindow::updatePanelRect(const base::Rect &rect)
         return;
     m_panelRect = rect;
     updateGlass();
-    m_window->setInputRegion(roundedRegion(rect, cornerRadius()));
+    const DockSettings::Direction direction = m_dock->settings().direction();
+    const base::Rect gap = direction == DockSettings::Bottom
+            ? base::Rect::fromEdges(rect.x(), rect.y() + rect.height() / 2, rect.right(),
+                                    m_windowRect.height())
+            : direction == DockSettings::Left
+            ? base::Rect::fromEdges(0, rect.y(), rect.x() + rect.width() / 2, rect.bottom())
+            : base::Rect::fromEdges(rect.x() + rect.width() / 2, rect.y(), m_windowRect.width(),
+                                    rect.bottom());
+    m_window->setInputRegion(roundedRegion(rect, cornerRadius()) | gap);
     m_dock->notifyPrimaryGeometryChanged();
 }
 
@@ -898,10 +914,17 @@ void DockWindow::updateStrut()
         thickness = (screen.y() + screen.height() - 1) - dock.y() + kStrutExtraPixels;
         break;
     }
-    if (settings.visibility() == DockSettings::AlwaysShow)
+    switch (settings.visibility()) {
+    case DockSettings::AlwaysShow:
         m_window->setExclusiveZone(edge, thickness);
-    else
+        break;
+    case DockSettings::IntellHide:
+        m_window->setExclusiveZone(edge, thickness, true);
+        break;
+    case DockSettings::AlwaysHide:
         m_window->setExclusiveZone(edge, 0);
+        break;
+    }
 }
 
 base::Rect DockWindow::minimizedSlot(int index, int count) const
@@ -915,11 +938,13 @@ base::Rect DockWindow::minimizedSlot(int index, int count) const
     const DockSettings::Direction direction = m_dock->settings().direction();
     const int thickness = m_metrics.thickness();
     const int size = m_metrics.iconSize;
+    const int gap = edgeGap();
     if (direction == DockSettings::Bottom)
         return base::Rect(int(start + m_metrics.lengthPadding + before),
-                          m_windowRect.height() - thickness + m_metrics.outerPadding, size, size);
-    return base::Rect(direction == DockSettings::Left ? m_metrics.dotAreaSize()
-                                                      : m_windowRect.width() - thickness + m_metrics.outerPadding,
+                          m_windowRect.height() - gap - thickness + m_metrics.outerPadding, size, size);
+    return base::Rect(direction == DockSettings::Left
+                              ? gap + m_metrics.dotAreaSize()
+                              : m_windowRect.width() - gap - thickness + m_metrics.outerPadding,
                       int(start + m_metrics.lengthPadding + before), size, size);
 }
 
@@ -930,11 +955,13 @@ base::Rect DockWindow::applicationSlot(double position) const
     const DockSettings::Direction direction = m_dock->settings().direction();
     const int thickness = m_metrics.thickness();
     const int size = m_metrics.iconSize;
+    const int gap = edgeGap();
     if (direction == DockSettings::Bottom)
-        return base::Rect(int(alongStart), m_windowRect.height() - thickness + m_metrics.outerPadding,
-                          size, size);
-    return base::Rect(direction == DockSettings::Left ? m_metrics.dotAreaSize()
-                                                      : m_windowRect.width() - thickness + m_metrics.outerPadding,
+        return base::Rect(int(alongStart),
+                          m_windowRect.height() - gap - thickness + m_metrics.outerPadding, size, size);
+    return base::Rect(direction == DockSettings::Left
+                              ? gap + m_metrics.dotAreaSize()
+                              : m_windowRect.width() - gap - thickness + m_metrics.outerPadding,
                       int(alongStart), size, size);
 }
 

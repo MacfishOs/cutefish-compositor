@@ -37,6 +37,7 @@
 #include "scene/window_visual_node.h"
 #include "shm_test_util.h"
 #include "wm/activation.h"
+#include "wm/anchored_placement.h"
 #include "wm/placement.h"
 #include "wm/quit_all.h"
 #include "wm/snap_drag_controller.h"
@@ -1234,6 +1235,66 @@ TEST(PlacementTest, CentersInAnOffsetWorkAreaAndClampsEachDimension)
     EXPECT_EQ(base::Rect(-650, 30, 300, 721), placement.place(base::Size(300, 900), workArea));
 }
 
+TEST(PlacementTest, AnAnchoredWindowGoesNextToItsRectangleAndStaysInTheWorkArea)
+{
+    using compositor::PlacementAnchor;
+    using compositor::PlacementEdge;
+    const base::Rect workArea(0, 30, 1000, 770);
+    const PlacementAnchor below {base::Rect(700, 12, 0, 0), PlacementEdge::Bottom, PlacementEdge::Bottom};
+    EXPECT_EQ(base::Rect(550, 30, 300, 200), placeAtAnchor(base::Size(300, 200), below, workArea));
+
+    // Slid back from the right edge.
+    const PlacementAnchor corner {base::Rect(950, 40, 0, 0), PlacementEdge::Bottom, PlacementEdge::Bottom};
+    EXPECT_EQ(base::Rect(700, 40, 300, 200), placeAtAnchor(base::Size(300, 200), corner, workArea));
+
+    // A point exactly where the window's top left goes.
+    const PlacementAnchor topLeft {base::Rect(100, 300, 0, 0), PlacementEdge::TopLeft,
+                                   PlacementEdge::BottomRight};
+    EXPECT_EQ(base::Rect(100, 300, 300, 200), placeAtAnchor(base::Size(300, 200), topLeft, workArea));
+
+    // Larger than the work area: shrunk into it.
+    EXPECT_EQ(base::Rect(0, 30, 1000, 770), placeAtAnchor(base::Size(1200, 900), below, workArea));
+}
+
+TEST(PlacementTest, AnAnchoredWindowFlipsWhenOnlyTheOtherSideHasRoom)
+{
+    using compositor::PlacementAnchor;
+    using compositor::PlacementEdge;
+    // A bar along the bottom of the screen.
+    const base::Rect workArea(0, 0, 1000, 770);
+    const PlacementAnchor item {base::Rect(500, 770, 40, 30), PlacementEdge::Bottom, PlacementEdge::Bottom};
+    EXPECT_EQ(base::Rect(370, 570, 300, 200), placeAtAnchor(base::Size(300, 200), item, workArea));
+    // Room on neither side: this side, slid in.
+    EXPECT_EQ(base::Rect(370, 0, 300, 770), placeAtAnchor(base::Size(300, 770), item, workArea));
+}
+
+TEST_F(WmTest, AnAnchoredWindowMapsNextToItsAnchorBeforeItsRestoreId)
+{
+    const auto map = [&](bool anchored) {
+        compositor::Surface *surface = makeSurface(base::Size(200, 100));
+        surface->setRestoreId("calendar");
+        if (anchored) {
+            surface->setPlacementAnchor(compositor::PlacementAnchor {
+                    base::Rect(600, 0, 0, 0), compositor::PlacementEdge::Bottom,
+                    compositor::PlacementEdge::Bottom});
+        }
+        return manager.createWindow(surface, {.requestedSize = base::Size(200, 100),
+                                              .applicationId = "app",
+                                              .positionManaged = true});
+    };
+    Window *first = map(false);
+    first->requestBounds(base::Rect(100, 120, 200, 100));
+    manager.destroyWindow(first);
+
+    Window *anchored = map(true);
+    EXPECT_EQ(base::Rect(500, 0, 200, 100), anchored->bounds());
+    manager.destroyWindow(anchored);
+
+    // Where the anchored window was left is what the restore id remembers.
+    Window *restored = map(false);
+    EXPECT_EQ(base::Rect(500, 0, 200, 100), restored->bounds());
+}
+
 TEST_F(WmTest, AnOversizedWindowIsClampedToTheWorkArea)
 {
     Window *window =
@@ -1978,6 +2039,25 @@ TEST_F(WmTest, PopupsGetAFadeAnimationNode)
         EXPECT_EQ(scene::WindowAnimation::Style::None,
                   static_cast<scene::WindowAnimation *>(window->node())->style());
     }
+}
+
+TEST_F(WmTest, AnAnchoredWindowFadesInPlaceLikeAPopup)
+{
+    compositor::Surface *surface = makeSurface(base::Size(200, 100));
+    surface->setPlacementAnchor(compositor::PlacementAnchor {
+            base::Rect(600, 0, 0, 0), compositor::PlacementEdge::Bottom, compositor::PlacementEdge::Bottom});
+    Window *anchored = manager.createWindow(surface, {.requestedSize = base::Size(200, 100)});
+    auto *animation = dynamic_cast<scene::WindowAnimation *>(anchored->node());
+    ASSERT_NE(nullptr, animation);
+    EXPECT_EQ(scene::WindowAnimation::Style::Popup, animation->style());
+    anchored->setRole(WindowRole::Panel);
+    EXPECT_EQ(scene::WindowAnimation::Style::None, animation->style());
+    anchored->setRole(WindowRole::Normal);
+    EXPECT_EQ(scene::WindowAnimation::Style::Popup, animation->style());
+
+    Window *plain = makeWindow(base::Rect(0, 0, 200, 100));
+    EXPECT_EQ(scene::WindowAnimation::Style::Window,
+              static_cast<scene::WindowAnimation *>(plain->node())->style());
 }
 
 TEST_F(WmTest, DesktopPopupTreeStaysAboveApplicationsAndBelowDock)

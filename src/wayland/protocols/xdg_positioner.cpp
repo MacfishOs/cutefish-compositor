@@ -254,6 +254,14 @@ void WaylandPositioner::setGravity(uint32_t gravity)
     std::tie(m_gravityX, m_gravityY) = decomposeGravity(gravity);
 }
 
+WaylandPositioner::Result WaylandPositioner::calculateBounds(const base::Rect& workArea,
+                                                             const base::Point& anchorOffset) const
+{
+    WaylandPositioner moved = *this;
+    moved.m_anchorRect.translate(anchorOffset);
+    return moved.calculateBounds(workArea);
+}
+
 WaylandPositioner::Result WaylandPositioner::calculateBounds(const base::Rect& workArea) const
 {
     const ConstraintAdjustment adjustmentsX = maskToConstraintAdjustment(

@@ -10,7 +10,7 @@
 #include "base/event_loop.h"
 #include "core/main_loop.h"
 #include "shell/statusbar/dbus_menu.h"
-#include "shell/statusbar/dbus_menu_popup.h"
+#include "shell/statusbar/menu_popup.h"
 #include "shell/statusbar/status_notifier_item.h"
 #include "shell/statusbar/system_tray_model.h"
 #include "ui/drag.h"
@@ -374,7 +374,7 @@ void SystemTrayView::showMenu(TrayItemView *item, DBusMenu *menu)
     m_menuLoaded.reset();
     if (m_popup && m_popup->menu().isOpen())
         return;
-    m_popup = std::make_unique<DBusMenuPopup>(menu, 0);
+    m_popup = std::make_unique<MenuPopup>(menu, 0);
     m_popup->setPrepared();
     m_popupItem = item;
     m_popup->onClosed = [this] { menuClosed(); };

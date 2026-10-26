@@ -160,10 +160,11 @@ void Shadow::updateNode()
     base::Rect content = m_window->presentedBounds();
     m_node->setSurfaceOrigin(m_window->frameInsets().topLeft() + m_window->surfaceOrigin());
     if (m_window->role() == wm::WindowRole::Dock && m_window->rootSurface()) {
-        const auto region = m_window->rootSurface()->inputRegion();
-        // The dock surface includes transparent space outside its rounded panel.
-        if (region)
-            content = content.intersected(region->boundingRect());
+        // The dock surface includes transparent space outside its rounded panel,
+        // which its glass covers exactly.
+        const base::Rect glass = m_window->rootSurface()->backgroundBlurRect();
+        if (!glass.isEmpty())
+            content = content.intersected(glass);
         // The panel's corners grow with the icon size; past the largest shadow
         // corner the shadow keeps that corner rather than disappearing.
         const int panel =

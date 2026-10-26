@@ -19,6 +19,7 @@
 #include "base/event_loop.h"
 #include "base/strings.h"
 #include "compositor/compositor.h"
+#include "compositor/output.h"
 #include "compositor/surface.h"
 #include "core/logging.h"
 #include "core/main_loop.h"
@@ -30,6 +31,7 @@
 #include "scene/node.h"
 #include "scene/surface_node.h"
 #include "scene/window_animation.h"
+#include "wm/anchored_placement.h"
 #include "wm/desks/desks_controller.h"
 #include "wm/mru_window_tracker.h"
 #include "wm/overview/overview_controller.h"
@@ -38,6 +40,7 @@
 #include "wm/shell_surface.h"
 #include "wm/show_desktop_controller.h"
 #include "wm/stacking.h"
+#include "wm/status_items.h"
 #include "wm/toplevel_event_handler.h"
 #include "wm/transient_manager.h"
 #include "wm/window.h"
@@ -140,11 +143,13 @@ WindowManager::WindowManager(compositor::Compositor *compositor, input::Seat *se
     m_desks = std::make_unique<DesksController>(this);
     m_overview = std::make_unique<OverviewController>(this);
     m_showDesktop = std::make_unique<ShowDesktopController>(this);
+    m_statusItems = std::make_unique<StatusItems>(this);
 }
 
 WindowManager::~WindowManager()
 {
     m_activation.removeObserver(this);
+    m_statusItems.reset();
     m_showDesktop.reset();
     m_overview.reset();
     // Tear down through destroyWindow so activation and drags unwind cleanly.
@@ -162,7 +167,7 @@ void WindowManager::setOutputBounds(const base::Rect &bounds)
     followDisplays();
     // The reservations are edge thicknesses, so they survive a resolution
     // change and simply apply to the new output.
-    setWorkArea(m_exclusiveZones.apply(m_outputBounds));
+    setWorkArea(zonedWorkArea(m_outputBounds, m_outputBounds, {}, true));
     // With a display manager its displaysChanged follows, once windows are
     // back on the new outputs.
     if (!m_displayManager)
@@ -204,8 +209,9 @@ void WindowManager::setDisplayManager(display::DisplayManager *manager)
                                 m_displayManager->nearestDisplay(centerPixel(window->bounds()));
                         base::Rect target = window->bounds();
                         if (output) {
-                            const base::Rect area = m_exclusiveZones.apply(
-                                    output->workArea, output->waylandName, output->primary);
+                            const base::Rect area =
+                                    zonedWorkArea(output->workArea, output->bounds,
+                                                  output->waylandName, output->primary);
                             const int visibleWidth = std::min(64, target.width());
                             const int visibleHeight = std::min(32, target.height());
                             target.moveLeft(std::clamp(target.x(),
@@ -255,8 +261,8 @@ void WindowManager::followDisplays()
                              + int(float(rect.y() - from->bounds.y()) / from->bounds.height()
                                    * to.height()));
         return fitInside(moved,
-                         m_exclusiveZones.apply(fallback.workArea, fallback.waylandName,
-                                                fallback.primary));
+                         zonedWorkArea(fallback.workArea, fallback.bounds, fallback.waylandName,
+                                       fallback.primary));
     };
     for (Window *window : std::vector<Window *>(m_stackingOrder)) {
         if (!hasWindow(window) || window->isShellWindow() || window->isPopup()
@@ -344,8 +350,8 @@ base::Rect WindowManager::workAreaFor(const Window *window, const base::Rect &bo
         if (logical)
             return window && window->isShellWindow()
                     ? logical->bounds
-                    : m_exclusiveZones.apply(logical->workArea, logical->waylandName,
-                                             logical->primary);
+                    : zonedWorkArea(logical->workArea, logical->bounds, logical->waylandName,
+                                    logical->primary);
     }
     // A shell window places itself and is expected to cover the area it
     // reserved; confining it to the work area would move the dock off its own
@@ -397,12 +403,55 @@ base::Rect WindowManager::workAreaForOutput(const base::Rect &outputBounds) cons
     if (m_displayManager && m_displayManager->applied()) {
         for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
             if (logical.bounds == outputBounds) {
+                return zonedWorkArea(logical.workArea, logical.bounds, logical.waylandName,
+                                     logical.primary);
+            }
+        }
+    }
+    return outputBounds == m_outputBounds ? m_workArea : base::Rect();
+}
+
+base::Rect WindowManager::restingWorkAreaForOutput(const base::Rect &outputBounds) const
+{
+    if (m_displayManager && m_displayManager->applied()) {
+        for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
+            if (logical.bounds == outputBounds) {
                 return m_exclusiveZones.apply(logical.workArea, logical.waylandName,
                                               logical.primary);
             }
         }
     }
-    return outputBounds == m_outputBounds ? m_workArea : base::Rect();
+    if (outputBounds != m_outputBounds)
+        return base::Rect();
+    return m_exclusiveZones.apply(m_outputBounds).intersected(m_outputBounds);
+}
+
+base::Rect WindowManager::placementWorkAreaForOutput(const base::Rect &outputBounds) const
+{
+    const bool dockHidden =
+            std::any_of(m_hiddenDocks.begin(), m_hiddenDocks.end(), [&](const Window *dock) {
+                return outputBoundsFor(dock) == outputBounds;
+            });
+    if (m_displayManager && m_displayManager->applied()) {
+        for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
+            if (logical.bounds == outputBounds) {
+                return m_exclusiveZones.apply(logical.workArea, logical.waylandName,
+                                              logical.primary, dockHidden);
+            }
+        }
+    }
+    if (outputBounds != m_outputBounds)
+        return base::Rect();
+    return m_exclusiveZones.apply(m_outputBounds, std::string(), true, dockHidden)
+            .intersected(m_outputBounds);
+}
+
+void WindowManager::setDockHidden(const Window *dock, bool hidden)
+{
+    if (hidden)
+        m_hiddenDocks.insert(dock);
+    else
+        m_hiddenDocks.erase(dock);
 }
 
 std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
@@ -411,14 +460,15 @@ std::vector<WindowManager::OutputArea> WindowManager::outputAreas() const
     if (m_displayManager && m_displayManager->applied()) {
         for (const auto &logical : m_displayManager->applied()->logicalDisplays) {
             if (!logical.bounds.isEmpty())
-                areas.push_back({logical.bounds, workAreaForOutput(logical.bounds),
-                                 logical.scale.value()});
+                areas.push_back({logical.bounds, restingWorkAreaForOutput(logical.bounds),
+                                 logical.scale.value(), logical.waylandName, logical.primary});
         }
     }
     if (areas.empty() && !m_outputBounds.isEmpty()) {
         const double scale = m_compositor ? m_compositor->outputScale().value() : 1;
-        areas.push_back({m_outputBounds, m_workArea.isEmpty() ? m_outputBounds : m_workArea,
-                         scale});
+        const base::Rect workArea = restingWorkAreaForOutput(m_outputBounds);
+        areas.push_back({m_outputBounds, workArea.isEmpty() ? m_outputBounds : workArea, scale,
+                         compositor::Output().name, true});
     }
     return areas;
 }
@@ -440,13 +490,57 @@ void WindowManager::setWorkArea(const base::Rect &bounds)
 
 void WindowManager::applyExclusiveZones()
 {
-    setWorkArea(m_exclusiveZones.apply(m_outputBounds));
+    setWorkArea(zonedWorkArea(m_outputBounds, m_outputBounds, {}, true));
+}
+
+base::Rect WindowManager::zonedWorkArea(const base::Rect &workArea, const base::Rect &outputBounds,
+                                        const std::string &outputName, bool primary) const
+{
+    const bool maximized =
+            m_exclusiveZones.hasYieldingZone() && hasMaximizedWindow(outputBounds);
+    return m_exclusiveZones.apply(workArea, outputName, primary, maximized);
+}
+
+bool WindowManager::hasMaximizedWindow(const base::Rect &outputBounds) const
+{
+    return std::any_of(m_stackingOrder.begin(), m_stackingOrder.end(), [&](const Window *window) {
+        return window->role() == WindowRole::Normal && !window->isPopup() && window->isVisible()
+                && window->stateType() == WindowStateType::Maximized
+                && outputBoundsFor(window) == outputBounds;
+    });
+}
+
+void WindowManager::updateWorkAreas()
+{
+    std::vector<base::Rect> maximized;
+    if (m_exclusiveZones.hasYieldingZone()) {
+        for (const OutputArea &area : outputAreas()) {
+            if (hasMaximizedWindow(area.bounds))
+                maximized.push_back(area.bounds);
+        }
+    }
+    if (maximized == m_maximizedOutputs)
+        return;
+    m_maximizedOutputs = std::move(maximized);
+    applyExclusiveZones();
+    if (m_displayManager)
+        notifyWorkAreaChanged();
+    exclusiveZonesChanged();
+}
+
+void WindowManager::notifyWorkAreaChanged()
+{
+    const WMEvent event(WMEventType::WorkAreaChanged);
+    for (Window *window : std::vector<Window *>(m_stackingOrder)) {
+        if (hasWindow(window))
+            window->state()->onEvent(event);
+    }
 }
 
 void WindowManager::setExclusiveZone(const void *token, ScreenEdge edge, int thickness,
-                                     const std::string &outputName)
+                                     const std::string &outputName, bool yieldsToMaximized)
 {
-    if (m_exclusiveZones.set(token, edge, thickness, outputName)) {
+    if (m_exclusiveZones.set(token, edge, thickness, outputName, yieldsToMaximized)) {
         applyExclusiveZones();
         if (!outputName.empty()) {
             const WMEvent event(WMEventType::WorkAreaChanged);
@@ -578,13 +672,15 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     } else if (window->isShellWindow()) {
         window->setBounds(base::Rect(outputBoundsFor(window).topLeft(), size));
     } else if (Window *parent = window->transientParent()) {
-        window->setBounds(m_placement.placeTransient(window->frameInsets().outset(size),
-                                                     parent->bounds(), parent->frameInsets().top,
-                                                     workAreaFor(parent)));
+        base::Rect bounds = m_placement.placeTransient(window->frameInsets().outset(size),
+                                                       parent->bounds(), parent->frameInsets().top,
+                                                       workAreaFor(parent));
+        requestedPlacement(window, &bounds);
+        window->setBounds(bounds);
     } else {
-        base::Rect workArea = workAreaForOutput(init.output);
+        base::Rect workArea = placementWorkAreaForOutput(init.output);
         if (workArea.isEmpty())
-            workArea = workAreaForOutput(outputForNewWindow());
+            workArea = placementWorkAreaForOutput(outputForNewWindow());
         if (workArea.isEmpty())
             workArea = workAreaFor(window);
         window->setBounds(m_placement.place(window->frameInsets().outset(size), workArea));
@@ -606,9 +702,40 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
 
 base::Rect WindowManager::boundsForNewWindow(const Window *window, base::Rect bounds) const
 {
-    if (!restorePlacement(window, &bounds))
+    const compositor::Surface *surface = window->rootSurface();
+    if (surface && surface->placementAnchor()) {
+        const compositor::PlacementAnchor &anchor = *surface->placementAnchor();
+        const base::Rect workArea =
+                workAreaFor(window, base::Rect(anchor.rect.center(), base::Size(1, 1)));
+        if (!workArea.isEmpty())
+            return placeAtAnchor(bounds.size(), anchor, workArea);
+    }
+    if (!requestedPlacement(window, &bounds) && !restorePlacement(window, &bounds))
         bounds = window_positioner::boundsForNewWindow(window, bounds);
     return bounds;
+}
+
+bool WindowManager::requestedPlacement(const Window *window, base::Rect *bounds) const
+{
+    const compositor::Surface *surface = window->rootSurface();
+    if (!surface || !surface->requestedPosition())
+        return false;
+    const Insets insets = window->frameInsets();
+    bounds->moveTopLeft(*surface->requestedPosition() - base::Point(insets.left, insets.top));
+    adjustBoundsToEnsureMinimumVisibility(visibleAreaFor(window, *bounds), bounds,
+                                          workAreaFor(window, *bounds));
+    return true;
+}
+
+void WindowManager::moveWindowTo(Window *window, const base::Point &position)
+{
+    if (!hasWindow(window) || window->role() != WindowRole::Normal || window->isPopup()
+        || window->isDragged())
+        return;
+    const Insets insets = window->frameInsets();
+    base::Rect bounds = window->bounds();
+    bounds.moveTopLeft(position - base::Point(insets.left, insets.top));
+    window->requestBounds(bounds);
 }
 
 void WindowManager::rememberPlacement(const Window *window)
@@ -640,7 +767,7 @@ bool WindowManager::restorePlacement(const Window *window, base::Rect *bounds) c
             m_rememberedPlacements.find(placementKey(window->applicationId(), surface->restoreId()));
     if (!remembered)
         return false;
-    const base::Rect workArea = workAreaForOutput(remembered->output);
+    const base::Rect workArea = placementWorkAreaForOutput(remembered->output);
     if (workArea.isEmpty())
         return false;
     const base::Rect &previous = remembered->bounds;
@@ -688,8 +815,10 @@ void WindowManager::destroyWindow(Window *window)
     m_eventHandler->onWindowRemoving(window);
     m_desks->onWindowRemoving(window);
     m_transientManager->windowDestroying(window);
-    if (m_popupKeyboardRoot == window)
+    if (m_popupKeyboardRoot == window) {
         m_popupKeyboardRoot = nullptr;
+        m_popupKeyboardSurface = nullptr;
+    }
     const bool grabbed = m_keyboardGrab == window;
     if (grabbed)
         m_keyboardGrab = nullptr;
@@ -951,6 +1080,8 @@ void WindowManager::onWindowVisibilityChanged(Window *window)
 void WindowManager::onWindowTargetBoundsChanged(Window *window, const base::Rect &oldBounds,
                                                 const base::Rect &newBounds)
 {
+    if (newBounds.topLeft() != oldBounds.topLeft())
+        windowMoved(window);
     const scene::Node *node = window->node();
     if (!m_seat || !hasWindow(window) || !node || !node->isEffectivelyVisible()
         || node->isEventTargetingBlocked())
@@ -1049,6 +1180,7 @@ void WindowManager::releaseKeyboardGrab()
 {
     m_keyboardGrab = nullptr;
     m_popupKeyboardRoot = nullptr;
+    m_popupKeyboardSurface = nullptr;
     Window *active = m_activation.activeWindow();
     if (m_seat)
         m_seat->setFocusedSurface(active ? active->rootSurface() : nullptr);
@@ -1240,13 +1372,17 @@ void WindowManager::pushPopupGrab(ShellSurface *popup)
     }
     m_popupGrabs.push_back(popup);
     updatePopupKeyboard();
+    popupGrabsChanged();
 }
 
 void WindowManager::removePopupGrab(ShellSurface *popup)
 {
-    m_popupGrabs.erase(std::remove(m_popupGrabs.begin(), m_popupGrabs.end(), popup),
-                       m_popupGrabs.end());
+    const auto it = std::remove(m_popupGrabs.begin(), m_popupGrabs.end(), popup);
+    if (it == m_popupGrabs.end())
+        return;
+    m_popupGrabs.erase(it, m_popupGrabs.end());
     updatePopupKeyboard();
+    popupGrabsChanged();
 }
 
 bool WindowManager::isInsidePopupGrabChain(compositor::Surface *surface) const
@@ -1275,7 +1411,25 @@ Window *WindowManager::popupGrabRoot() const
 
 bool WindowManager::isPopupGrabMenuBar(const Window *window) const
 {
-    return window && window->role() == WindowRole::Panel && popupGrabRoot() == window;
+    return window && window->role() == WindowRole::Panel && !m_popupGrabs.empty()
+            && !m_popupGrabs.front()->popupAnchorSurface() && popupGrabRoot() == window;
+}
+
+bool WindowManager::isPopupGrabAnchor(compositor::Surface *surface) const
+{
+    for (; surface; surface = surface->parentSurface()) {
+        for (ShellSurface *popup : m_popupGrabs) {
+            if (popup->popupAnchorSurface() == surface)
+                return true;
+        }
+    }
+    return false;
+}
+
+bool WindowManager::pressReachesPopupGrabRoot(const Window *target) const
+{
+    return target && target->role() == WindowRole::Panel && !m_popupGrabs.empty()
+            && m_popupGrabs.front()->popupAnchorSurface() && popupGrabRoot() == target;
 }
 
 void WindowManager::updatePopupKeyboard()
@@ -1283,18 +1437,26 @@ void WindowManager::updatePopupKeyboard()
     Window *root = popupGrabRoot();
     if (root && root->focusPolicy() != FocusPolicy::NoFocus)
         root = nullptr;
-    if (root == m_popupKeyboardRoot)
+    compositor::Surface *anchor = root ? m_popupGrabs.front()->popupAnchorSurface() : nullptr;
+    if (root == m_popupKeyboardRoot && anchor == m_popupKeyboardSurface)
         return;
 
     const bool lent = m_popupKeyboardRoot && m_keyboardGrab == m_popupKeyboardRoot;
     m_popupKeyboardRoot = nullptr;
+    m_popupKeyboardSurface = nullptr;
     // Lent from the grab request on, not from the map: a popup that replaces
     // another in the same request batch keeps the client focused throughout,
     // and Qt closes every popup of an application that loses the keyboard.
     if (root && (!m_keyboardGrab || lent)) {
         setKeyboardGrab(root);
-        if (m_keyboardGrab == root)
+        if (m_keyboardGrab == root) {
             m_popupKeyboardRoot = root;
+            // A client's status item hands the keys to its own popups.
+            if (anchor && m_seat) {
+                m_popupKeyboardSurface = anchor;
+                m_seat->setFocusedSurface(anchor, true);
+            }
+        }
     } else if (lent) {
         releaseKeyboardGrab();
     }
@@ -1320,6 +1482,7 @@ void WindowManager::dismissPopupGrabs()
         innermost->close();
     }
     updatePopupKeyboard();
+    popupGrabsChanged();
 }
 
 void WindowManager::cancelInteractions()
@@ -1618,11 +1781,14 @@ bool WindowManager::handlePointerButton(input::Timestamp timestamp, const base::
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
         Window *target = windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target) && !isPopupGrabAnchor(hit)
             && !isPopupGrabMenuBar(target)) {
-            // The press belongs to the grab, not to whatever is underneath.
+            // The press belongs to the grab, not to whatever is underneath,
+            // except on the bar a status item's popups hang from.
+            const bool reachesBar = pressReachesPopupGrabRoot(target);
             dismissPopupGrabs();
-            return true;
+            if (!reachesBar)
+                return true;
         }
     }
 
@@ -1690,10 +1856,12 @@ bool WindowManager::onTouchDown(input::Timestamp timestamp, int32_t id, const ba
     if (!m_popupGrabs.empty()) {
         compositor::Surface *hit = nullptr;
         Window *target = windowAt(location, &hit, nullptr);
-        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target)
+        if (!isInsidePopupGrabChain(hit) && !isCaptureWindow(target) && !isPopupGrabAnchor(hit)
             && !isPopupGrabMenuBar(target)) {
+            const bool reachesBar = pressReachesPopupGrabRoot(target);
             dismissPopupGrabs();
-            return true;
+            if (!reachesBar)
+                return true;
         }
     }
 

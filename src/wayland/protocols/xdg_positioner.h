@@ -31,12 +31,16 @@ public:
     enum Direction { kNegative = -1, kNeutral = 0, kPositive = 1 };
 
     WaylandPositioner() = default;
-    WaylandPositioner(const WaylandPositioner&) = delete;
-    WaylandPositioner& operator=(const WaylandPositioner&) = delete;
+    // Copyable, for a popup that keeps its positioner until it has a parent.
+    WaylandPositioner(const WaylandPositioner&) = default;
+    WaylandPositioner& operator=(const WaylandPositioner&) = default;
 
     // `workArea` is in the same coordinate space as the anchor rect, which for
     // xdg_positioner is the parent surface's window geometry.
     Result calculateBounds(const base::Rect& workArea) const;
+    // The same with the anchor rect moved by `anchorOffset`, for an anchor
+    // given in the coordinates of a surface inside the parent.
+    Result calculateBounds(const base::Rect& workArea, const base::Point& anchorOffset) const;
 
     void setSize(const base::Size& size) { m_size = size; }
     void setAnchorRect(const base::Rect& anchorRect) { m_anchorRect = anchorRect; }

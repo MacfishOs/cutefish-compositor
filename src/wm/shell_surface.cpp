@@ -924,6 +924,8 @@ void ShellSurface::mapToplevel()
             bounds = m_manager->boundsForNewWindow(m_window, bounds);
         m_window->state()->setRestoreBounds(bounds);
     }
+    // A position asked for places only the next map.
+    m_surface->setRequestedPosition(std::nullopt);
 
     // The capture interface and pickers are never activated; mapping them
     // takes the keyboard.
@@ -1182,7 +1184,7 @@ base::Size ShellSurface::configureBounds() const
         return base::Size(0, 0);
     const Insets insets = normalFrameInsets();
     base::Rect workArea = m_window ? m_manager->workAreaFor(m_window)
-                              : m_manager->workAreaForOutput(m_initialOutput);
+                              : m_manager->placementWorkAreaForOutput(m_initialOutput);
     if (workArea.isEmpty())
         workArea = m_manager->workAreaFor(nullptr);
     return insets.inset(workArea.size());

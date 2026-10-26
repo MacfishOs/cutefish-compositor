@@ -16,6 +16,10 @@
 #include "base/signal.h"
 #include "base/timer.h"
 
+namespace cutefish::compositor {
+class MenuModel;
+}
+
 namespace cutefish::shell {
 
 class AppMenuRegistrar;
@@ -23,10 +27,13 @@ class DBusMenu;
 class TaskManager;
 class TaskWindows;
 
-// Which application the menu bar belongs to and its exported menu: the
-// menu bar's non-visual half. The bar shows the user's
-// menu, then title() and the entries of menu(); the user's menu and the
-// application menu's Hide, Hide Others and Quit are the view's.
+// Which application the menu bar belongs to and its menu: the menu bar's
+// non-visual half. The bar shows the user's menu, then title() and the
+// entries of menu(); the user's menu, and Hide, Hide Others and Quit for an
+// application without a menu of its own role, are the view's.
+//
+// A window's main menu (cutefish_main_menu_v1) is ready as soon as it is
+// set; a com.canonical.dbusmenu export is imported.
 //
 // Menus are imported as soon as a window or its exporter appears, so that
 // focusing it later finds the menu ready and the bar switches in one step.
@@ -50,7 +57,7 @@ public:
     // alone.
     const std::string &title() const { return m_title; }
     // The application's menu, ready to show; null for none.
-    DBusMenu *menu() const { return m_menu; }
+    compositor::MenuModel *menu() const { return m_menu; }
 
     // Whether the desktop has the focus, which has no application to quit.
     void setDesktop(bool desktop);
@@ -86,7 +93,8 @@ private:
     void pruneImports();
     void scheduleUpdate();
     void update();
-    void commit(const std::string &title, DBusMenu *menu);
+    void commit(const std::string &title, compositor::MenuModel *menu,
+                std::shared_ptr<compositor::MenuModel> held = nullptr);
     void commitPending();
     std::string applicationTitle() const;
 
@@ -96,7 +104,9 @@ private:
     AppMenuRegistrar *m_registrar;
     bool m_desktop = false;
     std::string m_title;
-    DBusMenu *m_menu = nullptr;
+    compositor::MenuModel *m_menu = nullptr;
+    // A main menu stays while shown, even after its client let it go.
+    std::shared_ptr<compositor::MenuModel> m_heldMenu;
     bool m_shown = false;
     std::map<std::string, Import> m_imports;
     std::map<std::string, base::dbus::NameWatch> m_serviceWatches;

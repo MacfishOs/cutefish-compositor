@@ -94,6 +94,10 @@ cutefish_add_test(shell_surface_test cutefish-decoration)
 cutefish_add_test(decoration_test cutefish-decoration)
 cutefish_add_test(text_test cutefish-decoration PkgConfig::TitleText)
 cutefish_add_test(xdg_shell_protocol_test cutefish-wayland-shell cutefish-wayland-input
+    cutefish-wayland-private-shell PkgConfig::WaylandClient)
+cutefish_add_test(status_item_protocol_test cutefish-wayland-shell cutefish-wayland-input
+    PkgConfig::WaylandClient)
+cutefish_add_test(main_menu_protocol_test cutefish-wayland-shell cutefish-wayland-input
     PkgConfig::WaylandClient)
 cutefish_add_test(protocol_binding_test cutefish-wayland-globals PkgConfig::WaylandClient)
 set_tests_properties(protocol_binding_test PROPERTIES TIMEOUT 60)

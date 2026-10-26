@@ -41,6 +41,8 @@ std::optional<CompositorOptions> CompositorOptions::parse(int argc, char **argv)
     parser.addOption({"computer-control-client",
                       "Allow this executable to ask for control of the computer (repeatable).",
                       "path"});
+    parser.addOption({"window-placement-client",
+                      "Allow this executable to place its own windows (repeatable).", "path"});
     parser.addOption({"input-method",
                       "Development only: run this input-method desktop file id instead of the "
                       "saved selection, also without a display.",
@@ -113,6 +115,7 @@ std::optional<CompositorOptions> CompositorOptions::parse(int argc, char **argv)
     options.clipboardClients = parser.values("clipboard-client");
     options.captureClients = parser.values("capture-client");
     options.computerControlClients = parser.values("computer-control-client");
+    options.windowPlacementClients = parser.values("window-placement-client");
     options.inputMethodId = parser.value("input-method");
     options.displayConfigService = parser.value("display-config-service");
 #ifdef CUTEFISH_ENABLE_XWAYLAND

@@ -131,6 +131,8 @@ public:
     void clearRole();
 
     ShellSurface *popupParent() const { return m_parentShell; }
+    // The popups opened from this surface, one level down.
+    const std::vector<ShellSurface *> &childPopups() const { return m_childShells; }
     // Whether `root` is the surface of a popup opened from this one, at any depth.
     bool hasPopupDescendant(const compositor::Surface *root) const;
 
@@ -240,6 +242,14 @@ public:
     void grab(const void *client = nullptr);
 
     const void *grabClient() const { return m_grabClient; }
+
+    // The surface inside the parent's window that a popup hangs from, such as
+    // a status item in the bar: a press on it reaches its client and keeps
+    // the popup, and it borrows the keyboard for the chain. Not owned; the
+    // caller clears it before the surface goes.
+    void setPopupAnchorSurface(compositor::Surface *surface) { m_popupAnchorSurface = surface; }
+
+    compositor::Surface *popupAnchorSurface() const { return m_popupAnchorSurface; }
 
     // Sends xdg_popup.configure for the current bounds, followed by
     // xdg_surface.configure, and records the serial so ack_configure can find
@@ -443,6 +453,7 @@ private:
     std::optional<base::Rect> m_pendingPopupBounds;
     bool m_hasGrab = false;
     const void *m_grabClient = nullptr;
+    compositor::Surface *m_popupAnchorSurface = nullptr;
     bool m_popupMapped = false;
 };
 

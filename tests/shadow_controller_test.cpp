@@ -204,13 +204,13 @@ TEST_F(ShadowControllerTest, ServerSideDecoratedWindowGetsShadow)
     EXPECT_EQ(shadow->shadowBounds(), window->bounds().marginsAdded(margins));
 }
 
-TEST_F(ShadowControllerTest, DockShadowFollowsPanelInputBounds)
+TEST_F(ShadowControllerTest, DockShadowFollowsPanelGlass)
 {
     ShellSurface *shell = makeToplevel({800, 86}, false);
     Window *window = shell->window();
     window->setRole(WindowRole::Dock);
     const base::Rect panel(200, 0, 400, 86);
-    shell->rootSurface()->setInputRegion(base::Region(panel));
+    shell->rootSurface()->setBackgroundBlur(panel, 28);
     shell->rootSurface()->commit();
     controller->handlePossibleShadowVisibilityChange(window);
 
@@ -230,7 +230,7 @@ TEST_F(ShadowControllerTest, TallDockKeepsItsShadow)
     Window *window = shell->window();
     window->setRole(WindowRole::Dock);
     const base::Rect panel(200, 0, 800, 204);
-    shell->rootSurface()->setInputRegion(base::Region(panel));
+    shell->rootSurface()->setBackgroundBlur(panel, 66);
     shell->rootSurface()->commit();
     controller->handlePossibleShadowVisibilityChange(window);
 
@@ -251,6 +251,60 @@ TEST_F(ShadowControllerTest, FramelessClientDecoratedWindowGetsShadow)
     EXPECT_FALSE(window->isDecorated());
     EXPECT_EQ(window->clientExteriorInsets(), Insets());
     EXPECT_FALSE(window->hasClientExteriorDecoration());
+    EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
+}
+
+// A window that draws a shaped body in a transparent surface, a bubble with an
+// arrow, casts its shadow from that outline, and is neither clipped nor
+// outlined as a rounded rectangle.
+TEST_F(ShadowControllerTest, ABodyShapeCastsTheShadowAndKeepsTheWindowAsDrawn)
+{
+    Window *window = makeToplevel({200, 160}, false)->window();
+    ASSERT_TRUE(window);
+    ui::Path bubble;
+    bubble.moveTo(100, 0);
+    bubble.lineTo(112, 12);
+    bubble.lineTo(200, 12);
+    bubble.lineTo(200, 160);
+    bubble.lineTo(0, 160);
+    bubble.lineTo(0, 12);
+    bubble.lineTo(88, 12);
+    bubble.close();
+    window->rootSurface()->setBodyShape(bubble);
+    EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
+    decoration::ShadowNode *node = shadowOf(window)->node();
+    ASSERT_TRUE(node);
+    EXPECT_FALSE(node->silhouette().isEmpty());
+    const auto *visual = static_cast<scene::WindowVisualNode *>(window->visualNode());
+    EXPECT_EQ(scene::WindowVisualMode::PreserveClient, visual->state().mode);
+    EXPECT_FALSE(visual->state().clipContent);
+    EXPECT_FALSE(visual->state().drawOutline);
+
+    window->rootSurface()->setBodyShape({});
+    EXPECT_TRUE(node->silhouette().isEmpty());
+    EXPECT_TRUE(static_cast<scene::WindowVisualNode *>(window->visualNode())->state().drawOutline);
+}
+
+// A client that draws its own shadow inside a transparent surface asks for
+// none: with its body shape the window shows exactly as drawn.
+TEST_F(ShadowControllerTest, AClientCanDeclineTheShadow)
+{
+    Window *window = makeToplevel({200, 160}, false)->window();
+    ASSERT_TRUE(window);
+    ui::Path body;
+    body.moveTo(40, 40);
+    body.lineTo(160, 40);
+    body.lineTo(160, 120);
+    body.lineTo(40, 120);
+    body.close();
+    window->rootSurface()->setBodyShape(body);
+    window->rootSurface()->setCastsShadow(false);
+    EXPECT_EQ(elevationOf(window), ShadowElevation::None);
+    const auto *visual = static_cast<scene::WindowVisualNode *>(window->visualNode());
+    EXPECT_FALSE(visual->state().clipContent);
+    EXPECT_FALSE(visual->state().drawOutline);
+
+    window->rootSurface()->setCastsShadow(true);
     EXPECT_EQ(elevationOf(window), ShadowElevation::Active);
 }
 

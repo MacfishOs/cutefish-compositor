@@ -9,18 +9,19 @@
 namespace cutefish::wm {
 
 bool ExclusiveZones::set(const void* token, ScreenEdge edge, int thickness,
-                         const std::string& outputName)
+                         const std::string& outputName, bool yieldsToMaximized)
 {
     if (!token)
         return false;
     if (thickness <= 0)
         return clear(token);
 
-    const Zone zone {edge, thickness, outputName};
+    const Zone zone {edge, thickness, outputName, yieldsToMaximized};
     auto it = m_zones.find(token);
     if (it != m_zones.end() && it->second.edge == zone.edge
         && it->second.thickness == zone.thickness &&
-        it->second.outputName == zone.outputName) {
+        it->second.outputName == zone.outputName &&
+        it->second.yieldsToMaximized == zone.yieldsToMaximized) {
         return false;
     }
     m_zones[token] = zone;
@@ -32,13 +33,20 @@ bool ExclusiveZones::clear(const void* token)
     return m_zones.erase(token) != 0;
 }
 
+bool ExclusiveZones::hasYieldingZone() const
+{
+    return std::any_of(m_zones.begin(), m_zones.end(), [](const auto& entry) {
+        return entry.second.yieldsToMaximized;
+    });
+}
+
 base::Rect ExclusiveZones::apply(const base::Rect& outputBounds) const
 {
     return apply(outputBounds, std::string(), true);
 }
 
 base::Rect ExclusiveZones::apply(const base::Rect& outputBounds, const std::string& outputName,
-                            bool primary) const
+                            bool primary, bool maximized) const
 {
     int top = 0;
     int bottom = 0;
@@ -50,6 +58,8 @@ base::Rect ExclusiveZones::apply(const base::Rect& outputBounds, const std::stri
             (zone.outputName.empty() && !primary)) {
             continue;
         }
+        if (maximized && zone.yieldsToMaximized)
+            continue;
         switch (zone.edge) {
         case ScreenEdge::Top:
             top = std::max(top, zone.thickness);

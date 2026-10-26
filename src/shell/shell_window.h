@@ -106,7 +106,7 @@ public:
     // task list and the menu bar, and held at the size setSize() gives it, so
     // the user moves it but cannot resize, maximize or snap it.
     void setDialog(bool dialog);
-    void setExclusiveZone(wm::ScreenEdge edge, int thickness);
+    void setExclusiveZone(wm::ScreenEdge edge, int thickness, bool yieldsToMaximized = false);
     void clearExclusiveZone();
     // Takes the keyboard: activation, or for the Capture and Picker roles
     // the window manager's keyboard grab.
@@ -173,6 +173,11 @@ public:
     std::function<void()> onFrameProduced;
     // The seat's keyboard came to the window or left it.
     std::function<void(bool focused)> onKeyboardFocusChanged;
+
+    // A frame at the next output frame, which commits the surface even when
+    // nothing in the window changed: the synchronized subsurfaces of other
+    // clients in it show what they committed.
+    void requestFrame() { scheduleRender(); }
 
     // Places the popup again from its toolkit window's placement and size.
     void place();

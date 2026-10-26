@@ -49,6 +49,7 @@ class PrivilegedClients;
 class SecurityDelegate;
 class Server;
 class WaylandComputerControl;
+class WaylandWindowPlacement;
 class WaylandCutefishShell;
 class WaylandXdgActivation;
 class WaylandXdgShell;
@@ -134,6 +135,7 @@ private:
     bool registerClipboard();
     bool registerCapture();
     bool registerComputerControl();
+    bool registerWindowPlacement();
     bool registerPrivateShell();
 
     const Dependencies m_deps;
@@ -155,6 +157,7 @@ private:
     std::unique_ptr<ImageCaptureManager> m_imageCapture;
     std::unique_ptr<ForeignToplevelList> m_toplevelList;
     std::unique_ptr<WaylandComputerControl> m_computerControl;
+    std::unique_ptr<WaylandWindowPlacement> m_windowPlacement;
     std::unique_ptr<WaylandCutefishShell> m_cutefishShell;
 };
 

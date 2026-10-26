@@ -18,12 +18,15 @@ namespace cutefish::ui {
 class Menu;
 }
 
+namespace cutefish::compositor {
+class MenuModel;
+}
+
 namespace cutefish::shell {
 
 class ApplicationMenu;
 class AppMenuRegistrar;
-class DBusMenu;
-class DBusMenuPopup;
+class MenuPopup;
 class PowerActions;
 class Shell;
 
@@ -33,15 +36,10 @@ class Shell;
 // always there; the application rows come and go with the focus.
 //
 // The desktop is not an application: while it has the focus the bar names
-// "Desktop" and shows the desktop's own menus, which the desktop's process
-// exports over com.canonical.dbusmenu and announces to the AppMenu registrar
-// like any application.
+// "Desktop" and shows the desktop window's main menu.
 class MenuBarModel
 {
 public:
-    // Where the file manager's desktop exports its menus.
-    static constexpr const char *kDesktopMenuPath = "/org/cutefish/DesktopMenu";
-
     enum class Kind {
         User,
         Application,
@@ -52,7 +50,8 @@ public:
         Kind kind = Kind::Menu;
         // With the exporter's "_" mnemonic markers removed.
         std::string title;
-        // The dbusmenu entry of a Menu row; -1 otherwise.
+        // The dbusmenu entry of a Menu row, or of the application's own menu
+        // on the Application row; -1 otherwise.
         int32_t id = -1;
 
         bool operator==(const Row &) const = default;
@@ -91,42 +90,36 @@ public:
     // elsewhere, or close().
     base::Signal<> menuClosed;
 
-    // The desktop's exported menu, while it has one; for tests.
-    DBusMenu *desktopMenu() const { return m_desktopMenu.get(); }
+    // The desktop window's main menu, while it has one; for tests.
+    compositor::MenuModel *desktopMainMenu() const { return m_desktopMainMenu.get(); }
 
 private:
     void buildUserMenu();
     void retranslate();
     void fillApplicationMenu();
     void updateDesktop();
-    void updateDesktopImport();
-    void onDesktopMenuUpdated(int32_t id);
+    void updateDesktopMenu();
     void updateShown();
     void watchShown();
     void updateRows();
 
     Shell *m_shell;
-    AppMenuRegistrar *m_registrar;
     PowerActions *m_power;
     std::unique_ptr<ApplicationMenu> m_applicationMenu;
     bool m_desktop = false;
 
-    // The desktop's export, found through the registrar by the desktop
-    // window's process.
-    std::unique_ptr<DBusMenu> m_desktopMenu;
-    bool m_desktopReady = false;
-    std::vector<base::Subscription> m_desktopSubscriptions;
+    std::shared_ptr<compositor::MenuModel> m_desktopMainMenu;
 
     // The menu the application rows come from: the application's or the
     // desktop's; null for a bar with the name alone.
-    DBusMenu *m_shown = nullptr;
+    compositor::MenuModel *m_shown = nullptr;
     std::vector<base::Subscription> m_shownSubscriptions;
     std::vector<Row> m_rows;
 
     std::unique_ptr<ui::Menu> m_userMenu;
     std::unique_ptr<ui::Menu> m_applicationRowMenu;
     // The open-able menus of the shown menu's entries, by entry id.
-    std::map<int32_t, std::unique_ptr<DBusMenuPopup>> m_popups;
+    std::map<int32_t, std::unique_ptr<MenuPopup>> m_popups;
     std::vector<base::Subscription> m_subscriptions;
 };
 

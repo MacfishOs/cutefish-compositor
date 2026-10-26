@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "base/application_bundle.h"
 #include "base/i18n.h"
 #include "base/settings.h"
 #include "shell/common/app_launcher.h"
@@ -153,11 +154,16 @@ void DockModel::updateFromEntry(DockItem *item, const base::DesktopEntry &entry)
     item->id = entry.id;
     if (!entry.icon.empty())
         item->iconName = entry.icon;
+    else if (entry.bundle)
+        item->iconName = "application-x-executable";
     if (!entry.name.empty())
         item->visibleName = entry.name;
     item->desktopPath = entry.path;
-    if (entry.shouldShow())
+    // A bundle outside ~/Applications is not listed, yet it runs.
+    if (entry.shouldShow() || entry.bundle) {
         item->uninstalled = false;
+        item->missing = false;
+    }
 }
 
 void DockModel::changed(DockItem *item)
@@ -311,6 +317,14 @@ bool DockModel::openNewInstance(const std::string &id)
     // Without a desktop entry there is no command: the app id is the
     // client's own choice, and a sandboxed one could name a program it wrote.
     const DesktopEntryPtr entry = m_applications.byId(item->id);
+    if (!entry && item->missing) {
+        // The runtime looks for a missing bundle again, as when its disk
+        // image is back; the registry reads it again too.
+        base::DesktopEntry bundle;
+        bundle.id = item->desktopPath;
+        m_launcher.launch(bundle);
+        return true;
+    }
     if (!entry)
         return false;
     m_launcher.launch(*entry);
@@ -548,10 +562,19 @@ void DockModel::loadPins(const std::optional<std::vector<std::string>> &saved)
     for (const std::string &id : ids) {
         const DesktopEntryPtr entry = m_applications.byId(id);
         const bool listed = std::any_of(items.begin(), items.end(), [&id](const auto &item) { return item->id == id; });
-        if (!entry || listed)
+        const std::string bundle = base::bundle::bundlePath(id);
+        if ((!entry && bundle.empty()) || listed)
             continue;
         auto item = std::make_unique<DockItem>();
-        updateFromEntry(item.get(), *entry);
+        if (entry) {
+            updateFromEntry(item.get(), *entry);
+        } else {
+            // Read on a thread, or gone; checkInstalled() tells which.
+            item->id = bundle;
+            item->desktopPath = bundle;
+            item->visibleName = std::filesystem::path(bundle).stem().string();
+            showMissingBundle(item.get());
+        }
         item->isPinned = true;
         items.push_back(std::move(item));
     }
@@ -613,10 +636,19 @@ void DockModel::checkInstalled()
         if (!entry)
             entry = m_applications.byId(item->id);
         // Uninstalled means the launcher no longer lists it.
-        const bool uninstalled = !entry || !entry->shouldShow(desktops);
+        const bool bundle = isBundle(*item);
+        const bool uninstalled = !entry || (!entry->bundle && !entry->shouldShow(desktops));
         if (item->uninstalled == uninstalled)
             continue;
 
+        if (bundle && item->isPinned) {
+            if (uninstalled)
+                showMissingBundle(item);
+            else
+                updateFromEntry(item, *entry);
+            changed(item);
+            continue;
+        }
         item->uninstalled = uninstalled;
         // Removed when nothing runs, otherwise moved among the running ones.
         if (uninstalled && item->isPinned)

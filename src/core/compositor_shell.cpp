@@ -845,7 +845,9 @@ bool CompositorShell::initWayland()
             std::vector<std::string> {"/usr/bin/cutefish-services",
                                       "/usr/bin/cutefish-polkit-agent"},
             !m_options.noDrm,
-            withExecutables({"/usr/bin/cutefish-computer-use"}, m_options.computerControlClients));
+            withExecutables({"/usr/bin/cutefish-computer-use"}, m_options.computerControlClients),
+            // The compatibility runtime, whose programs place their windows.
+            withExecutables({"/usr/bin/reef"}, m_options.windowPlacementClients));
     m_windowManager.setSystemDialogPolicy([this](int64_t pid) {
         return m_security->showsSystemDialogs(pid);
     });

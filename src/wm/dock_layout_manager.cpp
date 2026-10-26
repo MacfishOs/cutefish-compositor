@@ -13,6 +13,7 @@
 
 #include "compositor/compositor.h"
 #include "input/seat.h"
+#include "scene/node.h"
 #include "wm/activation.h"
 #include "wm/overview/overview_controller.h"
 #include "wm/window.h"
@@ -227,10 +228,8 @@ WorkspaceState DockLayoutManager::workspaceStateFor(const base::Rect &output) co
     if (topmost && isFullscreenOrOverFullscreen(topmost))
         return WorkspaceState::Fullscreen;
 
-    for (const Window *window : windows) {
-        if (onOutput(window) && window->stateType() == WindowStateType::Maximized)
-            return WorkspaceState::Maximized;
-    }
+    if (m_manager->hasMaximizedWindow(output))
+        return WorkspaceState::Maximized;
     return WorkspaceState::Default;
 }
 
@@ -330,6 +329,7 @@ DockAutoHideState DockLayoutManager::computeAutoHideState(const Window *dock, co
 
 void DockLayoutManager::update()
 {
+    m_manager->updateWorkAreas();
     for (Window *window : m_manager->windows()) {
         if (window->role() == WindowRole::Desktop)
             window->setPresentationHidden(m_sessionEnding);
@@ -338,10 +338,10 @@ void DockLayoutManager::update()
         auto &entry = m_docks[window];
         if (!entry) {
             entry = std::make_unique<Dock>();
-            entry->revealTimer.setSingleShot(true);
-            entry->revealTimer.setInterval(std::chrono::milliseconds(kRevealDelayMs));
-            entry->revealTimer.onTimeout = [this, window] {
-                revealNow(window);
+            entry->autoHideTimer.setSingleShot(true);
+            entry->autoHideTimer.setInterval(std::chrono::milliseconds(kAutoHideDelayMs));
+            entry->autoHideTimer.onTimeout = [this, window] {
+                updateAutoHideStateNow(window);
             };
             enter(window, *entry);
         }
@@ -357,6 +357,7 @@ void DockLayoutManager::enter(Window *dock, Dock &entry)
     entry.edge = edgeFor(dock->bounds(), output);
     entry.visibility = computeVisibility(dock, output);
     entry.autoHide = computeAutoHideState(dock, entry, output, false);
+    m_manager->setDockHidden(dock, entry.autoHide == DockAutoHideState::Hidden);
     entry.offset = hiddenOffset(dock->bounds(), output, entry.edge);
     entry.parked = true;
     present(dock, entry);
@@ -365,7 +366,7 @@ void DockLayoutManager::enter(Window *dock, Dock &entry)
 }
 
 // Upstream: ShelfLayoutManager::UpdateAutoHideStateNow.
-void DockLayoutManager::revealNow(Window *dock)
+void DockLayoutManager::updateAutoHideStateNow(Window *dock)
 {
     Dock *entry = dockFor(dock);
     if (!entry || !m_manager->hasWindow(dock))
@@ -387,35 +388,51 @@ void DockLayoutManager::updateDock(Window *dock, Dock &entry)
     entry.edge = edgeFor(dock->bounds(), output);
     entry.visibility = computeVisibility(dock, output);
 
+    const bool wasPointerOver = entry.pointerOver;
+    entry.pointerOver = m_pointer
+            && (shownRegion(dock->bounds(), output, entry.edge).contains(m_pointer->toPoint())
+                || revealStrip(output, entry.edge).contains(m_pointer->toPoint()));
+
+    if (entry.visibility == DockVisibilityState::AutoHide
+        && entry.autoHide == DockAutoHideState::Shown && wasPointerOver && !entry.pointerOver) {
+        entry.autoHideTimer.start();
+    }
+
     // While the reveal delay runs the pointer may already have moved on from
     // the strip to where the dock is about to appear.
     const bool revealing =
-            entry.autoHide == DockAutoHideState::Shown || entry.revealTimer.isActive();
+            entry.autoHide == DockAutoHideState::Shown || entry.autoHideTimer.isActive();
     const DockAutoHideState autoHide = computeAutoHideState(dock, entry, output, revealing);
     if (autoHide == entry.autoHide) {
-        entry.revealTimer.stop();
+        if (autoHide == DockAutoHideState::Hidden || entry.pointerOver)
+            entry.autoHideTimer.stop();
         // The dock may have moved or grown while parked off screen.
         if (autoHide == DockAutoHideState::Hidden)
             slideTo(dock, entry, hiddenOffset(dock->bounds(), output, entry.edge));
         return;
     }
-    // Hiding is immediate; showing waits, so a pointer merely passing along
-    // the edge does not pull the dock out.
-    if (autoHide == DockAutoHideState::Hidden || entry.visibility == DockVisibilityState::Visible) {
-        entry.revealTimer.stop();
+    if (entry.visibility == DockVisibilityState::Visible) {
+        entry.autoHideTimer.stop();
         applyAutoHideState(dock, entry, autoHide);
-    } else if (!entry.revealTimer.isActive()) {
-        entry.revealTimer.start();
+        return;
     }
+    if (entry.autoHideTimer.isActive())
+        return;
+    if (autoHide == DockAutoHideState::Shown)
+        entry.autoHideTimer.start();
+    else
+        applyAutoHideState(dock, entry, autoHide);
 }
 
 void DockLayoutManager::applyAutoHideState(Window *dock, Dock &entry, DockAutoHideState state)
 {
     entry.autoHide = state;
+    m_manager->setDockHidden(dock, state == DockAutoHideState::Hidden);
     const base::Rect output = m_manager->outputBoundsFor(dock);
     slideTo(dock, entry,
             state == DockAutoHideState::Hidden ? hiddenOffset(dock->bounds(), output, entry.edge)
                                                : base::Point());
+    present(dock, entry);
 }
 
 void DockLayoutManager::slideTo(Window *dock, Dock &entry, const base::Point &offset)
@@ -445,6 +462,8 @@ void DockLayoutManager::present(Window *dock, const Dock &entry)
     }
     dock->setPresentationOffset(offset);
     dock->setPresentationHidden(hidden);
+    if (scene::Node *node = dock->node())
+        node->setEventTargetingBlocked(entry.autoHide == DockAutoHideState::Hidden);
 }
 
 void DockLayoutManager::advance(double frameTimeMs)
@@ -493,6 +512,7 @@ void DockLayoutManager::onWindowRemoved(Window *window)
     if (window->hasObserver(this))
         window->removeObserver(this);
     m_docks.erase(window);
+    m_manager->setDockHidden(window, false);
     update();
 }
 

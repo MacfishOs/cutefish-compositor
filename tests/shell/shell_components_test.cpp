@@ -387,8 +387,9 @@ TEST_F(ShellComponentsTest, TheDockSitsAlongTheBottomOnItsGlassAndReservesItsStr
     ASSERT_NE(nullptr, window);
     EXPECT_EQ(wm::WindowRole::Dock, window->role());
     EXPECT_EQ(wm::FocusPolicy::NoFocus, window->focusPolicy());
-    // The strip along the whole edge, 5 px off it, 86 thick at the default icon size.
-    EXPECT_EQ(base::Rect(5, 960 - 86 - 5, 1430, 86), window->bounds());
+    // The strip along the whole edge, 86 thick at the default icon size and
+    // reaching over its 5 px gap to the edge.
+    EXPECT_EQ(base::Rect(5, 960 - 86 - 5, 1430, 91), window->bounds());
     // From the screen edge to the far side, and 2 more.
     EXPECT_EQ(base::Rect(0, kStatusBar, 1440, 960 - kStatusBar - 92), manager.workAreaFor(nullptr));
 
@@ -418,6 +419,10 @@ TEST_F(ShellComponentsTest, TheDockSitsAlongTheBottomOnItsGlassAndReservesItsStr
     EXPECT_TRUE(surface->inputRegion()->contains(base::Point(panel.x() + panel.width() / 2, panel.y() + 2)));
     EXPECT_FALSE(surface->inputRegion()->contains(base::Point(panel.x(), panel.y())));
     EXPECT_FALSE(surface->inputRegion()->contains(base::Point(2, 40)));
+    // And on the gap under it, where the icon above still has the pointer.
+    EXPECT_TRUE(surface->inputRegion()->contains(base::Point(panel.x(), 89)));
+    EXPECT_FALSE(surface->inputRegion()->contains(base::Point(panel.x() - 1, 89)));
+    EXPECT_EQ(91.0, dock->icons()[1]->geometry().height);
 
     // Icons in order along the panel, each slot a pitch of 70 on.
     const auto icons = dock->icons();

@@ -60,6 +60,12 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
             setShellOutlineColors(state, window, style);
             return state;
         }
+        // A body the client outlines itself casts the shadow, unoutlined.
+        if (surface && !surface->bodyShape().isEmpty()) {
+            state.outlinePath = surface->bodyShape().translated(origin.x(), origin.y());
+            state.outlineShape = {ui::toBase(state.outlinePath.boundingRect()), 0};
+            return state;
+        }
         const base::Rect body = surface
                 ? surface->backgroundBlurRect().intersected(base::Rect(surface->contentSize()))
                 : base::Rect();
@@ -71,6 +77,14 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
             state.outlineWidthPx = style.outlineWidthPx;
             setShellOutlineColors(state, window, style);
         }
+        return state;
+    }
+    // A body the client outlines itself: kept as drawn, its shadow cast by it.
+    const auto *root = window.rootSurface();
+    if (!window.isDecorated() && root && !root->bodyShape().isEmpty()) {
+        const base::Point origin = state.surfaceOrigin;
+        state.outlinePath = root->bodyShape().translated(origin.x(), origin.y());
+        state.outlineShape = {ui::toBase(state.outlinePath.boundingRect()), 0};
         return state;
     }
     if (window.isDecorated())

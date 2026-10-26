@@ -64,11 +64,13 @@ ExecutableSecurityDelegate::ExecutableSecurityDelegate(
         const std::vector<std::string> &clipboardClients,
         const std::vector<std::string> &captureClients,
         const std::vector<std::string> &systemDialogClients, bool captureEnabled,
-        const std::vector<std::string> &computerControlClients)
+        const std::vector<std::string> &computerControlClients,
+        const std::vector<std::string> &windowPlacementClients)
     : m_clipboardClients(canonicalPaths(clipboardClients))
     , m_captureClients(canonicalPaths(captureClients))
     , m_systemDialogClients(canonicalPaths(systemDialogClients))
     , m_computerControlClients(canonicalPaths(computerControlClients))
+    , m_windowPlacementClients(canonicalPaths(windowPlacementClients))
     , m_captureEnabled(captureEnabled)
 {
 }
@@ -91,6 +93,11 @@ bool ExecutableSecurityDelegate::showsSystemDialogs(int64_t pid) const
 bool ExecutableSecurityDelegate::canControlComputer(const wl_client *client) const
 {
     return m_captureEnabled && runsOneOf(client, m_computerControlClients);
+}
+
+bool ExecutableSecurityDelegate::canPlaceWindows(const wl_client *client) const
+{
+    return runsOneOf(client, m_windowPlacementClients);
 }
 
 } // namespace cutefish::wayland

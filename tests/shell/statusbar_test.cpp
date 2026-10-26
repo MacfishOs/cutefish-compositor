@@ -77,7 +77,7 @@ TEST(DBusMenuTest, FetchesOneLevelAtATimeAndFollowsUpdates)
     EXPECT_EQ(menu.item(1)->children, (std::vector<int32_t>{10, 11, 12}));
     EXPECT_EQ(menu.item(10)->shortcut, (std::vector<std::vector<std::string>>{{"Control", "o"}}));
     EXPECT_TRUE(menu.item(11)->separator);
-    EXPECT_EQ(menu.item(12)->toggle, shell::DBusMenuItem::Toggle::Checkmark);
+    EXPECT_EQ(menu.item(12)->toggle, compositor::MenuItem::Toggle::Checkmark);
     EXPECT_EQ(menu.item(12)->toggleState, 1);
     EXPECT_FALSE(menu.item(12)->enabled);
 
@@ -269,39 +269,6 @@ TEST(AppMenuRegistrarTest, FindsAProcessMenuAndForgetsItsServiceLeaving)
     application.reset();
     EXPECT_TRUE(test::runUntil([&] { return unregistered == std::vector<uint32_t>{7}; }));
     EXPECT_EQ(registrar.serviceForPid(uint32_t(getpid())), "");
-}
-
-TEST(AppMenuRegistrarTest, TheDesktopsMenuIsNotItsProcesssOtherWindows)
-{
-    // The file manager registers its desktop's File/Edit as window 0 and
-    // owns browser windows as well: those never show the desktop's menus.
-    shell::AppMenuRegistrar registrar(sessionBus());
-    ASSERT_TRUE(registrar.registerService());
-    auto application = std::make_unique<test::DBusTestClient>();
-    std::vector<uint32_t> registered;
-    auto subscription = registrar.windowRegistered.connect(
-            [&](uint32_t id, const std::string &, const std::string &) { registered.push_back(id); });
-    const char *service = "com.canonical.AppMenu.Registrar";
-    const char *path = "/com/canonical/AppMenu/Registrar";
-    const uint32_t pid = uint32_t(getpid());
-    application->call(service, path, service, "RegisterWindow", uint32_t(0),
-                      dbus::ObjectPath{"/org/cutefish/DesktopMenu"});
-    ASSERT_TRUE(test::runUntil([&] { return registered.size() == 1; }));
-    const std::string exporter = application->connection->uniqueName();
-    EXPECT_EQ(registrar.serviceForPid(pid), "");
-    EXPECT_EQ(registrar.pathForPid(pid), "");
-    EXPECT_EQ(registrar.desktopServiceForPid(pid), exporter);
-    EXPECT_EQ(registrar.desktopPathForPid(pid), "/org/cutefish/DesktopMenu");
-
-    // A window of its own that does export a menu shows that one, and the
-    // desktop keeps its menu, newer registration or not.
-    application->call(service, path, service, "RegisterWindow", uint32_t(3), dbus::ObjectPath{"/menu/3"});
-    ASSERT_TRUE(test::runUntil([&] { return registered.size() == 2; }));
-    application->call(service, path, service, "RegisterWindow", uint32_t(0),
-                      dbus::ObjectPath{"/org/cutefish/DesktopMenu"});
-    ASSERT_TRUE(test::runUntil([&] { return registered.size() == 3; }));
-    EXPECT_EQ(registrar.pathForPid(pid), "/menu/3");
-    EXPECT_EQ(registrar.desktopPathForPid(pid), "/org/cutefish/DesktopMenu");
 }
 
 namespace {

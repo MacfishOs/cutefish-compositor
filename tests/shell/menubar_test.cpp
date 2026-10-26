@@ -18,6 +18,8 @@
 #include <gtest/gtest.h>
 
 #include "compositor/compositor.h"
+#include "compositor/menu_model.h"
+#include "compositor/surface.h"
 #include "dbus_test_client.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
@@ -59,6 +61,63 @@ dbus::Variant layout(int32_t id, dbus::VariantMap properties, std::vector<dbus::
 {
     return dbus::Variant(Layout(id, std::move(properties), std::move(children)));
 }
+
+// A main menu as a window gives it through cutefish_main_menu_v1, kept in
+// memory; it records what the bar asks of it.
+class FakeMainMenu : public compositor::MenuModel
+{
+public:
+    FakeMainMenu()
+    {
+        m_items[0].hasSubmenu = true;
+        m_items[0].childrenLoaded = true;
+    }
+
+    void add(int32_t parent, int32_t id, const std::string &label,
+             compositor::MenuItem::Role role = compositor::MenuItem::Role::None)
+    {
+        compositor::MenuItem &item = m_items[id];
+        item.id = id;
+        item.parent = parent;
+        item.label = label;
+        item.role = role;
+        compositor::MenuItem &above = m_items[parent];
+        above.children.push_back(id);
+        above.hasSubmenu = true;
+        above.childrenLoaded = true;
+    }
+
+    void rename(int32_t id, const std::string &label)
+    {
+        m_items[id].label = label;
+        itemChanged(id);
+    }
+
+    int prepared(int32_t id) const { return int(std::count(m_prepared.begin(), m_prepared.end(), id)); }
+    int closedCount(int32_t id) const { return int(std::count(m_closed.begin(), m_closed.end(), id)); }
+
+    const compositor::MenuItem *item(int32_t id) const override
+    {
+        const auto it = m_items.find(id);
+        return it == m_items.end() ? nullptr : &it->second;
+    }
+    void refresh(int32_t) override { }
+    void prepare(int32_t id) override
+    {
+        m_prepared.push_back(id);
+        menuUpdated(id);
+    }
+    void opened(int32_t) override { }
+    void closed(int32_t id) override { m_closed.push_back(id); }
+    void activate(int32_t id) override { activated.push_back(id); }
+
+    std::vector<int32_t> activated;
+
+private:
+    std::map<int32_t, compositor::MenuItem> m_items;
+    std::vector<int32_t> m_prepared;
+    std::vector<int32_t> m_closed;
+};
 
 dbus::Variant label(const std::string &text)
 {
@@ -117,17 +176,17 @@ public:
 };
 
 // The desktop's File and Edit menus.
-void exportDesktopMenus(FakeMenuExporter &exporter)
+std::shared_ptr<FakeMainMenu> desktopMenus()
 {
-    exporter.layouts[0] = layout(0, {},
-                                 {layout(1, {{"label", label("File")}, {"children-display", submenu()}}),
-                                  layout(2, {{"label", label("Edit")}, {"children-display", submenu()}})});
-    exporter.layouts[1] = layout(1, {}, {layout(10, {{"label", label("New Window")}}),
-                                         layout(11, {{"label", label("New Folder")}}),
-                                         layout(12, {{"type", dbus::Variant(std::string("separator"))}}),
-                                         layout(13, {{"label", label("Properties")}})});
-    exporter.layouts[2] = layout(2, {}, {layout(20, {{"label", label("Undo")}, {"enabled", dbus::Variant(false)}}),
-                                         layout(21, {{"label", label("Select All")}})});
+    auto menu = std::make_shared<FakeMainMenu>();
+    menu->add(0, 1, "File");
+    menu->add(1, 10, "New Window");
+    menu->add(1, 11, "New Folder");
+    menu->add(1, 13, "Properties");
+    menu->add(0, 2, "Edit");
+    menu->add(2, 20, "Undo");
+    menu->add(2, 21, "Select All");
+    return menu;
 }
 
 // The status bar's part the menu bar needs: a 32 px panel along the top, its
@@ -331,19 +390,14 @@ protected:
         return window->wmWindow()->bounds();
     }
 
-    // The desktop as the file manager has it: a Desktop window of its
-    // process, whose menus the process exports and registers as window 0.
-    std::unique_ptr<shell::ShellWindow> showDesktop(test::DBusTestClient &client, FakeMenuExporter &exporter,
-                                                    int64_t pid = getpid(), const std::string &path = "/MenuBar")
+    // The desktop as the file manager has it: a Desktop window whose surface
+    // has the File and Edit main menu.
+    std::unique_ptr<shell::ShellWindow> showDesktop(const std::shared_ptr<FakeMainMenu> &menu)
     {
-        exportDesktopMenus(exporter);
         auto desktop = std::make_unique<shell::ShellWindow>(shell.get(), wm::WindowRole::Desktop);
         desktop->setGeometry(kOutput);
+        desktop->surface()->setMainMenu(menu);
         desktop->show();
-        desktop->wmWindow()->setProcessId(pid);
-        client.call("com.canonical.AppMenu.Registrar", "/com/canonical/AppMenu/Registrar",
-                    "com.canonical.AppMenu.Registrar", "RegisterWindow", uint32_t(0),
-                    dbus::ObjectPath {path});
         EXPECT_TRUE(test::runUntil([this] { return view->model().count() == 4; }));
         frame();
         return desktop;
@@ -425,31 +479,24 @@ TEST_F(MenuBarTest, TheUserMenuOpensUnderItsPlateAndClosesOnASecondClick)
     EXPECT_TRUE(manager.popupGrabs().empty());
 }
 
-TEST_F(MenuBarTest, TheDesktopShowsItsExportedMenus)
+TEST_F(MenuBarTest, TheDesktopShowsItsMainMenu)
 {
-    test::DBusTestClient desktopProcess;
-    FakeMenuExporter exporter(desktopProcess.connection.get(), "/MenuBar");
-    const auto desktop = showDesktop(desktopProcess, exporter);
+    const std::shared_ptr<FakeMainMenu> menu = desktopMenus();
+    const auto desktop = showDesktop(menu);
     ASSERT_EQ(titles(), (std::vector<std::string> {"", "Desktop", "File", "Edit"}));
     // The application's name is bold, its menus regular; File's plate starts
     // where its entry does, plus the inset.
     const double file = entryRect(2).x;
     EXPECT_EQ(entryRect(1).x + entryRect(1).width, file);
-    // The submenus were fetched ahead.
-    ASSERT_TRUE(test::runUntil([&] { return exporter.called("AboutToShow 1") && exporter.called("AboutToShow 2"); }));
 
-    test::runFor(std::chrono::milliseconds(50));
-    const int openedBefore = exporter.count("Event 1 opened");
     click(entryCentre(2).x(), 16);
     ASSERT_EQ(2, view->currentIndex());
-    // One AboutToShow and one "opened" per opening.
-    test::runFor(std::chrono::milliseconds(50));
-    EXPECT_EQ(openedBefore + 1, exporter.count("Event 1 opened"));
+    // The desktop hears that File is about to open, once.
+    EXPECT_EQ(1, menu->prepared(1));
     const auto bounds = menuBounds();
     ASSERT_TRUE(bounds);
     EXPECT_EQ(int(std::lround(file + 3)), bounds->x());
     EXPECT_EQ(38, bounds->y());
-    ASSERT_TRUE(test::runUntil([&] { return exporter.called("Event 1 opened"); }));
 
     // Moving onto Edit while File is open switches to Edit's menu; the
     // grab stays with the bar.
@@ -460,7 +507,8 @@ TEST_F(MenuBarTest, TheDesktopShowsItsExportedMenus)
     EXPECT_TRUE(view->entry(3)->isChecked());
     EXPECT_EQ(int(std::lround(entryRect(3).x + 3)), menuBounds()->x());
     EXPECT_EQ(1u, manager.popupGrabs().size());
-    ASSERT_TRUE(test::runUntil([&] { return exporter.called("Event 1 closed") && exporter.called("Event 2 opened"); }));
+    EXPECT_EQ(1, menu->closedCount(1));
+    EXPECT_EQ(1, menu->prepared(2));
 
     // Right wraps around to the user's entry, Left comes back.
     key(KEY_RIGHT);
@@ -471,13 +519,13 @@ TEST_F(MenuBarTest, TheDesktopShowsItsExportedMenus)
     EXPECT_EQ(2, view->currentIndex());
     EXPECT_EQ(1u, manager.popupGrabs().size());
 
-    // Down lights New Window, Return chooses it: the exporter hears the
-    // click and the menu goes.
+    // Down lights New Window, Return chooses it: the desktop hears the
+    // choice and the menu goes.
     key(KEY_DOWN);
     key(KEY_ENTER);
     EXPECT_EQ(-1, view->currentIndex());
     EXPECT_TRUE(manager.popupGrabs().empty());
-    EXPECT_TRUE(test::runUntil([&] { return exporter.called("Event 10 clicked"); }));
+    EXPECT_EQ(std::vector<int32_t> {10}, menu->activated);
 
     // Without a menu open, moving along the bar opens nothing.
     move(entryCentre(2).x(), 16);
@@ -489,9 +537,7 @@ TEST_F(MenuBarTest, TheDesktopsProcessOtherWindowsDoNotShowItsMenus)
 {
     // The file manager's daemon draws the desktop and owns the browser
     // windows: a focused browser window shows no File/Edit of the desktop's.
-    test::DBusTestClient desktopProcess;
-    FakeMenuExporter exporter(desktopProcess.connection.get(), "/MenuBar");
-    const auto desktop = showDesktop(desktopProcess, exporter);
+    const auto desktop = showDesktop(desktopMenus());
     ASSERT_EQ(titles(), (std::vector<std::string> {"", "Desktop", "File", "Edit"}));
 
     shell::TaskWindow browser;
@@ -511,18 +557,6 @@ TEST_F(MenuBarTest, TheDesktopsProcessOtherWindowsDoNotShowItsMenus)
     windows->setActive(0);
     ASSERT_TRUE(test::runUntil([&] { return view->model().isDesktop() && view->model().count() == 4; }));
     EXPECT_EQ(titles(), (std::vector<std::string> {"", "Desktop", "File", "Edit"}));
-}
-
-TEST_F(MenuBarTest, TheDesktopIsFoundByItsExportPath)
-{
-    // The session hands the file manager's desktop its Wayland connection as a
-    // socket pair: its Desktop window carries another process's id.
-    test::DBusTestClient desktopProcess;
-    FakeMenuExporter exporter(desktopProcess.connection.get(), shell::MenuBarModel::kDesktopMenuPath);
-    const auto desktop = showDesktop(desktopProcess, exporter, 1, shell::MenuBarModel::kDesktopMenuPath);
-    ASSERT_EQ(titles(), (std::vector<std::string> {"", "Desktop", "File", "Edit"}));
-    ASSERT_NE(nullptr, view->model().desktopMenu());
-    EXPECT_EQ(desktopProcess.connection->uniqueName(), view->model().desktopMenu()->service());
 }
 
 TEST_F(MenuBarTest, AnApplicationShowsItsNameItsMenusAndTheirChanges)
@@ -597,6 +631,54 @@ TEST_F(MenuBarTest, AnApplicationShowsItsNameItsMenusAndTheirChanges)
     ASSERT_TRUE(test::runUntil([&] { return view->model().count() == 5; }));
     EXPECT_EQ(0, view->currentIndex());
     EXPECT_TRUE(view->openMenu()->isOpen());
+}
+
+TEST_F(MenuBarTest, AMainMenuShowsItsApplicationMenuUnderTheName)
+{
+    // Archiver's main menu: its application menu (About, Quit) and File.
+    auto menu = std::make_shared<FakeMainMenu>();
+    menu->add(0, 1, "Archiver", compositor::MenuItem::Role::Application);
+    menu->add(1, 10, "About Archiver");
+    menu->add(1, 11, "Quit Archiver");
+    menu->add(0, 2, "_File", compositor::MenuItem::Role::None);
+    menu->add(2, 20, "Open");
+
+    shell::TaskWindow archiver;
+    archiver.appId = "archiver";
+    archiver.title = "Archiver (ZIP)";
+    archiver.pid = 4343;
+    archiver.mainMenu = menu;
+    const uint64_t id = windows->add(archiver);
+    windows->setActive(id);
+    ASSERT_TRUE(test::runUntil([&] { return view->model().count() == 3; }));
+    frame();
+    // Ready at once; the application menu has no entry of its own, and
+    // without a desktop entry the name is its title, not the window's.
+    EXPECT_EQ(titles(), (std::vector<std::string> {"", "Archiver", "File"}));
+
+    // The name opens it, in place of the bar's Hide and Quit; the
+    // application hears that it is about to open.
+    click(entryCentre(1).x(), 16);
+    ASSERT_EQ(1, view->currentIndex());
+    frame();
+    EXPECT_EQ(1, menu->prepared(1));
+    key(KEY_DOWN);
+    key(KEY_ENTER);
+    EXPECT_EQ(std::vector<int32_t> {10}, menu->activated);
+    EXPECT_TRUE(windows->requests.empty());
+    EXPECT_EQ(1, menu->closedCount(1));
+
+    // An entry the application renames while its menu is open changes there.
+    click(entryCentre(2).x(), 16);
+    ASSERT_EQ(2, view->currentIndex());
+    frame();
+    menu->rename(20, "Open…");
+    test::runFor(std::chrono::milliseconds(20));
+    frame();
+    EXPECT_TRUE(view->openMenu() && view->openMenu()->isOpen());
+    key(KEY_DOWN);
+    key(KEY_ENTER);
+    EXPECT_EQ((std::vector<int32_t> {10, 20}), menu->activated);
 }
 
 TEST_F(MenuBarTest, AnApplicationThatLeavesTakesItsOpenMenu)

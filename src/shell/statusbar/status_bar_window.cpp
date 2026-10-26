@@ -23,12 +23,14 @@
 #include "shell/statusbar/device_usage.h"
 #include "shell/statusbar/status_bar_backdrop.h"
 #include "shell/statusbar/status_icon.h"
+#include "shell/statusbar/status_items_view.h"
 #include "shell/statusbar/system_tray_view.h"
 #include "shell/statusbar/vpn_notifier.h"
 #include "ui/embedded_window.h"
 #include "ui/cell_layout.h"
 #include "ui/path.h"
 #include "ui/theme.h"
+#include "wm/status_items.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
 
@@ -66,8 +68,14 @@ protected:
         }
     }
 
-    // The plate moves with its item, wherever in the row it sits.
-    void childrenLaidOut() override { m_bar->updatePlateBlur(); }
+    // The plate moves with its item, wherever in the row it sits, and so do
+    // the applications' items.
+    void childrenLaidOut() override
+    {
+        if (m_bar->m_statusItems)
+            m_bar->m_statusItems->placeItems();
+        m_bar->updatePlateBlur();
+    }
 
 private:
     StatusBarWindow *m_bar;
@@ -124,6 +132,11 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
         if (onStopAgentControl)
             onStopAgentControl();
     };
+
+    m_statusItems = m_root->addChild<StatusItemsView>(
+            this, shell->windowManager() ? shell->windowManager()->statusItems() : nullptr);
+    m_statusItems->setName("status-items");
+    m_statusItems->onWidthChanged = [this] { layoutRow(); };
 
     SystemTrayView::Host trayHost;
     trayHost.closePanels = [this] { closePanels(); };
@@ -189,6 +202,12 @@ StatusBarWindow::StatusBarWindow(Shell *shell, std::unique_ptr<StatusBar> status
     updateLook();
     updateClock();
     m_window->show();
+    if (wm::StatusItems *items = m_shell->windowManager() ? m_shell->windowManager()->statusItems() : nullptr) {
+        items->setBar(m_window->surface(), m_window->shellSurface());
+        m_subscriptions.push_back(items->committed.connect([this] { m_window->requestFrame(); }));
+        updateStatusItemLimits();
+        updateLook();
+    }
 }
 
 StatusBarWindow::~StatusBarWindow()
@@ -198,6 +217,8 @@ StatusBarWindow::~StatusBarWindow()
     m_indicatorsChanged.reset();
     m_deviceUsageChanged.reset();
     m_backdrop->follow(nullptr);
+    if (wm::StatusItems *items = m_shell->windowManager() ? m_shell->windowManager()->statusItems() : nullptr)
+        items->setBar(nullptr, nullptr);
     m_window.reset();
     if (m_clockWatch)
         core::mainLoop()->unwatch(m_clockWatch);
@@ -214,6 +235,18 @@ void StatusBarWindow::updateGeometry()
     m_window->setOutput(output->name);
     m_window->setGeometry(base::Rect(output->bounds.x(), output->bounds.y(), output->bounds.width(), kHeight));
     m_window->setExclusiveZone(wm::ScreenEdge::Top, kHeight);
+    updateStatusItemLimits();
+}
+
+void StatusBarWindow::updateStatusItemLimits()
+{
+    wm::StatusItems *items = m_shell->windowManager() ? m_shell->windowManager()->statusItems() : nullptr;
+    if (!items || !m_window)
+        return;
+    // An item may take up to a third of the bar.
+    const base::Rect geometry = m_window->geometry();
+    items->setBarOrigin(geometry.topLeft());
+    items->setLimits(kHeight, std::max(kHeight, geometry.width() / 3));
 }
 
 void StatusBarWindow::setWallpaper(Wallpaper *wallpaper)
@@ -246,6 +279,10 @@ void StatusBarWindow::updateLook()
     if (m_menuBar)
         m_menuBar->barChanged();
     m_tray->barChanged();
+    m_statusItems->barChanged();
+    if (wm::StatusItems *items = m_shell->windowManager() ? m_shell->windowManager()->statusItems() : nullptr) {
+        items->setAppearance(light, textColor().argb());
+    }
     for (StatusIcon *icon : {m_volume, m_network, m_battery, m_control})
         icon->updateLook();
     m_clock->updateLook();
@@ -384,6 +421,8 @@ void StatusBarWindow::layoutRow()
     };
     preferred(m_recording, m_recording->preferredWidth());
     preferred(m_agentControl, m_agentControl->preferredWidth());
+    m_statusItems->setVisible(m_statusItems->count() > 0);
+    preferred(m_statusItems, m_statusItems->preferredWidth());
     m_tray->setVisible(m_tray->count() > 0);
     preferred(m_tray, m_tray->preferredWidth());
     for (StatusIcon *icon : {m_volume, m_network, m_battery, m_control})

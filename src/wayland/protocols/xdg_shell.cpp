@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "compositor/compositor.h"
@@ -661,6 +663,14 @@ public:
         return surfaceData ? surfaceData->shell : nullptr;
     }
 
+    // A popup made with a null parent keeps its positioner until another
+    // protocol gives it one.
+    std::optional<WaylandPositioner> waitingPositioner;
+    // Where the coordinates its positioners use lie in its parent's.
+    base::Point anchorOffset;
+    // The client of a grab asked for while it waited for a parent.
+    wl_client* pendingGrab = nullptr;
+
 private:
     wl_resource* m_resource;
     std::shared_ptr<WaylandXdgSurface*> m_token;
@@ -696,6 +706,11 @@ void xdg_popup_grab(wl_client* client, wl_resource* resource, wl_resource*, uint
                                "the surface has already been destroyed");
         return;
     }
+    // Taken once the popup has its parent.
+    if (popup->waitingPositioner) {
+        popup->pendingGrab = client;
+        return;
+    }
     shellSurface->grab(client);
 }
 
@@ -713,8 +728,8 @@ void xdg_popup_reposition(wl_client*, wl_resource* resource, wl_resource* positi
     xdg_popup_send_repositioned(resource, token);
 
     auto* positioner = getUserDataAs<WaylandPositioner>(positionerResource);
-    const WaylandPositioner::Result position =
-        positioner->calculateBounds(popupWorkArea(popup->shell(), shellSurface->popupParent()));
+    const WaylandPositioner::Result position = positioner->calculateBounds(
+            popupWorkArea(popup->shell(), shellSurface->popupParent()), popup->anchorOffset);
     shellSurface->reposition(position.toRect());
 }
 
@@ -769,8 +784,24 @@ void xdg_surface_get_popup(wl_client* client, wl_resource* resource, uint32_t id
         return;
     }
     if (!parentResource) {
-        wl_resource_post_error(resource, XDG_SURFACE_ERROR_NOT_CONSTRUCTED,
-                               "popup parent not supplied");
+        // Another protocol names the parent before the first commit, as
+        // cutefish_status_item_v1.get_popup does.
+        auto* positioner = getUserDataAs<WaylandPositioner>(positionerResource);
+        if (positioner->size().isEmpty()) {
+            wl_resource_post_error(resource, XDG_WM_BASE_ERROR_INVALID_POSITIONER,
+                                   "the positioner is incomplete");
+            return;
+        }
+        wl_resource* popupResource =
+            wl_resource_create(client, &xdg_popup_interface, wl_resource_get_version(resource), id);
+        if (!popupResource) {
+            wl_client_post_no_memory(client);
+            return;
+        }
+        surfaceData->hasRoleObject = true;
+        auto popup = std::make_unique<WaylandPopup>(popupResource, resource);
+        popup->waitingPositioner = *positioner;
+        setImplementation(popupResource, &xdg_popup_implementation, std::move(popup));
         return;
     }
 
@@ -977,6 +1008,30 @@ wm::ShellSurface* shellSurfaceForToplevel(wl_resource* toplevelResource)
     if (!toplevelResource)
         return nullptr;
     return getUserDataAs<WaylandToplevel>(toplevelResource)->shellSurface();
+}
+
+ParentlessPopupResult adoptParentlessPopup(wl_resource* popupResource, wm::ShellSurface* parent,
+                                           const base::Point& anchorOffset,
+                                           const std::function<bool(wm::ShellSurface*, const base::Rect&)>& adopt)
+{
+    auto* popup = getUserDataAs<WaylandPopup>(popupResource);
+    ShellSurface* shellSurface = popup->shellSurface();
+    if (!shellSurface || !popup->waitingPositioner || shellSurface->hasRole())
+        return ParentlessPopupResult::HasParent;
+    const WaylandPositioner positioner = *popup->waitingPositioner;
+    popup->waitingPositioner.reset();
+    const base::Rect bounds = parent
+            ? positioner.calculateBounds(popupWorkArea(popup->shell(), parent), anchorOffset).toRect()
+            : base::Rect();
+    if (!parent || !adopt(shellSurface, bounds)) {
+        shellSurface->close();
+        return ParentlessPopupResult::Dismissed;
+    }
+    popup->anchorOffset = anchorOffset;
+    if (wl_client* client = std::exchange(popup->pendingGrab, nullptr))
+        shellSurface->grab(client);
+    shellSurface->configurePopup();
+    return ParentlessPopupResult::Adopted;
 }
 
 wl_global* createXdgShellGlobal(wl_display* display, WaylandXdgShell* shell)

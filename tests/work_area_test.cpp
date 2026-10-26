@@ -61,6 +61,21 @@ TEST(ExclusiveZonesTest, ZeroThicknessReleasesTheReservation)
     EXPECT_EQ(kOutput, zones.apply(kOutput));
 }
 
+TEST(ExclusiveZonesTest, AYieldingReservationGivesWayToMaximizedWindows)
+{
+    ExclusiveZones zones;
+    const int statusBar = 1;
+    const int dock = 2;
+    zones.set(&statusBar, ScreenEdge::Top, 30);
+    EXPECT_FALSE(zones.hasYieldingZone());
+    EXPECT_TRUE(zones.set(&dock, ScreenEdge::Bottom, 70, {}, true));
+    EXPECT_TRUE(zones.hasYieldingZone());
+    EXPECT_EQ(base::Rect(0, 30, 1920, 980), zones.apply(kOutput, {}, true, false));
+    EXPECT_EQ(base::Rect(0, 30, 1920, 1050), zones.apply(kOutput, {}, true, true));
+    EXPECT_TRUE(zones.set(&dock, ScreenEdge::Bottom, 70));
+    EXPECT_EQ(base::Rect(0, 30, 1920, 980), zones.apply(kOutput, {}, true, true));
+}
+
 TEST(ExclusiveZonesTest, AReservationLargerThanTheOutputIsIgnored)
 {
     ExclusiveZones zones;

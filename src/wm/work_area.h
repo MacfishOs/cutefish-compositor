@@ -23,21 +23,27 @@ public:
         ScreenEdge edge = ScreenEdge::Top;
         int thickness = 0;
         std::string outputName;
+        // Withdrawn while a window on its output is maximized, as a dock that
+        // hides for maximized windows is.
+        bool yieldsToMaximized = false;
     };
 
     // Returns true when the aggregate changed and the work area has to be
     // recomputed.
     bool set(const void* token, ScreenEdge edge, int thickness,
-             const std::string& outputName = {});
+             const std::string& outputName = {}, bool yieldsToMaximized = false);
     bool clear(const void* token);
 
     bool isEmpty() const { return m_zones.empty(); }
+    bool hasYieldingZone() const;
 
     // `outputBounds` minus every reservation. Reservations on the same edge do
     // not stack: the largest one wins, so a dock that briefly has two
-    // reservations in flight cannot shrink the work area twice.
+    // reservations in flight cannot shrink the work area twice. `maximized`
+    // leaves out the reservations that yield to maximized windows.
     base::Rect apply(const base::Rect& outputBounds) const;
-    base::Rect apply(const base::Rect& outputBounds, const std::string& outputName, bool primary) const;
+    base::Rect apply(const base::Rect& outputBounds, const std::string& outputName, bool primary,
+                     bool maximized = false) const;
 
 private:
     std::map<const void*, Zone> m_zones;

@@ -111,6 +111,7 @@ Window::Window(WindowManager *manager, compositor::Surface *rootSurface, const s
         m_rootSurface->addSurfaceObserver(this);
         // Hints are usually set before the first commit, so before this window exists.
         m_surfaceAlwaysOnTop = m_rootSurface->alwaysOnTop();
+        m_surfaceOpacity = m_rootSurface->opacity();
         if (isPopup())
             m_rootSurface->setHidden(false);
     }
@@ -120,8 +121,10 @@ Window::Window(WindowManager *manager, compositor::Surface *rootSurface, const s
     if (scene::Node *container = surfaceContainer(m_manager)) {
         if (m_rootSurface && m_rootSurface->node()) {
             auto animation = std::make_unique<scene::WindowAnimation>();
-            if (isPopup())
+            // A window placed against an anchor opens in place, like a popup.
+            if (isPopup() || m_rootSurface->placementAnchor())
                 animation->setStyle(scene::WindowAnimation::Style::Popup);
+            animation->setOpacity(m_rootSurface->opacity());
             m_node = container->addChild(std::move(animation));
         }
     }
@@ -191,9 +194,25 @@ void Window::onSurfaceCommit(compositor::Surface *surface)
 
 void Window::onSurfaceWindowHintsChanged(compositor::Surface *surface)
 {
+    if (surface != m_rootSurface)
+        return;
+    if (surface->bodyShape() != m_bodyShape || surface->castsShadow() != m_castsShadow) {
+        m_bodyShape = surface->bodyShape();
+        m_castsShadow = surface->castsShadow();
+        if (m_visual)
+            m_visual->update();
+        forEachObserver(this, m_observers, [this](WindowObserver *observer) {
+            observer->onWindowClientDecorationChanged(this);
+        });
+    }
+    if (surface->opacity() != m_surfaceOpacity) {
+        m_surfaceOpacity = surface->opacity();
+        if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node))
+            animation->setOpacity(m_opacity * m_surfaceOpacity);
+    }
     // Every hint lands here; restacking for the others would raise the window
     // within its layer.
-    if (surface != m_rootSurface || surface->alwaysOnTop() == m_surfaceAlwaysOnTop)
+    if (surface->alwaysOnTop() == m_surfaceAlwaysOnTop)
         return;
     const bool wasAlwaysOnTop = isAlwaysOnTop();
     m_surfaceAlwaysOnTop = surface->alwaysOnTop();
@@ -453,8 +472,9 @@ void Window::setHidden(bool hidden)
 
 void Window::setOpacity(float opacity)
 {
+    m_opacity = opacity;
     if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node))
-        animation->setOpacity(opacity);
+        animation->setOpacity(m_opacity * m_surfaceOpacity);
 }
 
 void Window::setPresentationScale(double scale, const base::PointF &anchor, bool animate)
@@ -642,8 +662,11 @@ void Window::setRole(WindowRole role)
     if (role == m_role)
         return;
     m_role = role;
-    if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node); animation && !isPopup())
-        animation->setStyle(animationStyleFor(role));
+    if (auto *animation = dynamic_cast<scene::WindowAnimation *>(m_node); animation && !isPopup()) {
+        const bool anchored = m_rootSurface && m_rootSurface->placementAnchor();
+        animation->setStyle(role == WindowRole::Normal && anchored ? scene::WindowAnimation::Style::Popup
+                                                                   : animationStyleFor(role));
+    }
     m_visual->update();
     // A shell window is placed where it asked to be, and a titlebar around it
     // would move it there plus an inset; it also never resizes interactively.

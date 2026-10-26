@@ -192,8 +192,8 @@ target_link_libraries(cutefish-shell-bar-items PUBLIC cutefish-shell cutefish-sh
 # The status bar: its window, tray, status icons and clock on the bar's backend.
 find_package(CutefishClients REQUIRED COMPONENTS appearance)
 add_library(cutefish-shell-statusbar-view STATIC
-    src/shell/statusbar/dbus_menu_popup.cpp
-    src/shell/statusbar/dbus_menu_popup.h
+    src/shell/statusbar/menu_popup.cpp
+    src/shell/statusbar/menu_popup.h
     src/shell/statusbar/device_usage.cpp
     src/shell/statusbar/device_usage.h
     src/shell/statusbar/status_bar_backdrop.cpp
@@ -202,6 +202,8 @@ add_library(cutefish-shell-statusbar-view STATIC
     src/shell/statusbar/status_bar_panels.h
     src/shell/statusbar/status_bar_window.cpp
     src/shell/statusbar/status_bar_window.h
+    src/shell/statusbar/status_items_view.cpp
+    src/shell/statusbar/status_items_view.h
     src/shell/statusbar/system_tray_view.cpp
     src/shell/statusbar/system_tray_view.h
 )

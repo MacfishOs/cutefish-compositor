@@ -117,6 +117,12 @@ cutefish_wayland_protocol(cutefish-window-hints-v1
     ${CMAKE_CURRENT_SOURCE_DIR}/protocols/cutefish-window-hints-v1.xml)
 cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${CMAKE_CURRENT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
+cutefish_wayland_protocol(cutefish-status-item-v1
+    ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-status-item-v1.xml)
+cutefish_wayland_protocol(cutefish-main-menu-v1
+    ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-main-menu-v1.xml)
+cutefish_wayland_protocol(cutefish-window-placement-v1
+    ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-window-placement-v1.xml)
 cutefish_wayland_protocol(ext-data-control-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/ext-data-control/ext-data-control-v1.xml)
 cutefish_wayland_protocol(wlr-data-control-unstable-v1
@@ -160,6 +166,9 @@ add_library(cutefish-protocols STATIC
     ${xdg-output-unstable-v1_SOURCES}
     ${ext-data-control-v1_SOURCES} ${wlr-data-control-unstable-v1_SOURCES}
     ${cutefish-window-hints-v1_SOURCES} ${cutefish-surface-blur-v1_SOURCES} ${xdg-shell_SOURCES} ${xdg-decoration_SOURCES}
+    ${cutefish-status-item-v1_SOURCES}
+    ${cutefish-main-menu-v1_SOURCES}
+    ${cutefish-window-placement-v1_SOURCES}
     ${xdg-dialog-v1_SOURCES}
     ${xdg-foreign-unstable-v2_SOURCES}
     ${xdg-toplevel-drag-v1_SOURCES}
@@ -339,6 +348,7 @@ add_library(cutefish-compositor-core STATIC
     src/wayland/protocols/wp_viewporter.h
     src/compositor/surface.cpp
     src/compositor/surface.h
+    src/compositor/menu_model.h
     src/wayland/protocols/wl_compositor.cpp
     src/wayland/protocols/wl_compositor.h
     src/wayland/protocols/wl_shm.cpp
@@ -437,6 +447,8 @@ add_library(cutefish-wm STATIC
     src/wm/types.h
     src/wm/wm_event.cpp
     src/wm/wm_event.h
+    src/wm/anchored_placement.cpp
+    src/wm/anchored_placement.h
     src/wm/placement.cpp
     src/wm/placement.h
     src/wm/stacking.cpp
@@ -492,6 +504,8 @@ add_library(cutefish-wm STATIC
     src/wm/shell_surface.h
     src/wm/show_desktop_controller.cpp
     src/wm/show_desktop_controller.h
+    src/wm/status_items.cpp
+    src/wm/status_items.h
     src/wm/mru_window_tracker.cpp
     src/wm/mru_window_tracker.h
     src/wm/window_cycle_controller.cpp
@@ -675,12 +689,18 @@ add_library(cutefish-wayland-shell STATIC
     src/wayland/protocols/xdg_activation.cpp
     src/wayland/protocols/xdg_activation.h
     src/wayland/protocols/application_menu.cpp
+    src/wayland/protocols/main_menu.cpp
+    src/wayland/protocols/main_menu.h
     src/wayland/protocols/xdg_positioner.cpp
     src/wayland/protocols/xdg_positioner.h
     src/wayland/protocols/xdg_shell.cpp
     src/wayland/protocols/xdg_shell.h
+    src/wayland/protocols/status_item.cpp
+    src/wayland/protocols/status_item.h
     src/wayland/protocols/window_hints.cpp
     src/wayland/protocols/window_hints.h
+    src/wayland/protocols/window_placement.cpp
+    src/wayland/protocols/window_placement.h
     src/wayland/protocols/surface_blur.cpp
     src/wayland/protocols/surface_blur.h
     src/wayland/protocols/xdg_decoration.cpp
