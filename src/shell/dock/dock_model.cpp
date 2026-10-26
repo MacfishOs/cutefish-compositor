@@ -149,6 +149,19 @@ DesktopEntryPtr DockModel::desktopEntry(const std::string &id) const
     return m_applications.byId(id);
 }
 
+// A pinned bundle keeps its place when its folder goes, as when the disk
+// image it is on is ejected, and shows that it cannot be found.
+static bool isBundle(const DockItem &item)
+{
+    return !base::bundle::bundlePath(item.desktopPath).empty();
+}
+
+static void showMissingBundle(DockItem *item)
+{
+    item->uninstalled = true;
+    item->missing = true;
+}
+
 void DockModel::updateFromEntry(DockItem *item, const base::DesktopEntry &entry) const
 {
     item->id = entry.id;
