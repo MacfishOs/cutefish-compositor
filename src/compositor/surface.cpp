@@ -1321,6 +1321,19 @@ void Surface::updateMenuAddress()
     if (address == m_menuAddress)
         return;
     m_menuAddress = address;
+    notifyMenuChanged();
+}
+
+void Surface::setMainMenu(std::shared_ptr<MenuModel> menu)
+{
+    if (menu == m_mainMenu)
+        return;
+    m_mainMenu = std::move(menu);
+    notifyMenuChanged();
+}
+
+void Surface::notifyMenuChanged()
+{
     for (auto *observer : std::vector<SurfaceObserver *>(m_observers)) {
         if (hasSurfaceObserver(observer))
             observer->onSurfaceMenuChanged(this);

@@ -44,6 +44,8 @@ class SurfaceNode;
 
 namespace cutefish::compositor {
 
+class MenuModel;
+
 class Compositor;
 class SubSurface;
 class SurfaceObserver;
@@ -160,6 +162,11 @@ public:
     void removeMenuSource(uint64_t source);
 
     const MenuAddress &menuAddress() const { return m_menuAddress; }
+
+    // The main menu the window shows through cutefish_main_menu_v1; null for
+    // none. Takes precedence over the menu address.
+    const std::shared_ptr<MenuModel> &mainMenu() const { return m_mainMenu; }
+    void setMainMenu(std::shared_ptr<MenuModel> menu);
 
     // --- Requests. All of these are pending until commit(). ---
 
@@ -524,9 +531,11 @@ private:
 
     Placement m_placement;
     void updateMenuAddress();
+    void notifyMenuChanged();
     std::map<uint64_t, MenuAddress> m_menuSources;
     uint64_t m_nextMenuSource = 0;
     MenuAddress m_menuAddress;
+    std::shared_ptr<MenuModel> m_mainMenu;
     bool m_skipTaskbar = false;
     bool m_alwaysOnTop = false;
     bool m_castsShadow = true;

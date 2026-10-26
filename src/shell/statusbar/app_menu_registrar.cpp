@@ -8,9 +8,6 @@
 
 namespace cutefish::shell {
 
-// The window id a desktop registers its menu with.
-static constexpr uint32_t kDesktopWindowId = 0;
-
 namespace dbus = base::dbus;
 
 static const base::LogCategory cfAppMenu("cutefish.shell.appmenu");
@@ -75,12 +72,12 @@ bool AppMenuRegistrar::registerService()
     return true;
 }
 
-const AppMenuRegistrar::Registration *AppMenuRegistrar::newestFor(uint32_t pid, bool desktop) const
+const AppMenuRegistrar::Registration *AppMenuRegistrar::newestFor(uint32_t pid) const
 {
     if (pid == 0)
         return nullptr;
     for (auto it = m_registrations.rbegin(); it != m_registrations.rend(); ++it) {
-        if (it->pid == pid && (it->windowId == kDesktopWindowId) == desktop)
+        if (it->pid == pid)
             return &*it;
     }
     return nullptr;
@@ -88,34 +85,13 @@ const AppMenuRegistrar::Registration *AppMenuRegistrar::newestFor(uint32_t pid, 
 
 std::string AppMenuRegistrar::serviceForPid(uint32_t pid) const
 {
-    const Registration *registration = newestFor(pid, false);
+    const Registration *registration = newestFor(pid);
     return registration ? registration->service : std::string();
-}
-
-std::string AppMenuRegistrar::desktopServiceForPid(uint32_t pid) const
-{
-    const Registration *registration = newestFor(pid, true);
-    return registration ? registration->service : std::string();
-}
-
-std::string AppMenuRegistrar::desktopPathForPid(uint32_t pid) const
-{
-    const Registration *registration = newestFor(pid, true);
-    return registration ? registration->path : std::string();
-}
-
-std::string AppMenuRegistrar::serviceForPath(const std::string &path) const
-{
-    for (auto it = m_registrations.rbegin(); it != m_registrations.rend(); ++it) {
-        if (it->path == path && it->pid != 0)
-            return it->service;
-    }
-    return {};
 }
 
 std::string AppMenuRegistrar::pathForPid(uint32_t pid) const
 {
-    const Registration *registration = newestFor(pid, false);
+    const Registration *registration = newestFor(pid);
     return registration ? registration->path : std::string();
 }
 

@@ -118,6 +118,8 @@ cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${CMAKE_CURRENT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
 cutefish_wayland_protocol(cutefish-status-item-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-status-item-v1.xml)
+cutefish_wayland_protocol(cutefish-main-menu-v1
+    ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-main-menu-v1.xml)
 cutefish_wayland_protocol(cutefish-window-placement-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-window-placement-v1.xml)
 cutefish_wayland_protocol(ext-data-control-v1
@@ -164,6 +166,7 @@ add_library(cutefish-protocols STATIC
     ${ext-data-control-v1_SOURCES} ${wlr-data-control-unstable-v1_SOURCES}
     ${cutefish-window-hints-v1_SOURCES} ${cutefish-surface-blur-v1_SOURCES} ${xdg-shell_SOURCES} ${xdg-decoration_SOURCES}
     ${cutefish-status-item-v1_SOURCES}
+    ${cutefish-main-menu-v1_SOURCES}
     ${cutefish-window-placement-v1_SOURCES}
     ${xdg-dialog-v1_SOURCES}
     ${xdg-foreign-unstable-v2_SOURCES}
@@ -344,6 +347,7 @@ add_library(cutefish-compositor-core STATIC
     src/wayland/protocols/wp_viewporter.h
     src/compositor/surface.cpp
     src/compositor/surface.h
+    src/compositor/menu_model.h
     src/wayland/protocols/wl_compositor.cpp
     src/wayland/protocols/wl_compositor.h
     src/wayland/protocols/wl_shm.cpp
@@ -684,6 +688,8 @@ add_library(cutefish-wayland-shell STATIC
     src/wayland/protocols/xdg_activation.cpp
     src/wayland/protocols/xdg_activation.h
     src/wayland/protocols/application_menu.cpp
+    src/wayland/protocols/main_menu.cpp
+    src/wayland/protocols/main_menu.h
     src/wayland/protocols/xdg_positioner.cpp
     src/wayland/protocols/xdg_positioner.h
     src/wayland/protocols/xdg_shell.cpp

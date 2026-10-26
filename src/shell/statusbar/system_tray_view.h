@@ -28,7 +28,7 @@ class ThemeIcon;
 namespace cutefish::shell {
 
 class DBusMenu;
-class DBusMenuPopup;
+class MenuPopup;
 class SystemTrayModel;
 class TrayItemView;
 
@@ -91,7 +91,7 @@ private:
     SystemTrayModel *m_model;
     Host m_host;
     std::vector<TrayItemView *> m_items;
-    std::unique_ptr<DBusMenuPopup> m_popup;
+    std::unique_ptr<MenuPopup> m_popup;
     // The item whose menu the popup shows, open or not.
     TrayItemView *m_popupItem = nullptr;
     TrayItemView *m_menuItem = nullptr;

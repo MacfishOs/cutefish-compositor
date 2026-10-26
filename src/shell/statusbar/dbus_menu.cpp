@@ -22,7 +22,7 @@ DBusMenu::DBusMenu(dbus::Connection *bus, std::string service, std::string path)
     , m_proxy(bus, m_service, m_path, kInterface)
     , m_sender(bus, m_service)
 {
-    DBusMenuItem root;
+    compositor::MenuItem root;
     root.hasSubmenu = true;
     m_items.emplace(0, std::move(root));
 
@@ -78,7 +78,7 @@ DBusMenu::DBusMenu(dbus::Connection *bus, std::string service, std::string path)
 
 DBusMenu::~DBusMenu() = default;
 
-const DBusMenuItem *DBusMenu::item(int32_t id) const
+const compositor::MenuItem *DBusMenu::item(int32_t id) const
 {
     const auto it = m_items.find(id);
     return it == m_items.end() ? nullptr : &it->second;
@@ -124,7 +124,7 @@ void DBusMenu::applyLayout(int32_t parentId, const dbus::Variant &layout)
         if (it == m_items.end()) {
             if (m_items.size() >= kMaxItems)
                 continue;
-            DBusMenuItem item;
+            compositor::MenuItem item;
             item.id = id;
             it = m_items.emplace(id, std::move(item)).first;
             applyProperties(it->second, properties, true);
@@ -150,7 +150,7 @@ void DBusMenu::applyLayout(int32_t parentId, const dbus::Variant &layout)
         }
     }
 
-    DBusMenuItem &parent = m_items.at(parentId);
+    compositor::MenuItem &parent = m_items.at(parentId);
     parent.children = std::move(children);
     parent.childrenLoaded = true;
     menuUpdated(parentId);
@@ -182,7 +182,7 @@ static std::string cappedLabel(const std::string &label)
     return label.substr(0, size);
 }
 
-void DBusMenu::applyProperties(DBusMenuItem &item, const dbus::VariantMap &properties, bool created)
+void DBusMenu::applyProperties(compositor::MenuItem &item, const dbus::VariantMap &properties, bool created)
 {
     for (const auto &[key, value] : properties) {
         if (key == "type") {
@@ -191,9 +191,9 @@ void DBusMenu::applyProperties(DBusMenuItem &item, const dbus::VariantMap &prope
         } else if (key == "toggle-type") {
             if (created) {
                 const std::string type = value.value<std::string>();
-                item.toggle = type == "checkmark" ? DBusMenuItem::Toggle::Checkmark
-                        : type == "radio"         ? DBusMenuItem::Toggle::Radio
-                                                  : DBusMenuItem::Toggle::None;
+                item.toggle = type == "checkmark" ? compositor::MenuItem::Toggle::Checkmark
+                        : type == "radio"         ? compositor::MenuItem::Toggle::Radio
+                                                  : compositor::MenuItem::Toggle::None;
             }
         } else if (key == "children-display") {
             if (created)
@@ -220,7 +220,7 @@ void DBusMenu::applyProperties(DBusMenuItem &item, const dbus::VariantMap &prope
     }
 }
 
-void DBusMenu::resetProperty(DBusMenuItem &item, const std::string &key)
+void DBusMenu::resetProperty(compositor::MenuItem &item, const std::string &key)
 {
     if (key == "label")
         item.label.clear();
@@ -271,15 +271,6 @@ void DBusMenu::decodeIcon(int32_t id, const std::string &bytes)
                                            it->second.icon = icon->isNull() ? nullptr : icon;
                                            itemChanged(id);
                                        });
-}
-
-void DBusMenu::aboutToShow(int32_t id)
-{
-    if (!m_items.count(id))
-        return;
-    prepare(id);
-    // Some exporters act on AboutToShow and others only on "opened": both go.
-    opened(id);
 }
 
 void DBusMenu::prepare(int32_t id)

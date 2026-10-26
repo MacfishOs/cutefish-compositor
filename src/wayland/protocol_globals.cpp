@@ -15,6 +15,7 @@
 #include "wayland/input_method_launcher.h"
 #include "wayland/privileged_client.h"
 #include "wayland/protocols/application_menu.h"
+#include "wayland/protocols/main_menu.h"
 #include "wayland/protocols/cursor_shape.h"
 #include "wayland/protocols/cutefish_computer_control.h"
 #include "wayland/protocols/cutefish_shell.h"
@@ -105,7 +106,8 @@ bool ProtocolGlobals::registerCoreGlobals()
         || (m_deps.windowManager
             && !createXdgToplevelDragGlobal(display, m_deps.windowManager))
         || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
-        || !createWindowHintsGlobal(display, m_deps.windowManager) || !createAppMenuGlobal(display) || !createFractionalScaleGlobal(display)
+        || !createWindowHintsGlobal(display, m_deps.windowManager) || !createAppMenuGlobal(display)
+        || !createMainMenuGlobal(display) || !createFractionalScaleGlobal(display)
         || !createXdgOutputManagerGlobal(display) || !createViewporterGlobal(display)
         || (m_deps.windowManager
             && !createStatusItemGlobal(display, m_deps.windowManager->statusItems()))) {

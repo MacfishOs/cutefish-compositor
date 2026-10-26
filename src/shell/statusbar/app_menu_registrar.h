@@ -36,16 +36,8 @@ public:
 
     // The newest registration of the process: an application that opened a
     // second window registers again, and the last is the one in front.
-    // Window id 0 is the desktop's (the file manager registers its desktop's
-    // File/Edit so); its own browser windows must not show them.
     std::string serviceForPid(uint32_t pid) const;
     std::string pathForPid(uint32_t pid) const;
-    // The process's desktop menu, window id 0.
-    std::string desktopServiceForPid(uint32_t pid) const;
-    std::string desktopPathForPid(uint32_t pid) const;
-    // The newest registration of a menu at `path`, for an exporter whose
-    // windows' process cannot be told (a client on a socket pair).
-    std::string serviceForPath(const std::string &path) const;
 
     // windowId, service, path
     base::Signal<uint32_t, const std::string &, const std::string &> windowRegistered;
@@ -61,7 +53,7 @@ private:
 
     void registerWindow(const std::string &sender, uint32_t windowId, const std::string &path);
     void unregisterWindow(const std::string &sender, uint32_t windowId);
-    const Registration *newestFor(uint32_t pid, bool desktop) const;
+    const Registration *newestFor(uint32_t pid) const;
     void removeAt(size_t index);
     void serviceUnregistered(const std::string &service);
 

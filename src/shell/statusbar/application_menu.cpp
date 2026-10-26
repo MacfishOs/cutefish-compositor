@@ -7,6 +7,7 @@
 #include <set>
 
 #include "base/i18n.h"
+#include "compositor/menu_model.h"
 #include "shell/common/task_manager.h"
 #include "shell/common/task_windows.h"
 #include "shell/statusbar/app_menu_registrar.h"
@@ -113,7 +114,7 @@ ApplicationMenu::Import *ApplicationMenu::importFor(const std::string &service, 
     DBusMenu *menu = import.menu.get();
     import.subscriptions.push_back(menu->menuUpdated.connect([this, key](int32_t id) { onImported(key, id); }));
     import.subscriptions.push_back(menu->activationRequested.connect([this, menu](int32_t id) {
-        const DBusMenuItem *item = menu->item(id);
+        const compositor::MenuItem *item = menu->item(id);
         if (menu == m_menu && item && item->parent == 0)
             activationRequested(id);
     }));
@@ -148,7 +149,7 @@ void ApplicationMenu::onImported(const std::string &key, int32_t id)
     // Later changes to them arrive through the exporter's own signals.
     if (first) {
         for (int32_t child : import.menu->root().children) {
-            const DBusMenuItem *item = import.menu->item(child);
+            const compositor::MenuItem *item = import.menu->item(child);
             if (item && item->hasSubmenu)
                 import.menu->aboutToShow(child);
         }
@@ -236,6 +237,11 @@ void ApplicationMenu::update()
         return;
     }
 
+    if (const TaskWindow *client = m_windows.window(m_windows.activeWindow()); client && client->mainMenu) {
+        commit(title, client->mainMenu.get(), client->mainMenu);
+        return;
+    }
+
     std::string service;
     std::string path;
     menuAddressOf(m_windows.activeWindow(), &service, &path);
@@ -269,7 +275,8 @@ void ApplicationMenu::commitPending()
         commit(m_pendingTitle, it->second.menu.get());
 }
 
-void ApplicationMenu::commit(const std::string &title, DBusMenu *menu)
+void ApplicationMenu::commit(const std::string &title, compositor::MenuModel *menu,
+                             std::shared_ptr<compositor::MenuModel> held)
 {
     const bool shown = !title.empty();
     if (shown == m_shown && menu == m_menu) {
@@ -282,6 +289,9 @@ void ApplicationMenu::commit(const std::string &title, DBusMenu *menu)
     m_title = title;
     m_menu = menu;
     m_shown = shown;
+    // Released after the switch: the menus open on the previous one close
+    // there.
+    std::shared_ptr<compositor::MenuModel> previous = std::exchange(m_heldMenu, std::move(held));
     switched();
 }
 
@@ -295,6 +305,14 @@ std::string ApplicationMenu::applicationTitle() const
         return {};
     if (const DesktopEntryPtr entry = m_tasks.entryForWindow(window))
         return entry->name;
+    // The application's own menu carries its name.
+    if (client->mainMenu) {
+        for (int32_t id : client->mainMenu->root().children) {
+            const compositor::MenuItem *item = client->mainMenu->item(id);
+            if (item && item->role == compositor::MenuItem::Role::Application && !item->label.empty())
+                return compositor::plainMenuLabel(item->label);
+        }
+    }
     return client->title;
 }
 

@@ -6,11 +6,16 @@
 #define CUTEFISH_SHELL_COMMON_TASK_WINDOWS_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/geometry.h"
 #include "base/signal.h"
+
+namespace cutefish::compositor {
+class MenuModel;
+}
 
 namespace cutefish::ui {
 class Bitmap;
@@ -39,6 +44,9 @@ struct TaskWindow {
     // The dbusmenu the window's surface names through the appmenu protocol.
     std::string menuService;
     std::string menuPath;
+    // The main menu it shows through cutefish_main_menu_v1, which takes
+    // precedence; null for none.
+    std::shared_ptr<compositor::MenuModel> mainMenu;
 
     bool isTaskListWindow() const { return id != 0 && !skipTaskbar; }
 };

@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include "compositor/compositor.h"
+#include "compositor/menu_model.h"
 #include "compositor/surface.h"
 #include "dbus_test_client.h"
 #include "fake_renderer.h"
@@ -30,7 +31,7 @@
 #include "shell/shell_window.h"
 #include "shell/statusbar/bar_item.h"
 #include "shell/statusbar/battery.h"
-#include "shell/statusbar/dbus_menu_popup.h"
+#include "shell/statusbar/menu_popup.h"
 #include "shell/statusbar/device_usage.h"
 #include "shell/statusbar/status_bar.h"
 #include "shell/statusbar/status_bar_backdrop.h"
@@ -670,9 +671,9 @@ TEST_F(StatusBarViewTest, ApplicationItemsSitBeforeTheTrayOnWholePixels)
     EXPECT_FALSE(bar->statusItems()->isVisible());
 }
 
-TEST(DBusMenuPopupTest, LabelsLoseTheirMnemonics)
+TEST(MenuPopupTest, LabelsLoseTheirMnemonics)
 {
-    EXPECT_EQ("File", shell::DBusMenuPopup::plainLabel("_File"));
-    EXPECT_EQ("Save_As", shell::DBusMenuPopup::plainLabel("Save__As"));
-    EXPECT_EQ("Tom & Jerry", shell::DBusMenuPopup::plainLabel("Tom & Jerry"));
+    EXPECT_EQ("File", compositor::plainMenuLabel("_File"));
+    EXPECT_EQ("Save_As", compositor::plainMenuLabel("Save__As"));
+    EXPECT_EQ("Tom & Jerry", compositor::plainMenuLabel("Tom & Jerry"));
 }
