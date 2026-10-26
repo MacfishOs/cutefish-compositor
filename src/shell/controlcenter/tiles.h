@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "base/thread_pool.h"
@@ -60,12 +61,17 @@ public:
 protected:
     void layout() override;
     void paint(ui::Painter &painter) override;
+    void hoverChanged() override;
     void pointerPress(const ui::PointerEvent &event) override;
     void pointerRelease(const ui::PointerEvent &event) override;
 
 private:
     SvgIcon *m_icon;
     bool m_pressed = false;
+    std::unique_ptr<ui::Animation> m_hoverAnim;
+    double m_hoverProgress = 0.0;
+    double m_fromHover = 0.0;
+    double m_targetHover = 0.0;
 };
 
 // CardItem: represents either a 2x2 Top Card or a Round Quick Toggle.
@@ -104,6 +110,7 @@ public:
 protected:
     void layout() override;
     void paint(ui::Painter &painter) override;
+    void hoverChanged() override;
     void pointerPress(const ui::PointerEvent &event) override;
     void pointerRelease(const ui::PointerEvent &event) override;
 
@@ -123,6 +130,21 @@ private:
     ui::Label *m_title;
     ui::Label *m_status;
     base::Timer m_holdTimer;
+
+    std::unique_ptr<ui::Animation> m_checkAnim;
+    double m_checkProgress = 0.0;
+    double m_fromCheck = 0.0;
+    double m_targetCheck = 0.0;
+
+    std::unique_ptr<ui::Animation> m_hoverAnim;
+    double m_hoverProgress = 0.0;
+    double m_fromHover = 0.0;
+    double m_targetHover = 0.0;
+
+    std::unique_ptr<ui::Animation> m_pressAnim;
+    double m_pressProgress = 0.0;
+    double m_fromPress = 0.0;
+    double m_targetPress = 0.0;
 };
 
 // An icon button for media playback.
@@ -152,6 +174,10 @@ private:
     ui::Color m_surface;
     bool m_pressed = false;
     bool m_inside = false;
+    std::unique_ptr<ui::Animation> m_hoverAnim;
+    double m_hoverProgress = 0.0;
+    double m_fromHover = 0.0;
+    double m_targetHover = 0.0;
 };
 
 // MPRIS Media Card (76px height)
@@ -192,6 +218,8 @@ private:
     bool m_artReady = false;
     base::Job m_downloadJob;
     std::string m_downloadingUrl;
+    std::unordered_set<std::string> m_failedUrls;
+    std::unique_ptr<ui::Animation> m_artFade;
 };
 
 // DeviceUsersTile (privacy dot applications)

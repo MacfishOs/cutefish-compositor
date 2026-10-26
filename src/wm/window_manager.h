@@ -261,6 +261,10 @@ public:
         m_forceQuitProcess = std::move(forceQuit);
     }
 
+    std::function<void(Window*, const base::PointF&)> showTilePopover;
+    std::function<void()> hideTilePopover;
+    std::function<void(bool)> notifyTileButtonHover;
+
     // How the user is offered force quit for a window that stopped answering
     // (the shell's not-responding sheets); returns whether it was offered.
     void setNotRespondingPrompt(std::function<bool(Window *)> prompt)

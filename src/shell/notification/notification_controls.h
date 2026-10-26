@@ -89,6 +89,7 @@ private:
     bool m_hovered = false;
     bool m_pressed = false;
     ui::Label *m_label = nullptr;
+    std::unique_ptr<Tween> m_hoverFade;
     std::unique_ptr<Tween> m_progress;
     base::Subscription m_languageChanged;
 };
@@ -118,6 +119,7 @@ private:
     bool m_hovered = false;
     bool m_pressed = false;
     ui::Label *m_label = nullptr;
+    std::unique_ptr<Tween> m_hoverFade;
 };
 
 // The fill of a pill button on its surface (PillButton, ClearButton): light

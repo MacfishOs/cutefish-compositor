@@ -82,7 +82,11 @@ std::string CaptureNotifier::soundFile(const std::string &event)
 
 void CaptureNotifier::playShutter()
 {
-    const std::string file = soundFile("screen-capture");
+    std::string file = soundFile("camera-shutter");
+    if (file.empty())
+        file = soundFile("screen-capture");
+    if (file.empty() && std::filesystem::exists("/usr/share/sounds/freedesktop/stereo/camera-shutter.oga"))
+        file = "/usr/share/sounds/freedesktop/stereo/camera-shutter.oga";
     if (file.empty())
         return;
     if (playSound) {

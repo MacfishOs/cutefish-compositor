@@ -5,10 +5,13 @@
 #include "shell/osd/osd.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
 
 #include "base/dbus.h"
 #include "base/logging.h"
+#include "base/process.h"
 #include "core/main_loop.h"
 #include "shell/osd/level_track.h"
 #include "shell/shell_data.h"
@@ -144,6 +147,17 @@ void Osd::present(Kind kind)
     applyGlass();
     m_window->show();
     m_hideTimer.start();
+
+    if (kind == Kind::Volume && !muted()) {
+        static auto lastSoundTime = std::chrono::steady_clock::time_point{};
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastSoundTime >= std::chrono::milliseconds(90)) {
+            lastSoundTime = now;
+            if (std::filesystem::exists("/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga")) {
+                base::Process::startDetached("pw-play", {"/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga"});
+            }
+        }
+    }
 }
 
 void Osd::hide()

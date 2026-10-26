@@ -68,7 +68,7 @@ std::unique_ptr<EglRenderTarget> EglRenderer::createTarget(gbm_surface *surface,
         return nullptr;
     }
     m_lastTarget = target.get();
-    eglSwapInterval(m_context->display(), 1);
+    eglSwapInterval(m_context->display(), 0);
     return target;
 }
 

@@ -14,7 +14,7 @@ namespace cutefish::accelerators {
 
 namespace {
 
-constexpr std::array<std::pair<AcceleratorAction, const char *>, 47> kActionNames = {{
+constexpr std::array<std::pair<AcceleratorAction, const char *>, 51> kActionNames = {{
         {AcceleratorAction::ToggleAppList, "toggle-app-list"},
         {AcceleratorAction::ToggleSpotlight, "toggle-spotlight"},
         {AcceleratorAction::LockScreen, "lock-screen"},
@@ -63,6 +63,10 @@ constexpr std::array<std::pair<AcceleratorAction, const char *>, 47> kActionName
         {AcceleratorAction::BrightnessUp, "brightness-up"},
         {AcceleratorAction::KeyboardBrightnessDown, "keyboard-brightness-down"},
         {AcceleratorAction::KeyboardBrightnessUp, "keyboard-brightness-up"},
+        {AcceleratorAction::MediaPlayPause, "media-play-pause"},
+        {AcceleratorAction::MediaNextTrack, "media-next-track"},
+        {AcceleratorAction::MediaPrevTrack, "media-prev-track"},
+        {AcceleratorAction::MediaStop, "media-stop"},
 }};
 
 } // namespace

@@ -95,6 +95,10 @@ void brightnessDown(const CommandContext &context);
 void brightnessUp(const CommandContext &context);
 void keyboardBrightnessDown(const CommandContext &context);
 void keyboardBrightnessUp(const CommandContext &context);
+void mediaPlayPause(const CommandContext &context);
+void mediaNextTrack(const CommandContext &context);
+void mediaPrevTrack(const CommandContext &context);
+void mediaStop(const CommandContext &context);
 
 } // namespace commands
 } // namespace cutefish::accelerators

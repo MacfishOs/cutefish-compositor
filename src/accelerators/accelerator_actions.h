@@ -84,6 +84,12 @@ enum class AcceleratorAction : uint32_t {
     BrightnessUp,
     KeyboardBrightnessDown,
     KeyboardBrightnessUp,
+
+    // Media controls, performed by the shell.
+    MediaPlayPause,
+    MediaNextTrack,
+    MediaPrevTrack,
+    MediaStop,
 };
 
 using AcceleratorActionId = uint32_t;

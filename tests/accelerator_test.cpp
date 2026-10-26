@@ -89,6 +89,7 @@ public:
     void startCaptureMode() override { captures.push_back("capture-mode"); }
     void stopScreenRecording() override { captures.push_back("stop-recording"); }
     void toggleClipboardHistory() override { ++clipboardHistoryToggles; }
+    void toggleSpotlight() override { ++spotlightToggles; }
     void volumeDown() override { levels.push_back("volume-down"); }
     void volumeUp() override { levels.push_back("volume-up"); }
     void toggleMute() override { levels.push_back("mute"); }
@@ -97,11 +98,17 @@ public:
     void brightnessUp() override { levels.push_back("brightness-up"); }
     void keyboardBrightnessDown() override { levels.push_back("keyboard-brightness-down"); }
     void keyboardBrightnessUp() override { levels.push_back("keyboard-brightness-up"); }
+    void mediaPlayPause() override { media.push_back("play-pause"); }
+    void mediaNextTrack() override { media.push_back("next-track"); }
+    void mediaPrevTrack() override { media.push_back("prev-track"); }
+    void mediaStop() override { media.push_back("stop"); }
 
     int appListToggles = 0;
     int clipboardHistoryToggles = 0;
+    int spotlightToggles = 0;
     std::vector<std::string> captures;
     std::vector<std::string> levels;
+    std::vector<std::string> media;
 };
 
 // Records what reaches a client keyboard.
@@ -531,7 +538,7 @@ TEST(AcceleratorConfiguration, EachConventionKeepsItsOwnOverrides)
     const auto maximize = toActionId(AcceleratorAction::ToggleMaximized);
     const auto launcher = toActionId(AcceleratorAction::ToggleAppList);
     const Accelerator pcBinding(XKB_KEY_k, MetaDown | ControlDown);
-    const Accelerator commandBinding(XKB_KEY_space, MetaDown);
+    const Accelerator commandBinding(XKB_KEY_p, MetaDown);
 
     AcceleratorConfiguration configuration(file);
     configuration.initialize();
@@ -815,10 +822,15 @@ TEST_F(AcceleratorTest, ConsumedKeysNeverReachTheClientAndOthersDo)
                                              "keyboard-brightness-up"};
     EXPECT_EQ(levels, delegate.levels);
 
-    // Media keys have no action, so they belong to the client.
+    // Media keys are the system's and dispatch to the delegate.
     keyboardDelegate->keys.clear();
     tap(KEY_PLAYPAUSE);
-    EXPECT_EQ(2u, keyboardDelegate->keys.size());
+    tap(KEY_NEXTSONG);
+    tap(KEY_PREVIOUSSONG);
+    tap(KEY_STOPCD);
+    EXPECT_TRUE(keyboardDelegate->keys.empty());
+    const std::vector<std::string> media = {"play-pause", "next-track", "prev-track", "stop"};
+    EXPECT_EQ(media, delegate.media);
 }
 
 TEST_F(AcceleratorTest, HeldVolumeAndBrightnessKeysRepeatAtTheKeyboardRate)
@@ -1031,13 +1043,13 @@ TEST_F(AcceleratorTest, UnderTheCommandConventionApplicationsGetCommandAsCtrl)
             {KEY_LEFTCTRL, true}, {KEY_C, true}, {KEY_C, false}, {KEY_LEFTCTRL, false}};
     EXPECT_EQ(expected, keyboardDelegate->keys);
 
-    // The launcher has no default here; Command+Space is the application's.
+    // The launcher has no default here; Command+B is the application's.
     keyboardDelegate->keys.clear();
-    chord({KEY_LEFTALT}, KEY_SPACE);
+    chord({KEY_LEFTALT}, KEY_B);
     EXPECT_EQ(0, delegate.appListToggles);
     const std::vector<std::pair<uint32_t, bool>> space = {{KEY_LEFTCTRL, true},
-                                                          {KEY_SPACE, true},
-                                                          {KEY_SPACE, false},
+                                                          {KEY_B, true},
+                                                          {KEY_B, false},
                                                           {KEY_LEFTCTRL, false}};
     EXPECT_EQ(space, keyboardDelegate->keys);
 
@@ -1800,15 +1812,15 @@ TEST_F(AcceleratorTest, ServiceValidatesConfirmsAndReportsConflicts)
     // An action without a default starts empty and takes a binding like any
     // other.
     EXPECT_EQ("success",
-              parse(service.addAccelerator("toggle-app-list", KEY_SPACE, 0,
+              parse(service.addAccelerator("toggle-app-list", KEY_P, 0,
                                            MetaDown))
                       ["result"].toString());
-    chord({KEY_LEFTMETA}, KEY_SPACE);
+    chord({KEY_LEFTMETA}, KEY_P);
     EXPECT_EQ(1, delegate.appListToggles);
     EXPECT_EQ("success",
               parse(service.restoreDefault("toggle-app-list"))
                       ["result"].toString());
-    chord({KEY_LEFTMETA}, KEY_SPACE);
+    chord({KEY_LEFTMETA}, KEY_P);
     EXPECT_EQ(1, delegate.appListToggles);
 
     // The launcher's default is Ash's lone Meta tap: it fires on release, only
@@ -1894,7 +1906,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     const auto reply = proxy.call("accelerators");
     ASSERT_FALSE(reply.isError()) << reply.error().message;
     const base::json::Value actions = parse(reply.value<std::string>().value_or(""))["actions"];
-    EXPECT_EQ(46u, actions.size());
+    EXPECT_EQ(51u, actions.size());
     bool sawMaximize = false;
     bool sawOverview = false;
     for (const base::json::Value &action : actions.toArray()) {

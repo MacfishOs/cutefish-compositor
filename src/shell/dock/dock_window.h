@@ -98,6 +98,8 @@ public:
     void iconMenuRequested(DockIcon *icon);
     // Hides the tooltip, as leaving the dock does.
     void hideTooltip();
+    void updateHoverMagnification(const ui::PointF &pointerPos);
+    void resetHoverMagnification();
 
 private:
     class Panel;
@@ -241,6 +243,7 @@ private:
     std::vector<uint64_t> m_landed;
     std::map<uint64_t, base::Rect> m_sentTargets;
     base::Timer m_strutSettle;
+    base::Timer m_magnificationExitTimer;
     std::vector<base::Subscription> m_subscriptions;
 };
 

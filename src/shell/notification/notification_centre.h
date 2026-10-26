@@ -158,6 +158,8 @@ private:
     base::Timer m_motionTimer;
     base::Timer m_removalTimer;
     base::Timer m_timeTimer;
+    std::unique_ptr<Tween> m_openAnim;
+    std::unique_ptr<Tween> m_emptyFade;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
     std::vector<base::Subscription> m_subscriptions;
 };

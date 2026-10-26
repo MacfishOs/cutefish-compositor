@@ -189,11 +189,13 @@ public:
     ActionButton(NotificationCard *card, std::string key, std::string label)
         : m_card(card)
         , m_key(std::move(key))
+        , m_hoverFade(card->window(), std::chrono::milliseconds(140), outCubic)
     {
         m_label = addChild<ui::Label>(std::move(label));
         m_label->setWeight(500);
         m_label->setTextAlignment(ui::Label::TextAlignment::Center);
         m_label->setVerticallyCentered(true);
+        m_hoverFade.onChanged = [this] { requestPaint(); };
     }
 
     bool acceptsPointer() const override { return true; }
@@ -202,13 +204,13 @@ protected:
     void pointerEnter() override
     {
         m_hovered = true;
-        requestPaint();
+        m_hoverFade.setTarget(1.0, true);
     }
 
     void pointerLeave() override
     {
         m_hovered = false;
-        requestPaint();
+        m_hoverFade.setTarget(0.0, true);
     }
 
     void pointerPress(const ui::PointerEvent &event) override
@@ -238,8 +240,20 @@ protected:
     void paint(ui::Painter &painter) override
     {
         const ui::RectF rect = localRect();
-        painter.drawRoundedRect(rect, {rect.height / 2, 0, ui::Corners::Circular},
-                                m_card->controlTint(m_pressed ? 2 : m_hovered ? 1 : 0));
+        const ui::Color base = m_card->controlTint(0);
+        const ui::Color active = m_card->controlTint(m_pressed ? 2 : 1);
+        ui::Color tint = base;
+        if (m_pressed) {
+            tint = active;
+        } else if (m_hoverFade.value() > 0) {
+            const double t = std::clamp(m_hoverFade.value(), 0.0, 1.0);
+            const auto interp = [t](uint8_t a, uint8_t b) -> uint8_t {
+                return static_cast<uint8_t>(std::lround(a + (b - a) * t));
+            };
+            tint = ui::Color {interp(base.r, active.r), interp(base.g, active.g), interp(base.b, active.b),
+                              interp(base.a, active.a)};
+        }
+        painter.drawRoundedRect(rect, {rect.height / 2, 0, ui::Corners::Circular}, tint);
     }
 
 private:
@@ -248,6 +262,7 @@ private:
     ui::Label *m_label = nullptr;
     bool m_hovered = false;
     bool m_pressed = false;
+    Tween m_hoverFade;
 };
 
 NotificationCard::NotificationCard(ui::Window *window)

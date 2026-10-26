@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "base/timer.h"
+#include "ui/animation.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -43,7 +44,8 @@ public:
     double windowHeight(double scale) const;
 
     SubPanel subPanel() const { return m_subPanel; }
-    void setSubPanel(SubPanel panel) { m_subPanel = panel; requestLayout(); refresh(); }
+    void setSubPanel(SubPanel panel);
+    void startEntranceAnimation();
 
     // Top 2x2 Cards
     CardItem *wirelessCard() const { return m_wireless; }
@@ -124,6 +126,9 @@ private:
     bool m_locationEnabled = false;
     SubPanel m_subPanel = SubPanel::Main;
     std::vector<PanelRow*> m_subRows;
+    std::unique_ptr<ui::Animation> m_subPanelAnim;
+    std::unique_ptr<ui::Animation> m_entranceAnim;
+    bool m_entranceDone = false;
 };
 
 } // namespace cutefish::shell

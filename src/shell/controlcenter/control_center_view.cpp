@@ -59,9 +59,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
     m_backButton->setIcon(panel::artwork("down", panel::dark()));
     m_backButton->setVisible(false);
     m_backButton->onClicked = [this] {
-        m_subPanel = SubPanel::Main;
-        requestLayout();
-        refresh();
+        setSubPanel(SubPanel::Main);
     };
 
     m_users = addChild<DeviceUsersTile>();
@@ -82,10 +80,8 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
         m_services.openSettings({"-m", "wlan"});
     };
     m_wireless->onChevronClicked = [this] {
-        m_subPanel = SubPanel::Wifi;
         m_services.requestScan();
-        requestLayout();
-        refresh();
+        setSubPanel(SubPanel::Wifi);
     };
 
     m_bluetooth = addChild<CardItem>();
@@ -101,9 +97,7 @@ ControlCenterView::ControlCenterView(ControlCenterServices &services)
         m_services.openSettings({"-m", "bluetooth"});
     };
     m_bluetooth->onChevronClicked = [this] {
-        m_subPanel = SubPanel::Bluetooth;
-        requestLayout();
-        refresh();
+        setSubPanel(SubPanel::Bluetooth);
     };
 
     m_wirelessShare = addChild<CardItem>();
@@ -491,6 +485,61 @@ void ControlCenterView::refresh()
         onHeightChanged();
 }
 
+void ControlCenterView::startEntranceAnimation()
+{
+    if (!window())
+        return;
+    setOpacity(0.0);
+    if (!m_entranceAnim) {
+        m_entranceAnim = std::make_unique<ui::Animation>(window());
+        m_entranceAnim->setDuration(std::chrono::milliseconds(180));
+        m_entranceAnim->setEasing(ui::Animation::Easing::OutCubic);
+        m_entranceAnim->onUpdate = [this](double val) {
+            setOpacity(val);
+        };
+    }
+    m_entranceAnim->stop();
+    m_entranceAnim->start();
+}
+
+void ControlCenterView::setSubPanel(SubPanel panel)
+{
+    if (m_subPanel == panel)
+        return;
+    m_subPanel = panel;
+    requestLayout();
+    refresh();
+
+    if (window()) {
+        if (!m_subPanelAnim) {
+            m_subPanelAnim = std::make_unique<ui::Animation>(window());
+            m_subPanelAnim->setDuration(std::chrono::milliseconds(180));
+            m_subPanelAnim->setEasing(ui::Animation::Easing::OutCubic);
+            m_subPanelAnim->onUpdate = [this](double val) {
+                if (m_subPanel == SubPanel::Main) {
+                    for (ui::View *v : std::initializer_list<ui::View*>{m_wireless, m_bluetooth, m_wirelessShare,
+                                        m_kdeConnect, m_media, m_brightness, m_sound,
+                                        m_powerModeToggle, m_nightShiftToggle, m_captureToggle,
+                                        m_doNotDisturbToggle, m_darkModeToggle, m_keyLightToggle,
+                                        m_cameraToggle, m_logoutToggle, m_restartToggle, m_powerOffToggle}) {
+                        if (v && v->isVisible())
+                            v->setOpacity(val);
+                    }
+                } else {
+                    for (PanelRow *row : m_subRows) {
+                        if (row && row->isVisible())
+                            row->setOpacity(val);
+                    }
+                    if (m_backButton)
+                        m_backButton->setOpacity(val);
+                }
+            };
+        }
+        m_subPanelAnim->stop();
+        m_subPanelAnim->start();
+    }
+}
+
 double ControlCenterView::layoutHeight() const
 {
     if (m_subPanel != SubPanel::Main) {
@@ -525,6 +574,11 @@ double ControlCenterView::windowHeight(double scale) const
 
 void ControlCenterView::layout()
 {
+    if (!m_entranceDone && window()) {
+        m_entranceDone = true;
+        startEntranceAnimation();
+    }
+
     if (m_darkModeShown != ui::Theme::current().darkMode) {
         m_darkModeShown = ui::Theme::current().darkMode;
         const bool dark = m_darkModeShown;

@@ -17,6 +17,10 @@
 
 namespace cutefish::shell {
 
+// Normalizes MPRIS art URLs (e.g. converting deprecated Spotify endpoints
+// or URI schemes to working CDN URLs, trimming whitespace).
+std::string normalizeMprisArtUrl(const std::string &rawUrl);
+
 // One media player on the session bus, org.mpris.MediaPlayer2.<name>: its
 // MediaPlayer2 and MediaPlayer2.Player properties, read once and kept from
 // PropertiesChanged, and the calls the control centre's media controls make.
@@ -58,6 +62,7 @@ public:
     void playPause();
     void next();
     void previous();
+    void stop();
 
     // Any property changed.
     base::Signal<> changed;
@@ -97,6 +102,7 @@ public:
     MprisManager &operator=(const MprisManager &) = delete;
 
     MprisPlayer *current() const { return m_current.get(); }
+    std::shared_ptr<MprisPlayer> activePlayer() const { return choose(); }
     std::string currentService() const;
     // The shown player first, then the most recently active.
     std::vector<std::string> availableServices() const;

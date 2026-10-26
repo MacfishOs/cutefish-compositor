@@ -9,6 +9,7 @@
 
 #include "compositor/compositor.h"
 #include "core/logging.h"
+#include "core/main_loop.h"
 #include "decoration/decoration_node.h"
 #include "decoration/decoration_theme.h"
 #include "decoration/text.h"
@@ -47,10 +48,17 @@ constexpr int kDoubleTapSlop = 20;
 Decoration::Decoration(wm::Window *window, Theme *theme)
     : m_window(window)
     , m_theme(theme)
+    , m_tileTimer(core::mainLoop())
 {
     m_buttons.emplace_back(CaptionButtonType::Close);
     m_buttons.emplace_back(CaptionButtonType::Minimize);
     m_buttons.emplace_back(CaptionButtonType::Maximize);
+
+    m_tileTimer.setSingleShot(true);
+    m_tileTimer.setInterval(std::chrono::milliseconds(380));
+    m_tileTimer.onTimeout = [this] {
+        showTilePopover();
+    };
 
     if (scene::Node *windowNode = m_window->visualNode()) {
         auto node = std::make_unique<DecorationNode>(this, m_theme);
@@ -154,10 +162,8 @@ base::Rect Decoration::captionArea() const
     const base::Rect area = titleBarRect();
     int buttonsWidth = 0;
     if (!m_buttons.empty()) {
-        // Mac style buttons: 14px size with 8px spacing, starting at 12px
-        buttonsWidth = static_cast<int>(m_buttons.size()) * 14
-                + (static_cast<int>(m_buttons.size()) - 1) * 8
-                + 12;
+        // Mac style buttons: 20px per button (14px circle centered), starting at 12px
+        buttonsWidth = static_cast<int>(m_buttons.size()) * 20 + 12;
     }
     return area.adjusted(buttonsWidth + metrics.captionMargin, 0, -metrics.captionMargin, 0);
 }
@@ -168,11 +174,11 @@ void Decoration::layout()
     const base::Rect titleBar = titleBarRect();
 
     int left = titleBar.left() + 12;
-    const int buttonSize = 18;
+    const int buttonSize = 20;
     const int top = titleBar.top() + std::max(0, (titleBar.height() - buttonSize) / 2);
     for (CaptionButton &button : m_buttons) {
         button.setGeometry(base::Rect(left, top, buttonSize, buttonSize));
-        left += buttonSize + 8;
+        left += buttonSize;
     }
 }
 
@@ -264,6 +270,18 @@ bool Decoration::setHoveredButton(int index)
     m_hoveredButton = index;
     if (m_hoveredButton >= 0)
         m_buttons[m_hoveredButton].setHovered(true);
+
+    if (m_hoveredButton >= 0 && m_buttons[m_hoveredButton].type() == CaptionButtonType::Maximize) {
+        if (!m_tileTimer.isActive())
+            m_tileTimer.start();
+        if (m_window && m_window->manager() && m_window->manager()->notifyTileButtonHover)
+            m_window->manager()->notifyTileButtonHover(true);
+    } else {
+        m_tileTimer.stop();
+        if (m_window && m_window->manager() && m_window->manager()->notifyTileButtonHover)
+            m_window->manager()->notifyTileButtonHover(false);
+    }
+
     scheduleRepaint();
     return true;
 }
@@ -344,6 +362,7 @@ void Decoration::onTouchCancel()
 
 void Decoration::cancelPress()
 {
+    m_tileTimer.stop();
     if (m_pressedButton < 0)
         return;
     m_pressTouch.reset();
@@ -359,6 +378,9 @@ bool Decoration::press(input::Timestamp timestamp, const base::PointF &location,
     // One press at a time holds a button, whichever device made it.
     if (m_pressedButton >= 0)
         return true;
+
+    if (m_window && m_window->manager() && m_window->manager()->hideTilePopover)
+        m_window->manager()->hideTilePopover();
 
     const base::Point framePoint = toFrame(location);
     const int index = buttonIndexAt(framePoint);
@@ -415,7 +437,23 @@ void Decoration::releaseButton(const base::Point &framePoint)
 
 void Decoration::onPointerLeave()
 {
+    m_tileTimer.stop();
     setHoveredButton(-1);
+    if (m_window && m_window->manager() && m_window->manager()->notifyTileButtonHover)
+        m_window->manager()->notifyTileButtonHover(false);
+}
+
+void Decoration::showTilePopover()
+{
+    if (!m_window || m_hoveredButton < 0 || size_t(m_hoveredButton) >= m_buttons.size()
+        || m_buttons[m_hoveredButton].type() != CaptionButtonType::Maximize)
+        return;
+
+    const base::Rect btnGeom = m_buttons[m_hoveredButton].geometry();
+    const base::PointF center(m_window->bounds().x() + btnGeom.x() + btnGeom.width() / 2.0,
+                              m_window->bounds().y() + btnGeom.y() + btnGeom.height() / 2.0);
+    if (m_window->manager() && m_window->manager()->showTilePopover)
+        m_window->manager()->showTilePopover(m_window, center);
 }
 
 void Decoration::runButtonAction(CaptionButtonType type)

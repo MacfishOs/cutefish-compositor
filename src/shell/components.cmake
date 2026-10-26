@@ -144,6 +144,8 @@ target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-launcher-view)
 add_library(cutefish-shell-spotlight STATIC
     src/shell/spotlight/spotlight.cpp
     src/shell/spotlight/spotlight.h
+    src/shell/spotlight/spotlight_evaluator.cpp
+    src/shell/spotlight/spotlight_evaluator.h
     src/shell/spotlight/spotlight_view.cpp
     src/shell/spotlight/spotlight_view.h
     src/shell/spotlight/spotlight_window.cpp
@@ -208,3 +210,11 @@ target_link_libraries(cutefish-shell-statusbar-view PUBLIC cutefish-shell cutefi
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-statusbar-view)
 # The status bar's menu bar.
 include(src/shell/menubar/menubar.cmake)
+
+# Window Tiling Popover (macOS Sequoia Green Button Hover Popover)
+add_library(cutefish-shell-tiling STATIC
+    src/shell/tiling/window_tile_popover.cpp
+    src/shell/tiling/window_tile_popover.h
+)
+target_link_libraries(cutefish-shell-tiling PUBLIC cutefish-shell)
+target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-tiling)

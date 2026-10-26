@@ -17,6 +17,7 @@
 #include "base/thread_pool.h"
 #include "base/url.h"
 #include "shell/controlcenter/panel_style.h"
+#include "shell/statusbar/mpris.h"
 #include "ui/icon.h"
 #include "ui/geometry.h"
 #include "ui/image_view.h"
@@ -31,6 +32,15 @@ namespace cutefish::shell {
 static constexpr std::chrono::milliseconds kPressAndHold {800};
 static constexpr ui::Color kLightArtwork = ui::Color::rgb(0x383838);
 static constexpr ui::Color kWhite = ui::Color::rgb(0xFFFFFF);
+
+static ui::Color blendColors(ui::Color c1, ui::Color c2, double t)
+{
+    t = std::clamp(t, 0.0, 1.0);
+    const auto interp = [t](uint8_t a, uint8_t b) -> uint8_t {
+        return static_cast<uint8_t>(std::lround(a + (b - a) * t));
+    };
+    return ui::Color {interp(c1.r, c2.r), interp(c1.g, c2.g), interp(c1.b, c2.b), interp(c1.a, c2.a)};
+}
 
 void SvgIcon::setFile(std::string file)
 {
@@ -102,6 +112,7 @@ void SvgIcon::paint(ui::Painter &painter)
 HeaderButton::HeaderButton()
 {
     m_icon = addChild<SvgIcon>();
+    setTracksHover(true);
 }
 
 void HeaderButton::setIcon(std::string file)
@@ -114,10 +125,39 @@ void HeaderButton::layout()
     m_icon->setGeometry({8, 8, 16, 16});
 }
 
+void HeaderButton::hoverChanged()
+{
+    const bool hovered = isHovered();
+    if (window()) {
+        if (!m_hoverAnim) {
+            m_hoverAnim = std::make_unique<ui::Animation>(window());
+            m_hoverAnim->setDuration(std::chrono::milliseconds(150));
+            m_hoverAnim->setEasing(ui::Animation::Easing::OutCubic);
+            m_hoverAnim->onUpdate = [this](double val) {
+                m_hoverProgress = m_fromHover + (m_targetHover - m_fromHover) * val;
+                requestPaint();
+            };
+        }
+        m_hoverAnim->stop();
+        m_fromHover = m_hoverProgress;
+        m_targetHover = hovered ? 1.0 : 0.0;
+        m_hoverAnim->start();
+    } else {
+        m_hoverProgress = hovered ? 1.0 : 0.0;
+        m_targetHover = m_hoverProgress;
+        requestPaint();
+    }
+}
+
 void HeaderButton::paint(ui::Painter &painter)
 {
     const ui::RectF rect = localRect();
-    const ui::Color bg = m_pressed ? panel::rgba(1, 1, 1, 0.25) : panel::inactiveCircleColor();
+    const ui::Color base = panel::inactiveCircleColor();
+    ui::Color bg = base;
+    if (m_hoverProgress > 0)
+        bg = panel::shade(base, 0.12 * m_hoverProgress);
+    if (m_pressed)
+        bg = panel::rgba(1, 1, 1, 0.25);
     painter.fillRoundedRect(rect, rect.height / 2.0, bg);
 }
 
@@ -146,6 +186,7 @@ void HeaderButton::pointerRelease(const ui::PointerEvent &event)
 // CardItem
 CardItem::CardItem()
 {
+    setTracksHover(true);
     m_svg = addChild<SvgIcon>();
     m_glyph = addChild<ui::Icon>(std::string(), 16);
     m_glyph->setVisible(false);
@@ -199,11 +240,53 @@ void CardItem::setGlyph(std::string name)
 
 void CardItem::setChecked(bool checked)
 {
-    if (checked == m_checked)
+    if (checked == m_checked && m_checkProgress == (checked ? 1.0 : 0.0))
         return;
     m_checked = checked;
     updateIcon();
+    if (window()) {
+        if (!m_checkAnim) {
+            m_checkAnim = std::make_unique<ui::Animation>(window());
+            m_checkAnim->setDuration(std::chrono::milliseconds(200));
+            m_checkAnim->setEasing(ui::Animation::Easing::OutCubic);
+            m_checkAnim->onUpdate = [this](double val) {
+                m_checkProgress = m_fromCheck + (m_targetCheck - m_fromCheck) * val;
+                requestPaint();
+            };
+        }
+        m_checkAnim->stop();
+        m_fromCheck = m_checkProgress;
+        m_targetCheck = checked ? 1.0 : 0.0;
+        m_checkAnim->start();
+    } else {
+        m_checkProgress = checked ? 1.0 : 0.0;
+        m_targetCheck = m_checkProgress;
+    }
     requestPaint();
+}
+
+void CardItem::hoverChanged()
+{
+    const bool hovered = isHovered();
+    if (window()) {
+        if (!m_hoverAnim) {
+            m_hoverAnim = std::make_unique<ui::Animation>(window());
+            m_hoverAnim->setDuration(std::chrono::milliseconds(160));
+            m_hoverAnim->setEasing(ui::Animation::Easing::OutCubic);
+            m_hoverAnim->onUpdate = [this](double val) {
+                m_hoverProgress = m_fromHover + (m_targetHover - m_fromHover) * val;
+                requestPaint();
+            };
+        }
+        m_hoverAnim->stop();
+        m_fromHover = m_hoverProgress;
+        m_targetHover = hovered ? 1.0 : 0.0;
+        m_hoverAnim->start();
+    } else {
+        m_hoverProgress = hovered ? 1.0 : 0.0;
+        m_targetHover = m_hoverProgress;
+        requestPaint();
+    }
 }
 
 void CardItem::setActiveColor(ui::Color color)
@@ -305,23 +388,28 @@ void CardItem::layout()
 
 void CardItem::paint(ui::Painter &painter)
 {
+    const ui::Color inactive = panel::inactiveCircleColor();
+    ui::Color circleBg = blendColors(inactive, m_activeColor, m_checkProgress);
+    if (m_hoverProgress > 0)
+        circleBg = panel::shade(circleBg, (m_mode == Mode::TopCard ? 0.08 : 0.12) * m_hoverProgress);
+    if (m_pressProgress > 0)
+        circleBg = panel::shade(circleBg, 0.15 * m_pressProgress);
+
     if (m_mode == Mode::TopCard) {
         panel::paintTile(painter, localRect());
+        if (m_hoverProgress > 0) {
+            const ui::Color hoverTile = panel::shade(panel::cardBgColor(), 0.04 * m_hoverProgress);
+            painter.fillRoundedRect(localRect(), panel::kTileRadius, hoverTile, ui::Corners::Continuous);
+        }
 
         const double circleSize = 40.0;
         const ui::RectF slot {10, (geometry().height - circleSize) / 2.0, circleSize, circleSize};
-        ui::Color circleBg = m_checked ? m_activeColor : panel::inactiveCircleColor();
-        if (m_pressed)
-            circleBg = panel::shade(circleBg, 0.15);
         painter.fillRoundedRect(slot, circleSize / 2.0, circleBg);
     } else {
         // QuickToggle circle button
         const double circleSize = 42.0;
         const double circleX = (geometry().width - circleSize) / 2.0;
         const ui::RectF circleRect {circleX, 0, circleSize, circleSize};
-        ui::Color circleBg = m_checked ? m_activeColor : panel::inactiveCircleColor();
-        if (m_pressed)
-            circleBg = panel::shade(circleBg, 0.15);
         painter.fillRoundedRect(circleRect, circleSize / 2.0, circleBg);
     }
 }
@@ -333,6 +421,24 @@ void CardItem::pointerPress(const ui::PointerEvent &event)
     m_pressed = true;
     m_held = false;
     m_holdTimer.start();
+    if (window()) {
+        if (!m_pressAnim) {
+            m_pressAnim = std::make_unique<ui::Animation>(window());
+            m_pressAnim->setDuration(std::chrono::milliseconds(120));
+            m_pressAnim->setEasing(ui::Animation::Easing::OutCubic);
+            m_pressAnim->onUpdate = [this](double val) {
+                m_pressProgress = m_fromPress + (m_targetPress - m_fromPress) * val;
+                requestPaint();
+            };
+        }
+        m_pressAnim->stop();
+        m_fromPress = m_pressProgress;
+        m_targetPress = 1.0;
+        m_pressAnim->start();
+    } else {
+        m_pressProgress = 1.0;
+        m_targetPress = 1.0;
+    }
     requestPaint();
 }
 
@@ -342,6 +448,15 @@ void CardItem::pointerRelease(const ui::PointerEvent &event)
         return;
     m_pressed = false;
     m_holdTimer.stop();
+    if (window() && m_pressAnim) {
+        m_pressAnim->stop();
+        m_fromPress = m_pressProgress;
+        m_targetPress = 0.0;
+        m_pressAnim->start();
+    } else {
+        m_pressProgress = 0.0;
+        m_targetPress = 0.0;
+    }
     requestPaint();
 
     const ui::RectF rect = localRect();
@@ -387,18 +502,38 @@ void IconButton::layout()
 
 void IconButton::paint(ui::Painter &painter)
 {
-    if (!isEnabled() || !isHovered())
+    if (!isEnabled() || m_hoverProgress <= 0)
         return;
     const bool dark = panel::isDark(m_surface);
     const bool pressed = m_pressed && m_inside;
-    const ui::Color color = panel::on(m_surface, pressed ? (dark ? 0.3 : 0.2) : (dark ? 0.2 : 0.1));
+    ui::Color color = panel::on(m_surface, pressed ? (dark ? 0.3 : 0.2) : (dark ? 0.2 : 0.1));
+    color.a = static_cast<uint8_t>(std::clamp(int(color.a * m_hoverProgress), 0, 255));
     const ui::RectF rect = localRect();
     painter.fillRoundedRect(rect, rect.height / 2, color);
 }
 
 void IconButton::hoverChanged()
 {
-    requestPaint();
+    const bool target = isEnabled() && isHovered();
+    if (window()) {
+        if (!m_hoverAnim) {
+            m_hoverAnim = std::make_unique<ui::Animation>(window());
+            m_hoverAnim->setDuration(std::chrono::milliseconds(140));
+            m_hoverAnim->setEasing(ui::Animation::Easing::OutCubic);
+            m_hoverAnim->onUpdate = [this](double val) {
+                m_hoverProgress = m_fromHover + (m_targetHover - m_fromHover) * val;
+                requestPaint();
+            };
+        }
+        m_hoverAnim->stop();
+        m_fromHover = m_hoverProgress;
+        m_targetHover = target ? 1.0 : 0.0;
+        m_hoverAnim->start();
+    } else {
+        m_hoverProgress = target ? 1.0 : 0.0;
+        m_targetHover = m_hoverProgress;
+        requestPaint();
+    }
 }
 
 void IconButton::enabledChanged()
@@ -454,6 +589,21 @@ MediaTile::MediaTile()
         m_artReady = (status == ui::ImageView::Status::Ready);
         m_art->setVisible(m_artReady);
         m_cover->setVisible(!m_artReady);
+        if (m_artReady && window()) {
+            if (!m_artFade) {
+                m_artFade = std::make_unique<ui::Animation>(window());
+                m_artFade->setDuration(std::chrono::milliseconds(200));
+                m_artFade->setEasing(ui::Animation::Easing::OutCubic);
+                m_artFade->onUpdate = [this](double val) {
+                    m_art->setOpacity(val);
+                };
+            }
+            m_artFade->stop();
+            m_art->setOpacity(0.0);
+            m_artFade->start();
+        } else if (m_artReady) {
+            m_art->setOpacity(1.0);
+        }
         requestPaint();
     };
     m_title = addChild<ui::Label>();
@@ -481,6 +631,10 @@ MediaTile::MediaTile()
 
 void MediaTile::setState(const MediaState &state)
 {
+    if (m_state.identity != state.identity) {
+        if (m_failedUrls.size() > 64)
+            m_failedUrls.clear();
+    }
     m_state = state;
     const bool control = state.hasPlayer && state.canControl;
     m_previous->setEnabled(control && state.canGoPrevious);
@@ -535,16 +689,13 @@ static std::string decodeBase64(std::string_view input)
     return out;
 }
 
-static bool downloadUrlToFile(const std::string &url, const std::string &destPath)
+static bool downloadSingleUrl(const std::string &url, std::string &buffer)
 {
-    static std::once_flag initFlag;
-    std::call_once(initFlag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
     if (!curl)
         return false;
 
-    std::string buffer;
+    buffer.clear();
     auto writeCallback = [](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
         auto *buf = static_cast<std::string *>(userdata);
         const size_t bytes = size * nmemb;
@@ -564,7 +715,7 @@ static bool downloadUrlToFile(const std::string &url, const std::string &destPat
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 5L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(handle, CURLOPT_USERAGENT, "cutefish-compositor/1.0");
+    curl_easy_setopt(handle, CURLOPT_USERAGENT, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, static_cast<size_t(*)(char*,size_t,size_t,void*)>(writeCallback));
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, &buffer);
 
@@ -577,7 +728,58 @@ static bool downloadUrlToFile(const std::string &url, const std::string &destPat
     if (httpCode < 200 || httpCode >= 300 || buffer.empty())
         return false;
 
-    return base::file::writeAtomically(destPath, buffer);
+    return true;
+}
+
+static bool downloadUrlToFile(const std::string &rawUrl, const std::string &destPath)
+{
+    static std::once_flag initFlag;
+    std::call_once(initFlag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+
+    const std::string primaryUrl = normalizeMprisArtUrl(rawUrl);
+
+    std::vector<std::string> candidates;
+    candidates.push_back(primaryUrl);
+
+    // Fallbacks for YouTube thumbnails if maxresdefault 404s
+    if (primaryUrl.find("maxresdefault.jpg") != std::string::npos) {
+        std::string fallbackHq = primaryUrl;
+        size_t pos = fallbackHq.find("maxresdefault.jpg");
+        fallbackHq.replace(pos, 17, "hqdefault.jpg");
+        candidates.push_back(fallbackHq);
+
+        std::string fallbackMq = primaryUrl;
+        pos = fallbackMq.find("maxresdefault.jpg");
+        fallbackMq.replace(pos, 17, "mqdefault.jpg");
+        candidates.push_back(fallbackMq);
+    } else if (primaryUrl.find("sddefault.jpg") != std::string::npos) {
+        std::string fallbackHq = primaryUrl;
+        size_t pos = fallbackHq.find("sddefault.jpg");
+        fallbackHq.replace(pos, 13, "hqdefault.jpg");
+        candidates.push_back(fallbackHq);
+    }
+
+    // Fallbacks for Google / YouTube Music user content
+    if (primaryUrl.find("=w1200-h1200") != std::string::npos) {
+        std::string fallback = primaryUrl;
+        size_t pos = fallback.find("=w1200-h1200");
+        fallback.replace(pos, 12, "=w544-h544");
+        candidates.push_back(fallback);
+    }
+    if (primaryUrl.find("=s1200") != std::string::npos) {
+        std::string fallback = primaryUrl;
+        size_t pos = fallback.find("=s1200");
+        fallback.replace(pos, 6, "=s544");
+        candidates.push_back(fallback);
+    }
+
+    std::string buffer;
+    for (const auto &candidate : candidates) {
+        if (downloadSingleUrl(candidate, buffer)) {
+            return base::file::writeAtomically(destPath, buffer);
+        }
+    }
+    return false;
 }
 
 void MediaTile::updateArtwork()
@@ -592,7 +794,9 @@ void MediaTile::updateArtwork()
     for (IconButton *button : {m_previous, m_play, m_next})
         button->setSurfaceColor(panel::tileInkColor());
 
-    if (!m_state.hasPlayer || m_state.artUrl.empty()) {
+    const std::string url = normalizeMprisArtUrl(m_state.artUrl);
+
+    if (!m_state.hasPlayer || url.empty()) {
         m_downloadJob = base::Job();
         m_downloadingUrl.clear();
         m_artReady = false;
@@ -602,7 +806,6 @@ void MediaTile::updateArtwork()
         return;
     }
 
-    const std::string &url = m_state.artUrl;
     std::string path;
 
     if (url.starts_with("file:")) {
@@ -638,7 +841,7 @@ void MediaTile::updateArtwork()
         struct stat st;
         if (stat(cachePath.c_str(), &st) == 0 && st.st_size > 0) {
             path = cachePath;
-        } else {
+        } else if (m_failedUrls.find(url) == m_failedUrls.end()) {
             if (m_downloadingUrl != url) {
                 m_downloadingUrl = url;
                 m_downloadJob = base::ThreadPool::global().run(
@@ -647,7 +850,13 @@ void MediaTile::updateArtwork()
                     },
                     [this, url, cachePath](bool success) {
                         m_downloadingUrl.clear();
-                        if (success && m_state.hasPlayer && m_state.artUrl == url) {
+                        if (!success) {
+                            if (m_failedUrls.size() > 256)
+                                m_failedUrls.clear();
+                            m_failedUrls.insert(url);
+                            return;
+                        }
+                        if (m_state.hasPlayer && normalizeMprisArtUrl(m_state.artUrl) == url) {
                             m_artReady = false;
                             m_art->setSource(cachePath);
                             requestLayout();
@@ -660,11 +869,23 @@ void MediaTile::updateArtwork()
     }
 
     if (!path.empty()) {
+        struct stat st;
+        if (stat(path.c_str(), &st) != 0 || st.st_size == 0) {
+            path.clear();
+        }
+    }
+
+    if (!path.empty()) {
         m_downloadJob = base::Job();
         m_downloadingUrl.clear();
         if (path != m_art->source()) {
             m_artReady = false;
             m_art->setSource(path);
+        }
+    } else {
+        if (!m_art->source().empty()) {
+            m_artReady = false;
+            m_art->setSource({});
         }
     }
 

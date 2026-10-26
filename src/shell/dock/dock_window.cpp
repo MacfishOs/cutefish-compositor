@@ -138,11 +138,18 @@ public:
     }
 
 protected:
+    void hoverMove(const ui::PointerEvent &event) override
+    {
+        m_dock->updateHoverMagnification(event.position);
+    }
+
     void hoverChanged() override
     {
         // Leaving the dock itself takes the tooltip down at once.
-        if (!isHovered())
+        if (!isHovered()) {
             m_dock->hideTooltip();
+            m_dock->resetHoverMagnification();
+        }
     }
 
     // A theme change lays every window out again.
@@ -160,10 +167,10 @@ protected:
             if (rect.isEmpty() || opacity <= 0)
                 return;
             ui::Color color = line;
-            color.a = uint8_t(std::lround(255 * opacity));
+            color.a = uint8_t(std::clamp(int(std::lround(255 * opacity)), 0, 255));
             painter.drawRoundedRect({panel.x() + rect.x(), panel.y() + rect.y(), rect.width(),
                                      rect.height()},
-                                    {0, 0, ui::Corners::Circular}, color);
+                                    {0.5, 0.5, ui::Corners::Circular}, color);
         };
         draw(m_dock->divider(), 0.18);
         draw(m_dock->trailingDivider(), m_dock->m_trailingOpacity);
@@ -198,6 +205,7 @@ DockWindow::DockWindow(Shell *shell, std::unique_ptr<Dock> dock)
     , m_reorderTimer(core::mainLoop())
     , m_tooltipHide(core::mainLoop())
     , m_strutSettle(core::mainLoop())
+    , m_magnificationExitTimer(core::mainLoop())
 {
     m_window = std::make_unique<ShellWindow>(shell, wm::WindowRole::Dock);
     m_window->setFocusPolicy(wm::FocusPolicy::NoFocus);
@@ -814,14 +822,11 @@ void DockWindow::layoutItems()
     };
     m_divider = lineRect(along(m_applications->sectionPosition() + middle,
                                m_applications->targetSectionPosition() + middle));
-    const double extent = m_applications->trailingExtent();
-    m_trailingOpacity = 0.18 * std::clamp((extent - 2) / (m_drawn.separatorExtent - 2), 0.0, 1.0);
-    m_trailingDivider = m_trailingOpacity > 0
-            ? lineRect(along(m_applications->length() + middle * extent / m_drawn.separatorExtent,
-                             m_applications->targetLength()
-                                     + middle * m_applications->targetTrailingExtent()
-                                             / m_metrics.sectionExtent()))
-            : base::RectF();
+    // In macOS, the right-section divider always demarcates the persistent applications
+    // from the right section (minimized windows + Trash).
+    m_trailingOpacity = 0.22;
+    m_trailingDivider = lineRect(along(m_applications->length() + middle,
+                                       m_applications->targetLength() + middle));
     m_panel->setGeometry({0, 0, double(m_windowRect.width()), double(m_windowRect.height())});
     m_panel->requestPaint();
     updatePanelRect(panel);
@@ -1041,14 +1046,101 @@ void DockWindow::hideTooltip()
         m_tooltip->hide();
 }
 
+void DockWindow::updateHoverMagnification(const ui::PointF &pointerPos)
+{
+    if (isDraggingIcon())
+        return;
+
+    m_magnificationExitTimer.stop();
+
+    const DockSettings::Direction direction = m_dock->settings().direction();
+    const bool bottom = direction == DockSettings::Bottom;
+    const bool left = direction == DockSettings::Left;
+    const double pointerAlong = bottom ? pointerPos.x : pointerPos.y;
+
+    constexpr double kRadius = 145.0;
+    constexpr double kMaxMagnification = 1.35;
+    constexpr double kMaxPush = 12.0;
+
+    for (DockIcon *icon : icons()) {
+        if (!icon || !icon->isVisible())
+            continue;
+        const ui::RectF geom = icon->geometry();
+        const double iconCenterAlong = bottom ? (geom.x + geom.width / 2.0)
+                                              : (geom.y + geom.height / 2.0);
+        const double dist = std::abs(iconCenterAlong - pointerAlong);
+
+        if (dist < kRadius) {
+            const double norm = dist / kRadius;
+            // Cosine bell curve
+            const double factor = 0.5 * (1.0 + std::cos(M_PI * norm));
+            const double scale = 1.0 + (kMaxMagnification - 1.0) * factor;
+
+            // Push outward along the dock
+            const double sign = (iconCenterAlong >= pointerAlong) ? 1.0 : -1.0;
+            const double pushAlong = sign * kMaxPush * (1.0 - norm) * (1.0 - norm);
+
+            // Lift upwards (away from screen edge)
+            const double itemSize = m_metrics.iconSize;
+            const double lift = (scale - 1.0) * (itemSize / 2.0);
+
+            if (bottom) {
+                icon->setMagnification(scale, {pushAlong, -lift});
+            } else if (left) {
+                icon->setMagnification(scale, {lift, pushAlong});
+            } else {
+                icon->setMagnification(scale, {-lift, pushAlong});
+            }
+        } else {
+            icon->setMagnification(1.0, {0.0, 0.0});
+        }
+    }
+}
+
+void DockWindow::resetHoverMagnification()
+{
+    // Step down smoothly to 1.0
+    m_magnificationExitTimer.setInterval(std::chrono::milliseconds(16));
+    m_magnificationExitTimer.setSingleShot(false);
+    m_magnificationExitTimer.onTimeout = [this, step = 0]() mutable {
+        step++;
+        const double progress = double(step) / 6.0;
+        bool allAtRest = true;
+        for (DockIcon *icon : icons()) {
+            if (!icon) continue;
+            const double currentScale = icon->magnificationScale();
+            const ui::PointF currentOffset = icon->magnificationOffset();
+            if (currentScale > 1.001 || !currentOffset.isNull()) {
+                allAtRest = false;
+                const double newScale = 1.0 + (currentScale - 1.0) * (1.0 - progress);
+                const ui::PointF newOffset = {currentOffset.x * (1.0 - progress),
+                                              currentOffset.y * (1.0 - progress)};
+                icon->setMagnification(newScale, newOffset);
+            }
+        }
+        if (step >= 6 || allAtRest) {
+            m_magnificationExitTimer.stop();
+            for (DockIcon *icon : icons()) {
+                if (icon)
+                    icon->setMagnification(1.0, {0.0, 0.0});
+            }
+        }
+    };
+    m_magnificationExitTimer.start();
+}
+
 void DockWindow::iconClicked(DockIcon *icon, int button)
 {
     switch (icon->kind()) {
     case DockIcon::Kind::Application:
-        if (button == int(ui::MouseButton::Left))
+        if (button == int(ui::MouseButton::Left)) {
+            if (!icon->isRunning())
+                icon->startLaunchBounce();
             m_dock->applications().clicked(icon->key());
-        else if (button == int(ui::MouseButton::Middle))
+        } else if (button == int(ui::MouseButton::Middle)) {
+            icon->startLaunchBounce();
             m_dock->applications().openNewInstance(icon->key());
+        }
         break;
     case DockIcon::Kind::Minimized:
         if (button == int(ui::MouseButton::Left))

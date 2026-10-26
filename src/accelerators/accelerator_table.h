@@ -90,8 +90,11 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
 
         // Screen capture.
         {true, XKB_KEY_Print, NoModifier, AcceleratorAction::StartCaptureMode},
+        {true, XKB_KEY_Sys_Req, NoModifier, AcceleratorAction::StartCaptureMode},
         {true, XKB_KEY_Print, ShiftDown, AcceleratorAction::TakeScreenshot},
+        {true, XKB_KEY_Sys_Req, ShiftDown, AcceleratorAction::TakeScreenshot},
         {true, XKB_KEY_Print, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
+        {true, XKB_KEY_Sys_Req, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
         {true, XKB_KEY_Escape, ControlDown | MetaDown, AcceleratorAction::StopScreenRecording},
 
         // Clipboard history.
@@ -107,6 +110,13 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_XF86KbdBrightnessDown, NoModifier,
          AcceleratorAction::KeyboardBrightnessDown},
         {true, XKB_KEY_XF86KbdBrightnessUp, NoModifier, AcceleratorAction::KeyboardBrightnessUp},
+
+        // Media keys.
+        {true, XKB_KEY_XF86AudioPlay, NoModifier, AcceleratorAction::MediaPlayPause},
+        {true, XKB_KEY_XF86AudioPause, NoModifier, AcceleratorAction::MediaPlayPause},
+        {true, XKB_KEY_XF86AudioNext, NoModifier, AcceleratorAction::MediaNextTrack},
+        {true, XKB_KEY_XF86AudioPrev, NoModifier, AcceleratorAction::MediaPrevTrack},
+        {true, XKB_KEY_XF86AudioStop, NoModifier, AcceleratorAction::MediaStop},
 });
 
 // The defaults under input::ShortcutConvention::Command. Command reaches the
@@ -172,8 +182,11 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
          AcceleratorAction::TakePartialScreenshotToClipboard},
         {true, XKB_KEY_5, MetaDown | ShiftDown, AcceleratorAction::StartCaptureMode},
         {true, XKB_KEY_Print, NoModifier, AcceleratorAction::StartCaptureMode},
+        {true, XKB_KEY_Sys_Req, NoModifier, AcceleratorAction::StartCaptureMode},
         {true, XKB_KEY_Print, ShiftDown, AcceleratorAction::TakeScreenshot},
+        {true, XKB_KEY_Sys_Req, ShiftDown, AcceleratorAction::TakeScreenshot},
         {true, XKB_KEY_Print, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
+        {true, XKB_KEY_Sys_Req, MetaDown | ShiftDown, AcceleratorAction::TakePartialScreenshot},
         {true, XKB_KEY_Escape, ControlDown | MetaDown, AcceleratorAction::StopScreenRecording},
 
         // Clipboard history.
@@ -189,6 +202,13 @@ inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_XF86KbdBrightnessDown, NoModifier,
          AcceleratorAction::KeyboardBrightnessDown},
         {true, XKB_KEY_XF86KbdBrightnessUp, NoModifier, AcceleratorAction::KeyboardBrightnessUp},
+
+        // Media keys.
+        {true, XKB_KEY_XF86AudioPlay, NoModifier, AcceleratorAction::MediaPlayPause},
+        {true, XKB_KEY_XF86AudioPause, NoModifier, AcceleratorAction::MediaPlayPause},
+        {true, XKB_KEY_XF86AudioNext, NoModifier, AcceleratorAction::MediaNextTrack},
+        {true, XKB_KEY_XF86AudioPrev, NoModifier, AcceleratorAction::MediaPrevTrack},
+        {true, XKB_KEY_XF86AudioStop, NoModifier, AcceleratorAction::MediaStop},
 });
 
 // Switching applications always switches, over a fullscreen game too, and
@@ -212,6 +232,10 @@ inline constexpr std::array kActionsAllowedAtLockScreen = {
         AcceleratorAction::BrightnessUp,
         AcceleratorAction::KeyboardBrightnessDown,
         AcceleratorAction::KeyboardBrightnessUp,
+        AcceleratorAction::MediaNextTrack,
+        AcceleratorAction::MediaPlayPause,
+        AcceleratorAction::MediaPrevTrack,
+        AcceleratorAction::MediaStop,
         AcceleratorAction::MicrophoneMuteToggle,
         AcceleratorAction::VolumeDown,
         AcceleratorAction::VolumeMuteToggle,
@@ -225,6 +249,10 @@ inline constexpr std::array kActionsAllowedAtModalWindow = {
         AcceleratorAction::KeyboardBrightnessDown,
         AcceleratorAction::KeyboardBrightnessUp,
         AcceleratorAction::LockScreen,
+        AcceleratorAction::MediaNextTrack,
+        AcceleratorAction::MediaPlayPause,
+        AcceleratorAction::MediaPrevTrack,
+        AcceleratorAction::MediaStop,
         AcceleratorAction::MicrophoneMuteToggle,
         AcceleratorAction::VolumeDown,
         AcceleratorAction::VolumeMuteToggle,

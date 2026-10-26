@@ -150,26 +150,31 @@ void WaylandPointerDelegate::onPointerScroll(input::Timestamp timestamp,
                                              const base::PointF &offset,
                                              bool discrete)
 {
+    const double xValue = offset.x();
+    const double yValue = offset.y();
+
+    if (xValue == 0.0 && yValue == 0.0)
+        return;
+
     if (wl_resource_get_version(m_pointerResource) >= WL_POINTER_AXIS_SOURCE_SINCE_VERSION) {
         wl_pointer_send_axis_source(m_pointerResource,
                                     discrete ? WL_POINTER_AXIS_SOURCE_WHEEL
                                              : WL_POINTER_AXIS_SOURCE_FINGER);
     }
 
-    // Exo negates here because aura's scroll axes point the other way. libinput
-    // already reports positive as down/right, which is Wayland's sense.
-    const double xValue = offset.x();
-    const double yValue = offset.y();
-
-    if (discrete) {
-        sendWheelSteps(WL_POINTER_AXIS_HORIZONTAL_SCROLL, xValue);
-        sendWheelSteps(WL_POINTER_AXIS_VERTICAL_SCROLL, yValue);
+    if (xValue != 0.0) {
+        if (discrete)
+            sendWheelSteps(WL_POINTER_AXIS_HORIZONTAL_SCROLL, xValue);
+        wl_pointer_send_axis(m_pointerResource, timePointToMilliseconds(timestamp),
+                             WL_POINTER_AXIS_HORIZONTAL_SCROLL, wl_fixed_from_double(xValue));
     }
 
-    wl_pointer_send_axis(m_pointerResource, timePointToMilliseconds(timestamp),
-                         WL_POINTER_AXIS_HORIZONTAL_SCROLL, wl_fixed_from_double(xValue));
-    wl_pointer_send_axis(m_pointerResource, timePointToMilliseconds(timestamp),
-                         WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_double(yValue));
+    if (yValue != 0.0) {
+        if (discrete)
+            sendWheelSteps(WL_POINTER_AXIS_VERTICAL_SCROLL, yValue);
+        wl_pointer_send_axis(m_pointerResource, timePointToMilliseconds(timestamp),
+                             WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_double(yValue));
+    }
 }
 
 // Both events must precede the axis event they describe.

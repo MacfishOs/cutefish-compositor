@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "base/geometry.h"
+#include "base/timer.h"
 
 #include "decoration/caption_button.h"
 #include "decoration/decoration_theme.h"
@@ -110,6 +111,7 @@ private:
     void runButtonAction(CaptionButtonType type);
     bool setHoveredButton(int index);
     void toggleMaximize();
+    void showTilePopover();
 
     wm::Window* m_window = nullptr;
     Theme* m_theme = nullptr;
@@ -129,6 +131,7 @@ private:
     input::Timestamp m_lastTitleBarPress {};
     base::Point m_lastTitleBarPressPoint;
     bool m_hadTitleBarPress = false;
+    base::Timer m_tileTimer;
 };
 
 // Installed on the window manager; hands out Decorations.

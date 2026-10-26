@@ -76,6 +76,15 @@ public:
     void setPresentationOpacity(double opacity);
     double presentationScale() const { return m_scale; }
     double presentationOpacity() const { return m_opacity; }
+
+    // Fish-eye hover magnification and launch bounce
+    void setMagnification(double scale, const ui::PointF &offset);
+    double magnificationScale() const { return m_magnificationScale; }
+    ui::PointF magnificationOffset() const { return m_magnificationOffset; }
+    void startLaunchBounce();
+    void stopLaunchBounce();
+    bool isBouncing() const;
+    void updateCombinedTransform();
     // The running dot, in this view.
     void setDotRect(const ui::RectF &rect);
 
@@ -159,6 +168,13 @@ private:
     // Holding the left button opens the menu like a right click.
     base::Timer m_holdTimer;
     bool m_held = false;
+
+    // Magnification and bounce animation state
+    double m_magnificationScale = 1.0;
+    ui::PointF m_magnificationOffset;
+    ui::PointF m_bounceOffset;
+    base::Timer m_bounceTimer;
+    std::chrono::steady_clock::time_point m_bounceStart;
 };
 
 } // namespace cutefish::shell

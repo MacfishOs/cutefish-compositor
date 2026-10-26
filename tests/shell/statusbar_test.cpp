@@ -569,3 +569,22 @@ TEST(VpnNotifierTest, TellsAFailedVpnAndOpensItsPage)
     notifications.emitSignal("ActionInvoked", uint32_t(7), std::string("default"));
     EXPECT_TRUE(test::runUntil([&] { return opened == 1; }));
 }
+
+TEST(MprisTest, NormalizesArtUrls)
+{
+    EXPECT_EQ("https://i.scdn.co/image/ab67616d0000b2732c5b24ecfa39523a75c993c4",
+              shell::normalizeMprisArtUrl("spotify:image:ab67616d0000b2732c5b24ecfa39523a75c993c4"));
+    EXPECT_EQ("https://i.scdn.co/image/ab67616d0000b2732c5b24ecfa39523a75c993c4",
+              shell::normalizeMprisArtUrl("https://open.spotify.com/image/ab67616d0000b2732c5b24ecfa39523a75c993c4"));
+    EXPECT_EQ("https://i.scdn.co/image/ab67616d0000b2732c5b24ecfa39523a75c993c4",
+              shell::normalizeMprisArtUrl("http://open.spotify.com/image/ab67616d0000b2732c5b24ecfa39523a75c993c4"));
+    EXPECT_EQ("https://i.scdn.co/image/ab67616d0000b2732c5b24ecfa39523a75c993c4",
+              shell::normalizeMprisArtUrl("open.spotify.com/image/ab67616d0000b2732c5b24ecfa39523a75c993c4"));
+    EXPECT_EQ("https://i.scdn.co/image/ab67616d0000b2732c5b24ecfa39523a75c993c4",
+              shell::normalizeMprisArtUrl("  https://open.spotify.com/image/ab67616d0000b2732c5b24ecfa39523a75c993c4 \n"));
+    EXPECT_EQ("https://i.ytimg.com/vi/abc/hqdefault.jpg",
+              shell::normalizeMprisArtUrl("https://i.ytimg.com/vi/abc/hqdefault.jpg"));
+    EXPECT_EQ("file:///home/user/music/art.jpg",
+              shell::normalizeMprisArtUrl("file:///home/user/music/art.jpg"));
+    EXPECT_EQ("", shell::normalizeMprisArtUrl("   "));
+}

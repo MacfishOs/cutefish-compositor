@@ -19,6 +19,7 @@
 #include "base/event_loop.h"
 #include "base/file.h"
 #include "base/paths.h"
+#include "base/process.h"
 #include "base/strings.h"
 
 namespace cutefish::shell {
@@ -320,6 +321,13 @@ void TrashMonitor::moveToTrash(const std::vector<std::string> &paths, base::dbus
 void TrashMonitor::emptyTrash(base::dbus::Connection *bus)
 {
     callFileManager(bus, "emptyTrash", nullptr);
+
+    // Play macOS/freedesktop trash emptying sound cue
+    if (std::filesystem::exists("/usr/share/sounds/freedesktop/stereo/trash-empty.oga")) {
+        base::Process::startDetached("pw-play", {"/usr/share/sounds/freedesktop/stereo/trash-empty.oga"});
+    } else {
+        base::Process::startDetached("canberra-gtk-play", {"-i", "trash-empty"});
+    }
 }
 
 void TrashMonitor::openTrash(base::dbus::Connection *bus)

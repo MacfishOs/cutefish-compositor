@@ -167,18 +167,45 @@ void DecorationNode::paintButtons(render::Renderer& renderer, const base::Rect& 
 {
     const int rasterDensity = int(std::ceil(renderer.rasterScale()));
     const Metrics& metrics = m_theme->metrics();
+
+    bool anyHoveredOrPressed = false;
+    for (const CaptionButton& button : m_decoration->buttons()) {
+        if (button.isHovered() || button.isPressed()) {
+            anyHoveredOrPressed = true;
+            break;
+        }
+    }
+
     for (const CaptionButton& button : m_decoration->buttons()) {
         const base::Rect geometry = button.geometry().translated(bounds.origin());
         if (!bounds.contains(innerCenter(geometry)))
             continue;
 
         render::Color dotColor;
-        if (button.type() == CaptionButtonType::Close)
-            dotColor = render::Color(1.0f, 0.37f, 0.33f, 1.0f);
-        else if (button.type() == CaptionButtonType::Minimize)
-            dotColor = render::Color(1.0f, 0.74f, 0.18f, 1.0f);
-        else
-            dotColor = render::Color(0.15f, 0.79f, 0.25f, 1.0f);
+        render::Color iconColor;
+        if (button.type() == CaptionButtonType::Close) {
+            dotColor = render::Color(1.0f, 95.0f / 255.0f, 86.0f / 255.0f, 1.0f);
+            iconColor = render::Color(75.0f / 255.0f, 0.0f, 0.0f, 1.0f);
+        } else if (button.type() == CaptionButtonType::Minimize) {
+            dotColor = render::Color(1.0f, 189.0f / 255.0f, 46.0f / 255.0f, 1.0f);
+            iconColor = render::Color(150.0f / 255.0f, 80.0f / 255.0f, 0.0f, 1.0f);
+        } else {
+            dotColor = render::Color(39.0f / 255.0f, 201.0f / 255.0f, 63.0f / 255.0f, 1.0f);
+            iconColor = render::Color(0.0f, 95.0f / 255.0f, 0.0f, 1.0f);
+        }
+
+        const bool active = m_decoration->isActive();
+        const bool pressed = button.isPressed();
+        const float opacity = (active || anyHoveredOrPressed) ? 1.0f : 0.35f;
+        dotColor.a = opacity;
+        if (pressed) {
+            dotColor.r /= 1.25f;
+            dotColor.g /= 1.25f;
+            dotColor.b /= 1.25f;
+            iconColor.r *= 0.8f;
+            iconColor.g *= 0.8f;
+            iconColor.b *= 0.8f;
+        }
 
         const std::string circleKey = std::format("{}macdot:{}:{}", rasterDensity, 14, colorKey(dotColor));
         render::Texture* circleTex = m_theme->texture(renderer, circleKey, [&] {
@@ -189,9 +216,8 @@ void DecorationNode::paintButtons(render::Renderer& renderer, const base::Rect& 
             renderer.drawTexture(circleTex, centeredAt(size, innerCenter(geometry)));
         }
 
-        if (button.isHovered() || button.isPressed()) {
+        if (anyHoveredOrPressed) {
             const bool restore = m_decoration->isRestoreButton();
-            const render::Color iconColor(0.2f, 0.2f, 0.2f, 1.0f);
             const std::string key =
                 std::format("{}icon:{}:{}:{}", rasterDensity, iconName(button.type(), restore),
                             14, colorKey(iconColor));

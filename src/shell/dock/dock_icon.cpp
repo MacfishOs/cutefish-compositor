@@ -102,6 +102,7 @@ DockIcon::DockIcon(DockWindow *dock, Kind kind)
     : m_dock(dock)
     , m_kind(kind)
     , m_holdTimer(core::mainLoop())
+    , m_bounceTimer(core::mainLoop())
 {
     m_holdTimer.setSingleShot(true);
     m_holdTimer.setInterval(kPressAndHold);
@@ -111,6 +112,24 @@ DockIcon::DockIcon(DockWindow *dock, Kind kind)
         // MouseArea drops the click that would follow the release.
         m_held = true;
         m_dock->iconMenuRequested(this);
+    };
+
+    m_bounceTimer.setInterval(std::chrono::milliseconds(16));
+    m_bounceTimer.setSingleShot(false);
+    m_bounceTimer.onTimeout = [this] {
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsedMs = std::chrono::duration<double, std::milli>(now - m_bounceStart).count();
+        if (elapsedMs > 6000.0) {
+            stopLaunchBounce();
+            return;
+        }
+        constexpr double kCycleMs = 480.0;
+        constexpr double kMaxHeight = 18.0;
+        const double phase = std::fmod(elapsedMs, kCycleMs) / kCycleMs;
+        // Upward parabolic arc: 4 * u * (1 - u)
+        const double arc = 4.0 * phase * (1.0 - phase);
+        m_bounceOffset = {0.0, -kMaxHeight * arc};
+        updateCombinedTransform();
     };
 }
 
@@ -214,6 +233,8 @@ void DockIcon::setRunning(bool running)
     if (running == m_running)
         return;
     m_running = running;
+    if (running)
+        stopLaunchBounce();
     requestPaint();
 }
 
@@ -282,40 +303,81 @@ void DockIcon::applyBadgeOpacity()
 void DockIcon::setIconRect(const ui::RectF &rect)
 {
     m_iconRect = rect;
-    const ui::Transform transform = [&] {
-        ui::Transform result;
-        // ui::Transform scales about the view's centre.
-        result.scale = m_scale;
-        return result;
-    }();
+    updateCombinedTransform();
+}
+
+void DockIcon::updateCombinedTransform()
+{
+    const double combinedScale = m_scale * m_magnificationScale;
+    const ui::PointF combinedOffset = m_magnificationOffset + m_bounceOffset;
+    ui::Transform transform;
+    transform.scale = combinedScale;
+    transform.translation = combinedOffset;
+
     for (ui::View *face : {static_cast<ui::View *>(m_themeFace), static_cast<ui::View *>(m_svgFace),
                            static_cast<ui::View *>(m_themeMask), static_cast<ui::View *>(m_svgMask)}) {
         if (!face)
             continue;
-        face->setGeometry(rect);
+        face->setGeometry(m_iconRect);
         face->setTransform(transform);
         const bool mask = face == m_themeMask || face == m_svgMask;
         face->setOpacity(m_opacity * (mask ? 0.4 : 1));
     }
     if (m_themeFace)
-        m_themeFace->setSize(rect.width);
+        m_themeFace->setSize(m_iconRect.width);
     if (m_themeMask)
-        m_themeMask->setSize(rect.width);
+        m_themeMask->setSize(m_iconRect.width);
     if (m_badge) {
-        const double size = std::round(rect.width * 0.42);
+        const double size = std::round(m_iconRect.width * 0.42);
         m_badge->setSize(size);
-        m_badge->setGeometry({rect.x + rect.width - size, rect.y + rect.height - size, size, size});
+        m_badge->setGeometry({m_iconRect.x + m_iconRect.width - size,
+                              m_iconRect.y + m_iconRect.height - size, size, size});
+        m_badge->setTransform(transform);
         m_badge->setOpacity(m_badgeOpacity * m_opacity);
         if (m_thumbnailMask) {
             const ui::RectF shape = thumbnailRect();
             m_thumbnailMask->setGeometry(localRect());
-            m_thumbnailMask->update(shape, std::max(2.0, rect.width * 2 / 54), m_iconName,
-                                    {rect.x + rect.width - size, rect.y + rect.height - size, size, size},
+            m_thumbnailMask->update(shape, std::max(2.0, m_iconRect.width * 2 / 54), m_iconName,
+                                    {m_iconRect.x + m_iconRect.width - size,
+                                     m_iconRect.y + m_iconRect.height - size, size, size},
                                     m_badgeOpacity);
+            m_thumbnailMask->setTransform(transform);
         }
     }
     placeCountBadge();
     requestPaint();
+}
+
+void DockIcon::setMagnification(double scale, const ui::PointF &offset)
+{
+    if (std::abs(scale - m_magnificationScale) < 0.001 &&
+        std::abs(offset.x - m_magnificationOffset.x) < 0.01 &&
+        std::abs(offset.y - m_magnificationOffset.y) < 0.01)
+        return;
+    m_magnificationScale = scale;
+    m_magnificationOffset = offset;
+    updateCombinedTransform();
+}
+
+void DockIcon::startLaunchBounce()
+{
+    m_bounceStart = std::chrono::steady_clock::now();
+    if (!m_bounceTimer.isActive())
+        m_bounceTimer.start();
+}
+
+void DockIcon::stopLaunchBounce()
+{
+    if (m_bounceTimer.isActive()) {
+        m_bounceTimer.stop();
+        m_bounceOffset = {0.0, 0.0};
+        updateCombinedTransform();
+    }
+}
+
+bool DockIcon::isBouncing() const
+{
+    return m_bounceTimer.isActive();
 }
 
 void DockIcon::setCount(int64_t count)
@@ -335,13 +397,15 @@ void DockIcon::placeCountBadge()
         return;
     raiseChild(m_countBadge);
     m_countBadge->setIconRect(m_iconRect);
-    // Scaled with the icon about the icon's centre; ui::Transform scales
-    // about the badge's own.
+    const double combinedScale = m_scale * m_magnificationScale;
+    const ui::PointF combinedOffset = m_magnificationOffset + m_bounceOffset;
     const ui::RectF badge = m_countBadge->geometry();
     ui::Transform transform;
-    transform.scale = m_scale;
-    transform.translation = {(m_scale - 1) * (badge.x + badge.width / 2 - (m_iconRect.x + m_iconRect.width / 2)),
-                             (m_scale - 1) * (badge.y + badge.height / 2 - (m_iconRect.y + m_iconRect.height / 2))};
+    transform.scale = combinedScale;
+    transform.translation = {
+        combinedOffset.x + (combinedScale - 1) * (badge.x + badge.width / 2 - (m_iconRect.x + m_iconRect.width / 2)),
+        combinedOffset.y + (combinedScale - 1) * (badge.y + badge.height / 2 - (m_iconRect.y + m_iconRect.height / 2))
+    };
     m_countBadge->setTransform(transform);
     m_countBadge->setOpacity(m_opacity);
     m_countBadge->setVisible(m_countBadge->count() > 0 && !m_dragHidden);
@@ -353,7 +417,7 @@ void DockIcon::setPresentation(double scale, double opacity)
         return;
     m_scale = scale;
     m_opacity = opacity;
-    setIconRect(m_iconRect);
+    updateCombinedTransform();
 }
 
 void DockIcon::setPresentationOpacity(double opacity)
@@ -461,13 +525,22 @@ ui::RectF DockIcon::thumbnailRect() const
 
 void DockIcon::paintThumbnail(ui::Painter &painter)
 {
-    const ui::RectF &slot = m_iconRect;
     const ui::RectF rect = thumbnailRect();
-    const double radius = std::max(2.0, slot.width * 2 / 54);
+    const double combinedScale = m_scale * m_magnificationScale;
+    const ui::PointF combinedOffset = m_magnificationOffset + m_bounceOffset;
+    const double fitW = rect.width * combinedScale;
+    const double fitH = rect.height * combinedScale;
+    const ui::RectF drawRect {
+        rect.x + (rect.width - fitW) / 2.0 + combinedOffset.x,
+        rect.y + (rect.height - fitH) / 2.0 + combinedOffset.y,
+        fitW,
+        fitH
+    };
+    const double radius = std::max(2.0, drawRect.width * 2 / 54);
     painter.save();
     painter.multiplyOpacity(m_opacity);
-    painter.clipRoundedRect(rect, radius);
-    painter.drawImage(m_thumbnail, rect);
+    painter.clipRoundedRect(drawRect, radius);
+    painter.drawImage(m_thumbnail, drawRect);
     painter.restore();
 }
 

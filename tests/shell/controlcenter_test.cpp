@@ -80,6 +80,13 @@ public:
     bool bluetoothAvailable() const override { return true; }
     bool bluetoothEnabled() const override { return bluetooth; }
     void setBluetoothEnabled(bool enabled) override { bluetooth = enabled; changed(); }
+    std::vector<shell::ControlCenterServices::BluetoothDevice> bluetoothDevices() const override { return {}; }
+    void connectBluetoothDevice(const std::string &) override {}
+    void disconnectBluetoothDevice(const std::string &) override {}
+    bool nightLightEnabled() const override { return false; }
+    void setNightLightEnabled(bool) override {}
+    int keyboardBacklightLevel() const override { return 0; }
+    void setKeyboardBacklightLevel(int) override {}
     void setDarkMode(bool dark) override { darkRequested = dark ? 1 : 0; }
     bool doNotDisturb() const override { return dnd; }
     void setDoNotDisturb(bool enabled) override { dnd = enabled; changed(); }

@@ -152,17 +152,62 @@ std::string MprisPlayer::artist() const
     return it->second.value<std::string>();
 }
 
+std::string normalizeMprisArtUrl(const std::string &rawUrl)
+{
+    if (rawUrl.empty())
+        return {};
+
+    std::string url = rawUrl;
+    const size_t first = url.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+        return {};
+    const size_t last = url.find_last_not_of(" \t\r\n");
+    url = url.substr(first, last - first + 1);
+
+    // Spotify URI scheme: spotify:image:<id>
+    static constexpr std::string_view kSpotifyUri = "spotify:image:";
+    if (url.starts_with(kSpotifyUri)) {
+        return "https://i.scdn.co/image/" + url.substr(kSpotifyUri.size());
+    }
+
+    // Spotify HTTP/HTTPS URLs: open.spotify.com/image/<id> or images.spotify.com/image/<id>
+    static constexpr std::pair<std::string_view, std::string_view> kSpotifyPrefixes[] = {
+        {"https://open.spotify.com/image/", "https://i.scdn.co/image/"},
+        {"http://open.spotify.com/image/", "https://i.scdn.co/image/"},
+        {"open.spotify.com/image/", "https://i.scdn.co/image/"},
+        {"https://images.spotify.com/image/", "https://i.scdn.co/image/"},
+        {"http://images.spotify.com/image/", "https://i.scdn.co/image/"},
+        {"images.spotify.com/image/", "https://i.scdn.co/image/"},
+    };
+    for (const auto &[prefix, replacement] : kSpotifyPrefixes) {
+        if (url.starts_with(prefix)) {
+            return std::string(replacement) + url.substr(prefix.size());
+        }
+    }
+
+    return url;
+}
+
 std::string MprisPlayer::artUrl() const
 {
     std::string url = stringOf(m_metadata, "mpris:artUrl");
     if (url.empty())
         url = stringOf(m_metadata, "artUrl");
-    return url;
+    if (url.empty())
+        url = stringOf(m_metadata, "xesam:artUrl");
+    if (url.empty()) {
+        std::string xesamUrl = stringOf(m_metadata, "xesam:url");
+        if (xesamUrl.ends_with(".jpg") || xesamUrl.ends_with(".jpeg") ||
+            xesamUrl.ends_with(".png") || xesamUrl.ends_with(".webp")) {
+            url = xesamUrl;
+        }
+    }
+    return normalizeMprisArtUrl(url);
 }
 
 void MprisPlayer::callPlayer(const char *method)
 {
-    if (canControl())
+    if (canControl() || m_playerProperties.find("CanControl") == m_playerProperties.end())
         m_player.send(method);
 }
 
@@ -189,6 +234,11 @@ void MprisPlayer::next()
 void MprisPlayer::previous()
 {
     callPlayer("Previous");
+}
+
+void MprisPlayer::stop()
+{
+    callPlayer("Stop");
 }
 
 static bool playing(const MprisPlayer &player)

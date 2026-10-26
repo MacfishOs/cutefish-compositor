@@ -211,6 +211,10 @@ bool AcceleratorController::canPerformAction(AcceleratorAction action,
     case AcceleratorAction::BrightnessUp:
     case AcceleratorAction::KeyboardBrightnessDown:
     case AcceleratorAction::KeyboardBrightnessUp:
+    case AcceleratorAction::MediaPlayPause:
+    case AcceleratorAction::MediaNextTrack:
+    case AcceleratorAction::MediaPrevTrack:
+    case AcceleratorAction::MediaStop:
         return true;
     }
     return false;
@@ -343,6 +347,18 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
         break;
     case AcceleratorAction::KeyboardBrightnessUp:
         commands::keyboardBrightnessUp(m_context);
+        break;
+    case AcceleratorAction::MediaPlayPause:
+        commands::mediaPlayPause(m_context);
+        break;
+    case AcceleratorAction::MediaNextTrack:
+        commands::mediaNextTrack(m_context);
+        break;
+    case AcceleratorAction::MediaPrevTrack:
+        commands::mediaPrevTrack(m_context);
+        break;
+    case AcceleratorAction::MediaStop:
+        commands::mediaStop(m_context);
         break;
     }
 }

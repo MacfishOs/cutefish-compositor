@@ -305,6 +305,26 @@ void keyboardBrightnessUp(const CommandContext &context)
     context.delegate->keyboardBrightnessUp();
 }
 
+void mediaPlayPause(const CommandContext &context)
+{
+    context.delegate->mediaPlayPause();
+}
+
+void mediaNextTrack(const CommandContext &context)
+{
+    context.delegate->mediaNextTrack();
+}
+
+void mediaPrevTrack(const CommandContext &context)
+{
+    context.delegate->mediaPrevTrack();
+}
+
+void mediaStop(const CommandContext &context)
+{
+    context.delegate->mediaStop();
+}
+
 void activateDesk(const CommandContext &context, bool activateLeft)
 {
     context.windowManager->desks()->activateAdjacentDesk(activateLeft,

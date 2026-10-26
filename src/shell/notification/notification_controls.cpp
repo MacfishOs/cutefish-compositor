@@ -51,6 +51,19 @@ ui::Color pillFill(ui::Color surface, bool hovered, bool pressed)
     return inkOn(surface, pressed ? 0.16 : hovered ? 0.12 : 0.07);
 }
 
+static ui::Color pillFillProgress(ui::Color surface, double hover, bool pressed)
+{
+    if (pressed)
+        return pillFill(surface, true, true);
+    const ui::Color rest = pillFill(surface, false, false);
+    const ui::Color hov = pillFill(surface, true, false);
+    const double t = std::clamp(hover, 0.0, 1.0);
+    const auto interp = [t](uint8_t a, uint8_t b) -> uint8_t {
+        return static_cast<uint8_t>(std::lround(a + (b - a) * t));
+    };
+    return ui::Color {interp(rest.r, hov.r), interp(rest.g, hov.g), interp(rest.b, hov.b), interp(rest.a, hov.a)};
+}
+
 // The application font's 0.9, as a whole logical pixel size.
 static double smallFontSize()
 {
@@ -77,6 +90,7 @@ static void paintCross(ui::Painter &painter, ui::PointF centre, double length, u
 ClearButton::ClearButton(ui::Window *window, Kind kind)
     : m_kind(kind)
     , m_confirm(kind == Kind::Clear)
+    , m_hoverFade(std::make_unique<Tween>(window, std::chrono::milliseconds(140), outCubic))
     , m_progress(std::make_unique<Tween>(window, std::chrono::milliseconds(240), outCubic))
 {
     m_label = addChild<ui::Label>(tr("Clear"));
@@ -84,6 +98,7 @@ ClearButton::ClearButton(ui::Window *window, Kind kind)
     m_label->setElide(ui::Label::Elide::None);
     m_label->setVisible(false);
     setClipsChildren(true);
+    m_hoverFade->onChanged = [this] { requestPaint(); };
     m_progress->onChanged = [this] {
         updateLabel();
         requestPaint();
@@ -163,13 +178,13 @@ void ClearButton::updateLabel()
 void ClearButton::pointerEnter()
 {
     m_hovered = true;
-    requestPaint();
+    m_hoverFade->setTarget(1.0, true);
 }
 
 void ClearButton::pointerLeave()
 {
     m_hovered = false;
-    requestPaint();
+    m_hoverFade->setTarget(0.0, true);
 }
 
 void ClearButton::pointerPress(const ui::PointerEvent &event)
@@ -219,10 +234,12 @@ void ClearButton::paint(ui::Painter &painter)
     const ui::RectF rect = localRect();
     const double radius = rect.height / 2;
     if (m_kind == Kind::Clear) {
-        painter.drawSmoothRectangle(rect, radius, pillFill(theme.background, m_hovered, m_pressed));
-    } else if ((m_hovered || progress() > 0) && m_tint) {
-        // Not snapped: the glyph is not either.
-        painter.drawSmoothRectangle(rect, radius, m_tint(m_pressed ? 2 : 1));
+        painter.drawSmoothRectangle(rect, radius, pillFillProgress(theme.background, m_hoverFade->value(), m_pressed));
+    } else if ((m_hoverFade->value() > 0 || progress() > 0) && m_tint) {
+        const double t = std::clamp(std::max(m_hoverFade->value(), progress()), 0.0, 1.0);
+        ui::Color col = m_tint(m_pressed ? 2 : 1);
+        col.a = static_cast<uint8_t>(std::clamp(int(col.a * t), 0, 255));
+        painter.drawSmoothRectangle(rect, radius, col);
     }
 
     const double glyphOpacity = 1 - std::min(1.0, progress() / 0.5);
@@ -267,13 +284,24 @@ double PillButton::preferredWidth() const
 void PillButton::pointerEnter()
 {
     m_hovered = true;
-    requestPaint();
+    if (window()) {
+        if (!m_hoverFade) {
+            m_hoverFade = std::make_unique<Tween>(window(), std::chrono::milliseconds(140), outCubic);
+            m_hoverFade->onChanged = [this] { requestPaint(); };
+        }
+        m_hoverFade->setTarget(1.0, true);
+    } else {
+        requestPaint();
+    }
 }
 
 void PillButton::pointerLeave()
 {
     m_hovered = false;
-    requestPaint();
+    if (m_hoverFade)
+        m_hoverFade->setTarget(0.0, true);
+    else
+        requestPaint();
 }
 
 void PillButton::pointerPress(const ui::PointerEvent &event)
@@ -305,7 +333,8 @@ void PillButton::layout()
 void PillButton::paint(ui::Painter &painter)
 {
     const ui::RectF rect = localRect();
-    painter.drawSmoothRectangle(rect, rect.height / 2, pillFill(ui::Theme::current().background, m_hovered, m_pressed));
+    const double h = m_hoverFade ? m_hoverFade->value() : (m_hovered ? 1.0 : 0.0);
+    painter.drawSmoothRectangle(rect, rect.height / 2, pillFillProgress(ui::Theme::current().background, h, m_pressed));
 }
 
 } // namespace cutefish::shell

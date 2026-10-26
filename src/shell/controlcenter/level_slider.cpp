@@ -91,8 +91,8 @@ void LevelSlider::setIcon(std::string file)
 void LevelSlider::setVisualValue(double value)
 {
     m_visualValue = value;
-    // Only wheel steps glide; a drag and the service's values snap.
-    m_track->setAnimated(m_gliding && !m_pressed);
+    // Glides on wheel and service changes; a drag tracks the pointer directly.
+    m_track->setAnimated(!m_pressed);
     m_track->setPosition(position());
 }
 
@@ -138,6 +138,7 @@ void LevelSlider::pointerPress(const ui::PointerEvent &event)
     if (event.button != ui::MouseButton::Left)
         return;
     m_pressed = true;
+    m_track->setAnimated(false);
     dragTo(event.position.x);
 }
 
@@ -152,6 +153,7 @@ void LevelSlider::pointerRelease(const ui::PointerEvent &event)
     if (event.button != ui::MouseButton::Left || !m_pressed)
         return;
     m_pressed = false;
+    m_track->setAnimated(true);
     if (!m_settling)
         setVisualValue(m_value);
 }

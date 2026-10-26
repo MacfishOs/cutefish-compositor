@@ -54,7 +54,7 @@ bool XkbTracker::updateKeyboardLayout(const std::string &name)
         }
 
         xkb_rule_names names = {};
-        names.model = "pc101";
+        names.model = "pc105";
         names.layout = layout.c_str();
         names.variant = variant.c_str();
         names.options = "";

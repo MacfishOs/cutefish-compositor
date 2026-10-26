@@ -42,15 +42,38 @@ public:
     virtual void brightnessUp() = 0;
     virtual void keyboardBrightnessDown() = 0;
     virtual void keyboardBrightnessUp() = 0;
+
+    // Media playback (MPRIS).
+    virtual void mediaPlayPause() = 0;
+    virtual void mediaNextTrack() = 0;
+    virtual void mediaPrevTrack() = 0;
+    virtual void mediaStop() = 0;
 };
 
 // The production delegate.
 class DBusAcceleratorDelegate : public AcceleratorDelegate
 {
 public:
-    // The launcher drawn in this process; unset, the call goes over D-Bus.
+    // Shell services callbacks wired in-process; unset, calls fall back to D-Bus.
     std::function<void()> launcherToggle;
     std::function<void()> spotlightToggle;
+    std::function<void(bool)> screenshotTake;
+    std::function<void(bool)> screenshotPartial;
+    std::function<void()> screenshotCaptureMode;
+    std::function<void()> screenshotStopRecording;
+    std::function<void()> clipboardHistoryToggle;
+    std::function<void()> osdVolumeDown;
+    std::function<void()> osdVolumeUp;
+    std::function<void()> osdToggleMute;
+    std::function<void()> osdToggleMicrophoneMute;
+    std::function<void()> osdBrightnessDown;
+    std::function<void()> osdBrightnessUp;
+    std::function<void()> osdKeyboardBrightnessDown;
+    std::function<void()> osdKeyboardBrightnessUp;
+    std::function<void()> mediaPlayPauseCallback;
+    std::function<void()> mediaNextTrackCallback;
+    std::function<void()> mediaPrevTrackCallback;
+    std::function<void()> mediaStopCallback;
 
     void toggleAppList() override;
     void toggleSpotlight() override;
@@ -67,6 +90,10 @@ public:
     void brightnessUp() override;
     void keyboardBrightnessDown() override;
     void keyboardBrightnessUp() override;
+    void mediaPlayPause() override;
+    void mediaNextTrack() override;
+    void mediaPrevTrack() override;
+    void mediaStop() override;
 };
 
 } // namespace cutefish::accelerators

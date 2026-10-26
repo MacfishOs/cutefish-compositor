@@ -40,3 +40,4 @@ target_compile_definitions(controlcenter_test PRIVATE CUTEFISH_SOURCE_DIR="${PRO
 cutefish_add_shell_test(statusbar_view_test DBUS cutefish-shell-statusbar-view)
 target_compile_definitions(statusbar_view_test PRIVATE CUTEFISH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 cutefish_add_shell_test(menubar_test DBUS cutefish-shell-menubar)
+cutefish_add_shell_test(spotlight_evaluator_test cutefish-shell-spotlight)

@@ -73,6 +73,7 @@
 #include "shell/spotlight/spotlight_window.h"
 #include "shell/statusbar/status_bar_window.h"
 #include "shell/statusbar/vpn_notifier.h"
+#include "shell/tiling/window_tile_popover.h"
 #include "shell/wallpaper/wallpaper.h"
 #include "switcher/switcher_view.h"
 #include "wayland/idle_inhibition.h"
@@ -691,6 +692,17 @@ void CompositorShell::initShell()
     shell::Spotlight *spotlightService = spotlight.get();
     m_shell->addComponent(std::make_unique<shell::SpotlightWindow>(m_shell.get(), std::move(spotlight)));
 
+    auto *tilePopover = m_shell->addComponent(std::make_unique<shell::WindowTilePopover>(m_shell.get()));
+    m_windowManager.showTilePopover = [tilePopover](wm::Window *win, const base::PointF &center) {
+        tilePopover->show(win, center);
+    };
+    m_windowManager.hideTilePopover = [tilePopover] {
+        tilePopover->hide();
+    };
+    m_windowManager.notifyTileButtonHover = [tilePopover](bool hovered) {
+        tilePopover->notifyButtonHover(hovered);
+    };
+
     // The dock and the accelerators reach the launcher directly.
     dockService->applications().hideLauncher = [launcherService, spotlightService] {
         launcherService->hide();
@@ -701,14 +713,54 @@ void CompositorShell::initShell()
         launcherService->hide();
         spotlightService->hide();
     };
-    if (m_acceleratorDelegate) {
-        m_acceleratorDelegate->launcherToggle = [launcherService] { launcherService->toggle(); };
-        m_acceleratorDelegate->spotlightToggle = [spotlightService] { spotlightService->toggle(); };
-    }
     auto statusBar = std::make_unique<shell::StatusBar>(
             environment.bus, environment.bus ? base::dbus::Connection::system(mainLoop()) : nullptr,
             &m_shell->tasks(), preferencesFile("shell"));
     shell::StatusBar *statusBarService = statusBar.get();
+
+    if (m_acceleratorDelegate) {
+        m_acceleratorDelegate->launcherToggle = [launcherService] { launcherService->toggle(); };
+        m_acceleratorDelegate->spotlightToggle = [spotlightService] { spotlightService->toggle(); };
+        m_acceleratorDelegate->screenshotTake = [screenshot](bool toClipboard) {
+            screenshot->takeScreenshot(toClipboard);
+        };
+        m_acceleratorDelegate->screenshotPartial = [screenshot](bool toClipboard) {
+            screenshot->takePartialScreenshot(toClipboard);
+        };
+        m_acceleratorDelegate->screenshotCaptureMode = [screenshot] {
+            screenshot->startCaptureMode();
+        };
+        m_acceleratorDelegate->screenshotStopRecording = [screenshot] {
+            screenshot->stopRecording();
+        };
+        m_acceleratorDelegate->clipboardHistoryToggle = [clipboard] {
+            clipboard->toggle();
+        };
+        m_acceleratorDelegate->osdVolumeDown = [osd] { osd->volumeDown(); };
+        m_acceleratorDelegate->osdVolumeUp = [osd] { osd->volumeUp(); };
+        m_acceleratorDelegate->osdToggleMute = [osd] { osd->toggleMute(); };
+        m_acceleratorDelegate->osdToggleMicrophoneMute = [osd] { osd->toggleMicrophoneMute(); };
+        m_acceleratorDelegate->osdBrightnessDown = [osd] { osd->brightnessDown(); };
+        m_acceleratorDelegate->osdBrightnessUp = [osd] { osd->brightnessUp(); };
+        m_acceleratorDelegate->osdKeyboardBrightnessDown = [osd] { osd->keyboardBrightnessDown(); };
+        m_acceleratorDelegate->osdKeyboardBrightnessUp = [osd] { osd->keyboardBrightnessUp(); };
+        m_acceleratorDelegate->mediaPlayPauseCallback = [statusBarService] {
+            if (auto player = statusBarService->mpris().activePlayer())
+                player->playPause();
+        };
+        m_acceleratorDelegate->mediaNextTrackCallback = [statusBarService] {
+            if (auto player = statusBarService->mpris().activePlayer())
+                player->next();
+        };
+        m_acceleratorDelegate->mediaPrevTrackCallback = [statusBarService] {
+            if (auto player = statusBarService->mpris().activePlayer())
+                player->previous();
+        };
+        m_acceleratorDelegate->mediaStopCallback = [statusBarService] {
+            if (auto player = statusBarService->mpris().activePlayer())
+                player->stop();
+        };
+    }
     auto *bar = m_shell->addComponent(
             std::make_unique<shell::StatusBarWindow>(m_shell.get(), std::move(statusBar)));
     bar->setWallpaper(wallpaper);

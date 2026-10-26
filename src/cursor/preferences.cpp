@@ -45,11 +45,18 @@ Preferences::Preferences(Cursor &cursor)
 void Preferences::reload()
 {
     m_settings.reload();
-    const auto theme = m_settings.stringValue("Appearance/CursorTheme", "default");
+    auto theme = m_settings.stringValue("Appearance/CursorTheme", "default");
     // A stored size that is not a number counts as 0.
     constexpr auto sizeKey = "Appearance/CursorSize";
     const int64_t size =
             m_settings.contains(sizeKey) ? m_settings.intValue(sizeKey, 0) : defaultSize();
+    if (theme == "default" || theme.empty()) {
+        std::error_code ec;
+        if (std::filesystem::exists("/usr/share/icons/Qogir-Dark/cursors", ec))
+            theme = "Qogir-Dark";
+        else if (std::filesystem::exists("/usr/share/icons/Qogir/cursors", ec))
+            theme = "Qogir";
+    }
     m_cursor.setTheme(theme, size >= INT_MIN && size <= INT_MAX ? int(size) : 0);
 }
 } // namespace cutefish::cursor

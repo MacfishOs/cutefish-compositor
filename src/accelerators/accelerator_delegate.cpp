@@ -51,67 +51,143 @@ void DBusAcceleratorDelegate::toggleSpotlight()
 
 void DBusAcceleratorDelegate::takeScreenshot(bool toClipboard)
 {
+    if (screenshotTake) {
+        screenshotTake(toClipboard);
+        return;
+    }
     callScreenshot("takeScreenshot", toClipboard);
 }
 
 void DBusAcceleratorDelegate::takePartialScreenshot(bool toClipboard)
 {
+    if (screenshotPartial) {
+        screenshotPartial(toClipboard);
+        return;
+    }
     callScreenshot("takePartialScreenshot", toClipboard);
 }
 
 void DBusAcceleratorDelegate::startCaptureMode()
 {
+    if (screenshotCaptureMode) {
+        screenshotCaptureMode();
+        return;
+    }
     callScreenshot("startCaptureMode");
 }
 
 void DBusAcceleratorDelegate::stopScreenRecording()
 {
+    if (screenshotStopRecording) {
+        screenshotStopRecording();
+        return;
+    }
     callScreenshot("stopRecording");
 }
 
 void DBusAcceleratorDelegate::toggleClipboardHistory()
 {
+    if (clipboardHistoryToggle) {
+        clipboardHistoryToggle();
+        return;
+    }
     call("org.cutefish.ClipboardHistory", "/ClipboardHistory", "toggle");
 }
 
 void DBusAcceleratorDelegate::volumeDown()
 {
+    if (osdVolumeDown) {
+        osdVolumeDown();
+        return;
+    }
     callOsd("volumeDown");
 }
 
 void DBusAcceleratorDelegate::volumeUp()
 {
+    if (osdVolumeUp) {
+        osdVolumeUp();
+        return;
+    }
     callOsd("volumeUp");
 }
 
 void DBusAcceleratorDelegate::toggleMute()
 {
+    if (osdToggleMute) {
+        osdToggleMute();
+        return;
+    }
     callOsd("toggleMute");
 }
 
 void DBusAcceleratorDelegate::toggleMicrophoneMute()
 {
+    if (osdToggleMicrophoneMute) {
+        osdToggleMicrophoneMute();
+        return;
+    }
     callOsd("toggleMicrophoneMute");
 }
 
 void DBusAcceleratorDelegate::brightnessDown()
 {
+    if (osdBrightnessDown) {
+        osdBrightnessDown();
+        return;
+    }
     callOsd("brightnessDown");
 }
 
 void DBusAcceleratorDelegate::brightnessUp()
 {
+    if (osdBrightnessUp) {
+        osdBrightnessUp();
+        return;
+    }
     callOsd("brightnessUp");
 }
 
 void DBusAcceleratorDelegate::keyboardBrightnessDown()
 {
+    if (osdKeyboardBrightnessDown) {
+        osdKeyboardBrightnessDown();
+        return;
+    }
     callOsd("keyboardBrightnessDown");
 }
 
 void DBusAcceleratorDelegate::keyboardBrightnessUp()
 {
+    if (osdKeyboardBrightnessUp) {
+        osdKeyboardBrightnessUp();
+        return;
+    }
     callOsd("keyboardBrightnessUp");
+}
+
+void DBusAcceleratorDelegate::mediaPlayPause()
+{
+    if (mediaPlayPauseCallback)
+        mediaPlayPauseCallback();
+}
+
+void DBusAcceleratorDelegate::mediaNextTrack()
+{
+    if (mediaNextTrackCallback)
+        mediaNextTrackCallback();
+}
+
+void DBusAcceleratorDelegate::mediaPrevTrack()
+{
+    if (mediaPrevTrackCallback)
+        mediaPrevTrackCallback();
+}
+
+void DBusAcceleratorDelegate::mediaStop()
+{
+    if (mediaStopCallback)
+        mediaStopCallback();
 }
 
 } // namespace cutefish::accelerators

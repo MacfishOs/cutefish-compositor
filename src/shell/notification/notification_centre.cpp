@@ -561,6 +561,18 @@ void NotificationCentre::open(ShellWindow *parent, const base::Point &position)
     m_history.updateTime();
     m_scroll->setScrollPosition({0, 0});
     m_window->show();
+    if (m_content) {
+        m_content->setOpacity(0.0);
+        if (!m_openAnim) {
+            m_openAnim = std::make_unique<Tween>(m_window.get(), std::chrono::milliseconds(200), outCubic);
+            m_openAnim->onChanged = [this] {
+                if (m_content)
+                    m_content->setOpacity(m_openAnim->value());
+            };
+        }
+        m_openAnim->snap(0.0);
+        m_openAnim->setTarget(1.0, true);
+    }
     applyGlass();
     m_timeTimer.start();
     openChanged();
@@ -856,7 +868,25 @@ void NotificationCentre::layoutPass()
     m_clear->setVisible(liveTotal > 0);
     if (!m_clear->isVisible())
         m_clear->reset();
-    m_empty->setVisible(liveTotal == 0);
+    if (liveTotal == 0) {
+        m_empty->setVisible(true);
+        if (m_window && m_open) {
+            if (!m_emptyFade) {
+                m_emptyFade = std::make_unique<Tween>(m_window.get(), std::chrono::milliseconds(220), outCubic);
+                m_emptyFade->onChanged = [this] {
+                    if (m_empty)
+                        m_empty->setOpacity(m_emptyFade->value());
+                };
+            }
+            m_emptyFade->setTarget(1.0, true);
+        } else {
+            m_empty->setOpacity(1.0);
+        }
+    } else {
+        if (m_emptyFade)
+            m_emptyFade->snap(0.0);
+        m_empty->setVisible(false);
+    }
 }
 
 NotificationCentre::GroupHeader *NotificationCentre::headerFor(const std::string &key)

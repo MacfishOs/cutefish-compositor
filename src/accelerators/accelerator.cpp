@@ -161,7 +161,14 @@ bool isModifierKeysym(uint32_t keysym)
 
 bool isFunctionKeysym(uint32_t keysym)
 {
-    return keysym >= XKB_KEY_F1 && keysym <= XKB_KEY_F24;
+    if (keysym >= XKB_KEY_F1 && keysym <= XKB_KEY_F35)
+        return true;
+    if (keysym == XKB_KEY_Print || keysym == XKB_KEY_Sys_Req || keysym == XKB_KEY_Pause
+        || keysym == XKB_KEY_Break || keysym == XKB_KEY_Scroll_Lock)
+        return true;
+    if (keysym >= 0x10080001 && keysym <= 0x1008ffff)
+        return true;
+    return false;
 }
 
 } // namespace cutefish::accelerators

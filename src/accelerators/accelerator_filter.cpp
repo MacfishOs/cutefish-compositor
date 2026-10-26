@@ -29,8 +29,8 @@ namespace cutefish::accelerators {
 
 namespace {
 
-// ash::AcceleratorController::IsSystemKey, less the media keys, which have no
-// action here and so stay with the applications.
+// ash::AcceleratorController::IsSystemKey, including device keys, media keys,
+// and screenshot keys so they are handled globally by the compositor.
 bool isSystemKey(xkb_keysym_t keysym)
 {
     switch (keysym) {
@@ -42,6 +42,13 @@ bool isSystemKey(xkb_keysym_t keysym)
     case XKB_KEY_XF86MonBrightnessUp:
     case XKB_KEY_XF86KbdBrightnessDown:
     case XKB_KEY_XF86KbdBrightnessUp:
+    case XKB_KEY_XF86AudioPlay:
+    case XKB_KEY_XF86AudioPause:
+    case XKB_KEY_XF86AudioNext:
+    case XKB_KEY_XF86AudioPrev:
+    case XKB_KEY_XF86AudioStop:
+    case XKB_KEY_Print:
+    case XKB_KEY_Sys_Req:
         return true;
     default:
         return false;

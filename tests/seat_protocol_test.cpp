@@ -855,9 +855,9 @@ TEST_F(SeatProtocolTest, AxisEventsCarrySourceDiscreteAndStop)
             EXPECT_EQ(uint32_t(WL_POINTER_AXIS_VERTICAL_SCROLL), c.observed.axisDiscrete[0].first);
             EXPECT_EQ(1, c.observed.axisDiscrete[0].second);
             EXPECT_TRUE(c.observed.axisValue120.empty());
-            ASSERT_EQ(2u, c.observed.axes.size());
-            EXPECT_EQ(uint32_t(WL_POINTER_AXIS_VERTICAL_SCROLL), c.observed.axes[1].first);
-            EXPECT_EQ(wl_fixed_from_double(10), c.observed.axes[1].second);
+            ASSERT_EQ(1u, c.observed.axes.size());
+            EXPECT_EQ(uint32_t(WL_POINTER_AXIS_VERTICAL_SCROLL), c.observed.axes[0].first);
+            EXPECT_EQ(wl_fixed_from_double(10), c.observed.axes[0].second);
             // axis_discrete must precede its axis event.
             const auto& events = c.observed.pointerEvents;
             const auto discreteAt = std::find(events.begin(), events.end(), "axis_discrete");
@@ -872,8 +872,11 @@ TEST_F(SeatProtocolTest, AxisEventsCarrySourceDiscreteAndStop)
             c.sync();
             ASSERT_EQ(2u, c.observed.axisSources.size() - 1);
             EXPECT_EQ(uint32_t(WL_POINTER_AXIS_SOURCE_FINGER), c.observed.axisSources[1]);
-            ASSERT_EQ(4u, c.observed.axes.size());
-            EXPECT_EQ(wl_fixed_from_double(-4.5), c.observed.axes[2].second);
+            ASSERT_EQ(3u, c.observed.axes.size());
+            EXPECT_EQ(uint32_t(WL_POINTER_AXIS_HORIZONTAL_SCROLL), c.observed.axes[1].first);
+            EXPECT_EQ(wl_fixed_from_double(-4.5), c.observed.axes[1].second);
+            EXPECT_EQ(uint32_t(WL_POINTER_AXIS_VERTICAL_SCROLL), c.observed.axes[2].first);
+            EXPECT_EQ(wl_fixed_from_double(2.25), c.observed.axes[2].second);
             EXPECT_EQ(1u, c.observed.axisDiscrete.size()); // unchanged
             EXPECT_EQ(2u, c.observed.axisStops.size());
         },
@@ -901,7 +904,11 @@ TEST_F(SeatProtocolTest, AVersionEightSeatGetsWheelFractionsAsValue120)
         EXPECT_EQ(15, c.observed.axisValue120[0].second);
         EXPECT_EQ(uint32_t(WL_POINTER_AXIS_HORIZONTAL_SCROLL), c.observed.axisValue120[1].first);
         EXPECT_EQ(-120, c.observed.axisValue120[1].second);
-        EXPECT_EQ(wl_fixed_from_double(1.25), c.observed.axes[1].second);
+        ASSERT_EQ(2u, c.observed.axes.size());
+        EXPECT_EQ(uint32_t(WL_POINTER_AXIS_VERTICAL_SCROLL), c.observed.axes[0].first);
+        EXPECT_EQ(wl_fixed_from_double(1.25), c.observed.axes[0].second);
+        EXPECT_EQ(uint32_t(WL_POINTER_AXIS_HORIZONTAL_SCROLL), c.observed.axes[1].first);
+        EXPECT_EQ(wl_fixed_from_double(-10), c.observed.axes[1].second);
         // axis_value120 must precede its axis event.
         const auto& events = c.observed.pointerEvents;
         const auto value120At = std::find(events.begin(), events.end(), "axis_value120");
@@ -926,7 +933,7 @@ TEST_F(SeatProtocolTest, AnOlderSeatCountsWheelFractionsIntoWholeClicks)
             });
             c.sync();
             EXPECT_TRUE(c.observed.axisDiscrete.empty());
-            EXPECT_EQ(14u, c.observed.axes.size());
+            EXPECT_EQ(7u, c.observed.axes.size());
 
             check([&] {
                 seat.onPointerAxis(at(9), base::PointF(10, 10), base::PointF(0, 1.25), true);
@@ -1181,7 +1188,7 @@ TEST_F(SeatProtocolTest, AVersionFourSeatGetsNoFrameAxisSourceOrDiscrete)
             EXPECT_TRUE(c.observed.axisSources.empty());
             EXPECT_TRUE(c.observed.axisDiscrete.empty());
             EXPECT_TRUE(c.observed.axisStops.empty());
-            EXPECT_EQ(2u, c.observed.axes.size());
+            EXPECT_EQ(1u, c.observed.axes.size());
             // repeat_info is version 4, so it is still sent.
             EXPECT_EQ(25, c.observed.repeatRate);
         },
