@@ -72,7 +72,7 @@ bool validObjectPath(std::string_view path)
         return true;
     return validElements(path.substr(1), '/', 1, [](std::string_view element) {
         return std::all_of(element.begin(), element.end(), [](char c) {
-            return isAsciiLetter(c) || isAsciiDigit(c) || c == '_';
+            return isAsciiLetter(c) || isAsciiDigit(c) || c == '_' || c == '-';
         });
     });
 }

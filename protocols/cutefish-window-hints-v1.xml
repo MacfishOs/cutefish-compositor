@@ -201,5 +201,23 @@
       <arg name="height" type="int"/>
       <arg name="primary" type="uint"/>
     </event>
+    <enum name="tile_action">
+      <entry name="none" value="0"/>
+      <entry name="left_half" value="1"/>
+      <entry name="right_half" value="2"/>
+      <entry name="top_half" value="3"/>
+      <entry name="bottom_half" value="4"/>
+      <entry name="top_left" value="5"/>
+      <entry name="top_right" value="6"/>
+      <entry name="bottom_left" value="7"/>
+      <entry name="bottom_right" value="8"/>
+    </enum>
+    <request name="request_tile">
+      <description summary="request the compositor to tile the window">
+        Asks the compositor to place the window into one of the tiled layout positions.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="action" type="uint" enum="tile_action"/>
+    </request>
   </interface>
 </protocol>

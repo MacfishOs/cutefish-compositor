@@ -98,6 +98,11 @@ void ApplicationMenu::menuAddressOf(uint64_t window, std::string *service, std::
         *service = m_registrar->serviceForPid(uint32_t(client->pid));
         *path = m_registrar->pathForPid(uint32_t(client->pid));
     }
+    // Fallback: if service or path is still empty and there is an active registration in m_registrar, use it.
+    if ((service->empty() || path->empty()) && m_registrar) {
+        *service = m_registrar->serviceForPid(0);
+        *path = m_registrar->pathForPid(0);
+    }
 }
 
 ApplicationMenu::Import *ApplicationMenu::importFor(const std::string &service, const std::string &path)

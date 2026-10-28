@@ -194,9 +194,8 @@ void DecorationNode::paintButtons(render::Renderer& renderer, const base::Rect& 
             iconColor = render::Color(0.0f, 95.0f / 255.0f, 0.0f, 1.0f);
         }
 
-        const bool active = m_decoration->isActive();
         const bool pressed = button.isPressed();
-        const float opacity = (active || anyHoveredOrPressed) ? 1.0f : 0.35f;
+        const float opacity = 1.0f;
         dotColor.a = opacity;
         if (pressed) {
             dotColor.r /= 1.25f;

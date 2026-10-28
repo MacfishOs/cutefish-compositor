@@ -111,11 +111,16 @@ void DBusMenu::applyLayout(int32_t parentId, const dbus::Variant &layout)
 
     std::vector<int32_t> children;
     for (const dbus::Variant &child : layout.items()[2].items()) {
-        const std::optional<dbus::Variant> inner = child.get<dbus::Variant>();
-        if (!inner || inner->signature() != "(ia{sv}av)")
+        dbus::Variant inner = child;
+        if (child.signature() == "v") {
+            const auto unwrapped = child.get<dbus::Variant>();
+            if (unwrapped)
+                inner = *unwrapped;
+        }
+        if (inner.signature() != "(ia{sv}av)")
             continue;
-        const int32_t id = inner->items()[0].value<int32_t>();
-        const dbus::VariantMap properties = inner->items()[1].value<dbus::VariantMap>();
+        const int32_t id = inner.items()[0].value<int32_t>();
+        const dbus::VariantMap properties = inner.items()[1].value<dbus::VariantMap>();
         // The root, or an entry listed twice, would make a cycle.
         if (id == 0 || id == parentId || std::find(children.begin(), children.end(), id) != children.end())
             continue;

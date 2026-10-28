@@ -504,9 +504,14 @@ base::Rect WindowManager::zonedWorkArea(const base::Rect &workArea, const base::
 bool WindowManager::hasMaximizedWindow(const base::Rect &outputBounds) const
 {
     return std::any_of(m_stackingOrder.begin(), m_stackingOrder.end(), [&](const Window *window) {
-        return window->role() == WindowRole::Normal && !window->isPopup() && window->isVisible()
-                && window->stateType() == WindowStateType::Maximized
-                && outputBoundsFor(window) == outputBounds;
+        if (window->role() != WindowRole::Normal || window->isPopup() || !window->isVisible()
+                || outputBoundsFor(window) != outputBounds)
+            return false;
+        const auto type = window->stateType();
+        return type == WindowStateType::Maximized
+            || type == WindowStateType::PrimarySnapped
+            || type == WindowStateType::SecondarySnapped
+            || (window->state() && window->state()->isSnapped());
     });
 }
 

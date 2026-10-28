@@ -24,6 +24,12 @@ enum class WindowStateType {
     Normal,
     PrimarySnapped,
     SecondarySnapped,
+    TopSnapped,
+    BottomSnapped,
+    TopLeftSnapped,
+    TopRightSnapped,
+    BottomLeftSnapped,
+    BottomRightSnapped,
     Maximized,
     Fullscreen,
     Minimized,
@@ -31,7 +37,10 @@ enum class WindowStateType {
 
 constexpr bool isSnappedStateType(WindowStateType type)
 {
-    return type == WindowStateType::PrimarySnapped || type == WindowStateType::SecondarySnapped;
+    return type == WindowStateType::PrimarySnapped || type == WindowStateType::SecondarySnapped
+            || type == WindowStateType::TopSnapped || type == WindowStateType::BottomSnapped
+            || type == WindowStateType::TopLeftSnapped || type == WindowStateType::TopRightSnapped
+            || type == WindowStateType::BottomLeftSnapped || type == WindowStateType::BottomRightSnapped;
 }
 
 // A snapped window keeps the floating look: rounded corners, outline and

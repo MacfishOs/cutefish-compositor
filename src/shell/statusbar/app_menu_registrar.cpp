@@ -4,6 +4,10 @@
 
 #include "shell/statusbar/app_menu_registrar.h"
 
+#include <fstream>
+#include <string>
+#include <unistd.h>
+
 #include "base/logging.h"
 
 namespace cutefish::shell {
@@ -14,6 +18,37 @@ static const base::LogCategory cfAppMenu("cutefish.shell.appmenu");
 
 static constexpr const char *kService = "com.canonical.AppMenu.Registrar";
 static constexpr const char *kPath = "/com/canonical/AppMenu/Registrar";
+
+static uint32_t getParentPid(uint32_t pid) {
+    if (pid == 0) return 0;
+    std::ifstream statFile("/proc/" + std::to_string(pid) + "/stat");
+    if (!statFile.is_open()) return 0;
+    std::string comm;
+    char state;
+    uint32_t ppid = 0;
+    uint32_t unused;
+    statFile >> unused >> comm >> state >> ppid;
+    return ppid;
+}
+
+static bool isSameProcessFamily(uint32_t pid1, uint32_t pid2) {
+    if (pid1 == 0 || pid2 == 0) return false;
+    if (pid1 == pid2) return true;
+
+    uint32_t p1 = pid1;
+    for (int i = 0; i < 4 && p1 > 1; ++i) {
+        if (p1 == pid2) return true;
+        p1 = getParentPid(p1);
+    }
+
+    uint32_t p2 = pid2;
+    for (int i = 0; i < 4 && p2 > 1; ++i) {
+        if (p2 == pid1) return true;
+        p2 = getParentPid(p2);
+    }
+
+    return (p1 > 1 && p1 == p2);
+}
 
 AppMenuRegistrar::AppMenuRegistrar(dbus::Connection *bus)
     : m_bus(bus)
@@ -74,12 +109,28 @@ bool AppMenuRegistrar::registerService()
 
 const AppMenuRegistrar::Registration *AppMenuRegistrar::newestFor(uint32_t pid) const
 {
-    if (pid == 0)
+    if (pid == 0) {
+        if (!m_registrations.empty())
+            return &m_registrations.back();
         return nullptr;
+    }
+
+    // 1. Direct PID match
     for (auto it = m_registrations.rbegin(); it != m_registrations.rend(); ++it) {
         if (it->pid == pid)
             return &*it;
     }
+
+    // 2. Parent/Child process family match (Java JBR / Android Studio / Electron / Wrapper scripts)
+    for (auto it = m_registrations.rbegin(); it != m_registrations.rend(); ++it) {
+        if (it->pid > 0 && isSameProcessFamily(pid, it->pid))
+            return &*it;
+    }
+
+    // 3. Fallback to newest registration if available
+    if (!m_registrations.empty())
+        return &m_registrations.back();
+
     return nullptr;
 }
 
@@ -123,13 +174,14 @@ void AppMenuRegistrar::registerWindow(const std::string &sender, uint32_t window
         return bus.callAsync(
                 "GetConnectionUnixProcessID",
                 [this, sender, windowId, path, finished](const dbus::Reply &reply) {
+                    const uint32_t pid = reply.value<uint32_t>().value_or(0);
                     for (auto it = m_registrations.rbegin(); it != m_registrations.rend(); ++it) {
-                        if (it->windowId != windowId || it->service != sender || it->path != path)
-                            continue;
-                        it->pid = reply.value<uint32_t>().value_or(0);
-                        windowRegistered(windowId, sender, path);
-                        break;
+                        if (it->windowId == windowId && it->service == sender) {
+                            it->pid = pid;
+                            break;
+                        }
                     }
+                    windowRegistered(windowId, sender, path);
                     finished();
                 },
                 sender);

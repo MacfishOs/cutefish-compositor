@@ -161,19 +161,19 @@ protected:
 
     void paint(ui::Painter &painter) override
     {
-        const ui::Color line = ui::color(toolkit::CompositorColor::DockDivider);
+        const ui::Color line = ui::Color(255, 255, 255, 180);
         const base::Rect panel = m_dock->panelRect();
         const auto draw = [&](const base::RectF &rect, double opacity) {
             if (rect.isEmpty() || opacity <= 0)
                 return;
             ui::Color color = line;
-            color.a = uint8_t(std::clamp(int(std::lround(255 * opacity)), 0, 255));
+            color.a = uint8_t(std::clamp(int(std::lround(color.a * opacity)), 0, 255));
             painter.drawRoundedRect({panel.x() + rect.x(), panel.y() + rect.y(), rect.width(),
                                      rect.height()},
-                                    {0.5, 0.5, ui::Corners::Circular}, color);
+                                    {0.75, 0.75, ui::Corners::Circular}, color);
         };
-        draw(m_dock->divider(), 0.18);
-        draw(m_dock->trailingDivider(), m_dock->m_trailingOpacity);
+        // Exactly ONE single divider line before Trash / Minimized windows (macOS Dock)
+        draw(m_dock->trailingDivider(), 1.0);
     }
 
     // The whole window takes drags: the application area, and the icons
@@ -825,16 +825,17 @@ void DockWindow::layoutItems()
     const double middle = (m_drawn.separatorExtent - m_drawn.iconGap) / 2 - 0.5;
     const auto lineRect = [&](double position) {
         const double start = origin + position;
-        return bottom ? base::RectF(start, lineAcross, 1, lineLength)
-                      : base::RectF(lineAcross, start, lineLength, 1);
+        return bottom ? base::RectF(start, lineAcross, 1.5, lineLength)
+                      : base::RectF(lineAcross, start, lineLength, 1.5);
     };
     m_divider = lineRect(along(m_applications->sectionPosition() + middle,
                                m_applications->targetSectionPosition() + middle));
-    // In macOS, the right-section divider always demarcates the persistent applications
-    // from the right section (minimized windows + Trash).
+    // In macOS, the right-section divider demarcates persistent applications from Trash / minimized windows.
+    // Shifted 6px left to provide balanced breathing room before the Bin icon.
+    const double lineOffset = 6.0;
     m_trailingOpacity = 0.22;
-    m_trailingDivider = lineRect(along(m_applications->length() + middle,
-                                       m_applications->targetLength() + middle));
+    m_trailingDivider = lineRect(along(m_applications->length() + middle - lineOffset,
+                                       m_applications->targetLength() + middle - lineOffset));
     m_panel->setGeometry({0, 0, double(m_windowRect.width()), double(m_windowRect.height())});
     m_panel->requestPaint();
     updatePanelRect(panel);

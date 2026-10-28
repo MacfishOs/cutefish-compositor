@@ -255,6 +255,8 @@ struct Xwm::X11Window : compositor::SurfaceObserver, wm::WindowObserver {
     float opacity = 1;
     uint32_t pingSerial = 0;
     std::string clientMachine;
+    std::string menuService, menuPath;
+    uint64_t menuSource = 0;
     // _NET_WM_SYNC_REQUEST: the client's counter, our alarm on it, the last
     // value requested, and a size change held back until it is reached.
     bool syncable = false, syncPending = false, syncDeferred = false;
@@ -808,7 +810,11 @@ void Xwm::setup()
                         "_NET_WORKAREA",
                         "_NET_NUMBER_OF_DESKTOPS",
                         "_NET_CURRENT_DESKTOP",
-                        "_NET_WM_DESKTOP"})
+                        "_NET_WM_DESKTOP",
+                        "_GTK_MENUBAR_OBJECT_PATH",
+                        "_GTK_APP_MENU_OBJECT_PATH",
+                        "_KDE_NET_WM_APPMENU_SERVICE_NAME",
+                        "_KDE_NET_WM_APPMENU_OBJECT_PATH"})
             supported.push_back(atom(n));
         property(m_root, "_NET_SUPPORTED", XCB_ATOM_ATOM, supported);
         reply(xcb_get_selection_owner(m_connection, atom("WM_S0")).sequence, [this](void *p) {
@@ -1027,7 +1033,10 @@ std::vector<xcb_atom_t> Xwm::followedProperties()
             atom("WM_PROTOCOLS"),      atom("_MOTIF_WM_HINTS"),     atom("_NET_WM_STATE"),
             atom("_NET_WM_WINDOW_TYPE"), atom("WM_CLIENT_LEADER"), atom("_NET_STARTUP_ID"),
             atom("WM_CLIENT_MACHINE"),   atom("_NET_WM_SYNC_REQUEST_COUNTER"),
-            atom("_NET_WM_WINDOW_OPACITY")};
+            atom("_NET_WM_WINDOW_OPACITY"),
+            atom("_GTK_MENUBAR_OBJECT_PATH"), atom("_GTK_APP_MENU_OBJECT_PATH"),
+            atom("_GTK_UNIQUE_BUS_NAME"),
+            atom("_KDE_NET_WM_APPMENU_SERVICE_NAME"), atom("_KDE_NET_WM_APPMENU_OBJECT_PATH")};
 }
 
 void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
@@ -1231,6 +1240,22 @@ void Xwm::properties(X11Window &w, std::vector<xcb_atom_t> atoms)
                       w.maximized = h && v;
                       for (const auto &request : w.stateRequests)
                           applyStateRequest(w, request);
+                  } else if (a == atom("_KDE_NET_WM_APPMENU_SERVICE_NAME") || a == atom("_GTK_UNIQUE_BUS_NAME")) {
+                      w.menuService = (r->type == atom("UTF8_STRING") || r->type == XCB_ATOM_STRING)
+                              ? std::string(data, size_t(bytes)) : std::string();
+                      if (w.surface && !w.menuService.empty() && !w.menuPath.empty()) {
+                          if (!w.menuSource)
+                              w.menuSource = w.surface->addMenuSource();
+                          w.surface->setMenuAddress(w.menuSource, {w.menuService, w.menuPath});
+                      }
+                  } else if (a == atom("_KDE_NET_WM_APPMENU_OBJECT_PATH") || a == atom("_GTK_MENUBAR_OBJECT_PATH") || a == atom("_GTK_APP_MENU_OBJECT_PATH")) {
+                      w.menuPath = (r->type == atom("UTF8_STRING") || r->type == XCB_ATOM_STRING)
+                              ? std::string(data, size_t(bytes)) : std::string();
+                      if (w.surface && !w.menuService.empty() && !w.menuPath.empty()) {
+                          if (!w.menuSource)
+                              w.menuSource = w.surface->addMenuSource();
+                          w.surface->setMenuAddress(w.menuSource, {w.menuService, w.menuPath});
+                      }
                   }
               });
     }

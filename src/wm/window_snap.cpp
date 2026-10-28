@@ -11,8 +11,8 @@ namespace {
 // Ash's kScreenEdgeInsetForSnappingSides / kScreenEdgeInsetForSnappingTop. The
 // top is less aggressive: the caption is what gets dragged there, and a wide
 // band would snap windows the user only wanted to align.
-constexpr int kSideTolerance = 48;
-constexpr int kTopTolerance = 16;
+constexpr int kSideTolerance = 32;
+constexpr int kTopTolerance = 8;
 
 } // namespace
 
@@ -81,7 +81,7 @@ WindowStateType snapStateType(SnapType type)
 
 bool canSnapSize(const base::Size &minimumOuterSize, const base::Rect &workArea)
 {
-    return !workArea.isEmpty() && minimumOuterSize.width() <= workArea.width() / 2
+    return !workArea.isEmpty() && minimumOuterSize.width() <= workArea.width()
             && minimumOuterSize.height() <= workArea.height();
 }
 
